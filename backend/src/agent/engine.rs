@@ -38,6 +38,7 @@ pub struct AgentEvent {
 }
 
 const MAX_ITERATIONS: usize = 20;
+const MAX_CONSECUTIVE_SAME_TOOL: usize = 3;
 
 /// Trim large binary payloads from tool results before sending to the LLM.
 /// The full result is still delivered to the frontend via SSE.
@@ -46,14 +47,22 @@ fn summarize_tool_result(content: &str) -> String {
     if content.starts_with("data:image/") {
         let summary: Vec<&str> = content.split('\n').skip(1).collect();
         if summary.is_empty() {
-            return "截图已获取".to_string();
+            return "截图已完成，图片已展示在界面中。请直接描述你看到的截图内容回复用户。".to_string();
         }
-        return format!("[图片数据已获取] {}", summary.join("\n"));
+        return format!(
+            "截图已完成，图片已展示在界面中。截图信息: {}。请直接回复用户，不要再次调用截图工具。",
+            summary.join("\n")
+        );
     }
 
-    // General: truncate extremely long results to avoid flooding LLM context
+    // General: truncate extremely long results to avoid flooding LLM context.
+    // Use char boundary to avoid UTF-8 panic.
     if content.len() > 8000 {
-        let truncated = &content[..8000];
+        let mut end = 8000;
+        while end > 0 && !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        let truncated = &content[..end];
         return format!("{}...\n(输出已截断，完整内容已展示在界面中)", truncated);
     }
 
@@ -72,6 +81,8 @@ pub async fn run_react_loop_with_channel(
 ) -> Result<String, String> {
     let tools_openai = tool_registry.to_openai_tools();
     let mut iteration = 0;
+    let mut last_tool_name = String::new();
+    let mut consecutive_same_tool = 0usize;
 
     loop {
         if cancel_token.is_cancelled() {
@@ -111,6 +122,20 @@ pub async fn run_react_loop_with_channel(
 
                 for tc in &tool_calls {
                     if cancel_token.is_cancelled() { return Err("已取消".to_string()); }
+
+                    // Guard against infinite tool loops: bail if same tool called too many times in a row
+                    if tc.function.name == last_tool_name {
+                        consecutive_same_tool += 1;
+                        if consecutive_same_tool >= MAX_CONSECUTIVE_SAME_TOOL {
+                            return Err(format!(
+                                "工具 {} 被连续调用 {} 次，可能陷入循环，已中止",
+                                tc.function.name, consecutive_same_tool
+                            ));
+                        }
+                    } else {
+                        consecutive_same_tool = 1;
+                        last_tool_name = tc.function.name.clone();
+                    }
 
                     let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
