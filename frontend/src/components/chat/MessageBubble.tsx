@@ -13,7 +13,9 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
 
   if (isTool) return null;
 
-  const toolCalls = message.tool_calls || [];
+  // Safely handle tool_calls from both new (streaming) and old (database) formats
+  const rawToolCalls = message.tool_calls;
+  const toolCalls = Array.isArray(rawToolCalls) ? rawToolCalls : [];
 
   return (
     <div className="mb-4">
@@ -35,17 +37,24 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         </div>
       </div>
 
-      {/* Render tool calls that powered this message */}
-      {toolCalls.map((tc: any) => (
-        <ToolCallCard
-          key={tc.toolCallId}
-          toolCallId={tc.toolCallId}
-          name={tc.name}
-          args={tc.args}
-          status={tc.status}
-          result={tc.result}
-        />
-      ))}
+      {/* Render tool calls that powered this message (only for new-format records) */}
+      {toolCalls.map((tc: any) => {
+        const id = tc.toolCallId || tc.id || "";
+        const name = tc.name || tc.function?.name || "";
+        const args = tc.args || tc.function?.arguments || {};
+        const status = tc.status || "success";
+        const result = tc.result;
+        return (
+          <ToolCallCard
+            key={id}
+            toolCallId={id}
+            name={name}
+            args={typeof args === "string" ? {} : args}
+            status={status}
+            result={result}
+          />
+        );
+      })}
     </div>
   );
 }
