@@ -1,7 +1,7 @@
 import { Message } from "../../types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import ToolCallCard from "./ToolCallCard";
+import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
 
 interface MessageBubbleProps {
   message: Message;
@@ -11,7 +11,17 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
 
-  if (isTool) return null;
+  // Render tool messages that contain images (screenshots persisted in history)
+  if (isTool) {
+    if (message.content?.startsWith("data:image/")) {
+      return (
+        <div className="mb-4 ml-4">
+          <ToolResultContent result={message.content} />
+        </div>
+      );
+    }
+    return null;
+  }
 
   // Safely handle tool_calls from both new (streaming) and old (database) formats
   const rawToolCalls = message.tool_calls;

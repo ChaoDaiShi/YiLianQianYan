@@ -50,7 +50,7 @@ const TOOL_ARG_DISPLAY: Record<string, (args: Record<string, unknown>) => string
  * Lines starting with "data:image/" are rendered as <img> tags;
  * everything else is rendered as <pre> text.
  */
-function ToolResultContent({ result }: { result: string }) {
+export function ToolResultContent({ result }: { result: string }) {
   const lines = result.split("\n");
   const imageLines: string[] = [];
   const textLines: string[] = [];
@@ -94,7 +94,7 @@ export default function ToolCallCard({
   status,
   result,
 }: ToolCallCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(name === "screenshot");
 
   const label = TOOL_LABELS[name] || `🔧 ${name}`;
   const argDisplay = TOOL_ARG_DISPLAY[name]?.(args) || JSON.stringify(args);
