@@ -1,0 +1,176 @@
+// ============================================================
+// Agent Engine — Core ReAct loop (channel-based for HTTP server)
+//
+// Flow: prepare → think (LLM with tools) ↔ execute tools → respond
+// ============================================================
+
+use serde::Serialize;
+use tokio::sync::mpsc::Sender;
+use tokio_util::sync::CancellationToken;
+
+use super::state::AgentState;
+use crate::config::types::AppConfig;
+use crate::llm::client::LlmClient;
+use crate::tools::registry::ToolRegistry;
+
+/// Agent streaming event (shared with API layer)
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub conversation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+}
+
+const MAX_ITERATIONS: usize = 20;
+
+/// Trim large binary payloads from tool results before sending to the LLM.
+/// The full result is still delivered to the frontend via SSE.
+fn summarize_tool_result(content: &str) -> String {
+    // Data URIs (e.g. screenshots) — keep only the metadata line after the URI
+    if content.starts_with("data:image/") {
+        let summary: Vec<&str> = content.split('\n').skip(1).collect();
+        if summary.is_empty() {
+            return "截图已获取".to_string();
+        }
+        return format!("[图片数据已获取] {}", summary.join("\n"));
+    }
+
+    // General: truncate extremely long results to avoid flooding LLM context
+    if content.len() > 8000 {
+        let truncated = &content[..8000];
+        return format!("{}...\n(输出已截断，完整内容已展示在界面中)", truncated);
+    }
+
+    content.to_string()
+}
+
+/// Run the ReAct agent loop, sending streaming events through a channel.
+pub async fn run_react_loop_with_channel(
+    state: &mut AgentState,
+    client: &LlmClient,
+    tool_registry: &ToolRegistry,
+    _config: &AppConfig,
+    conversation_id: &str,
+    cancel_token: &CancellationToken,
+    tx: &Sender<AgentEvent>,
+) -> Result<String, String> {
+    let tools_openai = tool_registry.to_openai_tools();
+    let mut iteration = 0;
+
+    loop {
+        if cancel_token.is_cancelled() {
+            return Err("已取消".to_string());
+        }
+
+        iteration += 1;
+        if iteration > MAX_ITERATIONS {
+            return Err("已达到最大工具调用次数限制".to_string());
+        }
+
+        // ── THINK: Call LLM with streaming ──
+        let result = client
+            .stream_with_callbacks(&state.messages, &tools_openai, |token| {
+                let _ = tx.try_send(AgentEvent {
+                    event_type: "token".into(),
+                    conversation_id: conversation_id.to_string(),
+                    token: Some(token.to_string()),
+                    tool_call_id: None, tool_name: None, args: None,
+                    result: None, status: None, error: None, message_id: None,
+                });
+            })
+            .await;
+
+        let accumulator = match result {
+            Ok(acc) => acc,
+            Err(e) => return Err(format!("LLM调用失败: {}", e)),
+        };
+
+        // ── Check for tool calls ──
+        if accumulator.has_tool_calls() {
+            if let Some(tool_calls) = accumulator.to_tool_calls() {
+                state.add_assistant_message(
+                    if accumulator.content.is_empty() { None } else { Some(accumulator.content.clone()) },
+                    Some(tool_calls.clone()),
+                );
+
+                for tc in &tool_calls {
+                    if cancel_token.is_cancelled() { return Err("已取消".to_string()); }
+
+                    let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                        .unwrap_or(serde_json::Value::Null);
+
+                    let _ = tx.try_send(AgentEvent {
+                        event_type: "tool_start".into(),
+                        conversation_id: conversation_id.to_string(),
+                        token: None,
+                        tool_call_id: Some(tc.id.clone()),
+                        tool_name: Some(tc.function.name.clone()),
+                        args: Some(args.clone()),
+                        result: None, status: None, error: None, message_id: None,
+                    });
+
+                    let tool_result = match tool_registry.execute(&tc.function.name, args).await {
+                        Some(r) => r,
+                        None => crate::tools::trait_def::ToolResult::error(
+                            format!("未知工具: {}", tc.function.name)
+                        ),
+                    };
+
+                    let status = if tool_result.ok { "success" } else { "error" };
+
+                    // Send full result to frontend via SSE (includes images, etc.)
+                    let _ = tx.try_send(AgentEvent {
+                        event_type: "tool_end".into(),
+                        conversation_id: conversation_id.to_string(),
+                        token: None,
+                        tool_call_id: Some(tc.id.clone()),
+                        tool_name: Some(tc.function.name.clone()),
+                        args: None,
+                        result: Some(tool_result.content.clone()),
+                        status: Some(status.to_string()),
+                        error: None, message_id: None,
+                    });
+
+                    // Trim data URIs before sending to LLM to avoid context pollution
+                    // LLMs can't interpret base64, so we replace with a human-readable summary
+                    let llm_result = summarize_tool_result(&tool_result.content);
+
+                    state.add_tool_result(tc.id.clone(), tc.function.name.clone(), llm_result);
+                }
+                continue;
+            }
+        }
+
+        // ── RESPOND: Final answer ──
+        let output = accumulator.content.clone();
+        state.add_assistant_message(Some(output.clone()), None);
+        state.output = output.clone();
+
+        let msg_id = uuid::Uuid::new_v4().to_string();
+        let _ = tx.try_send(AgentEvent {
+            event_type: "done".into(),
+            conversation_id: conversation_id.to_string(),
+            token: None, tool_call_id: None, tool_name: None,
+            args: None, result: None, status: None, error: None,
+            message_id: Some(msg_id),
+        });
+
+        return Ok(output);
+    }
+}
