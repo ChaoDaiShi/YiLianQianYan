@@ -48,10 +48,7 @@ fn capture_screenshot(
         let img_w = image.width();
         let img_h = image.height();
         if rx + rw > img_w || ry + rh > img_h {
-            return Err(format!(
-                "区域超出屏幕范围 ({}x{})",
-                img_w, img_h
-            ));
+            return Err(format!("区域超出屏幕范围 ({}x{})", img_w, img_h));
         }
         image = image.crop(rx, ry, rw, rh);
     }
@@ -60,24 +57,27 @@ fn capture_screenshot(
     let img_h = image.height();
 
     // Encode to PNG or JPEG bytes
+    let mime = match format {
+        "jpg" | "jpeg" => "image/jpeg",
+        _ => "image/png",
+    };
+    let img_fmt = match format {
+        "jpg" | "jpeg" => image::ImageFormat::Jpeg,
+        _ => image::ImageFormat::Png,
+    };
+
     let mut out = std::io::Cursor::new(Vec::new());
-    match format {
-        "jpg" | "jpeg" => {
-            image
-                .write_to(&mut out, image::ImageFormat::Jpeg)
-                .map_err(|e| format!("JPEG编码失败：{}", e))?;
-        }
-        _ => {
-            image
-                .write_to(&mut out, image::ImageFormat::Png)
-                .map_err(|e| format!("PNG编码失败：{}", e))?;
-        }
-    }
+    image
+        .write_to(&mut out, img_fmt)
+        .map_err(|e| format!("{}编码失败：{}", format, e))?;
     let bytes = out.into_inner();
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
+    // Return a data URI that browsers can render directly in <img src="...">
+    let data_uri = format!("data:{};base64,{}", mime, b64);
+
     Ok((
-        b64,
+        data_uri,
         ScreenshotMetadata {
             width: img_w,
             height: img_h,
@@ -145,13 +145,14 @@ impl Tool for ScreenshotTool {
         let format = args["format"].as_str().unwrap_or("png");
 
         match capture_screenshot(monitor_idx, x, y, width, height, format) {
-            Ok((b64, meta)) => {
-                let result = serde_json::json!({
-                    "content": b64,
-                    "metadata": meta,
-                });
-                // Return as JSON string so the content field is parseable
-                ToolResult::success(result.to_string())
+            Ok((data_uri, meta)) => {
+                // Return data URI on first line (rendered as <img> by frontend),
+                // followed by metadata as a human-readable caption
+                let output = format!(
+                    "{}\n截图尺寸: {}x{} | 格式: {} | 显示器: {}",
+                    data_uri, meta.width, meta.height, meta.format, meta.monitor
+                );
+                ToolResult::success(output)
             }
             Err(e) => ToolResult::error(e),
         }
