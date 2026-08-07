@@ -186,6 +186,7 @@ pub async fn chat_handler(
             &mut agent_state,
             &llm_client,
             &tool_registry,
+            &server.approval_store,
             &config_clone,
             &conv_clone,
             &cancel_token,
@@ -218,26 +219,39 @@ pub async fn chat_handler(
             });
         }
 
-        if let Err(ref e) = result {
-            log_buffer.push("error", "agent", &format!("Agent 错误: {}", e));
-            let _ = tx
-                .send(AgentEvent {
-                    event_type: "error".into(),
-                    conversation_id: conv_clone.clone(),
-                    error: Some(e.clone()),
-                    token: None,
-                    tool_call_id: None,
-                    tool_name: None,
-                    args: None,
-                    result: None,
-                    status: None,
-                    message_id: None,
-                    risk_level: None,
-                    reason: None,
-                })
-                .await;
-        } else {
-            log_buffer.push("info", "agent", "Agent 完成");
+        match result {
+            Err(ref e) => {
+                log_buffer.push("error", "agent", &format!("Agent 错误: {}", e));
+                let _ = tx
+                    .send(AgentEvent {
+                        event_type: "error".into(),
+                        conversation_id: conv_clone.clone(),
+                        error: Some(e.clone()),
+                        token: None,
+                        tool_call_id: None,
+                        tool_name: None,
+                        args: None,
+                        result: None,
+                        status: None,
+                        message_id: None,
+                        risk_level: None,
+                        reason: None,
+                        approval_id: None,
+                    })
+                    .await;
+            }
+            Ok(engine::RunOutcome::Done { .. }) => {
+                log_buffer.push("info", "agent", "Agent 完成");
+            }
+            Ok(engine::RunOutcome::Paused { approval_id }) => {
+                log_buffer.push(
+                    "warn",
+                    "agent",
+                    &format!("Agent 暂停，等待审批 {}", approval_id),
+                );
+                // Do NOT send "done": the frontend already received approval_required
+                // and will show the approval card. The stream simply ends here.
+            }
         }
         server.active_tasks.lock().remove(&conv_clone);
     });

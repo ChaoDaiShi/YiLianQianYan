@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use super::state::AgentState;
 use crate::config::types::AppConfig;
 use crate::llm::client::LlmClient;
+use crate::safety::approval::ApprovalStore;
 use crate::safety::{PermissionDecision, PermissionManager};
 use crate::server::LogBuffer;
 use crate::tools::registry::ToolRegistry;
@@ -42,6 +43,16 @@ pub struct AgentEvent {
     pub risk_level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
+}
+
+/// Result of running the agent loop.
+pub enum RunOutcome {
+    /// The loop produced a final answer (the "done" event was already sent).
+    Done { output: String },
+    /// The loop paused awaiting user approval (approval_required was sent).
+    Paused { approval_id: String },
 }
 
 const MAX_ITERATIONS: usize = 20;
@@ -49,7 +60,7 @@ const MAX_CONSECUTIVE_SAME_TOOL: usize = 3;
 
 /// Trim large binary payloads from tool results before sending to the LLM.
 /// The full result is still delivered to the frontend via SSE.
-fn summarize_tool_result(content: &str) -> String {
+pub(crate) fn summarize_tool_result(content: &str) -> String {
     // Data URIs (e.g. screenshots) — keep only the metadata line after the URI
     if content.starts_with("data:image/") {
         let summary: Vec<&str> = content.split('\n').skip(1).collect();
@@ -78,16 +89,21 @@ fn summarize_tool_result(content: &str) -> String {
 }
 
 /// Run the ReAct agent loop, sending streaming events through a channel.
+///
+/// Returns `RunOutcome::Paused` when a high-risk tool call requires user
+/// approval; the caller must persist state and wait for a decision before
+/// resuming.
 pub async fn run_react_loop_with_channel(
     state: &mut AgentState,
     client: &LlmClient,
     tool_registry: &ToolRegistry,
+    approval_store: &ApprovalStore,
     _config: &AppConfig,
     conversation_id: &str,
     cancel_token: &CancellationToken,
     tx: &Sender<AgentEvent>,
     log_buffer: &LogBuffer,
-) -> Result<String, String> {
+) -> Result<RunOutcome, String> {
     let tools_openai = tool_registry.to_openai_tools();
     let mut iteration = 0;
     let mut last_tool_name = String::new();
@@ -119,6 +135,7 @@ pub async fn run_react_loop_with_channel(
                     message_id: None,
                     risk_level: None,
                     reason: None,
+                    approval_id: None,
                 });
             })
             .await;
@@ -140,7 +157,7 @@ pub async fn run_react_loop_with_channel(
                     Some(tool_calls.clone()),
                 );
 
-                for tc in &tool_calls {
+                for (i, tc) in tool_calls.iter().enumerate() {
                     if cancel_token.is_cancelled() {
                         return Err("已取消".to_string());
                     }
@@ -184,6 +201,7 @@ pub async fn run_react_loop_with_channel(
                                 message_id: None,
                                 risk_level: None,
                                 reason: None,
+                                approval_id: None,
                             });
 
                             // Log tool start
@@ -232,6 +250,7 @@ pub async fn run_react_loop_with_channel(
                                 message_id: None,
                                 risk_level: None,
                                 reason: None,
+                                approval_id: None,
                             });
 
                             // Trim data URIs before sending to LLM to avoid context pollution
@@ -246,6 +265,32 @@ pub async fn run_react_loop_with_channel(
                         }
 
                         PermissionDecision::RequireApproval { risk_level, reason } => {
+                            // One active approval per conversation: if a decision is
+                            // already pending, reuse it and skip this call.
+                            let existing = approval_store.pending_for(conversation_id);
+                            let approval = match existing {
+                                Some(a) => {
+                                    let skipped = format!(
+                                        "工具 {} 的调用因已有待审批操作而被跳过，未执行。",
+                                        tc.function.name
+                                    );
+                                    state.add_tool_result(
+                                        tc.id.clone(),
+                                        tc.function.name.clone(),
+                                        skipped,
+                                    );
+                                    a
+                                }
+                                None => approval_store.create(
+                                    conversation_id.to_string(),
+                                    tc.id.clone(),
+                                    tc.function.name.clone(),
+                                    args.clone(),
+                                    risk_level,
+                                    reason.clone(),
+                                ),
+                            };
+
                             let _ = tx.try_send(AgentEvent {
                                 event_type: "approval_required".into(),
                                 conversation_id: conversation_id.to_string(),
@@ -259,19 +304,33 @@ pub async fn run_react_loop_with_channel(
                                 message_id: None,
                                 risk_level: Some(risk_level.to_string()),
                                 reason: Some(reason.clone()),
+                                approval_id: Some(approval.approval_id.clone()),
                             });
 
                             log_buffer.push(
                                 "warn",
                                 "safety",
-                                &format!("⚠ {} 已阻止 — {}", tc.function.name, reason),
+                                &format!("⚠ {} 等待审批 — {}", tc.function.name, reason),
                             );
 
-                            let blocked = format!(
-                                "工具 {} 需要用户批准，当前操作尚未执行。原因：{}",
-                                tc.function.name, reason
-                            );
-                            state.add_tool_result(tc.id.clone(), tc.function.name.clone(), blocked);
+                            // Stop the current batch: mark any later tool calls in this
+                            // batch as skipped so every entry in the assistant message's
+                            // tool_calls has a matching tool message (chain integrity).
+                            for later in tool_calls.iter().skip(i + 1) {
+                                let skipped = format!(
+                                    "工具 {} 的调用因等待审批被跳过，未执行。",
+                                    later.function.name
+                                );
+                                state.add_tool_result(
+                                    later.id.clone(),
+                                    later.function.name.clone(),
+                                    skipped,
+                                );
+                            }
+
+                            return Ok(RunOutcome::Paused {
+                                approval_id: approval.approval_id.clone(),
+                            });
                         }
 
                         PermissionDecision::Deny { reason } => {
@@ -304,8 +363,9 @@ pub async fn run_react_loop_with_channel(
             message_id: Some(msg_id),
             risk_level: None,
             reason: None,
+            approval_id: None,
         });
 
-        return Ok(output);
+        return Ok(RunOutcome::Done { output });
     }
 }
