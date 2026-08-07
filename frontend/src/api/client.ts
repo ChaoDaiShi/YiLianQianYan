@@ -289,6 +289,7 @@ export interface AgentEvent {
   message_id?: string;
   risk_level?: string;
   reason?: string;
+  approval_id?: string;
 }
 
 export type EventHandler = (event: AgentEvent) => void;
@@ -369,6 +370,10 @@ export function sendMessage(
           }
         }
       }
+
+      // Stream ended without an explicit terminal event (e.g. agent paused
+      // for approval). Let the handler clear transient loading state.
+      onEvent({ type: "stream_end", conversation_id: conversationId || "" });
     })
     .catch((err) => {
       if (err.name !== "AbortError") {

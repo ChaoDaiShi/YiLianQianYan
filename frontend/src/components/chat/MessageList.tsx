@@ -1,8 +1,11 @@
 import { Message } from "../../types";
+import type { PendingApproval } from "../../types/approval";
+import { useApprovalStore } from "../../stores/approvalStore";
 import { StreamingState } from "./ChatView";
 import MessageBubble from "./MessageBubble";
 import StreamingText from "./StreamingText";
 import ToolCallCard from "./ToolCallCard";
+import ApprovalCard from "../approval/ApprovalCard";
 import { EmptyState } from "../ui";
 
 interface MessageListProps {
@@ -11,6 +14,8 @@ interface MessageListProps {
   messagesEndRef: React.RefObject<HTMLDivElement>;
   onHint?: (text: string) => void;
   error?: string | null;
+  onApprove?: (approval: PendingApproval) => void;
+  onReject?: (approval: PendingApproval) => void;
 }
 
 const HINTS = [
@@ -26,7 +31,12 @@ export default function MessageList({
   messagesEndRef,
   onHint,
   error,
+  onApprove,
+  onReject,
 }: MessageListProps) {
+  const pendingApprovals = useApprovalStore((s) => s.pending);
+  const resolving = useApprovalStore((s) => s.resolving);
+
   return (
     <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6">
       {messages.length === 0 && !streaming && (
@@ -83,6 +93,20 @@ export default function MessageList({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {pendingApprovals.length > 0 && (
+        <div className="mt-1 mb-2">
+          {pendingApprovals.map((a) => (
+            <ApprovalCard
+              key={a.approval_id}
+              approval={a}
+              resolving={!!resolving[a.approval_id]}
+              onApprove={(approval) => onApprove?.(approval)}
+              onReject={(approval) => onReject?.(approval)}
+            />
+          ))}
         </div>
       )}
 

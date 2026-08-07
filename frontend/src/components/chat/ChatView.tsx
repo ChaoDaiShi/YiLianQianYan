@@ -10,6 +10,9 @@ import {
   type Workflow,
 } from "../../api/client";
 import { Message } from "../../types";
+import { approveAction, rejectAction } from "../../api/approvals";
+import { useApprovalStore } from "../../stores/approvalStore";
+import type { PendingApproval, RiskLevel } from "../../types/approval";
 import MessageList from "./MessageList";
 import ChatInput from "./ChatInput";
 
@@ -120,6 +123,45 @@ export default function ChatView({
             });
             return { content: prev?.content || "", toolCalls };
           });
+          if (event.approval_id) {
+            useApprovalStore.getState().add({
+              approval_id: event.approval_id,
+              conversation_id: event.conversation_id,
+              tool_call_id: event.tool_call_id || "",
+              tool_name: event.tool_name || "",
+              arguments: event.args || {},
+              risk_level: (event.risk_level as RiskLevel) || "high",
+              reason: event.reason || "高风险操作",
+              status: "pending",
+              created_at: new Date().toISOString(),
+              expires_at: "",
+            });
+          }
+          break;
+        case "approval_resolved":
+          if (event.approval_id) {
+            useApprovalStore.getState().remove(event.approval_id);
+          }
+          // Rejected/cancelled tools will never run — reflect that on the card.
+          if (event.status && event.status !== "approved") {
+            setStreaming((prev) => {
+              const toolCalls = new Map(prev?.toolCalls || []);
+              const existing = toolCalls.get(event.tool_call_id || "");
+              if (existing) {
+                toolCalls.set(event.tool_call_id || "", {
+                  ...existing,
+                  status: "error",
+                  result: "用户已拒绝该操作，未执行。",
+                });
+              }
+              return { content: prev?.content || "", toolCalls };
+            });
+          }
+          break;
+        case "stream_end":
+          // Agent paused awaiting approval, or the stream closed without a
+          // terminal event — stop the loading spinner so the user can decide.
+          setIsLoading(false);
           break;
         case "done":
           setStreaming((prev) => {
@@ -162,6 +204,22 @@ export default function ChatView({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming]);
+
+  const handleApprove = useCallback(
+    (approval: PendingApproval) => {
+      useApprovalStore.getState().markResolving(approval.approval_id, true);
+      approveAction(approval.approval_id, currentConvId, handleAgentEvent);
+    },
+    [currentConvId, handleAgentEvent]
+  );
+
+  const handleReject = useCallback(
+    (approval: PendingApproval) => {
+      useApprovalStore.getState().markResolving(approval.approval_id, true);
+      rejectAction(approval.approval_id, currentConvId, handleAgentEvent);
+    },
+    [currentConvId, handleAgentEvent]
+  );
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -275,6 +333,8 @@ export default function ChatView({
         messagesEndRef={messagesEndRef}
         onHint={setSuggestedText}
         error={error}
+        onApprove={handleApprove}
+        onReject={handleReject}
       />
 
       <ChatInput
