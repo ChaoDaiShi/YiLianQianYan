@@ -14,6 +14,7 @@ use super::skill::{LoadSkillTool, WriteTodosTool};
 use super::process::ProcessTool;
 use super::input::{MouseTool, KeyboardTool};
 use super::screenshot::ScreenshotTool;
+use super::upscale::UpscaleTool;
 
 /// Registry holding all available tools
 pub struct ToolRegistry {
@@ -62,6 +63,9 @@ impl ToolRegistry {
 
         // Screenshot tool
         registry.register(Arc::new(ScreenshotTool));
+
+        // AI image upscale tool
+        registry.register(Arc::new(UpscaleTool::new()));
 
         registry
     }

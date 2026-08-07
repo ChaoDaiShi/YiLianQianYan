@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { Copy, Check } from "lucide-react";
 import { Message } from "../../types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -10,8 +12,8 @@ interface MessageBubbleProps {
 export default function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
+  const [copied, setCopied] = useState(false);
 
-  // Render tool messages that contain images (screenshots persisted in history)
   if (isTool) {
     if (message.content?.startsWith("data:image/")) {
       return (
@@ -23,31 +25,44 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
     return null;
   }
 
-  // Safely handle tool_calls from both new (streaming) and old (database) formats
   const rawToolCalls = message.tool_calls;
   const toolCalls = Array.isArray(rawToolCalls) ? rawToolCalls : [];
 
+  const copy = async () => {
+    await navigator.clipboard.writeText(message.content || "");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
-    <div className="mb-4">
+    <div className="mb-4 animate-msg-in group">
       <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
         <div
-          className={`max-w-[85%] px-4 py-3 rounded-2xl ${
+          className={`relative max-w-[85%] px-4 py-3 rounded-2xl ${
             isUser
-              ? "bg-primary-500 text-white rounded-br-md"
-              : "bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-bl-md"
+              ? "bg-[var(--accent)] text-[var(--accent-fg)] rounded-br-md"
+              : "bg-[var(--panel)] border border-[var(--border)] text-[var(--text)] rounded-bl-md"
           }`}
         >
           {isUser ? (
             <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none overflow-x-auto">
+            <div className="prose prose-sm max-w-none overflow-x-auto">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
             </div>
+          )}
+          {!isUser && message.content && (
+            <button
+              onClick={copy}
+              className="absolute -bottom-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-[var(--panel-2)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]"
+              title="复制"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-[var(--success)]" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
           )}
         </div>
       </div>
 
-      {/* Render tool calls that powered this message (only for new-format records) */}
       {toolCalls.map((tc: any) => {
         const id = tc.toolCallId || tc.id || "";
         const name = tc.name || tc.function?.name || "";

@@ -1,4 +1,20 @@
 import { useState } from "react";
+import {
+  Terminal,
+  FileText,
+  Pencil,
+  Search,
+  FolderSearch,
+  Globe,
+  BookOpen,
+  ListTodo,
+  Cog,
+  Camera,
+  MousePointer,
+  Keyboard,
+  Wrench,
+} from "lucide-react";
+import { Badge } from "../ui";
 
 interface ToolCallCardProps {
   toolCallId: string;
@@ -8,20 +24,20 @@ interface ToolCallCardProps {
   result?: string;
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  bash: "💻 执行命令",
-  read_file: "📖 读取文件",
-  write_file: "✍️ 写入文件",
-  edit_file: "✏️ 编辑文件",
-  grep: "🔍 搜索内容",
-  glob: "📂 查找文件",
-  http_request: "🌐 HTTP请求",
-  load_skill: "📚 加载技能",
-  write_todos: "📋 更新计划",
-  process: "⚙️ 进程管理",
-  screenshot: "📸 截图",
-  mouse: "🖱️ 鼠标",
-  keyboard: "⌨️ 键盘",
+const TOOL_META: Record<string, { label: string; icon: React.ReactNode }> = {
+  bash: { label: "执行命令", icon: <Terminal className="w-3.5 h-3.5" /> },
+  read_file: { label: "读取文件", icon: <FileText className="w-3.5 h-3.5" /> },
+  write_file: { label: "写入文件", icon: <Pencil className="w-3.5 h-3.5" /> },
+  edit_file: { label: "编辑文件", icon: <Pencil className="w-3.5 h-3.5" /> },
+  grep: { label: "搜索内容", icon: <Search className="w-3.5 h-3.5" /> },
+  glob: { label: "查找文件", icon: <FolderSearch className="w-3.5 h-3.5" /> },
+  http_request: { label: "HTTP 请求", icon: <Globe className="w-3.5 h-3.5" /> },
+  load_skill: { label: "加载技能", icon: <BookOpen className="w-3.5 h-3.5" /> },
+  write_todos: { label: "更新计划", icon: <ListTodo className="w-3.5 h-3.5" /> },
+  process: { label: "进程管理", icon: <Cog className="w-3.5 h-3.5" /> },
+  screenshot: { label: "截图", icon: <Camera className="w-3.5 h-3.5" /> },
+  mouse: { label: "鼠标", icon: <MousePointer className="w-3.5 h-3.5" /> },
+  keyboard: { label: "键盘", icon: <Keyboard className="w-3.5 h-3.5" /> },
 };
 
 const TOOL_ARG_DISPLAY: Record<string, (args: Record<string, unknown>) => string> = {
@@ -45,22 +61,14 @@ const TOOL_ARG_DISPLAY: Record<string, (args: Record<string, unknown>) => string
   keyboard: (args) => (args.action as string) || "",
 };
 
-/**
- * Parse tool result text and split into image URIs + plain text segments.
- * Lines starting with "data:image/" are rendered as <img> tags;
- * everything else is rendered as <pre> text.
- */
 export function ToolResultContent({ result }: { result: string }) {
   const lines = result.split("\n");
   const imageLines: string[] = [];
   const textLines: string[] = [];
 
   for (const line of lines) {
-    if (line.startsWith("data:image/")) {
-      imageLines.push(line);
-    } else {
-      textLines.push(line);
-    }
+    if (line.startsWith("data:image/")) imageLines.push(line);
+    else textLines.push(line);
   }
 
   return (
@@ -72,14 +80,14 @@ export function ToolResultContent({ result }: { result: string }) {
               key={i}
               src={uri}
               alt={`截图 ${i + 1}`}
-              className="max-w-full rounded border border-gray-200 dark:border-gray-600"
+              className="max-w-full rounded border border-[var(--border)]"
               style={{ maxHeight: "400px" }}
             />
           ))}
         </div>
       )}
       {textLines.length > 0 && (
-        <pre className="text-xs p-2 rounded bg-gray-100 dark:bg-gray-800 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
+        <pre className="text-xs p-2 rounded bg-[var(--input-bg)] border border-[var(--border)] overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap font-mono text-[var(--text-muted)]">
           {textLines.join("\n")}
         </pre>
       )}
@@ -88,48 +96,47 @@ export function ToolResultContent({ result }: { result: string }) {
 }
 
 export default function ToolCallCard({
-  toolCallId: _toolCallId,
   name,
   args,
   status,
   result,
 }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(name === "screenshot");
-
-  const label = TOOL_LABELS[name] || `🔧 ${name}`;
+  const meta = TOOL_META[name] || { label: name, icon: <Wrench className="w-3.5 h-3.5" /> };
   const argDisplay = TOOL_ARG_DISPLAY[name]?.(args) || JSON.stringify(args);
 
   return (
-    <div className="mb-2 ml-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+    <div className="mb-2 ml-4 border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--panel)]/60">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-[var(--panel-hover)] transition-colors"
       >
-        {/* Status indicator */}
         <span className="flex-shrink-0">
           {status === "running" && (
-            <span className="inline-block w-3 h-3 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+            <span className="inline-block w-3 h-3 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
           )}
-          {status === "success" && <span className="text-green-500">✓</span>}
-          {status === "error" && <span className="text-red-500">✗</span>}
+          {status === "success" && <Badge tone="success">✓</Badge>}
+          {status === "error" && <Badge tone="danger">✗</Badge>}
         </span>
-
-        <span className="font-medium">{label}</span>
-        <span className="text-gray-400 truncate flex-1 text-left">{argDisplay}</span>
-        <span className="text-gray-400 text-xs">{expanded ? "收起" : "展开"}</span>
+        <span className="text-[var(--accent)]">{meta.icon}</span>
+        <span className="font-medium font-mono text-xs">{meta.label}</span>
+        <span className="text-[var(--text-faint)] truncate flex-1 text-left text-xs font-mono">
+          {argDisplay}
+        </span>
+        <span className="text-[var(--text-faint)] text-xs">{expanded ? "收起" : "展开"}</span>
       </button>
 
       {expanded && (
-        <div className="px-3 py-2 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+        <div className="px-3 py-2 border-t border-[var(--border)] bg-[var(--panel-2)]/50">
           <div className="mb-2">
-            <span className="text-xs font-medium text-gray-500">参数:</span>
-            <pre className="text-xs mt-1 p-2 rounded bg-gray-100 dark:bg-gray-800 overflow-x-auto">
+            <span className="text-xs font-medium text-[var(--text-muted)]">参数</span>
+            <pre className="text-xs mt-1 p-2 rounded bg-[var(--input-bg)] border border-[var(--border)] overflow-x-auto font-mono">
               {JSON.stringify(args, null, 2)}
             </pre>
           </div>
           {result && (
             <div>
-              <span className="text-xs font-medium text-gray-500">结果:</span>
+              <span className="text-xs font-medium text-[var(--text-muted)]">结果</span>
               <ToolResultContent result={result} />
             </div>
           )}

@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use super::state::AgentState;
 use crate::config::types::AppConfig;
 use crate::llm::client::LlmClient;
+use crate::server::LogBuffer;
 use crate::tools::registry::ToolRegistry;
 
 /// Agent streaming event (shared with API layer)
@@ -78,6 +79,7 @@ pub async fn run_react_loop_with_channel(
     conversation_id: &str,
     cancel_token: &CancellationToken,
     tx: &Sender<AgentEvent>,
+    log_buffer: &LogBuffer,
 ) -> Result<String, String> {
     let tools_openai = tool_registry.to_openai_tools();
     let mut iteration = 0;
@@ -150,6 +152,9 @@ pub async fn run_react_loop_with_channel(
                         result: None, status: None, error: None, message_id: None,
                     });
 
+                    // Log tool start
+                    log_buffer.push("tool", "tool", &format!("▶ {}", tc.function.name));
+
                     let tool_result = match tool_registry.execute(&tc.function.name, args).await {
                         Some(r) => r,
                         None => crate::tools::trait_def::ToolResult::error(
@@ -158,6 +163,15 @@ pub async fn run_react_loop_with_channel(
                     };
 
                     let status = if tool_result.ok { "success" } else { "error" };
+
+                    // Log tool result
+                    let log_level = if tool_result.ok { "tool" } else { "error" };
+                    let result_preview = if tool_result.content.len() > 80 {
+                        format!("{}…", &tool_result.content[..80])
+                    } else {
+                        tool_result.content.clone()
+                    };
+                    log_buffer.push(log_level, "tool", &format!("{} {} – {}", if tool_result.ok { "✓" } else { "✗" }, tc.function.name, result_preview));
 
                     // Send full result to frontend via SSE (includes images, etc.)
                     let _ = tx.try_send(AgentEvent {

@@ -26,7 +26,7 @@ serde_json = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # HTTP client (for LLM calls)
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 
 # Async utilities
 futures = "0.3"
@@ -56,3 +56,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 # Base64 encoding
 base64 = "0.22"
+
+# System information
+sysinfo = "0.31"
