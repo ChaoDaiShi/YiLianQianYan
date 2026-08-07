@@ -4,49 +4,64 @@
 
 use axum::{extract::State, Json};
 use std::sync::Arc;
-use sysinfo::{System, Disks};
+use sysinfo::{Disks, System};
 
 use crate::server::AppServer;
 
 /// GET /api/system — full system snapshot
-pub async fn system_info(
-    State(_server): State<Arc<AppServer>>,
-) -> Json<serde_json::Value> {
+pub async fn system_info(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
     let mut sys = System::new_all();
     sys.refresh_all();
 
     // ── CPU ──
     let cpu_count = sys.cpus().len();
     let cpu_usage: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
-    let cpu_avg = if cpu_usage.is_empty() { 0.0 } else {
+    let cpu_avg = if cpu_usage.is_empty() {
+        0.0
+    } else {
         cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
     };
-    let cpu_name = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
+    let cpu_name = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().to_string())
+        .unwrap_or_default();
 
     // ── Memory ──
     let total_mem = sys.total_memory(); // KB
-    let used_mem = sys.used_memory();   // KB
-    let mem_usage_pct = if total_mem > 0 { (used_mem as f64 / total_mem as f64) * 100.0 } else { 0.0 };
+    let used_mem = sys.used_memory(); // KB
+    let mem_usage_pct = if total_mem > 0 {
+        (used_mem as f64 / total_mem as f64) * 100.0
+    } else {
+        0.0
+    };
     let total_swap = sys.total_swap();
     let used_swap = sys.used_swap();
 
     // ── Disks ──
     let disks = Disks::new_with_refreshed_list();
-    let disk_info: Vec<serde_json::Value> = disks.iter().map(|d| {
-        let total = d.total_space();
-        let available = d.available_space();
-        let used = total.saturating_sub(available);
-        let pct = if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 };
-        serde_json::json!({
-            "mount": d.mount_point().to_string_lossy(),
-            "name": d.name().to_string_lossy(),
-            "fs_type": d.file_system().to_string_lossy(),
-            "total_gb": format!("{:.1}", total as f64 / 1_073_741_824.0),
-            "used_gb": format!("{:.1}", used as f64 / 1_073_741_824.0),
-            "available_gb": format!("{:.1}", available as f64 / 1_073_741_824.0),
-            "usage_pct": format!("{:.1}", pct),
+    let disk_info: Vec<serde_json::Value> = disks
+        .iter()
+        .map(|d| {
+            let total = d.total_space();
+            let available = d.available_space();
+            let used = total.saturating_sub(available);
+            let pct = if total > 0 {
+                (used as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+            serde_json::json!({
+                "mount": d.mount_point().to_string_lossy(),
+                "name": d.name().to_string_lossy(),
+                "fs_type": d.file_system().to_string_lossy(),
+                "total_gb": format!("{:.1}", total as f64 / 1_073_741_824.0),
+                "used_gb": format!("{:.1}", used as f64 / 1_073_741_824.0),
+                "available_gb": format!("{:.1}", available as f64 / 1_073_741_824.0),
+                "usage_pct": format!("{:.1}", pct),
+            })
         })
-    }).collect();
+        .collect();
 
     // ── GPU (basic via WMI on Windows, placeholder on other platforms) ──
     let gpu_info = get_gpu_info();
@@ -81,27 +96,36 @@ pub async fn system_info(
 }
 
 /// GET /api/system/cpu — CPU only
-pub async fn cpu_info(
-    State(_server): State<Arc<AppServer>>,
-) -> Json<serde_json::Value> {
+pub async fn cpu_info(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
     let mut sys = System::new_all();
     sys.refresh_cpu_all();
     // Wait briefly for accurate readings
     std::thread::sleep(std::time::Duration::from_millis(100));
     sys.refresh_cpu_all();
 
-    let cores: Vec<serde_json::Value> = sys.cpus().iter().enumerate().map(|(i, c)| {
-        serde_json::json!({
-            "index": i,
-            "name": c.name(),
-            "brand": c.brand(),
-            "usage_pct": format!("{:.1}", c.cpu_usage()),
-            "frequency_mhz": c.frequency(),
+    let cores: Vec<serde_json::Value> = sys
+        .cpus()
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            serde_json::json!({
+                "index": i,
+                "name": c.name(),
+                "brand": c.brand(),
+                "usage_pct": format!("{:.1}", c.cpu_usage()),
+                "frequency_mhz": c.frequency(),
+            })
         })
-    }).collect();
+        .collect();
 
-    let avg = if cores.is_empty() { 0.0 } else {
-        cores.iter().filter_map(|c| c["usage_pct"].as_str().and_then(|s| s.parse::<f32>().ok())).sum::<f32>() / cores.len() as f32
+    let avg = if cores.is_empty() {
+        0.0
+    } else {
+        cores
+            .iter()
+            .filter_map(|c| c["usage_pct"].as_str().and_then(|s| s.parse::<f32>().ok()))
+            .sum::<f32>()
+            / cores.len() as f32
     };
 
     Json(serde_json::json!({
@@ -112,9 +136,7 @@ pub async fn cpu_info(
 }
 
 /// GET /api/system/memory — Memory only
-pub async fn memory_info(
-    State(_server): State<Arc<AppServer>>,
-) -> Json<serde_json::Value> {
+pub async fn memory_info(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
     let mut sys = System::new_all();
     sys.refresh_memory();
 
@@ -159,5 +181,7 @@ fn get_gpu_info() -> Vec<serde_json::Value> {
             }
         }
     }
-    vec![serde_json::json!({"name": "GPU info unavailable", "vram_gb": "?", "driver": "", "resolution": ""})]
+    vec![
+        serde_json::json!({"name": "GPU info unavailable", "vram_gb": "?", "driver": "", "resolution": ""}),
+    ]
 }

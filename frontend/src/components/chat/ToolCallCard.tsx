@@ -20,7 +20,7 @@ interface ToolCallCardProps {
   toolCallId: string;
   name: string;
   args: Record<string, unknown>;
-  status: "running" | "success" | "error";
+  status: "running" | "success" | "error" | "blocked";
   result?: string;
 }
 
@@ -38,6 +38,7 @@ const TOOL_META: Record<string, { label: string; icon: React.ReactNode }> = {
   screenshot: { label: "截图", icon: <Camera className="w-3.5 h-3.5" /> },
   mouse: { label: "鼠标", icon: <MousePointer className="w-3.5 h-3.5" /> },
   keyboard: { label: "键盘", icon: <Keyboard className="w-3.5 h-3.5" /> },
+  upscale_image: { label: "图片放大", icon: <Wrench className="w-3.5 h-3.5" /> },
 };
 
 const TOOL_ARG_DISPLAY: Record<string, (args: Record<string, unknown>) => string> = {
@@ -117,6 +118,7 @@ export default function ToolCallCard({
           )}
           {status === "success" && <Badge tone="success">✓</Badge>}
           {status === "error" && <Badge tone="danger">✗</Badge>}
+          {status === "blocked" && <Badge tone="warning">⛔</Badge>}
         </span>
         <span className="text-[var(--accent)]">{meta.icon}</span>
         <span className="font-medium font-mono text-xs">{meta.label}</span>
@@ -134,7 +136,13 @@ export default function ToolCallCard({
               {JSON.stringify(args, null, 2)}
             </pre>
           </div>
-          {result && (
+          {status === "blocked" && (
+            <div className="mt-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-400">
+              <div className="font-medium mb-0.5">⚠️ 需要用户批准，尚未执行</div>
+              {result && <div className="whitespace-pre-wrap">{result}</div>}
+            </div>
+          )}
+          {result && status !== "blocked" && (
             <div>
               <span className="text-xs font-medium text-[var(--text-muted)]">结果</span>
               <ToolResultContent result={result} />

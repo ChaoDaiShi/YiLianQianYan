@@ -3,9 +3,9 @@
 // ============================================================
 
 use reqwest::Client as HttpClient;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use std::sync::Arc;
 use tracing;
 
 use super::types::*;
@@ -53,14 +53,15 @@ impl LlmClient {
 
     /// Build the full API endpoint URL
     fn api_url(&self) -> String {
-        format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'))
+        format!(
+            "{}/chat/completions",
+            self.config.base_url.trim_end_matches('/')
+        )
     }
 
     /// Get the resolved API key
     fn api_key(&self) -> Result<String, LlmError> {
-        self.config
-            .resolve_api_key()
-            .ok_or(LlmError::NoApiKey)
+        self.config.resolve_api_key().ok_or(LlmError::NoApiKey)
     }
 
     // ============================================================
@@ -78,7 +79,11 @@ impl LlmClient {
         let request = ChatCompletionRequest {
             model: self.config.name.clone(),
             messages: messages.to_vec(),
-            tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
+            tools: if tools.is_empty() {
+                None
+            } else {
+                Some(tools.to_vec())
+            },
             tool_choice: None,
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),
@@ -128,7 +133,11 @@ impl LlmClient {
         let request = ChatCompletionRequest {
             model: self.config.name.clone(),
             messages: messages.to_vec(),
-            tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
+            tools: if tools.is_empty() {
+                None
+            } else {
+                Some(tools.to_vec())
+            },
             tool_choice: None,
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),
@@ -211,15 +220,11 @@ impl LlmClient {
                         return;
                     }
                     Ok(Err(e)) => {
-                        let _ = tx
-                            .send(Err(LlmError::Stream(e.to_string())))
-                            .await;
+                        let _ = tx.send(Err(LlmError::Stream(e.to_string()))).await;
                         return;
                     }
                     Err(_) => {
-                        let _ = tx
-                            .send(Err(LlmError::Timeout))
-                            .await;
+                        let _ = tx.send(Err(LlmError::Timeout)).await;
                         return;
                     }
                 }

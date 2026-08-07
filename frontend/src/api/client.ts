@@ -287,6 +287,8 @@ export interface AgentEvent {
   status?: string;
   error?: string;
   message_id?: string;
+  risk_level?: string;
+  reason?: string;
 }
 
 export type EventHandler = (event: AgentEvent) => void;

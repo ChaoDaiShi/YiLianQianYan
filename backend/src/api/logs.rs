@@ -44,17 +44,24 @@ pub async fn get_logs(
         .into_iter()
         .filter(|e| {
             if let Some(ref level) = params.level {
-                if e.level != *level { return false; }
+                if e.level != *level {
+                    return false;
+                }
             }
             if let Some(ref source) = params.source {
-                if e.source != *source { return false; }
+                if e.source != *source {
+                    return false;
+                }
             }
             true
         })
         .collect();
 
     let total = filtered.len();
-    Json(LogsResponse { entries: filtered, total })
+    Json(LogsResponse {
+        entries: filtered,
+        total,
+    })
 }
 
 /// POST /api/logs — push a log entry from the frontend or subsystem
@@ -69,6 +76,8 @@ pub async fn push_log(
     State(server): State<Arc<AppServer>>,
     Json(body): Json<PushLogRequest>,
 ) -> Json<serde_json::Value> {
-    server.log_buffer.push(&body.level, &body.source, &body.message);
+    server
+        .log_buffer
+        .push(&body.level, &body.source, &body.message);
     Json(serde_json::json!({"status": "ok"}))
 }

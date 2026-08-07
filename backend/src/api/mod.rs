@@ -2,22 +2,25 @@
 // API Router — REST + SSE endpoints
 // ============================================================
 
-use axum::{Router, routing::{get, post, put, delete}};
-use tower_http::cors::{CorsLayer, Any};
+use axum::{
+    routing::{delete, get, post, put},
+    Router,
+};
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::server::AppServer;
 
 mod chat;
 mod conversations;
-mod settings;
-mod tools;
-mod skills_route;
-mod system;
+mod logs;
 mod memories;
 mod plugins;
+mod settings;
+mod skills_route;
+mod system;
+mod tools;
 mod workflows;
-mod logs;
 
 pub use chat::chat_handler;
 pub use chat::stop_handler;
@@ -34,7 +37,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/conversations", get(conversations::list_handler))
         .route("/api/conversations", post(conversations::create_handler))
         .route("/api/conversations/:id", get(conversations::load_handler))
-        .route("/api/conversations/:id", delete(conversations::delete_handler))
+        .route(
+            "/api/conversations/:id",
+            delete(conversations::delete_handler),
+        )
         .route("/api/skills", get(skills_route::list_skills))
         .route("/api/skills/:name", get(skills_route::load_skill))
         .route("/api/settings", get(settings::get_handler))
@@ -49,8 +55,14 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/memories/stats", get(memories::stats_handler))
         .route("/api/memories/extract", post(memories::extract_handler))
         // Reserved future endpoints
-        .route("/api/memories/batch-import", post(memories::batch_import_handler))
-        .route("/api/memories/batch-delete", post(memories::batch_delete_handler))
+        .route(
+            "/api/memories/batch-import",
+            post(memories::batch_import_handler),
+        )
+        .route(
+            "/api/memories/batch-delete",
+            post(memories::batch_delete_handler),
+        )
         .route("/api/memories/export", get(memories::export_handler))
         .route("/api/memories/merge", post(memories::merge_handler))
         .route("/api/memories/reindex", post(memories::reindex_handler))
@@ -71,7 +83,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/workflows/:id", get(workflows::get_workflow))
         .route("/api/workflows/:id", put(workflows::update_workflow))
         .route("/api/workflows/:id", delete(workflows::delete_workflow))
-        .route("/api/workflows/:id/activate", post(workflows::activate_workflow))
+        .route(
+            "/api/workflows/:id/activate",
+            post(workflows::activate_workflow),
+        )
         // Logs API
         .route("/api/logs", get(logs::get_logs))
         .route("/api/logs", post(logs::push_log))

@@ -148,12 +148,24 @@ impl ModelConfig {
     }
 }
 
-fn default_provider() -> String { "openai".to_string() }
-fn default_model_name() -> String { "deepseek-v4-flash".to_string() }
-fn default_base_url() -> String { "https://api.deepseek.com/v1".to_string() }
-fn default_api_key_env() -> String { "OPENAI_API_KEY".to_string() }
-fn default_max_tokens() -> u32 { 16384 }
-fn default_timeout_ms() -> u64 { 120000 }
+fn default_provider() -> String {
+    "openai".to_string()
+}
+fn default_model_name() -> String {
+    "deepseek-v4-flash".to_string()
+}
+fn default_base_url() -> String {
+    "https://api.deepseek.com/v1".to_string()
+}
+fn default_api_key_env() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+fn default_max_tokens() -> u32 {
+    16384
+}
+fn default_timeout_ms() -> u64 {
+    120000
+}
 
 // ── Permissions ──
 
@@ -182,7 +194,9 @@ impl Default for PermissionsConfig {
     }
 }
 
-fn default_permission_mode() -> PermissionMode { PermissionMode::Ask }
+fn default_permission_mode() -> PermissionMode {
+    PermissionMode::Ask
+}
 fn default_interrupt_on() -> Vec<String> {
     vec![
         "bash".to_string(),
@@ -232,7 +246,9 @@ impl SandboxConfig {
     }
 }
 
-fn default_profile() -> SandboxProfile { SandboxProfile::WorkspaceWrite }
+fn default_profile() -> SandboxProfile {
+    SandboxProfile::WorkspaceWrite
+}
 
 // ── Compaction ──
 
@@ -259,10 +275,18 @@ impl Default for CompactionConfig {
     }
 }
 
-fn default_true() -> bool { true }
-fn default_context_window() -> usize { 200000 }
-fn default_trigger_threshold() -> f64 { 0.8 }
-fn default_keep_recent() -> usize { 20000 }
+fn default_true() -> bool {
+    true
+}
+fn default_context_window() -> usize {
+    200000
+}
+fn default_trigger_threshold() -> f64 {
+    0.8
+}
+fn default_keep_recent() -> usize {
+    20000
+}
 
 // ── Skills ──
 

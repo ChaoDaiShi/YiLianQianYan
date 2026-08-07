@@ -6,7 +6,7 @@ export interface ToolCallRecord {
   toolCallId: string;
   name: string;
   args: Record<string, unknown>;
-  status: "running" | "success" | "error";
+  status: "running" | "success" | "error" | "blocked";
   result?: string;
 }
 

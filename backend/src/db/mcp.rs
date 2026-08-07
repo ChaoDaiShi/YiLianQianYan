@@ -2,8 +2,8 @@
 // MCP Server persistence — CRUD operations for mcp_servers table
 // ============================================================
 
-use serde::{Deserialize, Serialize};
 use super::Database;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServer {
@@ -73,8 +73,14 @@ impl Database {
 
     pub fn create_mcp_server(&self, server: &McpServer) -> Result<(), rusqlite::Error> {
         let conn = self.conn();
-        let args_json = server.args.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default());
-        let env_json = server.env.as_ref().map(|e| serde_json::to_string(e).unwrap_or_default());
+        let args_json = server
+            .args
+            .as_ref()
+            .map(|a| serde_json::to_string(a).unwrap_or_default());
+        let env_json = server
+            .env
+            .as_ref()
+            .map(|e| serde_json::to_string(e).unwrap_or_default());
         conn.execute(
             "INSERT INTO mcp_servers (id, name, transport, command, args, url, env, enabled, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
             rusqlite::params![
@@ -88,8 +94,14 @@ impl Database {
 
     pub fn update_mcp_server(&self, id: &str, server: &McpServer) -> Result<(), rusqlite::Error> {
         let conn = self.conn();
-        let args_json = server.args.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default());
-        let env_json = server.env.as_ref().map(|e| serde_json::to_string(e).unwrap_or_default());
+        let args_json = server
+            .args
+            .as_ref()
+            .map(|a| serde_json::to_string(a).unwrap_or_default());
+        let env_json = server
+            .env
+            .as_ref()
+            .map(|e| serde_json::to_string(e).unwrap_or_default());
         conn.execute(
             "UPDATE mcp_servers SET name=?2, transport=?3, command=?4, args=?5, url=?6, env=?7, enabled=?8, updated_at=?9 WHERE id=?1",
             rusqlite::params![
@@ -103,7 +115,10 @@ impl Database {
 
     pub fn delete_mcp_server(&self, id: &str) -> Result<(), rusqlite::Error> {
         let conn = self.conn();
-        conn.execute("DELETE FROM mcp_servers WHERE id = ?1", rusqlite::params![id])?;
+        conn.execute(
+            "DELETE FROM mcp_servers WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
         Ok(())
     }
 

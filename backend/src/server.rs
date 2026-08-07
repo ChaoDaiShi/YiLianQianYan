@@ -2,9 +2,9 @@
 // AppServer — shared state for the HTTP server
 // ============================================================
 
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::types::AppConfig;
@@ -16,8 +16,8 @@ use crate::tools::skill::SkillDiscovery;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LogEntry {
     pub timestamp: i64,
-    pub level: String,      // "info" | "warn" | "error" | "debug" | "tool" | "chat"
-    pub source: String,     // "api", "agent", "tool", "system"
+    pub level: String,  // "info" | "warn" | "error" | "debug" | "tool" | "chat"
+    pub source: String, // "api", "agent", "tool", "system"
     pub message: String,
 }
 
@@ -30,7 +30,10 @@ pub struct LogBuffer {
 
 impl LogBuffer {
     pub fn new(max_entries: usize) -> Self {
-        Self { entries: Arc::new(Mutex::new(Vec::with_capacity(max_entries))), max_entries }
+        Self {
+            entries: Arc::new(Mutex::new(Vec::with_capacity(max_entries))),
+            max_entries,
+        }
     }
 
     pub fn push(&self, level: &str, source: &str, message: &str) {
@@ -54,7 +57,11 @@ impl LogBuffer {
 
     pub fn recent(&self, count: usize) -> Vec<LogEntry> {
         let entries = self.entries.lock();
-        let start = if entries.len() > count { entries.len() - count } else { 0 };
+        let start = if entries.len() > count {
+            entries.len() - count
+        } else {
+            0
+        };
         entries[start..].to_vec()
     }
 }
@@ -84,10 +91,7 @@ pub struct AppServer {
 }
 
 impl AppServer {
-    pub fn new(
-        db_path: &std::path::Path,
-        workspace_root: &str,
-    ) -> Result<Self, String> {
+    pub fn new(db_path: &std::path::Path, workspace_root: &str) -> Result<Self, String> {
         let db = Database::new(db_path).map_err(|e| e.to_string())?;
         let mut config = db.get_settings().unwrap_or_default();
 
@@ -109,9 +113,10 @@ impl AppServer {
         } else {
             config.skills.directories.clone()
         };
-        let skill_discovery = Arc::new(RwLock::new(
-            SkillDiscovery::discover(&skill_dirs, workspace_root)
-        ));
+        let skill_discovery = Arc::new(RwLock::new(SkillDiscovery::discover(
+            &skill_dirs,
+            workspace_root,
+        )));
 
         let subagent_dirs = if config.subagents.directories.is_empty() {
             vec!["./.agents/agents".to_string()]
@@ -142,7 +147,8 @@ impl AppServer {
         let memories = self.db.get_relevant_memories("", 10).unwrap_or_default();
         if !memories.is_empty() {
             prompt.push_str("\n\n## 用户长期记忆 (Long-term Memories)\n\n");
-            prompt.push_str("以下是从之前对话中提取的关于用户的重要信息和偏好，请在回答时参考：\n\n");
+            prompt
+                .push_str("以下是从之前对话中提取的关于用户的重要信息和偏好，请在回答时参考：\n\n");
             for mem in &memories {
                 let category_label = match mem.category.as_str() {
                     "fact" => "事实",
@@ -166,7 +172,9 @@ impl AppServer {
             for sub in &self.subagents {
                 prompt.push_str(&format!(
                     "- **{}**: {} (tools: {})\n",
-                    sub.name, sub.description, sub.allowed_tools.join(", ")
+                    sub.name,
+                    sub.description,
+                    sub.allowed_tools.join(", ")
                 ));
             }
         }
@@ -178,14 +186,24 @@ impl AppServer {
         let mut agents = Vec::new();
         for dir in dirs {
             let resolved = std::path::Path::new(root).join(dir);
-            if !resolved.exists() { continue; }
+            if !resolved.exists() {
+                continue;
+            }
             if let Ok(entries) = std::fs::read_dir(&resolved) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if !path.is_dir() { continue; }
+                    if !path.is_dir() {
+                        continue;
+                    }
                     let agent_md = path.join("AGENT.md");
-                    if !agent_md.exists() { continue; }
-                    let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    if !agent_md.exists() {
+                        continue;
+                    }
+                    let name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     if let Ok(content) = std::fs::read_to_string(&agent_md) {
                         let desc = Self::extract_fm(&content, "description").unwrap_or_default();
                         let tools: Vec<String> = Self::extract_fm(&content, "tools")
@@ -194,8 +212,12 @@ impl AppServer {
                         let model = Self::extract_fm(&content, "model");
                         let workdir = Self::extract_fm(&content, "workdir");
                         agents.push(DiscoveredSubagent {
-                            name, description: desc, path: agent_md.display().to_string(),
-                            allowed_tools: tools, model, workdir,
+                            name,
+                            description: desc,
+                            path: agent_md.display().to_string(),
+                            allowed_tools: tools,
+                            model,
+                            workdir,
                         });
                     }
                 }
@@ -209,9 +231,18 @@ impl AppServer {
         let prefix = format!("{}:", field);
         for line in content.lines() {
             let t = line.trim();
-            if t == "---" { in_fm = !in_fm; continue; }
+            if t == "---" {
+                in_fm = !in_fm;
+                continue;
+            }
             if in_fm && t.starts_with(&prefix) {
-                return Some(t[prefix.len()..].trim().trim_matches('"').trim_matches('\'').to_string());
+                return Some(
+                    t[prefix.len()..]
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_string(),
+                );
             }
         }
         None

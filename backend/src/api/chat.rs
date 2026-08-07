@@ -9,8 +9,8 @@ use axum::{
 };
 use futures::stream::Stream;
 use serde::Deserialize;
-use std::sync::Arc;
 use std::convert::Infallible;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::engine::{self, AgentEvent};
@@ -60,7 +60,10 @@ pub async fn chat_handler(
         }
     } else {
         // Use active workflow if no explicit workflow_id
-        let active_wf = db.get_active_workflow_id().ok().flatten()
+        let active_wf = db
+            .get_active_workflow_id()
+            .ok()
+            .flatten()
             .and_then(|aid| db.get_workflow(&aid).ok().flatten());
         active_wf.map(|wf| {
             let mut extra = String::new();
@@ -88,20 +91,24 @@ pub async fn chat_handler(
     let conv_id = match req.conversation_id {
         Some(ref id) if !id.is_empty() => id.clone(),
         _ => {
-            let summary = db.create_conversation("新对话")
-                .unwrap_or_else(|_| crate::db::ConversationSummary {
+            let summary = db.create_conversation("新对话").unwrap_or_else(|_| {
+                crate::db::ConversationSummary {
                     id: uuid::Uuid::new_v4().to_string(),
                     title: "新对话".to_string(),
                     created_at: chrono::Utc::now().timestamp_millis(),
                     updated_at: chrono::Utc::now().timestamp_millis(),
-                });
+                }
+            });
             summary.id
         }
     };
 
     // Create cancel token
     let cancel_token = CancellationToken::new();
-    server.active_tasks.lock().insert(conv_id.clone(), cancel_token.clone());
+    server
+        .active_tasks
+        .lock()
+        .insert(conv_id.clone(), cancel_token.clone());
 
     // Save user message & track existing message count for later
     let now = chrono::Utc::now().timestamp_millis();
@@ -110,10 +117,17 @@ pub async fn chat_handler(
         conversation_id: conv_id.clone(),
         role: "user".to_string(),
         content: req.message.clone(),
-        tool_calls: None, tool_call_id: None, tool_name: None, tool_result: None,
+        tool_calls: None,
+        tool_call_id: None,
+        tool_name: None,
+        tool_result: None,
         created_at: now,
     });
-    let prev_msg_count = if let Ok(conv) = db.get_conversation(&conv_id) { conv.messages.len() } else { 0 };
+    let prev_msg_count = if let Ok(conv) = db.get_conversation(&conv_id) {
+        conv.messages.len()
+    } else {
+        0
+    };
 
     // Auto-title: use first user message (trim to 40 chars)
     let title = if req.message.len() > 40 {
@@ -126,22 +140,37 @@ pub async fn chat_handler(
     // Build agent state with history
     let mut agent_state = AgentState::new(system_prompt);
     if let Ok(conv) = db.get_conversation(&conv_id) {
-        let msgs: Vec<crate::llm::types::ChatMessage> = conv.messages.iter().map(|m| {
-            crate::llm::types::ChatMessage {
+        let msgs: Vec<crate::llm::types::ChatMessage> = conv
+            .messages
+            .iter()
+            .map(|m| crate::llm::types::ChatMessage {
                 role: m.role.clone(),
-                content: if m.content.is_empty() { None } else { Some(m.content.clone()) },
-                tool_calls: m.tool_calls.as_ref().and_then(|tc| serde_json::from_str(tc).ok()),
+                content: if m.content.is_empty() {
+                    None
+                } else {
+                    Some(m.content.clone())
+                },
+                tool_calls: m
+                    .tool_calls
+                    .as_ref()
+                    .and_then(|tc| serde_json::from_str(tc).ok()),
                 tool_call_id: m.tool_call_id.clone(),
                 name: m.tool_name.clone(),
-            }
-        }).collect();
+            })
+            .collect();
         agent_state.load_history(msgs);
     }
     agent_state.add_user_message(req.message.clone());
 
     // Log chat request
-    let msg_preview = if req.message.len() > 60 { format!("{}…", &req.message[..60]) } else { req.message.clone() };
-    server.log_buffer.push("chat", "api", &format!("收到消息: {}", msg_preview));
+    let msg_preview = if req.message.len() > 60 {
+        format!("{}…", &req.message[..60])
+    } else {
+        req.message.clone()
+    };
+    server
+        .log_buffer
+        .push("chat", "api", &format!("收到消息: {}", msg_preview));
 
     // Spawn agent loop
     let llm_client = LlmClient::new(&config.model);
@@ -154,22 +183,34 @@ pub async fn chat_handler(
     tokio::spawn(async move {
         log_buffer.push("info", "agent", "Agent 循环开始");
         let result = engine::run_react_loop_with_channel(
-            &mut agent_state, &llm_client, &tool_registry,
-            &config_clone, &conv_clone, &cancel_token, &tx, &log_buffer,
-        ).await;
+            &mut agent_state,
+            &llm_client,
+            &tool_registry,
+            &config_clone,
+            &conv_clone,
+            &cancel_token,
+            &tx,
+            &log_buffer,
+        )
+        .await;
 
         // Save new messages (only assistant + tool — those after the initial history + user msg)
         let total_msgs = agent_state.messages.len();
         let new_start = prev_msg_count; // skip already-saved system + history + user
         let now = chrono::Utc::now().timestamp_millis();
         for msg in &agent_state.messages[new_start.min(total_msgs)..] {
-            if msg.role == "user" || msg.role == "system" { continue; }
+            if msg.role == "user" || msg.role == "system" {
+                continue;
+            }
             let _ = db_clone.add_message(&MessageRow {
                 id: uuid::Uuid::new_v4().to_string(),
                 conversation_id: conv_clone.clone(),
                 role: msg.role.clone(),
                 content: msg.content.clone().unwrap_or_default(),
-                tool_calls: msg.tool_calls.as_ref().map(|tc| serde_json::to_string(tc).unwrap_or_default()),
+                tool_calls: msg
+                    .tool_calls
+                    .as_ref()
+                    .map(|tc| serde_json::to_string(tc).unwrap_or_default()),
                 tool_call_id: msg.tool_call_id.clone(),
                 tool_name: msg.name.clone(),
                 tool_result: None,
@@ -179,13 +220,22 @@ pub async fn chat_handler(
 
         if let Err(ref e) = result {
             log_buffer.push("error", "agent", &format!("Agent 错误: {}", e));
-            let _ = tx.send(AgentEvent {
-                event_type: "error".into(),
-                conversation_id: conv_clone.clone(),
-                error: Some(e.clone()),
-                token: None, tool_call_id: None, tool_name: None,
-                args: None, result: None, status: None, message_id: None,
-            }).await;
+            let _ = tx
+                .send(AgentEvent {
+                    event_type: "error".into(),
+                    conversation_id: conv_clone.clone(),
+                    error: Some(e.clone()),
+                    token: None,
+                    tool_call_id: None,
+                    tool_name: None,
+                    args: None,
+                    result: None,
+                    status: None,
+                    message_id: None,
+                    risk_level: None,
+                    reason: None,
+                })
+                .await;
         } else {
             log_buffer.push("info", "agent", "Agent 完成");
         }
@@ -208,7 +258,7 @@ pub async fn chat_handler(
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(std::time::Duration::from_secs(15))
-            .text("ping")
+            .text("ping"),
     )
 }
 

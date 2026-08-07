@@ -8,9 +8,7 @@ use std::sync::Arc;
 use crate::config::types::AppConfig;
 use crate::server::AppServer;
 
-pub async fn get_handler(
-    State(server): State<Arc<AppServer>>,
-) -> Json<AppConfig> {
+pub async fn get_handler(State(server): State<Arc<AppServer>>) -> Json<AppConfig> {
     Json(server.config.read().clone())
 }
 

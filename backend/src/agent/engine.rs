@@ -11,8 +11,10 @@ use tokio_util::sync::CancellationToken;
 use super::state::AgentState;
 use crate::config::types::AppConfig;
 use crate::llm::client::LlmClient;
+use crate::safety::{PermissionDecision, PermissionManager};
 use crate::server::LogBuffer;
 use crate::tools::registry::ToolRegistry;
+use crate::tools::trait_def::RiskLevel;
 
 /// Agent streaming event (shared with API layer)
 #[derive(Debug, Clone, Serialize)]
@@ -36,6 +38,10 @@ pub struct AgentEvent {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 const MAX_ITERATIONS: usize = 20;
@@ -48,7 +54,8 @@ fn summarize_tool_result(content: &str) -> String {
     if content.starts_with("data:image/") {
         let summary: Vec<&str> = content.split('\n').skip(1).collect();
         if summary.is_empty() {
-            return "截图已完成，图片已展示在界面中。请直接描述你看到的截图内容回复用户。".to_string();
+            return "截图已完成，图片已展示在界面中。请直接描述你看到的截图内容回复用户。"
+                .to_string();
         }
         return format!(
             "截图已完成，图片已展示在界面中。截图信息: {}。请直接回复用户，不要再次调用截图工具。",
@@ -103,8 +110,15 @@ pub async fn run_react_loop_with_channel(
                     event_type: "token".into(),
                     conversation_id: conversation_id.to_string(),
                     token: Some(token.to_string()),
-                    tool_call_id: None, tool_name: None, args: None,
-                    result: None, status: None, error: None, message_id: None,
+                    tool_call_id: None,
+                    tool_name: None,
+                    args: None,
+                    result: None,
+                    status: None,
+                    error: None,
+                    message_id: None,
+                    risk_level: None,
+                    reason: None,
                 });
             })
             .await;
@@ -118,12 +132,18 @@ pub async fn run_react_loop_with_channel(
         if accumulator.has_tool_calls() {
             if let Some(tool_calls) = accumulator.to_tool_calls() {
                 state.add_assistant_message(
-                    if accumulator.content.is_empty() { None } else { Some(accumulator.content.clone()) },
+                    if accumulator.content.is_empty() {
+                        None
+                    } else {
+                        Some(accumulator.content.clone())
+                    },
                     Some(tool_calls.clone()),
                 );
 
                 for tc in &tool_calls {
-                    if cancel_token.is_cancelled() { return Err("已取消".to_string()); }
+                    if cancel_token.is_cancelled() {
+                        return Err("已取消".to_string());
+                    }
 
                     // Guard against infinite tool loops: bail if same tool called too many times in a row
                     if tc.function.name == last_tool_name {
@@ -142,55 +162,124 @@ pub async fn run_react_loop_with_channel(
                     let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
 
-                    let _ = tx.try_send(AgentEvent {
-                        event_type: "tool_start".into(),
-                        conversation_id: conversation_id.to_string(),
-                        token: None,
-                        tool_call_id: Some(tc.id.clone()),
-                        tool_name: Some(tc.function.name.clone()),
-                        args: Some(args.clone()),
-                        result: None, status: None, error: None, message_id: None,
-                    });
+                    // ── Safety gate: assess risk and check permission before executing ──
+                    let tool = tool_registry.get(&tc.function.name);
+                    let default_risk = tool.map(|t| t.risk_level()).unwrap_or(RiskLevel::Low);
 
-                    // Log tool start
-                    log_buffer.push("tool", "tool", &format!("▶ {}", tc.function.name));
+                    let decision =
+                        PermissionManager::evaluate(&tc.function.name, default_risk, &args);
 
-                    let tool_result = match tool_registry.execute(&tc.function.name, args).await {
-                        Some(r) => r,
-                        None => crate::tools::trait_def::ToolResult::error(
-                            format!("未知工具: {}", tc.function.name)
-                        ),
-                    };
+                    match decision {
+                        PermissionDecision::Allow => {
+                            let _ = tx.try_send(AgentEvent {
+                                event_type: "tool_start".into(),
+                                conversation_id: conversation_id.to_string(),
+                                token: None,
+                                tool_call_id: Some(tc.id.clone()),
+                                tool_name: Some(tc.function.name.clone()),
+                                args: Some(args.clone()),
+                                result: None,
+                                status: None,
+                                error: None,
+                                message_id: None,
+                                risk_level: None,
+                                reason: None,
+                            });
 
-                    let status = if tool_result.ok { "success" } else { "error" };
+                            // Log tool start
+                            log_buffer.push("tool", "tool", &format!("▶ {}", tc.function.name));
 
-                    // Log tool result
-                    let log_level = if tool_result.ok { "tool" } else { "error" };
-                    let result_preview = if tool_result.content.len() > 80 {
-                        format!("{}…", &tool_result.content[..80])
-                    } else {
-                        tool_result.content.clone()
-                    };
-                    log_buffer.push(log_level, "tool", &format!("{} {} – {}", if tool_result.ok { "✓" } else { "✗" }, tc.function.name, result_preview));
+                            let tool_result =
+                                match tool_registry.execute(&tc.function.name, args).await {
+                                    Some(r) => r,
+                                    None => crate::tools::trait_def::ToolResult::error(format!(
+                                        "未知工具: {}",
+                                        tc.function.name
+                                    )),
+                                };
 
-                    // Send full result to frontend via SSE (includes images, etc.)
-                    let _ = tx.try_send(AgentEvent {
-                        event_type: "tool_end".into(),
-                        conversation_id: conversation_id.to_string(),
-                        token: None,
-                        tool_call_id: Some(tc.id.clone()),
-                        tool_name: Some(tc.function.name.clone()),
-                        args: None,
-                        result: Some(tool_result.content.clone()),
-                        status: Some(status.to_string()),
-                        error: None, message_id: None,
-                    });
+                            let status = if tool_result.ok { "success" } else { "error" };
 
-                    // Trim data URIs before sending to LLM to avoid context pollution
-                    // LLMs can't interpret base64, so we replace with a human-readable summary
-                    let llm_result = summarize_tool_result(&tool_result.content);
+                            // Log tool result
+                            let log_level = if tool_result.ok { "tool" } else { "error" };
+                            let result_preview = if tool_result.content.len() > 80 {
+                                format!("{}…", &tool_result.content[..80])
+                            } else {
+                                tool_result.content.clone()
+                            };
+                            log_buffer.push(
+                                log_level,
+                                "tool",
+                                &format!(
+                                    "{} {} – {}",
+                                    if tool_result.ok { "✓" } else { "✗" },
+                                    tc.function.name,
+                                    result_preview
+                                ),
+                            );
 
-                    state.add_tool_result(tc.id.clone(), tc.function.name.clone(), llm_result);
+                            // Send full result to frontend via SSE (includes images, etc.)
+                            let _ = tx.try_send(AgentEvent {
+                                event_type: "tool_end".into(),
+                                conversation_id: conversation_id.to_string(),
+                                token: None,
+                                tool_call_id: Some(tc.id.clone()),
+                                tool_name: Some(tc.function.name.clone()),
+                                args: None,
+                                result: Some(tool_result.content.clone()),
+                                status: Some(status.to_string()),
+                                error: None,
+                                message_id: None,
+                                risk_level: None,
+                                reason: None,
+                            });
+
+                            // Trim data URIs before sending to LLM to avoid context pollution
+                            // LLMs can't interpret base64, so we replace with a human-readable summary
+                            let llm_result = summarize_tool_result(&tool_result.content);
+
+                            state.add_tool_result(
+                                tc.id.clone(),
+                                tc.function.name.clone(),
+                                llm_result,
+                            );
+                        }
+
+                        PermissionDecision::RequireApproval { risk_level, reason } => {
+                            let _ = tx.try_send(AgentEvent {
+                                event_type: "approval_required".into(),
+                                conversation_id: conversation_id.to_string(),
+                                token: None,
+                                tool_call_id: Some(tc.id.clone()),
+                                tool_name: Some(tc.function.name.clone()),
+                                args: Some(args.clone()),
+                                result: None,
+                                status: None,
+                                error: None,
+                                message_id: None,
+                                risk_level: Some(risk_level.to_string()),
+                                reason: Some(reason.clone()),
+                            });
+
+                            log_buffer.push(
+                                "warn",
+                                "safety",
+                                &format!("⚠ {} 已阻止 — {}", tc.function.name, reason),
+                            );
+
+                            let blocked = format!(
+                                "工具 {} 需要用户批准，当前操作尚未执行。原因：{}",
+                                tc.function.name, reason
+                            );
+                            state.add_tool_result(tc.id.clone(), tc.function.name.clone(), blocked);
+                        }
+
+                        PermissionDecision::Deny { reason } => {
+                            let denied =
+                                format!("工具 {} 已被安全策略拒绝：{}", tc.function.name, reason);
+                            state.add_tool_result(tc.id.clone(), tc.function.name.clone(), denied);
+                        }
+                    }
                 }
                 continue;
             }
@@ -205,9 +294,16 @@ pub async fn run_react_loop_with_channel(
         let _ = tx.try_send(AgentEvent {
             event_type: "done".into(),
             conversation_id: conversation_id.to_string(),
-            token: None, tool_call_id: None, tool_name: None,
-            args: None, result: None, status: None, error: None,
+            token: None,
+            tool_call_id: None,
+            tool_name: None,
+            args: None,
+            result: None,
+            status: None,
+            error: None,
             message_id: Some(msg_id),
+            risk_level: None,
+            reason: None,
         });
 
         return Ok(output);

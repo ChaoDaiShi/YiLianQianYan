@@ -59,10 +59,9 @@ pub struct UpdateMcpRequest {
 // ── Handlers ──
 
 /// GET /api/plugins — list builtin tools + MCP servers
-pub async fn list_plugins(
-    State(server): State<Arc<AppServer>>,
-) -> Json<PluginListResponse> {
-    let builtin: Vec<BuiltinTool> = server.tool_registry
+pub async fn list_plugins(State(server): State<Arc<AppServer>>) -> Json<PluginListResponse> {
+    let builtin: Vec<BuiltinTool> = server
+        .tool_registry
         .list_tools()
         .iter()
         .map(|t| BuiltinTool {
@@ -100,7 +99,9 @@ pub async fn create_mcp(
         updated_at: now,
     };
 
-    server.db.create_mcp_server(&server_cfg)
+    server
+        .db
+        .create_mcp_server(&server_cfg)
         .map_err(|e| format!("创建失败: {}", e))?;
 
     Ok(Json(server_cfg))
@@ -112,7 +113,9 @@ pub async fn update_mcp(
     Path(id): Path<String>,
     Json(body): Json<UpdateMcpRequest>,
 ) -> Result<Json<McpServer>, String> {
-    let existing = server.db.get_mcp_server(&id)
+    let existing = server
+        .db
+        .get_mcp_server(&id)
         .map_err(|e| format!("查询失败: {}", e))?
         .ok_or("MCP 服务器不存在")?;
 
@@ -130,7 +133,9 @@ pub async fn update_mcp(
         updated_at: now,
     };
 
-    server.db.update_mcp_server(&id, &updated)
+    server
+        .db
+        .update_mcp_server(&id, &updated)
         .map_err(|e| format!("更新失败: {}", e))?;
 
     Ok(Json(updated))
@@ -141,7 +146,9 @@ pub async fn delete_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, String> {
-    server.db.delete_mcp_server(&id)
+    server
+        .db
+        .delete_mcp_server(&id)
         .map_err(|e| format!("删除失败: {}", e))?;
     Ok(Json(serde_json::json!({"status": "deleted"})))
 }
@@ -151,7 +158,9 @@ pub async fn toggle_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<McpServer>, String> {
-    server.db.toggle_mcp_server(&id)
+    server
+        .db
+        .toggle_mcp_server(&id)
         .map_err(|e| format!("切换失败: {}", e))?
         .map(Json)
         .ok_or("MCP 服务器不存在".to_string())
@@ -164,11 +173,19 @@ pub async fn test_mcp(
 ) -> Json<TestResult> {
     let mcp = match server.db.get_mcp_server(&id) {
         Ok(Some(s)) => s,
-        _ => return Json(TestResult { ok: false, message: "MCP 服务器不存在".to_string() }),
+        _ => {
+            return Json(TestResult {
+                ok: false,
+                message: "MCP 服务器不存在".to_string(),
+            })
+        }
     };
 
     if !mcp.enabled {
-        return Json(TestResult { ok: false, message: "MCP 服务器已禁用".to_string() });
+        return Json(TestResult {
+            ok: false,
+            message: "MCP 服务器已禁用".to_string(),
+        });
     }
 
     match mcp.transport.as_str() {
@@ -184,12 +201,21 @@ pub async fn test_mcp(
                         .map(|s| s.success())
                         .unwrap_or(false);
                     if ok {
-                        Json(TestResult { ok: true, message: format!("命令 {} 可执行", cmd) })
+                        Json(TestResult {
+                            ok: true,
+                            message: format!("命令 {} 可执行", cmd),
+                        })
                     } else {
-                        Json(TestResult { ok: false, message: format!("命令 {} 不可用，请检查安装", cmd) })
+                        Json(TestResult {
+                            ok: false,
+                            message: format!("命令 {} 不可用，请检查安装", cmd),
+                        })
                     }
                 }
-                None => Json(TestResult { ok: false, message: "未配置 command".to_string() }),
+                None => Json(TestResult {
+                    ok: false,
+                    message: "未配置 command".to_string(),
+                }),
             }
         }
         "sse" => {
@@ -212,9 +238,15 @@ pub async fn test_mcp(
                         }),
                     }
                 }
-                None => Json(TestResult { ok: false, message: "未配置 URL".to_string() }),
+                None => Json(TestResult {
+                    ok: false,
+                    message: "未配置 URL".to_string(),
+                }),
             }
         }
-        _ => Json(TestResult { ok: false, message: format!("不支持的传输类型: {}", mcp.transport) }),
+        _ => Json(TestResult {
+            ok: false,
+            message: format!("不支持的传输类型: {}", mcp.transport),
+        }),
     }
 }

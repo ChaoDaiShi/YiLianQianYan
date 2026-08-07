@@ -3,7 +3,7 @@
 // ============================================================
 
 use axum::{
-    extract::{State, Path},
+    extract::{Path, State},
     Json,
 };
 use serde::Deserialize;
@@ -14,9 +14,7 @@ use crate::server::AppServer;
 
 // ── List ──
 
-pub async fn list_handler(
-    State(server): State<Arc<AppServer>>,
-) -> Json<Vec<ConversationSummary>> {
+pub async fn list_handler(State(server): State<Arc<AppServer>>) -> Json<Vec<ConversationSummary>> {
     Json(server.db.list_conversations().unwrap_or_default())
 }
 
@@ -32,12 +30,17 @@ pub async fn create_handler(
     Json(req): Json<CreateRequest>,
 ) -> Json<ConversationSummary> {
     let title = req.title.unwrap_or_else(|| "新对话".to_string());
-    Json(server.db.create_conversation(&title).unwrap_or_else(|_| ConversationSummary {
-        id: uuid::Uuid::new_v4().to_string(),
-        title,
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
-    }))
+    Json(
+        server
+            .db
+            .create_conversation(&title)
+            .unwrap_or_else(|_| ConversationSummary {
+                id: uuid::Uuid::new_v4().to_string(),
+                title,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: chrono::Utc::now().timestamp_millis(),
+            }),
+    )
 }
 
 // ── Load ──

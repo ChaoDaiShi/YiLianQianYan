@@ -3,14 +3,14 @@
 // ============================================================
 
 mod conversations;
-mod settings;
-mod memories;
 mod mcp;
+mod memories;
+mod settings;
 mod workflows;
 
 pub use conversations::*;
-pub use memories::*;
 pub use mcp::McpServer;
+pub use memories::*;
 pub use workflows::Workflow;
 // settings::* not re-exported (used internally via Database impl)
 
@@ -31,7 +31,9 @@ impl Database {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(path)?;
-        let db = Self { conn: Arc::new(Mutex::new(conn)) };
+        let db = Self {
+            conn: Arc::new(Mutex::new(conn)),
+        };
         db.run_migrations()?;
         // Seed after migrations so the lock is released between calls
         db.seed_builtin_workflows()?;
@@ -120,7 +122,7 @@ impl Database {
                 is_builtin INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER,
                 updated_at INTEGER
-            );"
+            );",
         )?;
 
         Ok(())

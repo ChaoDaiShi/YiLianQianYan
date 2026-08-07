@@ -3,12 +3,12 @@
 // ============================================================
 
 use axum::{
-    extract::{State, Path, Query},
+    extract::{Path, Query, State},
     Json,
 };
 use std::sync::Arc;
 
-use crate::db::{Memory, CreateMemoryRequest, UpdateMemoryRequest, MemoryQuery};
+use crate::db::{CreateMemoryRequest, Memory, MemoryQuery, UpdateMemoryRequest};
 use crate::server::AppServer;
 
 // ── List / Search ──
@@ -19,8 +19,12 @@ pub async fn list_handler(
 ) -> Json<Vec<Memory>> {
     // Log query params for debugging
     if query.q.is_some() || query.category.is_some() || query.source.is_some() {
-        tracing::debug!("Memory query: q={:?} cat={:?} src={:?}",
-            query.q, query.category, query.source);
+        tracing::debug!(
+            "Memory query: q={:?} cat={:?} src={:?}",
+            query.q,
+            query.category,
+            query.source
+        );
     }
     Json(server.db.list_memories(&query).unwrap_or_default())
 }
@@ -76,9 +80,7 @@ pub async fn delete_handler(
 
 // ── Stats ──
 
-pub async fn stats_handler(
-    State(server): State<Arc<AppServer>>,
-) -> Json<serde_json::Value> {
+pub async fn stats_handler(State(server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
     match server.db.get_memory_stats() {
         Ok(stats) => Json(serde_json::to_value(stats).unwrap_or_default()),
         Err(e) => Json(serde_json::json!({"error": e})),
@@ -132,9 +134,7 @@ pub async fn batch_delete_handler(
 
 // ── Reserved: Export ──
 
-pub async fn export_handler(
-    State(_server): State<Arc<AppServer>>,
-) -> Json<serde_json::Value> {
+pub async fn export_handler(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "reserved",
         "message": "Export endpoint — reserved for future use"
@@ -155,9 +155,7 @@ pub async fn merge_handler(
 
 // ── Reserved: Reindex embeddings ──
 
-pub async fn reindex_handler(
-    State(_server): State<Arc<AppServer>>,
-) -> Json<serde_json::Value> {
+pub async fn reindex_handler(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "reserved",
         "message": "Reindex embeddings endpoint — reserved for future use"

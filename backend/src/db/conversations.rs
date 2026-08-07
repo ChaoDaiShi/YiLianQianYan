@@ -45,8 +45,14 @@ impl Database {
         conn.execute(
             "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
             params![id, title, now, now],
-        ).map_err(|e| e.to_string())?;
-        Ok(ConversationSummary { id, title: title.to_string(), created_at: now, updated_at: now })
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(ConversationSummary {
+            id,
+            title: title.to_string(),
+            created_at: now,
+            updated_at: now,
+        })
     }
 
     pub fn list_conversations(&self) -> Result<Vec<ConversationSummary>, String> {
@@ -54,34 +60,54 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
         ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok(ConversationSummary {
-                id: row.get(0)?, title: row.get(1)?,
-                created_at: row.get(2)?, updated_at: row.get(3)?,
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ConversationSummary {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
             })
-        }).map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn get_conversation(&self, id: &str) -> Result<Conversation, String> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?1"
-        ).map_err(|e| e.to_string())?;
-        let (conv_id, title, created_at, updated_at) = stmt.query_row(params![id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))
-        }).map_err(|e| format!("Conversation not found: {}", e))?;
+        let mut stmt = conn
+            .prepare("SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        let (conv_id, title, created_at, updated_at) = stmt
+            .query_row(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| format!("Conversation not found: {}", e))?;
         drop(stmt);
 
         let messages = self.get_messages_internal(&conn, &conv_id)?;
-        Ok(Conversation { id: conv_id, title, messages, created_at, updated_at })
+        Ok(Conversation {
+            id: conv_id,
+            title,
+            messages,
+            created_at,
+            updated_at,
+        })
     }
 
     pub fn delete_conversation(&self, id: &str) -> Result<(), String> {
         let conn = self.conn();
-        conn.execute("DELETE FROM messages WHERE conversation_id = ?1", params![id])
-            .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM messages WHERE conversation_id = ?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM conversations WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())?;
         Ok(())
@@ -93,7 +119,8 @@ impl Database {
         conn.execute(
             "UPDATE conversations SET title = ?1, updated_at = ?2 WHERE id = ?3",
             params![title, now, id],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -111,22 +138,36 @@ impl Database {
         conn.execute(
             "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
             params![now, msg.conversation_id],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    fn get_messages_internal(&self, conn: &std::sync::MutexGuard<'_, rusqlite::Connection>, conv_id: &str) -> Result<Vec<MessageRow>, String> {
+    fn get_messages_internal(
+        &self,
+        conn: &std::sync::MutexGuard<'_, rusqlite::Connection>,
+        conv_id: &str,
+    ) -> Result<Vec<MessageRow>, String> {
         let mut stmt = conn.prepare(
             "SELECT id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at
              FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC"
         ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(params![conv_id], |row| {
-            Ok(MessageRow {
-                id: row.get(0)?, conversation_id: row.get(1)?, role: row.get(2)?,
-                content: row.get(3)?, tool_calls: row.get(4)?, tool_call_id: row.get(5)?,
-                tool_name: row.get(6)?, tool_result: row.get(7)?, created_at: row.get(8)?,
+        let rows = stmt
+            .query_map(params![conv_id], |row| {
+                Ok(MessageRow {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    tool_calls: row.get(4)?,
+                    tool_call_id: row.get(5)?,
+                    tool_name: row.get(6)?,
+                    tool_result: row.get(7)?,
+                    created_at: row.get(8)?,
+                })
             })
-        }).map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 }

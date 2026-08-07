@@ -24,7 +24,7 @@ export interface StreamingState {
   content: string;
   toolCalls: Map<
     string,
-    { name: string; args: Record<string, unknown>; status: "running" | "success" | "error"; result?: string }
+    { name: string; args: Record<string, unknown>; status: "running" | "success" | "error" | "blocked"; result?: string }
   >;
 }
 
@@ -109,6 +109,18 @@ export default function ChatView({
             return { content: prev?.content || "", toolCalls };
           });
           break;
+        case "approval_required":
+          setStreaming((prev) => {
+            const toolCalls = new Map(prev?.toolCalls || []);
+            toolCalls.set(event.tool_call_id || "", {
+              name: event.tool_name || "",
+              args: event.args || {},
+              status: "blocked",
+              result: `操作需要批准，当前版本尚未执行。原因：${event.reason || "高风险操作"}（风险等级：${event.risk_level || "unknown"}）`,
+            });
+            return { content: prev?.content || "", toolCalls };
+          });
+          break;
         case "done":
           setStreaming((prev) => {
             if (prev) {
@@ -116,7 +128,7 @@ export default function ChatView({
                 toolCallId: string;
                 name: string;
                 args: Record<string, unknown>;
-                status: "running" | "success" | "error";
+                status: "running" | "success" | "error" | "blocked";
                 result?: string;
               }> = [];
               prev.toolCalls.forEach((tc, id) => {
