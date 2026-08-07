@@ -9,6 +9,7 @@ use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
 use super::state::AgentState;
+use super::verifier::{replan_message, Verifier};
 use crate::config::types::AppConfig;
 use crate::llm::client::LlmClient;
 use crate::safety::approval::ApprovalStore;
@@ -45,6 +46,12 @@ pub struct AgentEvent {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_success: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub should_replan: Option<bool>,
 }
 
 /// Result of running the agent loop.
@@ -98,6 +105,7 @@ pub async fn run_react_loop_with_channel(
     client: &LlmClient,
     tool_registry: &ToolRegistry,
     approval_store: &ApprovalStore,
+    verifier: &dyn Verifier,
     _config: &AppConfig,
     conversation_id: &str,
     cancel_token: &CancellationToken,
@@ -136,6 +144,9 @@ pub async fn run_react_loop_with_channel(
                     risk_level: None,
                     reason: None,
                     approval_id: None,
+                    verification_success: None,
+                    verification_reason: None,
+                    should_replan: None,
                 });
             })
             .await;
@@ -202,19 +213,24 @@ pub async fn run_react_loop_with_channel(
                                 risk_level: None,
                                 reason: None,
                                 approval_id: None,
+                                verification_success: None,
+                                verification_reason: None,
+                                should_replan: None,
                             });
 
                             // Log tool start
                             log_buffer.push("tool", "tool", &format!("▶ {}", tc.function.name));
 
-                            let tool_result =
-                                match tool_registry.execute(&tc.function.name, args).await {
-                                    Some(r) => r,
-                                    None => crate::tools::trait_def::ToolResult::error(format!(
-                                        "未知工具: {}",
-                                        tc.function.name
-                                    )),
-                                };
+                            let tool_result = match tool_registry
+                                .execute(&tc.function.name, args.clone())
+                                .await
+                            {
+                                Some(r) => r,
+                                None => crate::tools::trait_def::ToolResult::error(format!(
+                                    "未知工具: {}",
+                                    tc.function.name
+                                )),
+                            };
 
                             let status = if tool_result.ok { "success" } else { "error" };
 
@@ -251,11 +267,75 @@ pub async fn run_react_loop_with_channel(
                                 risk_level: None,
                                 reason: None,
                                 approval_id: None,
+                                verification_success: None,
+                                verification_reason: None,
+                                should_replan: None,
                             });
+
+                            // ── Verify the real outcome (ToolResult.ok ≠ success) ──
+                            let verification = verifier
+                                .verify(&tc.function.name, &args, &tool_result)
+                                .await;
+
+                            let _ = tx.try_send(AgentEvent {
+                                event_type: "verification".into(),
+                                conversation_id: conversation_id.to_string(),
+                                token: None,
+                                tool_call_id: Some(tc.id.clone()),
+                                tool_name: Some(tc.function.name.clone()),
+                                args: None,
+                                result: None,
+                                status: None,
+                                error: None,
+                                message_id: None,
+                                risk_level: None,
+                                reason: None,
+                                approval_id: None,
+                                verification_success: Some(verification.success),
+                                verification_reason: Some(verification.reason.clone()),
+                                should_replan: Some(verification.should_replan),
+                            });
+
+                            log_buffer.push(
+                                if verification.success { "tool" } else { "warn" },
+                                "verify",
+                                &format!(
+                                    "[VERIFY] {} tool={} reason={}",
+                                    if verification.success {
+                                        "success"
+                                    } else {
+                                        "failed"
+                                    },
+                                    tc.function.name,
+                                    verification.reason
+                                ),
+                            );
 
                             // Trim data URIs before sending to LLM to avoid context pollution
                             // LLMs can't interpret base64, so we replace with a human-readable summary
                             let llm_result = summarize_tool_result(&tool_result.content);
+
+                            if verification.should_replan {
+                                // Verification failed: write back an actionable replan
+                                // message and stop the current batch.
+                                state.add_tool_result(
+                                    tc.id.clone(),
+                                    tc.function.name.clone(),
+                                    replan_message(&tc.function.name, &verification.reason),
+                                );
+                                for later in tool_calls.iter().skip(i + 1) {
+                                    let skipped = format!(
+                                        "工具 {} 的调用因验证失败被跳过，未执行。",
+                                        later.function.name
+                                    );
+                                    state.add_tool_result(
+                                        later.id.clone(),
+                                        later.function.name.clone(),
+                                        skipped,
+                                    );
+                                }
+                                break;
+                            }
 
                             state.add_tool_result(
                                 tc.id.clone(),
@@ -305,6 +385,9 @@ pub async fn run_react_loop_with_channel(
                                 risk_level: Some(risk_level.to_string()),
                                 reason: Some(reason.clone()),
                                 approval_id: Some(approval.approval_id.clone()),
+                                verification_success: None,
+                                verification_reason: None,
+                                should_replan: None,
                             });
 
                             log_buffer.push(
@@ -364,6 +447,9 @@ pub async fn run_react_loop_with_channel(
             risk_level: None,
             reason: None,
             approval_id: None,
+            verification_success: None,
+            verification_reason: None,
+            should_replan: None,
         });
 
         return Ok(RunOutcome::Done { output });

@@ -182,11 +182,14 @@ pub async fn chat_handler(
 
     tokio::spawn(async move {
         log_buffer.push("info", "agent", "Agent 循环开始");
+        let verifier = crate::agent::verifier::DefaultVerifier::new(&server.workspace_root);
+
         let result = engine::run_react_loop_with_channel(
             &mut agent_state,
             &llm_client,
             &tool_registry,
             &server.approval_store,
+            &verifier,
             &config_clone,
             &conv_clone,
             &cancel_token,
@@ -237,6 +240,9 @@ pub async fn chat_handler(
                         risk_level: None,
                         reason: None,
                         approval_id: None,
+                        verification_success: None,
+                        verification_reason: None,
+                        should_replan: None,
                     })
                     .await;
             }

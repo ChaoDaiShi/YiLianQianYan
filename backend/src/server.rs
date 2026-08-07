@@ -85,6 +85,8 @@ pub struct AppServer {
     pub tool_registry: Arc<ToolRegistry>,
     pub skill_discovery: Arc<RwLock<SkillDiscovery>>,
     pub subagents: Vec<DiscoveredSubagent>,
+    /// Workspace root used for tool path resolution and verification.
+    pub workspace_root: String,
     /// Active generation tasks (conversation_id → cancel token)
     pub active_tasks: Mutex<HashMap<String, CancellationToken>>,
     /// In-memory log ring buffer
@@ -136,6 +138,7 @@ impl AppServer {
             tool_registry,
             skill_discovery,
             subagents,
+            workspace_root: workspace_root.to_string(),
             active_tasks: Mutex::new(HashMap::new()),
             log_buffer,
             approval_store: ApprovalStore::new(),

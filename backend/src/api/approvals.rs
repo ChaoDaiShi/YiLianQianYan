@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::engine::{self, AgentEvent, RunOutcome};
 use crate::agent::state::AgentState;
+use crate::agent::verifier::Verifier;
 use crate::config::types::AppConfig;
 use crate::db::{Database, MessageRow};
 use crate::llm::client::LlmClient;
@@ -221,6 +222,9 @@ fn resume_stream(
                 risk_level: Some(approval.risk_level.to_string()),
                 reason: None,
                 approval_id: Some(approval.approval_id.clone()),
+                verification_success: None,
+                verification_reason: None,
+                should_replan: None,
             })
             .await;
 
@@ -241,6 +245,9 @@ fn resume_stream(
                     risk_level: Some(approval.risk_level.to_string()),
                     reason: None,
                     approval_id: Some(approval.approval_id.clone()),
+                    verification_success: None,
+                    verification_reason: None,
+                    should_replan: None,
                 })
                 .await;
 
@@ -276,15 +283,51 @@ fn resume_stream(
                     risk_level: None,
                     reason: None,
                     approval_id: Some(approval.approval_id.clone()),
+                    verification_success: None,
+                    verification_reason: None,
+                    should_replan: None,
                 })
                 .await;
 
-            // Persist the (summarized) result back to the conversation.
+            // ── Verify the executed tool's real outcome (approved path) ──
+            let verifier = crate::agent::verifier::DefaultVerifier::new(&server.workspace_root);
+            let verification = verifier
+                .verify(&approval.tool_name, &approval.arguments, &tool_result)
+                .await;
+
+            let _ = tx
+                .send(AgentEvent {
+                    event_type: "verification".into(),
+                    conversation_id: approval.conversation_id.clone(),
+                    token: None,
+                    tool_call_id: Some(approval.tool_call_id.clone()),
+                    tool_name: Some(approval.tool_name.clone()),
+                    args: None,
+                    result: None,
+                    status: None,
+                    error: None,
+                    message_id: None,
+                    risk_level: None,
+                    reason: None,
+                    approval_id: Some(approval.approval_id.clone()),
+                    verification_success: Some(verification.success),
+                    verification_reason: Some(verification.reason.clone()),
+                    should_replan: Some(verification.should_replan),
+                })
+                .await;
+
+            // Persist the result back to the conversation — or the replan message
+            // when the outcome failed verification.
             let llm_result = engine::summarize_tool_result(&tool_result.content);
+            let decision_msg = if verification.should_replan {
+                crate::agent::verifier::replan_message(&approval.tool_name, &verification.reason)
+            } else {
+                llm_result
+            };
             add_tool_message(
                 &db,
                 &approval,
-                llm_result,
+                decision_msg,
                 chrono::Utc::now().timestamp_millis(),
             );
         } else {
@@ -382,12 +425,14 @@ async fn resume_agent(
         .insert(approval.conversation_id.clone(), cancel_token.clone());
 
     let llm_client = LlmClient::new(&config.model);
+    let verifier = crate::agent::verifier::DefaultVerifier::new(&server.workspace_root);
 
     let result = engine::run_react_loop_with_channel(
         &mut agent_state,
         &llm_client,
         tool_registry,
         &server.approval_store,
+        &verifier,
         config,
         &approval.conversation_id,
         &cancel_token,
@@ -448,6 +493,9 @@ async fn resume_agent(
                     risk_level: None,
                     reason: None,
                     approval_id: Some(approval.approval_id.clone()),
+                    verification_success: None,
+                    verification_reason: None,
+                    should_replan: None,
                 })
                 .await;
         }
