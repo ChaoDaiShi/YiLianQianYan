@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use std::process::Command;
 use std::time::Duration;
 
-use super::trait_def::{Tool, ToolResult};
+use super::trait_def::{RiskLevel, Tool, ToolResult};
 
 pub struct BashTool {
     workspace_root: String,
@@ -22,7 +22,9 @@ impl BashTool {
 
 #[async_trait]
 impl Tool for BashTool {
-    fn name(&self) -> &str { "bash" }
+    fn name(&self) -> &str {
+        "bash"
+    }
 
     fn description(&self) -> &str {
         "在沙箱内执行shell命令。用于构建/运行/git/系统操作。找文件请用grep/glob工具。Windows上使用PowerShell执行。"
@@ -45,7 +47,9 @@ impl Tool for BashTool {
         })
     }
 
-    fn requires_approval(&self) -> bool { true }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::High
+    }
 
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
         let command = args["command"].as_str().unwrap_or("");
@@ -115,15 +119,9 @@ impl Tool for BashTool {
                     ToolResult::error(error_msg)
                 }
             }
-            Ok(Ok(Err(e))) => {
-                ToolResult::error(format!("命令执行失败: {}", e))
-            }
-            Ok(Err(e)) => {
-                ToolResult::error(format!("线程错误: {}", e))
-            }
-            Err(_) => {
-                ToolResult::error(format!("命令超时 ({}ms)", timeout_ms))
-            }
+            Ok(Ok(Err(e))) => ToolResult::error(format!("命令执行失败: {}", e)),
+            Ok(Err(e)) => ToolResult::error(format!("线程错误: {}", e)),
+            Err(_) => ToolResult::error(format!("命令超时 ({}ms)", timeout_ms)),
         }
     }
 }

@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use std::time::Duration;
 
-use super::trait_def::{Tool, ToolResult};
+use super::trait_def::{RiskLevel, Tool, ToolResult};
 
 pub struct HttpRequestTool;
 
@@ -17,7 +17,9 @@ impl HttpRequestTool {
 
 #[async_trait]
 impl Tool for HttpRequestTool {
-    fn name(&self) -> &str { "http_request" }
+    fn name(&self) -> &str {
+        "http_request"
+    }
 
     fn description(&self) -> &str {
         "发送HTTP请求。支持GET/POST/PUT/DELETE/PATCH方法。自动防止SSRF攻击（阻止内网IP）。"
@@ -53,7 +55,9 @@ impl Tool for HttpRequestTool {
         })
     }
 
-    fn requires_approval(&self) -> bool { true }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::Medium
+    }
 
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
         let url = args["url"].as_str().unwrap_or("");
@@ -109,7 +113,11 @@ impl Tool for HttpRequestTool {
 
                 // Truncate response body if too large
                 let body_display = if body.len() > 10000 {
-                    format!("{}...\n(响应体过大，已截断至10000字符，完整大小: {}字节)", &body[..10000], body.len())
+                    format!(
+                        "{}...\n(响应体过大，已截断至10000字符，完整大小: {}字节)",
+                        &body[..10000],
+                        body.len()
+                    )
                 } else {
                     body
                 };

@@ -132,10 +132,6 @@ impl Tool for ScreenshotTool {
         })
     }
 
-    fn requires_approval(&self) -> bool {
-        true
-    }
-
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
         let monitor_idx = args["monitor"].as_u64().unwrap_or(0) as usize;
         let x = args["x"].as_u64().map(|v| v as u32);

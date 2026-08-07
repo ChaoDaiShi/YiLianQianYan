@@ -3,10 +3,10 @@
 // ============================================================
 
 use async_trait::async_trait;
-use std::process::Command;
 use serde::Serialize;
+use std::process::Command;
 
-use super::trait_def::{Tool, ToolResult};
+use super::trait_def::{RiskLevel, Tool, ToolResult};
 
 #[derive(Debug, Serialize)]
 struct ProcessInfo {
@@ -51,10 +51,22 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
                 if parts.len() >= 2 {
                     let name = parts[0].trim_matches('"');
                     let pid = parts[1].trim_matches('"').parse().unwrap_or(0);
-                    let mem = parts.get(4)
-                        .map(|s| s.trim_matches('"').replace(" K", "").replace(",", "").parse::<f64>().unwrap_or(0.0) / 1024.0)
+                    let mem = parts
+                        .get(4)
+                        .map(|s| {
+                            s.trim_matches('"')
+                                .replace(" K", "")
+                                .replace(",", "")
+                                .parse::<f64>()
+                                .unwrap_or(0.0)
+                                / 1024.0
+                        })
                         .unwrap_or(0.0);
-                    processes.push(ProcessInfo { pid, name: name.to_string(), memory_mb: mem });
+                    processes.push(ProcessInfo {
+                        pid,
+                        name: name.to_string(),
+                        memory_mb: mem,
+                    });
                 }
             }
         }
@@ -67,15 +79,26 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for (i, line) in stdout.lines().enumerate() {
-            if i == 0 { continue; } // Skip header
+            if i == 0 {
+                continue;
+            } // Skip header
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 11 {
                 let pid = parts[1].parse().unwrap_or(0);
                 let name = parts.get(10).unwrap_or(&"?").to_string();
-                let mem = parts.get(3).map(|s| s.parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0);
-                processes.push(ProcessInfo { pid, name, memory_mb: mem });
+                let mem = parts
+                    .get(3)
+                    .map(|s| s.parse::<f64>().unwrap_or(0.0))
+                    .unwrap_or(0.0);
+                processes.push(ProcessInfo {
+                    pid,
+                    name,
+                    memory_mb: mem,
+                });
             }
-            if processes.len() >= 50 { break; }
+            if processes.len() >= 50 {
+                break;
+            }
         }
     }
 
@@ -102,7 +125,9 @@ pub struct ProcessTool;
 
 #[async_trait]
 impl Tool for ProcessTool {
-    fn name(&self) -> &str { "process" }
+    fn name(&self) -> &str {
+        "process"
+    }
 
     fn description(&self) -> &str {
         "管理系统进程。可以列出正在运行的进程或终止指定进程。"
@@ -126,33 +151,33 @@ impl Tool for ProcessTool {
         })
     }
 
-    fn requires_approval(&self) -> bool { true }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::High
+    }
 
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
         let action = args["action"].as_str().unwrap_or("list");
 
         match action {
-            "list" => {
-                match list_processes() {
-                    Ok(processes) => {
-                        if processes.is_empty() {
-                            return ToolResult::success("未找到运行中的进程");
-                        }
-                        let mut output = format!("{:<8} {:<30} {:>10}\n", "PID", "进程名", "内存(MB)");
-                        output.push_str(&"-".repeat(52));
-                        output.push('\n');
-                        for p in &processes {
-                            output.push_str(&format!(
-                                "{:<8} {:<30} {:>10.1}\n",
-                                p.pid, p.name, p.memory_mb
-                            ));
-                        }
-                        output.push_str(&format!("\n共 {} 个进程", processes.len()));
-                        ToolResult::success(output)
+            "list" => match list_processes() {
+                Ok(processes) => {
+                    if processes.is_empty() {
+                        return ToolResult::success("未找到运行中的进程");
                     }
-                    Err(e) => ToolResult::error(e),
+                    let mut output = format!("{:<8} {:<30} {:>10}\n", "PID", "进程名", "内存(MB)");
+                    output.push_str(&"-".repeat(52));
+                    output.push('\n');
+                    for p in &processes {
+                        output.push_str(&format!(
+                            "{:<8} {:<30} {:>10.1}\n",
+                            p.pid, p.name, p.memory_mb
+                        ));
+                    }
+                    output.push_str(&format!("\n共 {} 个进程", processes.len()));
+                    ToolResult::success(output)
                 }
-            }
+                Err(e) => ToolResult::error(e),
+            },
             "kill" => {
                 let pid = args["pid"].as_u64().unwrap_or(0) as u32;
                 if pid == 0 {

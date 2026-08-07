@@ -5,6 +5,34 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// Risk level of a tool — used by the SafetyPolicy to decide permissions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl Default for RiskLevel {
+    fn default() -> Self {
+        Self::Low
+    }
+}
+
+impl std::fmt::Display for RiskLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            RiskLevel::Low => "low",
+            RiskLevel::Medium => "medium",
+            RiskLevel::High => "high",
+            RiskLevel::Critical => "critical",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 /// Result of executing a tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
@@ -39,6 +67,8 @@ pub struct ToolInfo {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+    pub risk_level: RiskLevel,
+    pub requires_approval: bool,
 }
 
 /// Core trait that every tool must implement
@@ -53,9 +83,16 @@ pub trait Tool: Send + Sync {
     /// JSON Schema describing the tool's parameters
     fn parameters(&self) -> serde_json::Value;
 
+    /// Default risk level of this tool.
+    /// The final risk is computed by SafetyPolicy as
+    /// max(tool default risk, argument-based risk).
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::Low
+    }
+
     /// Whether this tool requires user approval before execution
     fn requires_approval(&self) -> bool {
-        false
+        matches!(self.risk_level(), RiskLevel::High | RiskLevel::Critical)
     }
 
     /// Execute the tool with the given arguments.
@@ -80,6 +117,8 @@ pub trait Tool: Send + Sync {
             name: self.name().to_string(),
             description: self.description().to_string(),
             parameters: self.parameters(),
+            risk_level: self.risk_level(),
+            requires_approval: self.requires_approval(),
         }
     }
 }

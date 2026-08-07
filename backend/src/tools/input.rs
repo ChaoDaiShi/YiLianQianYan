@@ -3,13 +3,11 @@
 // ============================================================
 
 use async_trait::async_trait;
-use enigo::{
-    Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings,
-};
+use enigo::{Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use super::trait_def::{Tool, ToolResult};
+use super::trait_def::{RiskLevel, Tool, ToolResult};
 
 // ============================================================
 // Key name → enigo::Key mapping
@@ -93,7 +91,10 @@ fn resolve_key(name: &str) -> Result<Key, String> {
         }
     }
 
-    Err(format!("未知按键: {}，请使用标准按键名（如 return、escape、ctrl、a-z、0-9 等）", name))
+    Err(format!(
+        "未知按键: {}，请使用标准按键名（如 return、escape、ctrl、a-z、0-9 等）",
+        name
+    ))
 }
 
 fn parse_button(s: &str) -> Result<Button, String> {
@@ -101,16 +102,12 @@ fn parse_button(s: &str) -> Result<Button, String> {
         "left" => Ok(Button::Left),
         "right" => Ok(Button::Right),
         "middle" => Ok(Button::Middle),
-        other => Err(format!(
-            "无效的鼠标按钮: {}，支持 left/right/middle",
-            other
-        )),
+        other => Err(format!("无效的鼠标按钮: {}，支持 left/right/middle", other)),
     }
 }
 
 fn make_enigo() -> Result<Enigo, String> {
-    Enigo::new(&Settings::default())
-        .map_err(|e| format!("输入系统不可用：{}", e))
+    Enigo::new(&Settings::default()).map_err(|e| format!("输入系统不可用：{}", e))
 }
 
 // ============================================================
@@ -123,6 +120,10 @@ pub struct MouseTool;
 impl Tool for MouseTool {
     fn name(&self) -> &str {
         "mouse"
+    }
+
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::Medium
     }
 
     fn description(&self) -> &str {
@@ -305,6 +306,10 @@ impl Tool for KeyboardTool {
         "keyboard"
     }
 
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::Medium
+    }
+
     fn description(&self) -> &str {
         "模拟键盘操作。支持：type(输入文本)、press(单键)、combo(组合键如ctrl+c)、key_down(按住)、key_up(释放)。"
     }
@@ -371,7 +376,11 @@ impl Tool for KeyboardTool {
             "combo" => {
                 let keys: Vec<String> = args["keys"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 if keys.is_empty() {

@@ -5,15 +5,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::trait_def::{Tool, ToolInfo};
 use super::bash::BashTool;
-use super::fs::{ReadFileTool, WriteFileTool, EditFileTool};
-use super::search::{GrepTool, GlobTool};
+use super::fs::{EditFileTool, ReadFileTool, WriteFileTool};
 use super::http_client::HttpRequestTool;
-use super::skill::{LoadSkillTool, WriteTodosTool};
+use super::input::{KeyboardTool, MouseTool};
 use super::process::ProcessTool;
-use super::input::{MouseTool, KeyboardTool};
 use super::screenshot::ScreenshotTool;
+use super::search::{GlobTool, GrepTool};
+use super::skill::{LoadSkillTool, WriteTodosTool};
+use super::trait_def::{RiskLevel, Tool, ToolInfo};
 use super::upscale::UpscaleTool;
 
 /// Registry holding all available tools
@@ -110,6 +110,11 @@ impl ToolRegistry {
             .get(name)
             .map(|t| t.requires_approval())
             .unwrap_or(false)
+    }
+
+    /// Get the default risk level of a tool by name.
+    pub fn risk_level(&self, name: &str) -> Option<RiskLevel> {
+        self.tools.get(name).map(|t| t.risk_level())
     }
 
     /// Get tool count

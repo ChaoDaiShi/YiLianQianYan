@@ -3,26 +3,26 @@
 // Exposes server creation for both standalone binary and Tauri embedding
 // ============================================================
 
+pub mod agent;
+pub mod api;
 pub mod config;
 pub mod db;
 pub mod llm;
-pub mod tools;
-pub mod agent;
-pub mod api;
+pub mod safety;
 pub mod server;
+pub mod tools;
 
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing;
 
 pub use server::AppServer;
 
 fn default_data_dir() -> PathBuf {
-    std::env::var("YILIAN_DATA_DIR").ok()
+    std::env::var("YILIAN_DATA_DIR")
+        .ok()
         .map(PathBuf::from)
-        .or_else(|| {
-            dirs::data_dir().map(|d| d.join("yilianqianyan"))
-        })
+        .or_else(|| dirs::data_dir().map(|d| d.join("yilianqianyan")))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -34,10 +34,18 @@ pub async fn create_server() -> Result<(Arc<AppServer>, axum::Router), String> {
 
     let workspace_root = std::env::var("YILIAN_WORKSPACE")
         .ok()
-        .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().to_string()))
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        })
         .unwrap_or_else(|| ".".to_string());
 
-    tracing::info!("Backend: data_dir={}, workspace={}", data_dir.display(), workspace_root);
+    tracing::info!(
+        "Backend: data_dir={}, workspace={}",
+        data_dir.display(),
+        workspace_root
+    );
 
     let server = Arc::new(AppServer::new(&db_path, &workspace_root)?);
     let router = api::build_router(server.clone());
@@ -63,7 +71,11 @@ pub async fn serve_in_background() -> u16 {
     let (_server, router) = create_server().await.expect("Failed to create server");
 
     let addr = std::env::var("YILIAN_HOST").unwrap_or_else(|_| "127.0.0.1:9420".to_string());
-    let port: u16 = addr.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(9420);
+    let port: u16 = addr
+        .split(':')
+        .last()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(9420);
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

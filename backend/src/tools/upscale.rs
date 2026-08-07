@@ -5,21 +5,27 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::trait_def::{Tool, ToolResult};
+use super::trait_def::{RiskLevel, Tool, ToolResult};
 
 pub struct UpscaleTool;
 
 impl UpscaleTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     fn api_key() -> Option<String> {
-        std::env::var("BIGJPG_API_KEY").ok().filter(|k| !k.is_empty())
+        std::env::var("BIGJPG_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())
     }
 }
 
 #[async_trait]
 impl Tool for UpscaleTool {
-    fn name(&self) -> &str { "upscale_image" }
+    fn name(&self) -> &str {
+        "upscale_image"
+    }
 
     fn description(&self) -> &str {
         "使用 bigjpg.com AI 人工智能无损放大图片。支持动漫/照片风格，2x/4x 放大。需要设置 BIGJPG_API_KEY 环境变量（在 https://bigjpg.com 注册获取）。"
@@ -53,8 +59,8 @@ impl Tool for UpscaleTool {
         })
     }
 
-    fn requires_approval(&self) -> bool {
-        true
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::Medium
     }
 
     async fn execute(&self, args: Value) -> ToolResult {
@@ -93,7 +99,10 @@ impl Tool for UpscaleTool {
             ));
         }
 
-        let file_ext = img_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+        let file_ext = img_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("png");
         let mime = match file_ext.to_lowercase().as_str() {
             "jpg" | "jpeg" => "image/jpeg",
             "png" => "image/png",
@@ -112,7 +121,7 @@ impl Tool for UpscaleTool {
         };
 
         // Encode image as base64 data URI
-        use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+        use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
         let b64 = B64.encode(&img_data);
         let data_uri = format!("data:{};base64,{}", mime, b64);
 
@@ -136,9 +145,9 @@ impl Tool for UpscaleTool {
             .await
         {
             Ok(r) => r,
-            Err(e) => return ToolResult::error(format!(
-                "连接 bigjpg.com 失败: {}。请检查网络连接。", e
-            )),
+            Err(e) => {
+                return ToolResult::error(format!("连接 bigjpg.com 失败: {}。请检查网络连接。", e))
+            }
         };
 
         let status_code = task_resp.status();
@@ -171,7 +180,8 @@ impl Tool for UpscaleTool {
         }
 
         // Step 2: Extract task ID
-        let task_id = task_json["tid"].as_str()
+        let task_id = task_json["tid"]
+            .as_str()
             .or_else(|| task_json["task_id"].as_str())
             .or_else(|| task_json["data"]["tid"].as_str())
             .or_else(|| task_json["data"]["task_id"].as_str());
@@ -185,7 +195,11 @@ impl Tool for UpscaleTool {
                 }
                 // Print response for debugging
                 let resp_str = serde_json::to_string_pretty(&task_json).unwrap_or_default();
-                let preview = if resp_str.len() > 500 { &resp_str[..500] } else { &resp_str };
+                let preview = if resp_str.len() > 500 {
+                    &resp_str[..500]
+                } else {
+                    &resp_str
+                };
                 return ToolResult::error(format!(
                     "无法从 bigjpg 响应中解析任务 ID。\n响应内容: {}",
                     preview
@@ -213,13 +227,15 @@ impl Tool for UpscaleTool {
                 Err(_) => continue,
             };
 
-            let task_status = status_json["status"].as_str()
+            let task_status = status_json["status"]
+                .as_str()
                 .or_else(|| status_json["data"]["status"].as_str())
                 .unwrap_or("");
 
             match task_status {
                 "success" | "done" | "completed" => {
-                    let result_url = status_json["url"].as_str()
+                    let result_url = status_json["url"]
+                        .as_str()
                         .or_else(|| status_json["data"]["url"].as_str())
                         .or_else(|| status_json["download_url"].as_str());
 
@@ -230,7 +246,8 @@ impl Tool for UpscaleTool {
                     return download_result(&client, &url, path).await;
                 }
                 "failed" | "error" => {
-                    let err = status_json["error"].as_str()
+                    let err = status_json["error"]
+                        .as_str()
                         .or_else(|| status_json["message"].as_str())
                         .unwrap_or("未知");
                     return ToolResult::error(format!("放大任务失败: {}", err));
@@ -248,11 +265,7 @@ impl Tool for UpscaleTool {
 }
 
 /// Download result image and save beside original
-async fn download_result(
-    client: &reqwest::Client,
-    url: &str,
-    original_path: &str,
-) -> ToolResult {
+async fn download_result(client: &reqwest::Client, url: &str, original_path: &str) -> ToolResult {
     let resp = match client.get(url).send().await {
         Ok(r) => r,
         Err(e) => return ToolResult::error(format!("下载放大图片失败: {}", e)),

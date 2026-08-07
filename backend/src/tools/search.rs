@@ -16,17 +16,24 @@ pub struct GrepTool {
 
 impl GrepTool {
     pub fn new(workspace_root: &str) -> Self {
-        Self { workspace_root: workspace_root.to_string() }
+        Self {
+            workspace_root: workspace_root.to_string(),
+        }
     }
 
     fn should_skip_dir(name: &str) -> bool {
-        matches!(name, "node_modules" | ".git" | "target" | "dist" | ".next" | "__pycache__" | ".venv")
+        matches!(
+            name,
+            "node_modules" | ".git" | "target" | "dist" | ".next" | "__pycache__" | ".venv"
+        )
     }
 }
 
 #[async_trait]
 impl Tool for GrepTool {
-    fn name(&self) -> &str { "grep" }
+    fn name(&self) -> &str {
+        "grep"
+    }
 
     fn description(&self) -> &str {
         "在工作区内使用正则表达式搜索文件内容。自动跳过node_modules/.git/target等目录。"
@@ -136,7 +143,15 @@ impl GrepTool {
                 if Self::should_skip_dir(&name) {
                     continue;
                 }
-                Self::walk_dir(&path, regex, glob_filter, results, file_count, match_count, depth + 1)?;
+                Self::walk_dir(
+                    &path,
+                    regex,
+                    glob_filter,
+                    results,
+                    file_count,
+                    match_count,
+                    depth + 1,
+                )?;
             } else if path.is_file() {
                 // Apply glob filter if specified
                 if let Some(glob) = glob_filter {
@@ -153,10 +168,8 @@ impl GrepTool {
                     for (line_num, line) in content.lines().enumerate() {
                         if regex.is_match(line) {
                             *match_count += 1;
-                            let relative = path
-                                .strip_prefix(Path::new(""))
-                                .unwrap_or(&path)
-                                .display();
+                            let relative =
+                                path.strip_prefix(Path::new("")).unwrap_or(&path).display();
                             let preview = if line.len() > 200 {
                                 format!("{}...", &line[..200])
                             } else {
@@ -185,13 +198,17 @@ pub struct GlobTool {
 
 impl GlobTool {
     pub fn new(workspace_root: &str) -> Self {
-        Self { workspace_root: workspace_root.to_string() }
+        Self {
+            workspace_root: workspace_root.to_string(),
+        }
     }
 }
 
 #[async_trait]
 impl Tool for GlobTool {
-    fn name(&self) -> &str { "glob" }
+    fn name(&self) -> &str {
+        "glob"
+    }
 
     fn description(&self) -> &str {
         "使用glob模式匹配文件路径。用于查找文件名匹配特定模式的文件。"
@@ -231,7 +248,11 @@ impl Tool for GlobTool {
         };
 
         // Build full glob pattern
-        let full_pattern = format!("{}/{}", search_root.display(), pattern_str.trim_start_matches('/'));
+        let full_pattern = format!(
+            "{}/{}",
+            search_root.display(),
+            pattern_str.trim_start_matches('/')
+        );
 
         let mut results = Vec::new();
         let mut count = 0;
