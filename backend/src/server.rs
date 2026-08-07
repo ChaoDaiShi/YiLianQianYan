@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::types::AppConfig;
 use crate::db::Database;
+use crate::safety::approval::ApprovalStore;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
 
@@ -88,6 +89,8 @@ pub struct AppServer {
     pub active_tasks: Mutex<HashMap<String, CancellationToken>>,
     /// In-memory log ring buffer
     pub log_buffer: LogBuffer,
+    /// Pending high-risk tool approvals awaiting user decision
+    pub approval_store: ApprovalStore,
 }
 
 impl AppServer {
@@ -135,6 +138,7 @@ impl AppServer {
             subagents,
             active_tasks: Mutex::new(HashMap::new()),
             log_buffer,
+            approval_store: ApprovalStore::new(),
         })
     }
 

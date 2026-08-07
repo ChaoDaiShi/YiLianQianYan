@@ -11,6 +11,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::server::AppServer;
 
+mod approvals;
 mod chat;
 mod conversations;
 mod logs;
@@ -90,6 +91,15 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         // Logs API
         .route("/api/logs", get(logs::get_logs))
         .route("/api/logs", post(logs::push_log))
+        // Approval API
+        .route("/api/approvals/pending", get(approvals::pending_handler))
+        .route("/api/approvals/:id", get(approvals::get_handler))
+        .route(
+            "/api/approvals/:id/approve",
+            post(approvals::approve_handler),
+        )
+        .route("/api/approvals/:id/reject", post(approvals::reject_handler))
+        .route("/api/approvals/:id/cancel", post(approvals::cancel_handler))
         .route("/api/health", get(|| async { "OK" }))
         .layer(cors)
         .with_state(server)
