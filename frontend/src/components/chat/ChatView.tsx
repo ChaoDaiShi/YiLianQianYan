@@ -163,6 +163,24 @@ export default function ChatView({
           // terminal event — stop the loading spinner so the user can decide.
           setIsLoading(false);
           break;
+        case "verification":
+          setStreaming((prev) => {
+            const toolCalls = new Map(prev?.toolCalls || []);
+            const existing = toolCalls.get(event.tool_call_id || "");
+            if (existing) {
+              const note = event.verification_success
+                ? "\n\n✓ 结果验证通过"
+                : `\n\n⚠ 结果验证失败：${event.verification_reason || "未知原因"}`;
+              toolCalls.set(event.tool_call_id || "", {
+                ...existing,
+                status:
+                  event.verification_success === false ? "error" : existing.status,
+                result: (existing.result || "") + note,
+              });
+            }
+            return { content: prev?.content || "", toolCalls };
+          });
+          break;
         case "done":
           setStreaming((prev) => {
             if (prev) {

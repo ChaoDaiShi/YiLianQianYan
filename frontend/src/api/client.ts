@@ -290,6 +290,9 @@ export interface AgentEvent {
   risk_level?: string;
   reason?: string;
   approval_id?: string;
+  verification_success?: boolean;
+  verification_reason?: string;
+  should_replan?: boolean;
 }
 
 export type EventHandler = (event: AgentEvent) => void;
