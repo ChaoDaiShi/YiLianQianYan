@@ -294,3 +294,30 @@ fn pending_for_returns_only_active() {
     let _ = store.consume_for_approval(&a.approval_id, &a.conversation_id);
     assert!(store.pending_for("conv-1").is_none());
 }
+
+#[test]
+fn concurrent_approve_executes_exactly_once() {
+    // Proves the approve-once guarantee: even with many concurrent consumers,
+    // exactly one transitions Pending → Approved (the tool runs once).
+    use std::sync::Arc;
+    let store = Arc::new(make_store());
+    let a = create_pending(&store);
+    let id = a.approval_id.clone();
+    let conv = a.conversation_id.clone();
+
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let store = store.clone();
+            let id = id.clone();
+            let conv = conv.clone();
+            std::thread::spawn(move || store.consume_for_approval(&id, &conv).is_ok())
+        })
+        .collect();
+
+    let successes = handles
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .filter(|ok| *ok)
+        .count();
+    assert_eq!(successes, 1);
+}
