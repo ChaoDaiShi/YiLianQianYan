@@ -111,10 +111,6 @@ YiLianQianYan 对 Tool 进行风险分级，在执行前进行权限评估。
 | `High` | 需要用户批准 |
 | `Critical` | 需要用户明确批准 |
 
-在审批流程（Sprint 01C）完成前，高风险操作采用 **fail-closed** 策略：
-
-> 不会未经用户确认直接执行。遇到 `High` / `Critical` 工具时，Agent 发送 `approval_required` 事件并停止该工具，当前版本尚未执行。
-
 安全链路：
 
 ```text
@@ -124,5 +120,25 @@ SafetyPolicy.assess() → 最终风险等级
   ↓
 PermissionManager.evaluate() → Allow / RequireApproval
   ↓
-执行 或 阻断（发送 approval_required）
+执行 或 暂停等待用户审批（approval_required）
 ```
+
+### 用户审批
+
+高风险与关键风险操作会暂停执行并请求用户确认。
+
+只有用户明确选择"允许本次"后，系统才会执行最初请求的 Tool Call。
+
+拒绝后，该 Tool 不会执行，Agent 可以基于拒绝结果重新规划。
+
+审批 API：
+
+```text
+POST /api/approvals/:id/approve    允许 → 执行原始 Tool Call → 继续 Agent（SSE）
+POST /api/approvals/:id/reject     拒绝 → 写回拒绝结果 → 继续 Agent（SSE）
+POST /api/approvals/:id/cancel     取消 → 标记取消，不执行
+GET  /api/approvals/:id            查询单个审批
+GET  /api/approvals/pending        列出待审批
+```
+
+注意：当前 `PendingApproval` 为运行时状态（内存存储）；后端重启后，未处理审批会失效。
