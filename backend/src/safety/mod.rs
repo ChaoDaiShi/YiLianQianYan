@@ -8,9 +8,11 @@
 //     → Agent Engine gate (approval_required / deny)
 // ============================================================
 
+pub mod approval;
 pub mod permission;
 pub mod policy;
 
+pub use approval::{ApprovalError, ApprovalStatus, ApprovalStore, PendingApproval};
 pub use permission::{PermissionDecision, PermissionManager};
 pub use policy::SafetyPolicy;
 

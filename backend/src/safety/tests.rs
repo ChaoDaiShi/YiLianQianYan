@@ -150,3 +150,147 @@ fn process_list_stays_high() {
     );
     assert_eq!(risk, RiskLevel::High);
 }
+
+// ── ApprovalStore: lifecycle ──
+
+use super::approval::{ApprovalError, ApprovalStatus, ApprovalStore, PendingApproval};
+
+fn make_store() -> ApprovalStore {
+    ApprovalStore::new()
+}
+
+fn create_pending(store: &ApprovalStore) -> PendingApproval {
+    store.create(
+        "conv-1".to_string(),
+        "call-1".to_string(),
+        "bash".to_string(),
+        json_str(r#"{"command": "git push origin main"}"#),
+        RiskLevel::High,
+        "高风险操作".to_string(),
+    )
+}
+
+#[test]
+fn high_tool_creates_pending() {
+    let store = make_store();
+    let a = create_pending(&store);
+    assert_eq!(a.status, ApprovalStatus::Pending);
+    assert!(!a.approval_id.is_empty());
+    // Original tool call is preserved verbatim.
+    assert_eq!(a.tool_name, "bash");
+    assert_eq!(a.arguments["command"], "git push origin main");
+}
+
+#[test]
+fn approve_executes_once_and_second_is_conflict() {
+    let store = make_store();
+    let a = create_pending(&store);
+    let conv = a.conversation_id.clone();
+    let id = a.approval_id.clone();
+
+    // First approve succeeds and returns the original payload.
+    let approved = store
+        .consume_for_approval(&id, &conv)
+        .expect("first approve should succeed");
+    assert_eq!(approved.status, ApprovalStatus::Approved);
+    assert_eq!(approved.tool_call_id, "call-1");
+
+    // Second approve must conflict.
+    match store.consume_for_approval(&id, &conv) {
+        Err(ApprovalError::AlreadyProcessed) => {}
+        other => panic!("expected AlreadyProcessed, got {:?}", other),
+    }
+}
+
+#[test]
+fn reject_never_executes() {
+    let store = make_store();
+    let a = create_pending(&store);
+    let conv = a.conversation_id.clone();
+    let id = a.approval_id.clone();
+
+    let rejected = store
+        .consume_for_rejection(&id, &conv)
+        .expect("reject should succeed");
+    assert_eq!(rejected.status, ApprovalStatus::Rejected);
+
+    // Approve after reject is blocked.
+    match store.consume_for_approval(&id, &conv) {
+        Err(ApprovalError::AlreadyProcessed) => {}
+        other => panic!("expected AlreadyProcessed, got {:?}", other),
+    }
+}
+
+#[test]
+fn cancel_blocks_approve() {
+    let store = make_store();
+    let a = create_pending(&store);
+    let conv = a.conversation_id.clone();
+    let id = a.approval_id.clone();
+
+    let cancelled = store.cancel(&id, &conv).expect("cancel should succeed");
+    assert_eq!(cancelled.status, ApprovalStatus::Cancelled);
+
+    match store.consume_for_approval(&id, &conv) {
+        Err(ApprovalError::AlreadyProcessed) => {}
+        other => panic!("expected AlreadyProcessed, got {:?}", other),
+    }
+}
+
+#[test]
+fn conversation_mismatch_is_blocked() {
+    let store = make_store();
+    let a = create_pending(&store);
+    let id = a.approval_id.clone();
+
+    match store.consume_for_approval(&id, "other-conv") {
+        Err(ApprovalError::ConversationMismatch) => {}
+        other => panic!("expected ConversationMismatch, got {:?}", other),
+    }
+}
+
+#[test]
+fn unknown_approval_not_found() {
+    let store = make_store();
+    match store.consume_for_approval("nope", "conv-1") {
+        Err(ApprovalError::NotFound) => {}
+        other => panic!("expected NotFound, got {:?}", other),
+    }
+}
+
+#[test]
+fn expired_approval_is_blocked_and_purged() {
+    let store = make_store();
+    let a = create_pending(&store);
+    let id = a.approval_id.clone();
+    let conv = a.conversation_id.clone();
+
+    // Rewrite the stored approval to have an already-passed expiry.
+    let mut expired = a.clone();
+    expired.expires_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+    store.insert_for_test(expired);
+
+    match store.consume_for_approval(&id, &conv) {
+        Err(ApprovalError::Expired) => {}
+        other => panic!("expected Expired, got {:?}", other),
+    }
+
+    // It is now marked Expired and visible until purged.
+    assert_eq!(store.get(&id).unwrap().status, ApprovalStatus::Expired);
+    assert_eq!(store.purge_expired(), 1);
+    assert!(store.get(&id).is_none());
+}
+
+#[test]
+fn pending_for_returns_only_active() {
+    let store = make_store();
+    let a = create_pending(&store);
+    assert_eq!(
+        store.pending_for("conv-1").unwrap().approval_id,
+        a.approval_id
+    );
+
+    // After processing, no active pending remains.
+    let _ = store.consume_for_approval(&a.approval_id, &a.conversation_id);
+    assert!(store.pending_for("conv-1").is_none());
+}
