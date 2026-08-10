@@ -5,12 +5,14 @@
 mod conversations;
 mod mcp;
 mod memories;
+mod security_audit;
 mod settings;
 mod workflows;
 
 pub use conversations::*;
 pub use mcp::McpServer;
 pub use memories::*;
+pub use security_audit::*;
 pub use workflows::Workflow;
 // settings::* not re-exported (used internally via Database impl)
 
@@ -122,7 +124,115 @@ impl Database {
                 is_builtin INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER,
                 updated_at INTEGER
-            );",
+            );
+
+            CREATE TABLE IF NOT EXISTS security_subjects (
+                subject_id TEXT PRIMARY KEY,
+                subject_type TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                external_ref TEXT,
+                display_name TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS security_role_bindings (
+                binding_id TEXT PRIMARY KEY,
+                subject_id TEXT NOT NULL,
+                role_key TEXT NOT NULL CHECK (role_key IN ('owner', 'standard', 'restricted')),
+                source TEXT NOT NULL,
+                effective_at INTEGER NOT NULL,
+                expires_at INTEGER,
+                revoked_at INTEGER,
+                FOREIGN KEY (subject_id) REFERENCES security_subjects(subject_id)
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_security_role_active_subject
+                ON security_role_bindings(subject_id) WHERE revoked_at IS NULL;
+
+            CREATE TABLE IF NOT EXISTS security_approvals (
+                approval_id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                tool_call_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                role_key TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                risk_level TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                arguments_view TEXT NOT NULL,
+                request_digest TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                grant_scope TEXT NOT NULL CHECK (grant_scope = 'once'),
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                resolved_at INTEGER,
+                FOREIGN KEY (subject_id) REFERENCES security_subjects(subject_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS security_audit_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                parent_event_id TEXT,
+                created_at INTEGER NOT NULL,
+                subject_id TEXT NOT NULL,
+                role_key TEXT NOT NULL,
+                conversation_id TEXT,
+                tool_call_id TEXT,
+                tool_name TEXT,
+                capabilities_json TEXT NOT NULL,
+                actions_json TEXT NOT NULL,
+                resources_json TEXT NOT NULL,
+                policy_version TEXT,
+                risk_level TEXT,
+                decision_status TEXT,
+                request_digest TEXT,
+                result_digest TEXT,
+                details_json TEXT NOT NULL,
+                error_category TEXT,
+                previous_hash TEXT,
+                event_hash TEXT,
+                signature TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_security_audit_created_at
+                ON security_audit_events(created_at);
+            CREATE INDEX IF NOT EXISTS idx_security_audit_correlation
+                ON security_audit_events(correlation_id);
+            CREATE INDEX IF NOT EXISTS idx_security_audit_conversation
+                ON security_audit_events(conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_security_audit_tool
+                ON security_audit_events(tool_name);
+            CREATE INDEX IF NOT EXISTS idx_security_audit_event_type
+                ON security_audit_events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_security_audit_decision
+                ON security_audit_events(decision_status);
+            CREATE INDEX IF NOT EXISTS idx_security_audit_risk
+                ON security_audit_events(risk_level);
+            ",
+        )?;
+
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT OR IGNORE INTO security_subjects (
+                subject_id, subject_type, provider, external_ref, display_name,
+                status, created_at, updated_at
+             ) VALUES ('local-user', 'local_user', 'built_in', NULL,
+                       'Local User', 'active', ?1, ?1)",
+            [now],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO security_role_bindings (
+                binding_id, subject_id, role_key, source, effective_at,
+                expires_at, revoked_at
+             ) VALUES ('local-user-owner-initial', 'local-user', 'owner',
+                       'built_in', ?1, NULL, NULL)",
+            [now],
         )?;
 
         Ok(())
