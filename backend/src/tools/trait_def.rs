@@ -5,6 +5,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::safety::{describe_builtin_tool, DescriptorError, ToolSecurityDescriptor};
+
 /// Risk level of a tool — used by the SafetyPolicy to decide permissions.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
@@ -88,6 +90,15 @@ pub trait Tool: Send + Sync {
     /// max(tool default risk, argument-based risk).
     fn risk_level(&self) -> RiskLevel {
         RiskLevel::Low
+    }
+
+    /// Describe the permissions, resources, risk, and side effects requested
+    /// by this concrete Tool Call. Unknown tool names fail closed.
+    fn security_descriptor(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<ToolSecurityDescriptor, DescriptorError> {
+        describe_builtin_tool(self.name(), args)
     }
 
     /// Whether this tool requires user approval before execution
