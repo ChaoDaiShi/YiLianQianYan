@@ -82,6 +82,24 @@ fn image_upscale_declares_file_and_network_side_effects() {
     assert!(descriptor
         .side_effects
         .contains(&SideEffectKind::NetworkEgress));
+    assert_eq!(descriptor.default_risk, RiskLevel::High);
+    assert!(matches!(
+        descriptor.resources.as_slice(),
+        [
+            ResourceDescriptor::File { path: input },
+            ResourceDescriptor::File { path: output },
+            ResourceDescriptor::Network { url, method },
+            ResourceDescriptor::NetworkFromResponse {
+                source,
+                method: download_method,
+            },
+        ] if input == "image.png"
+            && output == "image_upscaled.png"
+            && url == "https://bigjpg.com/api/task/"
+            && method == "POST"
+            && source == "bigjpg.task_result.url"
+            && download_method == "GET"
+    ));
 }
 
 #[test]
@@ -147,4 +165,45 @@ fn file_descriptor_keeps_runtime_target() {
         descriptor.resources.as_slice(),
         [ResourceDescriptor::File { path }] if path == "notes.txt"
     ));
+}
+
+#[test]
+fn descriptor_identity_mismatch_fails_validation() {
+    let descriptor = describe_builtin_tool(
+        "write_file",
+        &serde_json::json!({"path": "notes.txt", "content": "sample"}),
+    )
+    .unwrap();
+
+    assert!(descriptor.validate_for_tool("read_file").is_err());
+}
+
+#[test]
+fn descriptor_permissions_and_resources_must_match_the_tool_profile() {
+    let descriptor =
+        describe_builtin_tool("read_file", &serde_json::json!({"path": "README.md"})).unwrap();
+
+    let mut wrong_permission = descriptor.clone();
+    wrong_permission.requested_permissions =
+        vec![PermissionId::ShellExecute.in_scope(crate::safety::ResourceScope::ShellCommand)];
+    assert!(wrong_permission.validate_for_tool("read_file").is_err());
+
+    let mut wrong_resource = descriptor;
+    wrong_resource.resources = vec![ResourceDescriptor::Shell {
+        command: "pwd".to_string(),
+        working_directory: None,
+    }];
+    assert!(wrong_resource.validate_for_tool("read_file").is_err());
+}
+
+#[test]
+fn descriptor_risk_cannot_be_lower_than_the_builtin_profile() {
+    let mut descriptor = describe_builtin_tool(
+        "mouse",
+        &serde_json::json!({"action": "click", "x": 10, "y": 20}),
+    )
+    .unwrap();
+    descriptor.default_risk = RiskLevel::Low;
+
+    assert!(descriptor.validate_for_tool("mouse").is_err());
 }

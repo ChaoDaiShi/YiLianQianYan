@@ -39,9 +39,11 @@ pub struct PolicyEngine;
 impl PolicyEngine {
     pub fn evaluate(
         role: BuiltInRole,
+        expected_tool_name: &str,
         descriptor: &ToolSecurityDescriptor,
         final_risk: RiskLevel,
     ) -> PolicyDecision {
+        let effective_risk = std::cmp::max(descriptor.default_risk, final_risk);
         let permissions = descriptor
             .requested_permissions
             .iter()
@@ -55,14 +57,14 @@ impl PolicyEngine {
 
         let context = |reason: String| DecisionContext {
             role,
-            risk_level: final_risk,
+            risk_level: effective_risk,
             policy_version: POLICY_VERSION.to_string(),
             requested_permissions: permissions.clone(),
             resource_scopes: scopes.clone(),
             reason,
         };
 
-        if let Err(error) = descriptor.validate() {
+        if let Err(error) = descriptor.validate_for_tool(expected_tool_name) {
             return PolicyDecision::Deny(context(format!("invalid security descriptor: {error}")));
         }
 
@@ -72,19 +74,17 @@ impl PolicyEngine {
             .map(|requested| RolePolicy::grant(role, requested.permission))
             .collect::<Vec<_>>();
 
-        if grants.iter().any(|grant| *grant == GrantMode::Deny) {
+        if grants.contains(&GrantMode::Deny) {
             return PolicyDecision::Deny(context(format!(
                 "role {role} does not grant every requested permission"
             )));
         }
 
-        if matches!(final_risk, RiskLevel::High | RiskLevel::Critical)
-            || grants
-                .iter()
-                .any(|grant| *grant == GrantMode::RequireApproval)
+        if matches!(effective_risk, RiskLevel::High | RiskLevel::Critical)
+            || grants.contains(&GrantMode::RequireApproval)
         {
             return PolicyDecision::RequireApproval(context(format!(
-                "role {role} or risk level {final_risk} requires one-time approval"
+                "role {role} or risk level {effective_risk} requires one-time approval"
             )));
         }
 

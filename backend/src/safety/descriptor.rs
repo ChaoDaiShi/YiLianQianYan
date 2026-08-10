@@ -34,6 +34,10 @@ pub enum ResourceDescriptor {
         url: String,
         method: String,
     },
+    NetworkFromResponse {
+        source: String,
+        method: String,
+    },
     Desktop {
         action: String,
         target: Option<String>,
@@ -74,6 +78,36 @@ impl ToolSecurityDescriptor {
                 self.tool_name
             )));
         }
+        let profile = builtin_descriptor_profile(self)?;
+        if self.requested_permissions != profile.requested_permissions {
+            return Err(DescriptorError::InvalidDescriptor(format!(
+                "tool {} permissions do not match its built-in profile",
+                self.tool_name
+            )));
+        }
+        if self.default_risk < profile.minimum_risk {
+            return Err(DescriptorError::InvalidDescriptor(format!(
+                "tool {} risk {} is below its built-in minimum {}",
+                self.tool_name, self.default_risk, profile.minimum_risk
+            )));
+        }
+        if self.side_effects != profile.side_effects {
+            return Err(DescriptorError::InvalidDescriptor(format!(
+                "tool {} side effects do not match its built-in profile",
+                self.tool_name
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn validate_for_tool(&self, expected_tool_name: &str) -> Result<(), DescriptorError> {
+        self.validate()?;
+        if self.tool_name != expected_tool_name {
+            return Err(DescriptorError::InvalidDescriptor(format!(
+                "descriptor tool {} does not match requested tool {expected_tool_name}",
+                self.tool_name
+            )));
+        }
         Ok(())
     }
 }
@@ -91,6 +125,229 @@ pub enum DescriptorError {
     InvalidAction { tool: String, action: String },
     #[error("invalid security descriptor: {0}")]
     InvalidDescriptor(String),
+}
+
+struct DescriptorProfile {
+    requested_permissions: Vec<RequestedPermission>,
+    minimum_risk: RiskLevel,
+    side_effects: Vec<SideEffectKind>,
+}
+
+fn builtin_descriptor_profile(
+    descriptor: &ToolSecurityDescriptor,
+) -> Result<DescriptorProfile, DescriptorError> {
+    let tool_name = descriptor.tool_name.as_str();
+    let invalid_resources = || {
+        DescriptorError::InvalidDescriptor(format!(
+            "tool {tool_name} resources do not match its built-in profile"
+        ))
+    };
+    let profile = |requested_permissions, minimum_risk, side_effects| DescriptorProfile {
+        requested_permissions,
+        minimum_risk,
+        side_effects,
+    };
+    let single_file = matches!(
+        descriptor.resources.as_slice(),
+        [ResourceDescriptor::File { path }] if !path.trim().is_empty()
+    );
+
+    let value = match tool_name {
+        "read_file" if single_file => profile(
+            vec![permission(
+                PermissionId::FilesystemRead,
+                ResourceScope::Workspace,
+            )],
+            RiskLevel::Low,
+            vec![],
+        ),
+        "write_file" | "edit_file" if single_file => profile(
+            vec![permission(
+                PermissionId::FilesystemWrite,
+                ResourceScope::Workspace,
+            )],
+            RiskLevel::Medium,
+            vec![SideEffectKind::FileMutation],
+        ),
+        "grep" | "glob" if single_file => profile(
+            vec![permission(
+                PermissionId::FilesystemRead,
+                ResourceScope::Workspace,
+            )],
+            RiskLevel::Low,
+            vec![],
+        ),
+        "bash" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Shell { command, .. }] if !command.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::ShellExecute,
+                    ResourceScope::ShellCommand,
+                )],
+                RiskLevel::High,
+                vec![SideEffectKind::ProcessMutation],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "process" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Process { action, pid: None }] if action == "list" => profile(
+                vec![permission(
+                    PermissionId::ProcessInspect,
+                    ResourceScope::Process,
+                )],
+                RiskLevel::Low,
+                vec![],
+            ),
+            [ResourceDescriptor::Process {
+                action,
+                pid: Some(_),
+            }] if action == "kill" => profile(
+                vec![permission(
+                    PermissionId::ProcessControl,
+                    ResourceScope::Process,
+                )],
+                RiskLevel::High,
+                vec![SideEffectKind::ProcessMutation],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "http_request" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Network { url, method }]
+                if !url.trim().is_empty() && !method.trim().is_empty() =>
+            {
+                let minimum_risk = match method.as_str() {
+                    "GET" | "HEAD" | "OPTIONS" => RiskLevel::Medium,
+                    _ => RiskLevel::High,
+                };
+                profile(
+                    vec![permission(
+                        PermissionId::NetworkRequest,
+                        ResourceScope::NetworkTarget,
+                    )],
+                    minimum_risk,
+                    vec![SideEffectKind::NetworkEgress],
+                )
+            }
+            _ => return Err(invalid_resources()),
+        },
+        "mouse" | "keyboard" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Desktop {
+                action,
+                target: None,
+            }] if !action.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::DesktopInteract,
+                    ResourceScope::DesktopTarget,
+                )],
+                RiskLevel::High,
+                vec![SideEffectKind::DesktopMutation],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "screenshot" | "windows_list" | "ui_inspect" | "ui_find" => {
+            match descriptor.resources.as_slice() {
+                [ResourceDescriptor::Desktop { action, target }]
+                    if action == tool_name
+                        && (tool_name != "ui_find"
+                            || target
+                                .as_ref()
+                                .is_some_and(|value| !value.trim().is_empty())) =>
+                {
+                    profile(
+                        vec![permission(
+                            PermissionId::DesktopObserve,
+                            ResourceScope::DesktopTarget,
+                        )],
+                        RiskLevel::Low,
+                        vec![],
+                    )
+                }
+                _ => return Err(invalid_resources()),
+            }
+        }
+        "windows_focus" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Desktop {
+                action,
+                target: Some(target),
+            }] if action == tool_name && !target.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::DesktopInteract,
+                    ResourceScope::DesktopTarget,
+                )],
+                RiskLevel::Medium,
+                vec![SideEffectKind::DesktopMutation],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "ui_invoke" | "ui_set_value" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Desktop {
+                action,
+                target: Some(target),
+            }] if action == tool_name && !target.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::DesktopInteract,
+                    ResourceScope::DesktopTarget,
+                )],
+                RiskLevel::High,
+                vec![SideEffectKind::DesktopMutation],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "load_skill" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Skill { name }] if !name.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::SkillLoad,
+                    ResourceScope::DiscoveredSkill,
+                )],
+                RiskLevel::Low,
+                vec![],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "write_todos" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Agent { action }] if action == "write_todos" => profile(
+                vec![permission(
+                    PermissionId::AgentPlan,
+                    ResourceScope::AgentInternal,
+                )],
+                RiskLevel::Low,
+                vec![],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "upscale_image" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::File { path: input }, ResourceDescriptor::File { path: output }, ResourceDescriptor::Network { url, method }, ResourceDescriptor::NetworkFromResponse {
+                source,
+                method: download_method,
+            }] if !input.trim().is_empty()
+                && output == &upscale_output_path(input)
+                && url == "https://bigjpg.com/api/task/"
+                && method == "POST"
+                && source == "bigjpg.task_result.url"
+                && download_method == "GET" =>
+            {
+                profile(
+                    vec![
+                        permission(PermissionId::FilesystemRead, ResourceScope::Workspace),
+                        permission(PermissionId::FilesystemWrite, ResourceScope::Workspace),
+                        permission(PermissionId::NetworkRequest, ResourceScope::NetworkTarget),
+                    ],
+                    RiskLevel::High,
+                    vec![
+                        SideEffectKind::FileMutation,
+                        SideEffectKind::NetworkEgress,
+                        SideEffectKind::ExternalService,
+                    ],
+                )
+            }
+            _ => return Err(invalid_resources()),
+        },
+        "read_file" | "write_file" | "edit_file" | "grep" | "glob" => {
+            return Err(invalid_resources())
+        }
+        _ => return Err(DescriptorError::UnknownTool(descriptor.tool_name.clone())),
+    };
+
+    Ok(value)
 }
 
 fn required_string(tool: &str, args: &Value, key: &'static str) -> Result<String, DescriptorError> {
@@ -112,6 +369,19 @@ fn required_u32(tool: &str, args: &Value, key: &'static str) -> Result<u32, Desc
             tool: tool.to_string(),
             argument: key,
         })
+}
+
+fn upscale_output_path(input_path: &str) -> String {
+    let input = std::path::Path::new(input_path);
+    let stem = input.file_stem().unwrap_or_default().to_string_lossy();
+    let extension = input.extension().unwrap_or_default().to_string_lossy();
+    let directory = input.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let output = if extension.is_empty() {
+        directory.join(format!("{stem}_upscaled"))
+    } else {
+        directory.join(format!("{stem}_upscaled.{extension}"))
+    };
+    output.to_string_lossy().to_string()
 }
 
 fn permission(permission: PermissionId, scope: ResourceScope) -> RequestedPermission {
@@ -346,6 +616,7 @@ pub fn describe_builtin_tool(
         },
         "upscale_image" => {
             let path = required_string(tool_name, args, "path")?;
+            let output_path = upscale_output_path(&path);
             ToolSecurityDescriptor {
                 tool_name: tool_name.to_string(),
                 requested_permissions: vec![
@@ -355,12 +626,17 @@ pub fn describe_builtin_tool(
                 ],
                 resources: vec![
                     ResourceDescriptor::File { path: path.clone() },
+                    ResourceDescriptor::File { path: output_path },
                     ResourceDescriptor::Network {
-                        url: "https://bigjpg.com".to_string(),
+                        url: "https://bigjpg.com/api/task/".to_string(),
                         method: "POST".to_string(),
                     },
+                    ResourceDescriptor::NetworkFromResponse {
+                        source: "bigjpg.task_result.url".to_string(),
+                        method: "GET".to_string(),
+                    },
                 ],
-                default_risk: RiskLevel::Medium,
+                default_risk: RiskLevel::High,
                 side_effects: vec![
                     SideEffectKind::FileMutation,
                     SideEffectKind::NetworkEgress,

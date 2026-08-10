@@ -7,8 +7,8 @@ fn sample_args(tool_name: &str) -> serde_json::Value {
         "write_file" => serde_json::json!({"path": "notes.txt", "content": "sample"}),
         "edit_file" => serde_json::json!({
             "path": "notes.txt",
-            "old_text": "before",
-            "new_text": "after"
+            "find": "before",
+            "replace": "after"
         }),
         "grep" => serde_json::json!({"pattern": "SafetyPolicy", "path": "."}),
         "glob" => serde_json::json!({"pattern": "**/*.rs", "path": "."}),
