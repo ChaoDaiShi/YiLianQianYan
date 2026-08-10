@@ -1,4 +1,5 @@
 import { API_BASE, type AgentEvent } from "./client";
+import { controlSessionHeaders } from "./controlSession";
 import type { PendingApproval } from "../types/approval";
 
 interface PendingResponse {
@@ -10,7 +11,10 @@ async function requestJSON<T>(path: string, body?: unknown): Promise<T | null> {
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...controlSessionHeaders(),
+      },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) return null;
@@ -28,7 +32,10 @@ async function streamDecision(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...controlSessionHeaders(),
+    },
     body: JSON.stringify(body),
   });
 
@@ -133,7 +140,9 @@ export async function cancelApproval(
 
 export async function getApproval(approvalId: string) {
   try {
-    const response = await fetch(`${API_BASE}/api/approvals/${approvalId}`);
+    const response = await fetch(`${API_BASE}/api/approvals/${approvalId}`, {
+      headers: controlSessionHeaders(),
+    });
     if (!response.ok) return null;
     const data = (await response.json()) as PendingResponse;
     return data.approval || null;
@@ -145,7 +154,9 @@ export async function getApproval(approvalId: string) {
 
 export async function listPendingApprovals() {
   try {
-    const response = await fetch(`${API_BASE}/api/approvals/pending`);
+    const response = await fetch(`${API_BASE}/api/approvals/pending`, {
+      headers: controlSessionHeaders(),
+    });
     if (!response.ok) return null;
     const data = (await response.json()) as PendingResponse;
     return data.approvals || [];

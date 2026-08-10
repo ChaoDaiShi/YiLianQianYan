@@ -2,6 +2,8 @@
 // API Client — fetch-based HTTP + SSE for backend communication
 // ============================================================
 
+import { controlSessionHeaders } from "./controlSession";
+
 export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ||
   "http://127.0.0.1:9420";
@@ -14,7 +16,10 @@ async function request<T>(
   try {
     const opts: RequestInit = {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...controlSessionHeaders(),
+      },
     };
     if (body !== undefined) {
       opts.body = JSON.stringify(body);
@@ -307,7 +312,10 @@ export function sendMessage(
 
   fetch(`${API_BASE}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...controlSessionHeaders(),
+    },
     body: JSON.stringify({
       conversation_id: conversationId,
       message,
