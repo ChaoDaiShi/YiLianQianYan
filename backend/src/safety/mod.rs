@@ -13,6 +13,7 @@ pub mod capability;
 pub mod descriptor;
 pub mod permission;
 pub mod policy;
+pub mod rbac;
 pub mod subject;
 
 pub use approval::{ApprovalError, ApprovalStatus, ApprovalStore, PendingApproval};
@@ -23,6 +24,7 @@ pub use descriptor::{
 };
 pub use permission::{PermissionDecision, PermissionManager};
 pub use policy::SafetyPolicy;
+pub use rbac::{GrantMode, RolePolicy};
 pub use subject::{BuiltInRole, SecuritySubject, SubjectType};
 
 #[cfg(test)]

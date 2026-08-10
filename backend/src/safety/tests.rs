@@ -5,6 +5,7 @@
 use crate::tools::trait_def::RiskLevel;
 
 mod descriptor;
+mod rbac;
 mod subject_capability;
 
 use super::permission::{PermissionDecision, PermissionManager};
