@@ -1,4 +1,5 @@
 import type { Message, ToolCallRecord } from "../../types";
+import { MESSAGE_LIST_VIEWPORT_CLASS_NAME } from "../layout/workspaceLayout";
 import { EmptyState } from "../ui";
 import MessageBubble from "./MessageBubble";
 import StreamingText from "./StreamingText";
@@ -12,7 +13,7 @@ export interface StreamingState {
 interface MessageListProps {
   messages: Message[];
   streaming: StreamingState | null;
-  messagesEndRef: React.RefObject<HTMLDivElement>;
+  scrollContainerRef: React.RefObject<HTMLDivElement>;
   onHint?: (text: string) => void;
   error?: string | null;
 }
@@ -27,12 +28,15 @@ const HINTS = [
 export default function MessageList({
   messages,
   streaming,
-  messagesEndRef,
+  scrollContainerRef,
   onHint,
   error,
 }: MessageListProps) {
   return (
-    <div className="scrollbar-thin flex-1 overflow-y-auto px-4 py-6">
+    <div
+      ref={scrollContainerRef}
+      className={MESSAGE_LIST_VIEWPORT_CLASS_NAME}
+    >
       <div className="message-column">
       {messages.length === 0 && !streaming && (
         <EmptyState
@@ -111,8 +115,6 @@ export default function MessageList({
           {error}
         </div>
       )}
-
-        <div ref={messagesEndRef} />
       </div>
     </div>
   );

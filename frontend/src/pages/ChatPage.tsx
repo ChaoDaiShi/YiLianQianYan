@@ -5,6 +5,7 @@ import ConversationSidebar from "../components/chat/ConversationSidebar";
 import {
   getDrawerState,
   getWorkspaceMode,
+  WORKBENCH_VIEWPORT_CLASS_NAME,
   type WorkspaceDrawer,
 } from "../components/layout/workspaceLayout";
 import { Drawer } from "../components/ui";
@@ -63,7 +64,7 @@ export default function ChatPage() {
   );
 
   return (
-    <div className="workbench-grid" data-mode={workspaceMode}>
+    <div className={WORKBENCH_VIEWPORT_CLASS_NAME} data-mode={workspaceMode}>
       {workspaceMode !== "narrow" && (
         <div className="min-h-0 border-r border-[var(--border)]">
           {conversationSidebar()}

@@ -32,6 +32,10 @@ import {
 import type { Message } from "../../types";
 import type { PendingApproval, RiskLevel } from "../../types/approval";
 import type { AgentRunState } from "../../features/execution/model";
+import {
+  CHAT_COLUMN_VIEWPORT_CLASS_NAME,
+  scrollMessageListToBottom,
+} from "../layout/workspaceLayout";
 import ChatInput from "./ChatInput";
 import ChatHeader from "./ChatHeader";
 import MessageList, { type StreamingState } from "./MessageList";
@@ -107,7 +111,7 @@ export default function ChatView({
   const pendingApprovals = useApprovalStore(selectPendingApprovals);
   const resolving = useApprovalStore((state) => state.resolving);
   const abortRef = useRef<AbortController | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null!);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const unknownEventTypes = useRef(new Set<string>());
 
   const loadWorkflows = useCallback(() => {
@@ -281,7 +285,7 @@ export default function ChatView({
   }, [currentConvId, execution.completed]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollMessageListToBottom(messagesScrollRef.current);
   }, [messages, runState.content, runState.order.length]);
 
   const streaming = useMemo<StreamingState | null>(() => {
@@ -354,7 +358,7 @@ export default function ChatView({
 
   return (
     <>
-      <div className="flex h-full min-w-0 flex-col">
+      <div className={CHAT_COLUMN_VIEWPORT_CLASS_NAME}>
         <ChatHeader
           title="智能工作台"
           connection={runState.connection}
@@ -373,7 +377,7 @@ export default function ChatView({
       <MessageList
         messages={messages}
         streaming={streaming}
-        messagesEndRef={messagesEndRef}
+        scrollContainerRef={messagesScrollRef}
         onHint={setSuggestedText}
         error={error}
       />
