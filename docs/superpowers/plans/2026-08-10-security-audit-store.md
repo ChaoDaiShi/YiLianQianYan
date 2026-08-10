@@ -264,6 +264,7 @@ Commit: `feat(audit): add fail-closed audit recorder`
 - Modify: `backend/src/safety/tests.rs`
 - Modify: `backend/src/server.rs`
 - Modify: `backend/src/api/mod.rs`
+- Modify: `backend/Cargo.toml`
 
 **Interfaces:**
 - Produces: `ControlSession`, `ControlSessionError`, and `CONTROL_SESSION_HEADER`.
@@ -306,7 +307,10 @@ Allow extra exact origins through `YILIAN_ALLOWED_ORIGINS`. Never use `Any`.
 
 - [ ] **Step 4: Add router tests and verify GREEN**
 
-Using `tower::ServiceExt`, assert public health is `200`, protected audit health is `401` without/wrong token and reaches its handler with the exact token. Assert `DELETE /api/security/audit` is `404`.
+Enable Tower's existing `util` feature for router tests. Using
+`tower::ServiceExt`, assert public health is `200`, the existing `/api/tools`
+route is `401` without/wrong token and reaches its handler with the exact token.
+The audit-route authorization checks remain in Task 5 after those routes exist.
 
 Run:
 
