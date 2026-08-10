@@ -4,6 +4,7 @@
 
 use crate::tools::trait_def::RiskLevel;
 
+mod audit;
 mod descriptor;
 mod policy_engine;
 mod rbac;

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::types::AppConfig;
 use crate::db::Database;
-use crate::safety::approval::ApprovalStore;
+use crate::safety::{approval::ApprovalStore, AuditRecorder};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
 
@@ -93,11 +93,14 @@ pub struct AppServer {
     pub log_buffer: LogBuffer,
     /// Pending high-risk tool approvals awaiting user decision
     pub approval_store: ApprovalStore,
+    /// Persistent, redacted security event recorder.
+    pub audit_recorder: AuditRecorder,
 }
 
 impl AppServer {
     pub fn new(db_path: &std::path::Path, workspace_root: &str) -> Result<Self, String> {
         let db = Database::new(db_path).map_err(|e| e.to_string())?;
+        let audit_recorder = AuditRecorder::new(db.clone_connection());
         let mut config = db.get_settings().unwrap_or_default();
 
         // Auto-migrate old system prompts to the new one
@@ -142,6 +145,7 @@ impl AppServer {
             active_tasks: Mutex::new(HashMap::new()),
             log_buffer,
             approval_store: ApprovalStore::new(),
+            audit_recorder,
         })
     }
 

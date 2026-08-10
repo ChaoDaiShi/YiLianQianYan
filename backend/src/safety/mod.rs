@@ -9,6 +9,7 @@
 // ============================================================
 
 pub mod approval;
+pub mod audit;
 pub mod capability;
 pub mod descriptor;
 pub mod permission;
@@ -19,6 +20,9 @@ pub mod redaction;
 pub mod subject;
 
 pub use approval::{ApprovalError, ApprovalStatus, ApprovalStore, PendingApproval};
+pub use audit::{
+    AuditError, AuditEventInput, AuditEventType, AuditExportV1, AuditHealth, AuditRecorder,
+};
 pub use capability::{Action, Capability, PermissionId, RequestedPermission, ResourceScope};
 pub use descriptor::{
     describe_builtin_tool, DescriptorError, ResourceDescriptor, SideEffectKind,
