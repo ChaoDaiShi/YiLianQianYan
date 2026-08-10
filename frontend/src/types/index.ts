@@ -8,6 +8,16 @@ export interface ToolCallRecord {
   args: Record<string, unknown>;
   status: "running" | "success" | "error" | "blocked";
   result?: string;
+  riskLevel?: "low" | "medium" | "high" | "critical" | "unknown";
+  approvalStatus?:
+    | "not_required"
+    | "pending"
+    | "approved"
+    | "rejected"
+    | "cancelled"
+    | "expired";
+  verificationStatus?: "not_requested" | "pending" | "passed" | "failed";
+  verificationReason?: string;
 }
 
 export interface Message {

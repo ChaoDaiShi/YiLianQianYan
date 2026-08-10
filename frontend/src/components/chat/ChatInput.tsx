@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Send, Square } from "lucide-react";
 import { Button } from "../ui";
 
@@ -21,59 +21,77 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (suggestedText) {
-      setInput(suggestedText);
-      onTextUsed?.();
-      textareaRef.current?.focus();
-    }
-  }, [suggestedText, onTextUsed]);
+    if (!suggestedText) return;
+    setInput(suggestedText);
+    onTextUsed?.();
+    textareaRef.current?.focus();
+  }, [onTextUsed, suggestedText]);
 
   useEffect(() => {
-    const el = textareaRef.current;
-    if (el) {
-      el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 200) + "px";
-    }
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
   }, [input]);
 
-  const handleSend = () => {
-    if (!input.trim() || isLoading) return;
-    onSend(input.trim());
+  const send = () => {
+    const text = input.trim();
+    if (!text || isLoading) return;
+    onSend(text);
     setInput("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      send();
     }
   };
 
   return (
-    <div className="border-t border-[var(--border)] px-4 py-3 bg-[var(--panel)]/40 backdrop-blur-md">
-      <div className="flex items-end gap-2 max-w-4xl mx-auto">
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="输入消息… Enter 发送，Shift+Enter 换行"
-          rows={1}
-          disabled={isLoading}
-          className="flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--input-bg)] px-4 py-2.5 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 disabled:opacity-50"
-        />
-        {isLoading ? (
-          <Button variant="danger" onClick={onStop} title="停止生成">
-            <Square className="w-4 h-4" />
-            停止
-          </Button>
-        ) : (
-          <Button onClick={handleSend} disabled={!input.trim()} title="发送">
-            <Send className="w-4 h-4" />
-            发送
-          </Button>
-        )}
+    <div className="shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
+      <div className="message-column">
+        <div className="surface-elevated flex items-end gap-2 rounded-2xl p-2.5">
+          <div className="min-w-0 flex-1">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="告诉我你想完成什么…"
+              rows={1}
+              disabled={isLoading}
+              className="block max-h-[180px] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text)] outline-none placeholder:text-[var(--text-faint)] disabled:opacity-60"
+            />
+            <p className="px-2 pt-1 text-[10px] text-[var(--text-faint)]">
+              Enter 发送 · Shift + Enter 换行
+            </p>
+          </div>
+          {isLoading ? (
+            <Button
+              type="button"
+              variant="danger"
+              onClick={onStop}
+              title="停止执行"
+              className="mb-0.5 shrink-0"
+            >
+              <Square className="h-4 w-4" />
+              停止
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={send}
+              disabled={!input.trim()}
+              title="发送消息"
+              className="mb-0.5 shrink-0"
+            >
+              <Send className="h-4 w-4" />
+              发送
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

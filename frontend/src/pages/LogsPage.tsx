@@ -7,12 +7,12 @@ import { getLogs, type LogEntry } from "../api/client";
 import { PageHeader, Button } from "../components/ui";
 
 const LEVEL_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  info: { label: "信息", color: "text-sky-400", icon: <Info className="w-3.5 h-3.5" /> },
-  warn: { label: "警告", color: "text-amber-400", icon: <AlertCircle className="w-3.5 h-3.5" /> },
-  error: { label: "错误", color: "text-red-400", icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-  debug: { label: "调试", color: "text-violet-400", icon: <Bug className="w-3.5 h-3.5" /> },
-  tool: { label: "工具", color: "text-emerald-400", icon: <Wrench className="w-3.5 h-3.5" /> },
-  chat: { label: "对话", color: "text-cyan-400", icon: <MessageSquare className="w-3.5 h-3.5" /> },
+  info: { label: "信息", color: "text-[var(--info)]", icon: <Info className="w-3.5 h-3.5" /> },
+  warn: { label: "警告", color: "text-[var(--warning)]", icon: <AlertCircle className="w-3.5 h-3.5" /> },
+  error: { label: "错误", color: "text-[var(--danger)]", icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+  debug: { label: "调试", color: "text-[var(--text-muted)]", icon: <Bug className="w-3.5 h-3.5" /> },
+  tool: { label: "工具", color: "text-[var(--success)]", icon: <Wrench className="w-3.5 h-3.5" /> },
+  chat: { label: "对话", color: "text-[var(--accent)]", icon: <MessageSquare className="w-3.5 h-3.5" /> },
 };
 
 const SOURCE_LABELS: Record<string, string> = {

@@ -8,7 +8,7 @@ export default function Panel({ className, padding = true, children, ...props }:
   return (
     <div
       className={cn(
-        "rounded-xl border border-[var(--border)] bg-[var(--panel)] backdrop-blur-sm",
+        "rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-soft)]",
         padding && "p-4",
         className
       )}

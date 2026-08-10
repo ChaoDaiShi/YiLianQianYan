@@ -36,6 +36,11 @@ export function applyThemeToDom(theme: ThemeConfig, bgImageUrl?: string | null) 
   root.style.setProperty("--success", c.success);
   root.style.setProperty("--warning", c.warning);
   root.style.setProperty("--danger", c.danger);
+  root.style.setProperty("--nav", c.nav);
+  root.style.setProperty("--nav-text", c.navText);
+  root.style.setProperty("--info", c.info);
+  root.style.setProperty("--focus-ring", c.focusRing);
+  root.style.setProperty("--backdrop", c.backdrop);
   root.style.setProperty("--font-size-base", `${theme.fontSize}px`);
   root.style.setProperty("--bg-blur", `${theme.blur}px`);
   root.style.setProperty("--bg-brightness", String(theme.brightness));
@@ -57,8 +62,10 @@ export function applyThemeToDom(theme: ThemeConfig, bgImageUrl?: string | null) 
   }
 
   root.classList.toggle("theme-mono", theme.monoTitles);
-  // Keep dark class for any residual dark: utilities during migration
-  const isLight = theme.presetId === "paper-light";
+  root.dataset.theme = theme.presetId;
+  // Keep these compatibility classes while existing dark: utilities are migrated.
+  const isLight =
+    theme.presetId === "warm-local" || theme.presetId === "precision-neutral";
   root.classList.toggle("dark", !isLight);
   root.classList.toggle("light", isLight);
 }

@@ -18,7 +18,13 @@ export default function AppShell() {
           filter: `blur(var(--bg-blur)) brightness(var(--bg-brightness))`,
         }}
       />
-      <div className="absolute inset-0 -z-10 bg-[var(--bg)]/40 pointer-events-none" />
+      <div
+        className="pointer-events-none absolute inset-0 -z-10 transition-opacity duration-300"
+        style={{
+          backgroundColor: "var(--backdrop)",
+          opacity: theme.bgMode === "image" ? 1 : 0,
+        }}
+      />
 
       <NavRail />
       <main className="flex-1 flex flex-col min-w-0 relative z-0 animate-page-in">

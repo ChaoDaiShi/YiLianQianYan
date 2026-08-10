@@ -1,79 +1,178 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Menu, GitBranch, ChevronDown } from "lucide-react";
 import {
-  sendMessage,
-  loadConversation,
-  stopGeneration,
-  listWorkflows,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import {
   activateWorkflow,
+  listWorkflows,
+  loadConversation,
+  sendMessage,
+  stopGeneration,
   type AgentEvent,
   type Workflow,
 } from "../../api/client";
-import { Message } from "../../types";
 import { approveAction, rejectAction } from "../../api/approvals";
-import { useApprovalStore } from "../../stores/approvalStore";
+import {
+  createInitialAgentWorkspaceState,
+  reduceExecutionWorkspace,
+  selectActiveRun,
+  toToolCallRecords,
+} from "../../features/execution/reducer";
+import { createDecisionGate } from "../../features/execution/decisionGate";
+import {
+  selectPendingApprovals,
+  useApprovalStore,
+} from "../../stores/approvalStore";
+import type { Message } from "../../types";
 import type { PendingApproval, RiskLevel } from "../../types/approval";
-import MessageList from "./MessageList";
+import type { AgentRunState } from "../../features/execution/model";
 import ChatInput from "./ChatInput";
+import ChatHeader from "./ChatHeader";
+import MessageList, { type StreamingState } from "./MessageList";
 
 interface ChatViewProps {
   conversationId: string | null;
   onConversationChange: (id: string | null) => void;
-  showSidebar: boolean;
-  onToggleSidebar: () => void;
+  showConversationToggle: boolean;
+  showExecutionToggle: boolean;
+  conversationToggleRef?: RefObject<HTMLButtonElement>;
+  executionToggleRef?: RefObject<HTMLButtonElement>;
+  onToggleConversations: () => void;
+  onToggleExecution: () => void;
+  renderExecution?: (controller: ExecutionController) => ReactNode;
 }
 
-export interface StreamingState {
-  content: string;
-  toolCalls: Map<
-    string,
-    { name: string; args: Record<string, unknown>; status: "running" | "success" | "error" | "blocked"; result?: string }
-  >;
+export interface ExecutionController {
+  state: AgentRunState;
+  pendingApprovals: PendingApproval[];
+  resolving: Record<string, boolean>;
+  onApprove: (approval: PendingApproval) => void;
+  onReject: (approval: PendingApproval) => void;
+}
+
+const KNOWN_EVENT_TYPES = new Set([
+  "connected",
+  "token",
+  "tool_start",
+  "tool_end",
+  "approval_required",
+  "approval_resolved",
+  "verification",
+  "done",
+  "error",
+  "stream_end",
+]);
+
+function riskLevel(value: string | undefined): RiskLevel {
+  return value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "critical"
+    ? value
+    : "high";
 }
 
 export default function ChatView({
   conversationId,
   onConversationChange,
-  showSidebar,
-  onToggleSidebar,
+  showConversationToggle,
+  showExecutionToggle,
+  conversationToggleRef,
+  executionToggleRef,
+  onToggleConversations,
+  onToggleExecution,
+  renderExecution,
 }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [streaming, setStreaming] = useState<StreamingState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [currentConvId, setCurrentConvId] = useState<string | null>(conversationId);
+  const [currentConvId, setCurrentConvId] = useState<string | null>(
+    conversationId
+  );
   const [error, setError] = useState<string | null>(null);
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [allWorkflows, setAllWorkflows] = useState<Workflow[]>([]);
-  const [showWfMenu, setShowWfMenu] = useState(false);
+  const [suggestedText, setSuggestedText] = useState("");
+  const [execution, dispatchExecution] = useReducer(
+    reduceExecutionWorkspace,
+    conversationId,
+    createInitialAgentWorkspaceState
+  );
+  const runState = selectActiveRun(execution);
+  const pendingApprovals = useApprovalStore(selectPendingApprovals);
+  const resolving = useApprovalStore((state) => state.resolving);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null!);
-  const [suggestedText, setSuggestedText] = useState("");
+  const unknownEventTypes = useRef(new Set<string>());
 
   const loadWorkflows = useCallback(() => {
-    listWorkflows().then((res) => {
-      if (!res) return;
-      setAllWorkflows(res.workflows);
-      const active = res.workflows.find((w) => w.id === res.active_id) || null;
-      setActiveWorkflow(active);
+    listWorkflows().then((result) => {
+      if (!result) return;
+      setAllWorkflows(result.workflows);
+      setActiveWorkflow(
+        result.workflows.find((workflow) => workflow.id === result.active_id) ||
+          null
+      );
     });
   }, []);
 
-  useEffect(() => { loadWorkflows(); }, [loadWorkflows]);
+  useEffect(() => {
+    loadWorkflows();
+  }, [loadWorkflows]);
 
   useEffect(() => {
-    if (conversationId) {
-      setCurrentConvId(conversationId);
-      loadConversation(conversationId).then((conv) => {
-        if (conv?.messages) setMessages(conv.messages);
-      });
-    } else {
+    let cancelled = false;
+    dispatchExecution({ type: "activate_conversation", conversationId });
+
+    if (!conversationId) {
       setMessages([]);
       setCurrentConvId(null);
+      return;
     }
+
+    setCurrentConvId(conversationId);
+    loadConversation(conversationId).then((conversation) => {
+      if (cancelled || !conversation?.messages) return;
+      const loadedMessages = conversation.messages as Message[];
+      setMessages(loadedMessages);
+      dispatchExecution({
+        type: "hydrate_history",
+        conversationId,
+        toolCalls: loadedMessages.flatMap((message) => message.tool_calls || []),
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [conversationId]);
+
+  const clearResolvingForConversation = useCallback((targetId: string) => {
+    const store = useApprovalStore.getState();
+    selectPendingApprovals(store)
+      .filter((approval) => approval.conversation_id === targetId)
+      .forEach((approval) =>
+        store.markResolving(approval.approval_id, false)
+      );
+  }, []);
 
   const handleAgentEvent = useCallback(
     (event: AgentEvent) => {
+      if (!KNOWN_EVENT_TYPES.has(event.type)) {
+        if (!unknownEventTypes.current.has(event.type)) {
+          unknownEventTypes.current.add(event.type);
+          console.debug("Ignoring unknown agent event:", event.type);
+        }
+        return;
+      }
+
+      dispatchExecution({ type: "agent_event", event });
+
       switch (event.type) {
         case "connected":
           if (event.conversation_id) {
@@ -81,48 +180,7 @@ export default function ChatView({
             if (!conversationId) onConversationChange(event.conversation_id);
           }
           break;
-        case "token":
-          setStreaming((prev) => {
-            if (!prev) return { content: event.token || "", toolCalls: new Map() };
-            return { ...prev, content: prev.content + (event.token || "") };
-          });
-          break;
-        case "tool_start":
-          setStreaming((prev) => {
-            const toolCalls = new Map(prev?.toolCalls || []);
-            toolCalls.set(event.tool_call_id || "", {
-              name: event.tool_name || "",
-              args: event.args || {},
-              status: "running",
-            });
-            return { content: prev?.content || "", toolCalls };
-          });
-          break;
-        case "tool_end":
-          setStreaming((prev) => {
-            const toolCalls = new Map(prev?.toolCalls || []);
-            const existing = toolCalls.get(event.tool_call_id || "");
-            if (existing) {
-              toolCalls.set(event.tool_call_id || "", {
-                ...existing,
-                status: event.status === "success" ? "success" : "error",
-                result: event.result,
-              });
-            }
-            return { content: prev?.content || "", toolCalls };
-          });
-          break;
         case "approval_required":
-          setStreaming((prev) => {
-            const toolCalls = new Map(prev?.toolCalls || []);
-            toolCalls.set(event.tool_call_id || "", {
-              name: event.tool_name || "",
-              args: event.args || {},
-              status: "blocked",
-              result: `操作需要批准，当前版本尚未执行。原因：${event.reason || "高风险操作"}（风险等级：${event.risk_level || "unknown"}）`,
-            });
-            return { content: prev?.content || "", toolCalls };
-          });
           if (event.approval_id) {
             useApprovalStore.getState().add({
               approval_id: event.approval_id,
@@ -130,8 +188,8 @@ export default function ChatView({
               tool_call_id: event.tool_call_id || "",
               tool_name: event.tool_name || "",
               arguments: event.args || {},
-              risk_level: (event.risk_level as RiskLevel) || "high",
-              reason: event.reason || "高风险操作",
+              risk_level: riskLevel(event.risk_level),
+              reason: event.reason || "该操作需要明确授权",
               status: "pending",
               created_at: new Date().toISOString(),
               expires_at: "",
@@ -142,208 +200,175 @@ export default function ChatView({
           if (event.approval_id) {
             useApprovalStore.getState().remove(event.approval_id);
           }
-          // Rejected/cancelled tools will never run — reflect that on the card.
-          if (event.status && event.status !== "approved") {
-            setStreaming((prev) => {
-              const toolCalls = new Map(prev?.toolCalls || []);
-              const existing = toolCalls.get(event.tool_call_id || "");
-              if (existing) {
-                toolCalls.set(event.tool_call_id || "", {
-                  ...existing,
-                  status: "error",
-                  result: "用户已拒绝该操作，未执行。",
-                });
-              }
-              return { content: prev?.content || "", toolCalls };
-            });
-          }
           break;
         case "stream_end":
-          // Agent paused awaiting approval, or the stream closed without a
-          // terminal event — stop the loading spinner so the user can decide.
           setIsLoading(false);
-          break;
-        case "verification":
-          setStreaming((prev) => {
-            const toolCalls = new Map(prev?.toolCalls || []);
-            const existing = toolCalls.get(event.tool_call_id || "");
-            if (existing) {
-              const note = event.verification_success
-                ? "\n\n✓ 结果验证通过"
-                : `\n\n⚠ 结果验证失败：${event.verification_reason || "未知原因"}`;
-              toolCalls.set(event.tool_call_id || "", {
-                ...existing,
-                status:
-                  event.verification_success === false ? "error" : existing.status,
-                result: (existing.result || "") + note,
-              });
-            }
-            return { content: prev?.content || "", toolCalls };
-          });
+          abortRef.current = null;
+          clearResolvingForConversation(event.conversation_id);
           break;
         case "done":
-          setStreaming((prev) => {
-            if (prev) {
-              const toolCalls: Array<{
-                toolCallId: string;
-                name: string;
-                args: Record<string, unknown>;
-                status: "running" | "success" | "error" | "blocked";
-                result?: string;
-              }> = [];
-              prev.toolCalls.forEach((tc, id) => {
-                toolCalls.push({ toolCallId: id, ...tc });
-              });
-              const newMsg: Message = {
-                id: event.message_id || crypto.randomUUID(),
-                role: "assistant",
-                content: prev.content,
-                created_at: Date.now(),
-                tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-              };
-              setMessages((msgs) => [...msgs, newMsg]);
-            }
-            return null;
-          });
           setIsLoading(false);
           abortRef.current = null;
           break;
         case "error":
-          setStreaming(null);
           setIsLoading(false);
           abortRef.current = null;
-          setError(event.error || "生成失败");
+          setError(event.error || "生成失败，请重试");
+          clearResolvingForConversation(event.conversation_id);
           break;
       }
     },
-    [conversationId, onConversationChange]
+    [clearResolvingForConversation, conversationId, onConversationChange]
   );
+
+  const decisionContextRef = useRef({ currentConvId, handleAgentEvent });
+  useEffect(() => {
+    decisionContextRef.current = { currentConvId, handleAgentEvent };
+  }, [currentConvId, handleAgentEvent]);
+
+  const decisionGateRef = useRef<ReturnType<typeof createDecisionGate> | null>(
+    null
+  );
+  if (!decisionGateRef.current) {
+    decisionGateRef.current = createDecisionGate(async (approvalId, decision) => {
+      const store = useApprovalStore.getState();
+      store.markResolving(approvalId, true);
+      setError(null);
+      setIsLoading(true);
+      try {
+        const context = decisionContextRef.current;
+        const submit = decision === "approve" ? approveAction : rejectAction;
+        await submit(
+          approvalId,
+          context.currentConvId,
+          context.handleAgentEvent
+        );
+      } catch (requestError) {
+        store.markResolving(approvalId, false);
+        setIsLoading(false);
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "审批请求失败，请重试"
+        );
+        throw requestError;
+      }
+    });
+  }
+
+  useEffect(() => {
+    const completed = execution.completed;
+    if (!completed) return;
+
+    if (completed.conversationId === currentConvId) {
+      const assistantMessage: Message = {
+        id: completed.messageId,
+        role: "assistant",
+        content: completed.content,
+        created_at: Date.now(),
+        tool_calls:
+          completed.records.length > 0
+            ? toToolCallRecords(completed.records)
+            : undefined,
+      };
+      setMessages((current) =>
+        current.some((message) => message.id === assistantMessage.id)
+          ? current
+          : [...current, assistantMessage]
+      );
+    }
+    dispatchExecution({ type: "consume_completed" });
+  }, [currentConvId, execution.completed]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streaming]);
+  }, [messages, runState.content, runState.order.length]);
 
-  const handleApprove = useCallback(
-    (approval: PendingApproval) => {
-      useApprovalStore.getState().markResolving(approval.approval_id, true);
-      approveAction(approval.approval_id, currentConvId, handleAgentEvent);
-    },
-    [currentConvId, handleAgentEvent]
-  );
+  const streaming = useMemo<StreamingState | null>(() => {
+    const hasLiveOutput = runState.content.length > 0 || runState.order.length > 0;
+    const visible =
+      isLoading ||
+      (hasLiveOutput && !runState.terminal && runState.connection !== "idle");
+    if (!visible) return null;
+    return {
+      content: runState.content,
+      toolCalls: toToolCallRecords(runState),
+    };
+  }, [isLoading, runState]);
 
-  const handleReject = useCallback(
-    (approval: PendingApproval) => {
-      useApprovalStore.getState().markResolving(approval.approval_id, true);
-      rejectAction(approval.approval_id, currentConvId, handleAgentEvent);
-    },
-    [currentConvId, handleAgentEvent]
-  );
+  const handleApprove = useCallback((approval: PendingApproval) => {
+    void decisionGateRef.current
+      ?.submit(approval.approval_id, "approve")
+      .catch(() => undefined);
+  }, []);
+
+  const handleReject = useCallback((approval: PendingApproval) => {
+    void decisionGateRef.current
+      ?.submit(approval.approval_id, "reject")
+      .catch(() => undefined);
+  }, []);
 
   const handleSend = useCallback(
-    async (text: string) => {
+    (text: string) => {
       if (!text.trim() || isLoading) return;
       setError(null);
-      const userMsg: Message = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: text,
-        created_at: Date.now(),
-      };
-      setMessages((prev) => [...prev, userMsg]);
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: text,
+          created_at: Date.now(),
+        },
+      ]);
+      dispatchExecution({ type: "start_run", conversationId: currentConvId });
       setIsLoading(true);
-      const controller = sendMessage(
+      abortRef.current = sendMessage(
         text,
         currentConvId,
         handleAgentEvent,
         activeWorkflow?.id
       );
-      abortRef.current = controller;
     },
-    [currentConvId, isLoading, handleAgentEvent, activeWorkflow]
+    [activeWorkflow, currentConvId, handleAgentEvent, isLoading]
   );
 
-  const handleStop = async () => {
+  const handleStop = useCallback(async () => {
     abortRef.current?.abort();
     if (currentConvId) await stopGeneration(currentConvId);
-    setIsLoading(false);
-    setStreaming(null);
-  };
+    handleAgentEvent({
+      type: "stream_end",
+      conversation_id: currentConvId || "",
+    });
+  }, [currentConvId, handleAgentEvent]);
+
+  const handleSelectWorkflow = useCallback((workflow: Workflow | null) => {
+    if (!workflow) {
+      setActiveWorkflow(null);
+      return;
+    }
+    void activateWorkflow(workflow.id).then((result) => {
+      if (result) setActiveWorkflow(workflow);
+    });
+  }, []);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)] bg-[var(--panel)]/60 backdrop-blur-md">
-        <button
-          onClick={onToggleSidebar}
-          className="p-1.5 rounded-lg hover:bg-[var(--panel-hover)] transition-colors text-[var(--text-muted)]"
-          title={showSidebar ? "收起侧栏" : "展开侧栏"}
-        >
-          <Menu className="w-5 h-5" />
-        </button>
-        <img src="/favicon.png" alt="忆涟千言" className="w-7 h-7 rounded-lg object-cover" />
-        <h2 className="font-semibold text-lg font-display">忆涟千言</h2>
-
-        {/* Workflow selector */}
-        <div className="relative">
-          <button
-            onClick={() => setShowWfMenu(!showWfMenu)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-[var(--panel-hover)] transition-colors text-sm"
-            title="切换工作流"
-          >
-            <GitBranch className="w-3.5 h-3.5 text-[var(--accent)]" />
-            <span className="text-[var(--text-muted)] max-w-[120px] truncate">
-              {activeWorkflow ? activeWorkflow.name : "无工作流"}
-            </span>
-            <ChevronDown className="w-3.5 h-3.5 text-[var(--text-faint)]" />
-          </button>
-
-          {showWfMenu && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowWfMenu(false)} />
-              <div className="absolute top-full left-0 mt-1 w-64 rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl z-50 py-1 max-h-80 overflow-y-auto scrollbar-thin">
-                <button
-                  onClick={() => {
-                    setActiveWorkflow(null);
-                    setShowWfMenu(false);
-                    // Note: The next message will be sent without workflow_id,
-                    // and the backend will use the active workflow from settings.
-                    // To explicitly disable, we could call an API, but for now
-                    // just not passing workflow_id means no workflow override.
-                  }}
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-[var(--panel-hover)] transition-colors ${
-                    !activeWorkflow ? "text-[var(--accent)]" : "text-[var(--text-muted)]"
-                  }`}
-                >
-                  不使用工作流
-                </button>
-                {allWorkflows.map((wf) => (
-                  <button
-                    key={wf.id}
-                    onClick={async () => {
-                      await activateWorkflow(wf.id);
-                      setActiveWorkflow(wf);
-                      setShowWfMenu(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-[var(--panel-hover)] transition-colors flex items-center gap-2 ${
-                      activeWorkflow?.id === wf.id ? "text-[var(--accent)]" : "text-[var(--text-muted)]"
-                    }`}
-                  >
-                    <span className="text-xs flex-shrink-0">{wf.is_builtin ? "📦" : "⚡"}</span>
-                    <span className="truncate">{wf.name}</span>
-                    <span className="text-[10px] text-[var(--text-faint)] ml-auto flex-shrink-0">
-                      {wf.nodes.length > 0 ? wf.nodes.length + "步" : ""}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 ml-auto">
-          <span className="w-2 h-2 rounded-full bg-[var(--success)]" title="后端已连接" />
-          <span className="text-xs text-[var(--text-faint)] font-mono">API</span>
-        </div>
-      </div>
+    <>
+      <div className="flex h-full min-w-0 flex-col">
+        <ChatHeader
+          title="智能工作台"
+          connection={runState.connection}
+          activeWorkflow={activeWorkflow}
+          workflows={allWorkflows}
+          executionCount={runState.order.length}
+          showConversationToggle={showConversationToggle}
+          showExecutionToggle={showExecutionToggle}
+          conversationToggleRef={conversationToggleRef}
+          executionToggleRef={executionToggleRef}
+          onToggleConversations={onToggleConversations}
+          onToggleExecution={onToggleExecution}
+          onSelectWorkflow={handleSelectWorkflow}
+        />
 
       <MessageList
         messages={messages}
@@ -351,8 +376,6 @@ export default function ChatView({
         messagesEndRef={messagesEndRef}
         onHint={setSuggestedText}
         error={error}
-        onApprove={handleApprove}
-        onReject={handleReject}
       />
 
       <ChatInput
@@ -362,6 +385,15 @@ export default function ChatView({
         suggestedText={suggestedText}
         onTextUsed={() => setSuggestedText("")}
       />
-    </div>
+
+      </div>
+      {renderExecution?.({
+        state: runState,
+        pendingApprovals,
+        resolving,
+        onApprove: handleApprove,
+        onReject: handleReject,
+      })}
+    </>
   );
 }

@@ -1,136 +1,156 @@
-// ============================================================
-// Approval API client — approve/reject/cancel + SSE resume stream
-// ============================================================
-
 import { API_BASE, type AgentEvent } from "./client";
 import type { PendingApproval } from "../types/approval";
 
 interface PendingResponse {
-  ok?: boolean;
   approvals?: PendingApproval[];
   approval?: PendingApproval;
-  status?: string;
-  error?: string;
 }
 
 async function requestJSON<T>(path: string, body?: unknown): Promise<T | null> {
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(`${API_BASE}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch (e) {
-    console.error(`Approval API ${path} failed:`, e);
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch (error) {
+    console.error(`Approval API ${path} failed:`, error);
     return null;
   }
 }
 
-/**
- * POST the decision to the backend and consume the resume SSE stream.
- * The backend streams approval_resolved / tool_start / tool_end / token / done.
- */
-function streamDecision(
+async function streamDecision(
   path: string,
   body: { conversation_id?: string | null },
   onEvent: (event: AgentEvent) => void
-): AbortController {
-  const controller = new AbortController();
-
-  fetch(`${API_BASE}${path}`, {
+): Promise<void> {
+  const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: controller.signal,
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        onEvent({ type: "error", conversation_id: "", error: `HTTP ${res.status}: ${text}` });
-        return;
-      }
-      const reader = res.body?.getReader();
-      if (!reader) return;
+  });
 
-      const decoder = new TextDecoder();
-      let buffer = "";
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `审批请求失败（HTTP ${response.status}）${detail ? `：${detail}` : ""}`
+    );
+  }
+  if (!response.body) {
+    throw new Error("审批请求未返回可读取的事件流");
+  }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          if (trimmed.startsWith("event:")) continue;
-          if (trimmed.startsWith("data:")) {
-            const data = trimmed.slice(5).trim();
-            if (data === "ping" || data === "[DONE]") continue;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type) onEvent(parsed as AgentEvent);
-            } catch {
-              console.warn("SSE parse error for:", data);
-            }
-          }
-        }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let currentEvent = "";
+  let terminalReceived = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        currentEvent = "";
+        continue;
       }
-      // Stream ended — let the caller clear any transient loading state.
-      onEvent({ type: "stream_end", conversation_id: body.conversation_id || "" });
-    })
-    .catch((err) => {
-      if (err.name !== "AbortError") {
-        onEvent({ type: "error", conversation_id: "", error: String(err) });
+      if (trimmed.startsWith("event:")) {
+        currentEvent = trimmed.slice(6).trim();
+        continue;
       }
+      if (!trimmed.startsWith("data:")) continue;
+
+      const data = trimmed.slice(5).trim();
+      if (data === "ping" || data === "[DONE]") continue;
+
+      try {
+        const parsed = JSON.parse(data) as AgentEvent;
+        const event =
+          currentEvent === "connected"
+            ? {
+                type: "connected",
+                conversation_id: parsed.conversation_id || "",
+              }
+            : parsed;
+        if (!event.type) continue;
+        terminalReceived =
+          terminalReceived || event.type === "done" || event.type === "error";
+        onEvent(event);
+      } catch {
+        console.warn("SSE parse error for:", data);
+      }
+    }
+  }
+
+  if (!terminalReceived) {
+    onEvent({
+      type: "stream_end",
+      conversation_id: body.conversation_id || "",
     });
-
-  return controller;
+  }
 }
 
 export function approveAction(
   approvalId: string,
   conversationId: string | null,
   onEvent: (event: AgentEvent) => void
-): AbortController {
-  return streamDecision(`/api/approvals/${approvalId}/approve`, { conversation_id: conversationId }, onEvent);
+): Promise<void> {
+  return streamDecision(
+    `/api/approvals/${approvalId}/approve`,
+    { conversation_id: conversationId },
+    onEvent
+  );
 }
 
 export function rejectAction(
   approvalId: string,
   conversationId: string | null,
   onEvent: (event: AgentEvent) => void
-): AbortController {
-  return streamDecision(`/api/approvals/${approvalId}/reject`, { conversation_id: conversationId }, onEvent);
+): Promise<void> {
+  return streamDecision(
+    `/api/approvals/${approvalId}/reject`,
+    { conversation_id: conversationId },
+    onEvent
+  );
 }
 
-export async function cancelApproval(approvalId: string, conversationId?: string | null) {
-  return requestJSON<PendingResponse>(`/api/approvals/${approvalId}/cancel`, { conversation_id: conversationId });
+export async function cancelApproval(
+  approvalId: string,
+  conversationId?: string | null
+) {
+  return requestJSON<PendingResponse>(`/api/approvals/${approvalId}/cancel`, {
+    conversation_id: conversationId,
+  });
 }
 
 export async function getApproval(approvalId: string) {
   try {
-    const res = await fetch(`${API_BASE}/api/approvals/${approvalId}`);
-    if (!res.ok) return null;
-    const data = (await res.json()) as PendingResponse;
+    const response = await fetch(`${API_BASE}/api/approvals/${approvalId}`);
+    if (!response.ok) return null;
+    const data = (await response.json()) as PendingResponse;
     return data.approval || null;
-  } catch (e) {
-    console.error("getApproval failed:", e);
+  } catch (error) {
+    console.error("getApproval failed:", error);
     return null;
   }
 }
 
 export async function listPendingApprovals() {
   try {
-    const res = await fetch(`${API_BASE}/api/approvals/pending`);
-    if (!res.ok) return null;
-    const data = (await res.json()) as PendingResponse;
+    const response = await fetch(`${API_BASE}/api/approvals/pending`);
+    if (!response.ok) return null;
+    const data = (await response.json()) as PendingResponse;
     return data.approvals || [];
-  } catch (e) {
-    console.error("listPendingApprovals failed:", e);
+  } catch (error) {
+    console.error("listPendingApprovals failed:", error);
     return null;
   }
 }

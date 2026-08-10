@@ -27,19 +27,54 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+const LEGACY_PRESET_MAP: Partial<
+  Record<string, Exclude<PresetId, "custom">>
+> = {
+  "paper-light": "warm-local",
+  "claude-dark": "graphite-pro",
+  "terminal-green": "graphite-pro",
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function normalizeStoredTheme(raw: unknown): ThemeConfig {
+  if (!isRecord(raw)) {
+    return {
+      ...DEFAULT_THEME,
+      colors: { ...DEFAULT_THEME.colors },
+      customVars: {},
+    };
+  }
+
+  const rawPresetId =
+    typeof raw.presetId === "string" ? raw.presetId : DEFAULT_THEME.presetId;
+  const migratedPresetId = LEGACY_PRESET_MAP[rawPresetId];
+  const isKnownPreset = Object.prototype.hasOwnProperty.call(PRESETS, rawPresetId);
+  const presetId: PresetId = migratedPresetId
+    ?? (rawPresetId === "custom" || isKnownPreset
+      ? (rawPresetId as PresetId)
+      : DEFAULT_THEME.presetId);
+  const base = presetId === "custom" ? DEFAULT_THEME : PRESETS[presetId];
+  const storedColors = !migratedPresetId && isRecord(raw.colors) ? raw.colors : {};
+
+  return {
+    ...base,
+    ...(raw as Partial<ThemeConfig>),
+    presetId,
+    colors: { ...base.colors, ...storedColors },
+    customVars: sanitizeCustomVars(raw.customVars),
+  };
+}
+
 function loadStored(): ThemeConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_THEME;
-    const parsed = JSON.parse(raw) as ThemeConfig;
-    return {
-      ...DEFAULT_THEME,
-      ...parsed,
-      colors: { ...DEFAULT_THEME.colors, ...parsed.colors },
-      customVars: sanitizeCustomVars(parsed.customVars),
-    };
+    if (!raw) return normalizeStoredTheme(DEFAULT_THEME);
+    return normalizeStoredTheme(JSON.parse(raw));
   } catch {
-    return DEFAULT_THEME;
+    return normalizeStoredTheme(DEFAULT_THEME);
   }
 }
 
@@ -61,8 +96,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme, bgImageUrl]);
 
   const setPreset = useCallback((id: PresetId) => {
+    if (id === "custom") return;
     const preset = PRESETS[id];
-    if (preset) setTheme({ ...preset });
+    setTheme({ ...preset, colors: { ...preset.colors }, customVars: {} });
   }, []);
 
   const updateTheme = useCallback((patch: Partial<ThemeConfig>) => {
@@ -90,7 +126,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetTheme = useCallback(() => {
-    setTheme(DEFAULT_THEME);
+    setTheme(normalizeStoredTheme(DEFAULT_THEME));
     clearBgImage().then(() => setBgImageUrl(null));
   }, []);
 
@@ -98,13 +134,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const importTheme = useCallback((json: string) => {
     try {
-      const parsed = JSON.parse(json) as ThemeConfig;
-      setTheme({
-        ...DEFAULT_THEME,
-        ...parsed,
-        colors: { ...DEFAULT_THEME.colors, ...parsed.colors },
-        customVars: sanitizeCustomVars(parsed.customVars),
-      });
+      setTheme(normalizeStoredTheme(JSON.parse(json)));
       return true;
     } catch {
       return false;

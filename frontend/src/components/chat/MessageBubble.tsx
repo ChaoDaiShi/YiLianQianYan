@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Copy, Check } from "lucide-react";
-import { Message } from "../../types";
+import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { Message } from "../../types";
 import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
 
 interface MessageBubbleProps {
@@ -15,71 +15,76 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
 
   if (isTool) {
-    if (message.content?.startsWith("data:image/")) {
-      return (
-        <div className="mb-4 ml-4">
-          <ToolResultContent result={message.content} />
-        </div>
-      );
-    }
-    return null;
+    return message.content?.startsWith("data:image/") ? (
+      <div className="mb-4">
+        <ToolResultContent result={message.content} />
+      </div>
+    ) : null;
   }
 
-  const rawToolCalls = message.tool_calls;
-  const toolCalls = Array.isArray(rawToolCalls) ? rawToolCalls : [];
+  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content || "");
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    window.setTimeout(() => setCopied(false), 1500);
   };
 
   return (
-    <div className="mb-4 animate-msg-in group">
+    <article className="group mb-5 animate-msg-in">
       <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
         <div
-          className={`relative max-w-[85%] px-4 py-3 rounded-2xl ${
+          className={`relative max-w-[88%] px-4 py-3 text-sm leading-7 ${
             isUser
-              ? "bg-[var(--accent)] text-[var(--accent-fg)] rounded-br-md"
-              : "bg-[var(--panel)] border border-[var(--border)] text-[var(--text)] rounded-bl-md"
+              ? "rounded-2xl rounded-br-md bg-[var(--accent)] text-[var(--accent-fg)] shadow-sm"
+              : "w-full text-[var(--text)]"
           }`}
         >
           {isUser ? (
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+            <p className="whitespace-pre-wrap">{message.content}</p>
           ) : (
             <div className="prose prose-sm max-w-none overflow-x-auto">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
             </div>
           )}
           {!isUser && message.content && (
             <button
-              onClick={copy}
-              className="absolute -bottom-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-[var(--panel-2)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]"
-              title="复制"
+              type="button"
+              onClick={() => void copy()}
+              className="absolute -bottom-2 right-1 rounded-md border border-[var(--border)] bg-[var(--panel)] p-1.5 text-[var(--text-muted)] opacity-0 transition-opacity hover:text-[var(--text)] focus:opacity-100 group-hover:opacity-100"
+              title="复制回答"
+              aria-label="复制回答"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-[var(--success)]" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
             </button>
           )}
         </div>
       </div>
 
-      {toolCalls.map((tc: any) => {
-        const id = tc.toolCallId || tc.id || "";
-        const name = tc.name || tc.function?.name || "";
-        const args = tc.args || tc.function?.arguments || {};
-        const status = tc.status || "success";
-        const result = tc.result;
-        return (
-          <ToolCallCard
-            key={id}
-            toolCallId={id}
-            name={name}
-            args={typeof args === "string" ? {} : args}
-            status={status}
-            result={result}
-          />
-        );
-      })}
-    </div>
+      {toolCalls.length > 0 && (
+        <div className="mt-3">
+          {toolCalls.map((toolCall) => (
+            <ToolCallCard
+              key={toolCall.toolCallId}
+              toolCallId={toolCall.toolCallId}
+              name={toolCall.name}
+              args={toolCall.args}
+              status={toolCall.status}
+              result={toolCall.result}
+              riskLevel={toolCall.riskLevel}
+              approvalStatus={toolCall.approvalStatus}
+              verificationStatus={toolCall.verificationStatus}
+              verificationReason={toolCall.verificationReason}
+            />
+          ))}
+        </div>
+      )}
+    </article>
   );
 }

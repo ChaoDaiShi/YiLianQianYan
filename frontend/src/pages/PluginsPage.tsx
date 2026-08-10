@@ -98,7 +98,7 @@ export default function PluginsPage() {
     setTestingId(id);
     const result = await testMcpServer(id);
     if (result) {
-      alert(result.ok ? `✅ ${result.message}` : `❌ ${result.message}`);
+      alert(`${result.ok ? "测试通过" : "测试失败"}：${result.message}`);
     }
     setTestingId(null);
   };
@@ -244,7 +244,7 @@ export default function PluginsPage() {
 
         {/* Runtime status notice */}
         {data && !data.mcp_runtime_ready && (
-          <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-[var(--warning)]/30 bg-yellow-500/5">
+          <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10">
             <AlertTriangle className="w-5 h-5 text-[var(--warning)] flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-[var(--warning)]">MCP 运行时未就绪</p>

@@ -1,27 +1,33 @@
 import { create } from "zustand";
 import type { PendingApproval } from "../types/approval";
 
-interface ApprovalStore {
-  pending: PendingApproval[];
-  /** approval_id → "resolving" while the decision request is in flight */
+export interface ApprovalState {
+  approvals: PendingApproval[];
   resolving: Record<string, boolean>;
-
   add: (approval: PendingApproval) => void;
   remove: (approvalId: string) => void;
-  setPending: (approvals: PendingApproval[]) => void;
+  setApprovals: (approvals: PendingApproval[]) => void;
   markResolving: (approvalId: string, value: boolean) => void;
 }
 
-export const useApprovalStore = create<ApprovalStore>((set) => ({
-  pending: [],
+export const selectPendingApprovals = (state: ApprovalState) =>
+  state.approvals.filter((approval) => approval.status === "pending");
+
+export const useApprovalStore = create<ApprovalState>((set) => ({
+  approvals: [],
   resolving: {},
 
   add: (approval) =>
     set((state) => {
-      if (state.pending.some((a) => a.approval_id === approval.approval_id)) {
-        return state;
+      const existingIndex = state.approvals.findIndex(
+        (item) => item.approval_id === approval.approval_id
+      );
+      if (existingIndex < 0) {
+        return { approvals: [...state.approvals, approval] };
       }
-      return { pending: [...state.pending, approval] };
+      const approvals = [...state.approvals];
+      approvals[existingIndex] = approval;
+      return { approvals };
     }),
 
   remove: (approvalId) =>
@@ -29,13 +35,17 @@ export const useApprovalStore = create<ApprovalStore>((set) => ({
       const resolving = { ...state.resolving };
       delete resolving[approvalId];
       return {
-        pending: state.pending.filter((a) => a.approval_id !== approvalId),
+        approvals: state.approvals.filter(
+          (approval) => approval.approval_id !== approvalId
+        ),
         resolving,
       };
     }),
 
-  setPending: (approvals) => set({ pending: approvals }),
+  setApprovals: (approvals) => set({ approvals }),
 
   markResolving: (approvalId, value) =>
-    set((state) => ({ resolving: { ...state.resolving, [approvalId]: value } })),
+    set((state) => ({
+      resolving: { ...state.resolving, [approvalId]: value },
+    })),
 }));

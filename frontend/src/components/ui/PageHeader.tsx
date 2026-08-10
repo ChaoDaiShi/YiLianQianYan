@@ -11,7 +11,7 @@ export default function PageHeader({ title, description, actions, className }: P
   return (
     <div
       className={cn(
-        "px-6 py-4 border-b border-[var(--border)] flex items-start justify-between gap-4 bg-[var(--panel)]/60 backdrop-blur-md",
+        "mx-4 mt-4 px-5 py-4 rounded-[var(--radius-md)] border border-[var(--border)] flex items-start justify-between gap-4 bg-[var(--panel)] shadow-[var(--shadow-soft)]",
         className
       )}
     >

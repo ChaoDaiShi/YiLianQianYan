@@ -1,12 +1,13 @@
-import { Message } from "../../types";
-import type { PendingApproval } from "../../types/approval";
-import { useApprovalStore } from "../../stores/approvalStore";
-import { StreamingState } from "./ChatView";
+import type { Message, ToolCallRecord } from "../../types";
+import { EmptyState } from "../ui";
 import MessageBubble from "./MessageBubble";
 import StreamingText from "./StreamingText";
 import ToolCallCard from "./ToolCallCard";
-import ApprovalCard from "../approval/ApprovalCard";
-import { EmptyState } from "../ui";
+
+export interface StreamingState {
+  content: string;
+  toolCalls: ToolCallRecord[];
+}
 
 interface MessageListProps {
   messages: Message[];
@@ -14,8 +15,6 @@ interface MessageListProps {
   messagesEndRef: React.RefObject<HTMLDivElement>;
   onHint?: (text: string) => void;
   error?: string | null;
-  onApprove?: (approval: PendingApproval) => void;
-  onReject?: (approval: PendingApproval) => void;
 }
 
 const HINTS = [
@@ -31,25 +30,28 @@ export default function MessageList({
   messagesEndRef,
   onHint,
   error,
-  onApprove,
-  onReject,
 }: MessageListProps) {
-  const pendingApprovals = useApprovalStore((s) => s.pending);
-  const resolving = useApprovalStore((s) => s.resolving);
-
   return (
-    <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6">
+    <div className="scrollbar-thin flex-1 overflow-y-auto px-4 py-6">
+      <div className="message-column">
       {messages.length === 0 && !streaming && (
         <EmptyState
-          icon={<img src="/favicon.png" alt="" className="w-16 h-16 rounded-2xl object-cover shadow-lg" />}
+          icon={
+            <img
+              src="/favicon.png"
+              alt=""
+              className="h-16 w-16 rounded-2xl object-cover shadow-lg"
+            />
+          }
           title="忆涟千言"
-          description="执行命令、管理文件、搜索内容、调用工具。直接告诉我你想做什么。"
+          description="描述你的目标，我会规划步骤、调用本地工具，并反馈执行与验证结果。"
           action={
-            <div className="grid grid-cols-2 gap-2 text-xs max-w-md">
+            <div className="grid max-w-md grid-cols-2 gap-2 text-xs">
               {HINTS.map((hint) => (
                 <button
+                  type="button"
                   key={hint}
-                  className="px-3 py-2.5 rounded-lg border border-[var(--border)] bg-[var(--panel)]/60 hover:border-[var(--accent)]/50 hover:text-[var(--accent)] transition-colors text-left text-[var(--text-muted)]"
+                  className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5 text-left text-[var(--text-muted)] transition-colors hover:border-[var(--accent)]/50 hover:text-[var(--accent)]"
                   onClick={() => onHint?.(hint)}
                 >
                   {hint}
@@ -61,62 +63,57 @@ export default function MessageList({
         />
       )}
 
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
+      {messages.map((message) => (
+        <MessageBubble key={message.id} message={message} />
       ))}
 
       {streaming && (
         <div className="mb-4 animate-msg-in">
-          {Array.from(streaming.toolCalls.entries()).map(([id, toolCall]) => (
+          {streaming.toolCalls.map((toolCall) => (
             <ToolCallCard
-              key={id}
-              toolCallId={id}
+              key={toolCall.toolCallId}
+              toolCallId={toolCall.toolCallId}
               name={toolCall.name}
               args={toolCall.args}
               status={toolCall.status}
               result={toolCall.result}
+              riskLevel={toolCall.riskLevel}
+              approvalStatus={toolCall.approvalStatus}
+              verificationStatus={toolCall.verificationStatus}
+              verificationReason={toolCall.verificationReason}
             />
           ))}
 
           {streaming.content && (
-            <div className="p-4 rounded-2xl bg-[var(--panel)] border border-[var(--border)] text-[var(--text)]">
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 text-[var(--text)]">
               <StreamingText text={streaming.content} />
             </div>
           )}
 
-          {!streaming.content && streaming.toolCalls.size === 0 && (
-            <div className="flex items-center gap-2 p-4">
+          {!streaming.content && streaming.toolCalls.length === 0 && (
+            <div className="flex items-center gap-2 p-4" aria-label="正在生成">
               <div className="flex gap-1">
-                <span className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse-dot" style={{ animationDelay: "0s" }} />
-                <span className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse-dot" style={{ animationDelay: "0.2s" }} />
-                <span className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse-dot" style={{ animationDelay: "0.4s" }} />
+                {[0, 0.2, 0.4].map((delay) => (
+                  <span
+                    key={delay}
+                    className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]"
+                    style={{ animationDelay: `${delay}s` }}
+                  />
+                ))}
               </div>
             </div>
           )}
         </div>
       )}
 
-      {pendingApprovals.length > 0 && (
-        <div className="mt-1 mb-2">
-          {pendingApprovals.map((a) => (
-            <ApprovalCard
-              key={a.approval_id}
-              approval={a}
-              resolving={!!resolving[a.approval_id]}
-              onApprove={(approval) => onApprove?.(approval)}
-              onReject={(approval) => onReject?.(approval)}
-            />
-          ))}
-        </div>
-      )}
-
       {error && (
-        <div className="mb-4 px-4 py-3 rounded-xl border border-[var(--danger)]/40 bg-red-500/10 text-[var(--danger)] text-sm">
+        <div className="mb-4 rounded-xl border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-4 py-3 text-sm text-[var(--danger)]">
           {error}
         </div>
       )}
 
-      <div ref={messagesEndRef} />
+        <div ref={messagesEndRef} />
+      </div>
     </div>
   );
 }

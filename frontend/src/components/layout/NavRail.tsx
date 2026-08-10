@@ -1,13 +1,13 @@
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import {
-  MessageSquare,
   Activity,
-  ScrollText,
-  Sparkles,
-  Puzzle,
-  GitBranch,
   BookOpen,
+  GitBranch,
+  MessageSquare,
+  Puzzle,
+  ScrollText,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "../ui/cn";
 import { useTheme } from "../../theme";
@@ -30,16 +30,25 @@ export default function NavRail() {
   const hasActiveChat = Boolean(params.id);
 
   return (
-    <nav className="w-[72px] flex-shrink-0 flex flex-col items-center py-3 gap-0.5 border-r border-[var(--border)] bg-[var(--panel)]/80 backdrop-blur-md z-20">
+    <nav
+      aria-label="全局导航"
+      className="z-20 flex w-[68px] shrink-0 flex-col items-center gap-0.5 border-r border-[var(--border)] bg-[var(--nav)] py-3 text-[var(--nav-text)] min-[960px]:w-[88px]"
+    >
       <button
+        type="button"
         onClick={() => navigate("/chat")}
-        className="mb-2 p-1 rounded-xl hover:bg-[var(--panel-hover)] transition-colors"
+        className="mb-2 rounded-xl p-1 transition-colors hover:bg-white/10"
         title="忆涟千言 · 新对话"
+        aria-label="忆涟千言 · 新对话"
       >
-        <img src="/favicon.png" alt="忆涟千言" className="w-9 h-9 rounded-lg object-cover" />
+        <img
+          src="/favicon.png"
+          alt=""
+          className="h-9 w-9 rounded-lg object-cover"
+        />
       </button>
 
-      <div className="w-8 border-t border-[var(--border)] mb-2" />
+      <div className="mb-2 w-8 border-t border-white/15" />
 
       {NAV_ITEMS.map((item) => {
         const Icon = item.icon;
@@ -49,22 +58,22 @@ export default function NavRail() {
             to={item.to}
             className={({ isActive }) =>
               cn(
-                "relative w-[60px] flex flex-col items-center gap-0.5 py-2 rounded-xl text-[10px] transition-all duration-150",
+                "relative flex w-[60px] flex-col items-center gap-0.5 rounded-lg py-1.5 text-[10px] leading-tight transition-colors min-[960px]:w-[76px]",
                 isActive
-                  ? "bg-[var(--accent)]/15 text-[var(--accent)] font-medium"
-                  : "text-[var(--text-muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
+                  ? "bg-white/10 font-medium text-[var(--accent)]"
+                  : "text-[var(--nav-text)] opacity-80 hover:bg-white/10 hover:opacity-100"
               )
             }
             title={item.label}
           >
             {({ isActive }) => (
               <>
-                <Icon className="w-5 h-5" strokeWidth={isActive ? 2.2 : 1.8} />
-                <span className={cn(theme.monoTitles && "font-mono")}>
+                <Icon className="h-[18px] w-[18px]" strokeWidth={isActive ? 2.2 : 1.8} />
+                <span className={cn("whitespace-nowrap", theme.monoTitles && "font-mono")}>
                   {item.label}
                 </span>
                 {isActive && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-7 bg-[var(--accent)] rounded-r-full" />
+                  <span className="absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-r-full bg-[var(--accent)]" />
                 )}
               </>
             )}
@@ -73,8 +82,9 @@ export default function NavRail() {
       })}
 
       {hasActiveChat && (
-        <div className="mt-auto mb-2">
-          <span className="w-2 h-2 rounded-full bg-[var(--success)] block animate-pulse" title="对话进行中" />
+        <div className="mt-auto mb-1 flex flex-col items-center gap-1 text-[9px] text-[var(--nav-text)] opacity-75">
+          <span className="block h-2 w-2 rounded-full bg-[var(--success)]" />
+          <span>运行中</span>
         </div>
       )}
     </nav>

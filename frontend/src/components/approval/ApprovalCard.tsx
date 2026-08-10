@@ -1,7 +1,6 @@
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
-import { Badge } from "../ui";
-import Button from "../ui/Button";
+import { Badge, Button } from "../ui";
 
 interface ApprovalCardProps {
   approval: PendingApproval;
@@ -10,7 +9,6 @@ interface ApprovalCardProps {
   onReject: (approval: PendingApproval) => void;
 }
 
-/** Field names whose values should be masked when displayed. */
 const SENSITIVE_KEYS = [
   "api_key",
   "apikey",
@@ -22,14 +20,16 @@ const SENSITIVE_KEYS = [
 ];
 
 function maskArgs(args: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args)) {
-    const key = k.toLowerCase();
-    out[k] = SENSITIVE_KEYS.some((s) => key.includes(s))
-      ? "••••••••"
-      : v;
-  }
-  return out;
+  return Object.fromEntries(
+    Object.entries(args).map(([key, value]) => [
+      key,
+      SENSITIVE_KEYS.some((sensitive) =>
+        key.toLowerCase().includes(sensitive)
+      )
+        ? "••••••••"
+        : value,
+    ])
+  );
 }
 
 function riskBadgeTone(risk: string): "danger" | "warning" | "accent" {
@@ -39,16 +39,13 @@ function riskBadgeTone(risk: string): "danger" | "warning" | "accent" {
 }
 
 function riskLabel(risk: string): string {
-  switch (risk) {
-    case "critical":
-      return "CRITICAL";
-    case "high":
-      return "HIGH";
-    case "medium":
-      return "MEDIUM";
-    default:
-      return risk.toUpperCase();
-  }
+  const labels: Record<string, string> = {
+    critical: "严重风险",
+    high: "高风险",
+    medium: "中风险",
+    low: "低风险",
+  };
+  return labels[risk] || "风险待确认";
 }
 
 export default function ApprovalCard({
@@ -58,55 +55,44 @@ export default function ApprovalCard({
   onReject,
 }: ApprovalCardProps) {
   const isCritical = approval.risk_level === "critical";
-  const masked = maskArgs(approval.arguments || {});
 
   return (
-    <div
-      className={`mb-2 ml-4 rounded-xl border overflow-hidden ${
-        isCritical ? "border-red-500/40" : "border-amber-500/40"
-      } bg-[var(--panel)]/60`}
-    >
-      <div
-        className={`flex items-center gap-2 px-3 py-2 text-sm ${
-          isCritical ? "bg-red-500/10" : "bg-amber-500/10"
-        }`}
-      >
+    <div className="overflow-hidden rounded-xl border border-[var(--warning)]/40 bg-[var(--panel)]">
+      <div className="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--warning)]/10 px-3 py-2.5">
         {isCritical ? (
-          <ShieldAlert className="w-4 h-4 text-red-400" />
+          <ShieldAlert className="h-4 w-4 text-[var(--danger)]" />
         ) : (
-          <ShieldCheck className="w-4 h-4 text-amber-400" />
+          <ShieldCheck className="h-4 w-4 text-[var(--warning)]" />
         )}
-        <span className="font-medium">需要用户批准</span>
-        <Badge tone={riskBadgeTone(approval.risk_level)}>
+        <span className="text-sm font-semibold">需要你的确认</span>
+        <Badge tone={riskBadgeTone(approval.risk_level)} className="ml-auto">
           {riskLabel(approval.risk_level)}
         </Badge>
       </div>
 
-      <div className="px-3 py-2 text-xs space-y-2">
+      <div className="space-y-3 px-3 py-3 text-xs">
         <div>
           <span className="text-[var(--text-muted)]">工具：</span>
-          <span className="font-mono font-medium">{approval.tool_name}</span>
+          <span className="font-mono font-semibold">{approval.tool_name}</span>
         </div>
         <div>
           <span className="text-[var(--text-muted)]">原因：</span>
-          <span>{approval.reason || "高风险操作"}</span>
+          <span>{approval.reason || "该操作需要明确授权"}</span>
         </div>
-
         <div>
           <span className="text-[var(--text-muted)]">参数：</span>
-          <pre className="mt-1 p-2 rounded bg-[var(--input-bg)] border border-[var(--border)] overflow-x-auto max-h-32 overflow-y-auto font-mono whitespace-pre-wrap">
-            {JSON.stringify(masked, null, 2)}
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--input-bg)] p-2 font-mono">
+            {JSON.stringify(maskArgs(approval.arguments || {}), null, 2)}
           </pre>
         </div>
 
         <div className="flex items-center gap-2 pt-1">
           <Button
             size="sm"
-            variant={isCritical ? "primary" : "primary"}
             disabled={resolving}
             onClick={() => onApprove(approval)}
           >
-            {resolving ? "处理中…" : "允许本次"}
+            {resolving ? "提交中…" : "允许本次"}
           </Button>
           <Button
             size="sm"
@@ -114,11 +100,8 @@ export default function ApprovalCard({
             disabled={resolving}
             onClick={() => onReject(approval)}
           >
-            {resolving ? "处理中…" : "拒绝"}
+            {resolving ? "提交中…" : "拒绝"}
           </Button>
-          <span className="text-[10px] text-[var(--text-faint)] ml-auto">
-            当前版本尚未执行，等待你的决定
-          </span>
         </div>
       </div>
     </div>

@@ -1,6 +1,11 @@
 export type BgMode = "solid" | "gradient" | "image";
 
-export type PresetId = "claude-dark" | "terminal-green" | "paper-light" | "high-contrast" | "custom";
+export type PresetId =
+  | "warm-local"
+  | "precision-neutral"
+  | "graphite-pro"
+  | "high-contrast"
+  | "custom";
 
 export interface ThemeColors {
   bg: string;
@@ -18,6 +23,11 @@ export interface ThemeColors {
   success: string;
   warning: string;
   danger: string;
+  nav: string;
+  navText: string;
+  info: string;
+  focusRing: string;
+  backdrop: string;
 }
 
 export interface ThemeConfig {
@@ -51,6 +61,11 @@ export const THEME_VAR_WHITELIST = [
   "--success",
   "--warning",
   "--danger",
+  "--nav",
+  "--nav-text",
+  "--info",
+  "--focus-ring",
+  "--backdrop",
 ] as const;
 
 export const STORAGE_KEY = "ylqy.theme";

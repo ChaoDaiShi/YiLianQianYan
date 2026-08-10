@@ -303,6 +303,9 @@ export default function SettingsPage() {
                   </Button>
                 )}
               </div>
+              <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
+                背景图片会自动叠加可读性遮罩，不改变风险和验证状态颜色。
+              </p>
               <div className="flex items-center gap-4 mt-3">
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-[var(--text-muted)]">模糊</label>
@@ -354,7 +357,7 @@ export default function SettingsPage() {
                   try { theme.updateTheme({ customVars: JSON.parse(e.target.value) }); } catch { /* invalid JSON, ignore */ }
                 }}
                 rows={6}
-                placeholder='{"--accent": "#d97757", "--success": "#34d399"}'
+                placeholder='{"--accent": "#b86135", "--success": "#527c62"}'
                 className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-xs text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none font-mono"
               />
               <p className="mt-1 text-xs text-[var(--text-muted)]">
@@ -362,7 +365,8 @@ export default function SettingsPage() {
                   "--bg", "--bg-2", "--panel", "--panel-2", "--panel-hover",
                   "--text", "--text-muted", "--text-faint", "--border",
                   "--accent", "--accent-fg", "--input-bg",
-                  "--success", "--warning", "--danger",
+                  "--success", "--warning", "--danger", "--nav", "--nav-text",
+                  "--info", "--focus-ring", "--backdrop",
                 ].join(", ")}
               </p>
             </div>
