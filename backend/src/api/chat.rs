@@ -110,34 +110,7 @@ pub async fn chat_handler(
         .lock()
         .insert(conv_id.clone(), cancel_token.clone());
 
-    // Save user message & track existing message count for later
-    let now = chrono::Utc::now().timestamp_millis();
-    let _ = db.add_message(&MessageRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        conversation_id: conv_id.clone(),
-        role: "user".to_string(),
-        content: req.message.clone(),
-        tool_calls: None,
-        tool_call_id: None,
-        tool_name: None,
-        tool_result: None,
-        created_at: now,
-    });
-    let prev_msg_count = if let Ok(conv) = db.get_conversation(&conv_id) {
-        conv.messages.len()
-    } else {
-        0
-    };
-
-    // Auto-title: use first user message (trim to 40 chars)
-    let title = if req.message.len() > 40 {
-        format!("{}…", &req.message[..40])
-    } else {
-        req.message.clone()
-    };
-    let _ = db.update_conversation_title(&conv_id, &title);
-
-    // Build agent state with history
+    // Build agent state from history before persisting the current user message.
     let mut agent_state = AgentState::new(system_prompt);
     if let Ok(conv) = db.get_conversation(&conv_id) {
         let msgs: Vec<crate::llm::types::ChatMessage> = conv
@@ -160,6 +133,31 @@ pub async fn chat_handler(
             .collect();
         agent_state.load_history(msgs);
     }
+    let prev_msg_count = agent_state.messages.len();
+
+    // Persist the current user message after taking the history snapshot.
+    let now = chrono::Utc::now().timestamp_millis();
+    let _ = db.add_message(&MessageRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        conversation_id: conv_id.clone(),
+        role: "user".to_string(),
+        content: req.message.clone(),
+        tool_calls: None,
+        tool_call_id: None,
+        tool_name: None,
+        tool_result: None,
+        created_at: now,
+    });
+
+    // Auto-title: use first user message (trim to 40 chars)
+    let title = if req.message.len() > 40 {
+        format!("{}…", &req.message[..40])
+    } else {
+        req.message.clone()
+    };
+    let _ = db.update_conversation_title(&conv_id, &title);
+
+    // Add the current user message to the LLM context exactly once.
     agent_state.add_user_message(req.message.clone());
 
     // Log chat request
@@ -198,9 +196,9 @@ pub async fn chat_handler(
         )
         .await;
 
-        // Save new messages (only assistant + tool — those after the initial history + user msg)
+        // Save new messages (only assistant + tool produced after the loaded history).
         let total_msgs = agent_state.messages.len();
-        let new_start = prev_msg_count; // skip already-saved system + history + user
+        let new_start = prev_msg_count; // current user starts here and is filtered below
         let now = chrono::Utc::now().timestamp_millis();
         for msg in &agent_state.messages[new_start.min(total_msgs)..] {
             if msg.role == "user" || msg.role == "system" {
@@ -295,4 +293,235 @@ pub async fn stop_handler(
         }
     }
     Json(serde_json::json!({"status": "not_found"}))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Arc};
+
+    use axum::{
+        body::{to_bytes, Body},
+        extract::State,
+        http::{header::CONTENT_TYPE, Request, StatusCode},
+        response::IntoResponse,
+        routing::post,
+        Json, Router,
+    };
+    use serde_json::{json, Value};
+    use tokio::{net::TcpListener, sync::Mutex, task::JoinHandle};
+    use tower::ServiceExt;
+
+    use crate::{
+        api::build_router,
+        db::MessageRow,
+        safety::{ControlSession, CONTROL_SESSION_HEADER},
+        server::AppServer,
+    };
+
+    type CapturedRequests = Arc<Mutex<Vec<Value>>>;
+
+    struct TempDatabase(PathBuf);
+
+    impl TempDatabase {
+        fn new() -> Self {
+            Self(std::env::temp_dir().join(format!(
+                "yilian-chat-user-message-{}.db",
+                uuid::Uuid::new_v4()
+            )))
+        }
+    }
+
+    impl Drop for TempDatabase {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    async fn capture_llm_request(
+        State(requests): State<CapturedRequests>,
+        Json(body): Json<Value>,
+    ) -> impl IntoResponse {
+        requests.lock().await.push(body);
+        (
+            [(CONTENT_TYPE, "text/event-stream")],
+            concat!(
+                "data: {\"id\":\"test\",\"choices\":[{\"index\":0,",
+                "\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+        )
+    }
+
+    async fn start_mock_llm() -> (String, CapturedRequests, JoinHandle<()>) {
+        let requests = CapturedRequests::default();
+        let app = Router::new()
+            .route("/chat/completions", post(capture_llm_request))
+            .with_state(requests.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), requests, task)
+    }
+
+    fn test_server(database: &TempDatabase, base_url: &str) -> (Arc<AppServer>, String) {
+        let token = "a".repeat(64);
+        let server = Arc::new(
+            AppServer::new_with_control_session(
+                &database.0,
+                ".",
+                ControlSession::new(token.clone()).unwrap(),
+            )
+            .unwrap(),
+        );
+        {
+            let mut config = server.config.write();
+            config.model.base_url = base_url.to_string();
+            config.model.api_key = "test-key".to_string();
+            config.model.api_key_env.clear();
+            config.model.invoke_timeout_ms = 5_000;
+        }
+        (server, token)
+    }
+
+    async fn send_chat(server: Arc<AppServer>, token: &str, body: Value) {
+        let response = build_router(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/chat")
+                    .header(CONTROL_SESSION_HEADER, token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let _ = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    }
+
+    fn message_row(
+        conversation_id: &str,
+        role: &str,
+        content: &str,
+        created_at: i64,
+    ) -> MessageRow {
+        MessageRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: conversation_id.to_string(),
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_result: None,
+            created_at,
+        }
+    }
+
+    fn current_user_message_count(request: &Value, content: &str) -> usize {
+        request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "user" && message["content"] == content)
+            .count()
+    }
+
+    #[tokio::test]
+    async fn existing_conversation_sends_current_user_message_once_and_keeps_history() {
+        let (base_url, requests, mock_llm) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let conversation = server.db.create_conversation("existing").unwrap();
+        for message in [
+            message_row(&conversation.id, "user", "previous question", 1),
+            message_row(&conversation.id, "assistant", "previous answer", 2),
+            message_row(&conversation.id, "tool", "previous tool result", 3),
+        ] {
+            server.db.add_message(&message).unwrap();
+        }
+
+        send_chat(
+            server.clone(),
+            &token,
+            json!({
+                "conversation_id": conversation.id,
+                "message": "帮我检查 README"
+            }),
+        )
+        .await;
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        assert_eq!(current_user_message_count(request, "帮我检查 README"), 1);
+        assert!(request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| {
+                message["role"] == "assistant" && message["content"] == "previous answer"
+            }));
+        assert!(request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| {
+                message["role"] == "tool" && message["content"] == "previous tool result"
+            }));
+        drop(requests);
+
+        let persisted = server.db.get_conversation(&conversation.id).unwrap();
+        assert_eq!(
+            persisted
+                .messages
+                .iter()
+                .filter(|message| {
+                    message.role == "user" && message.content == "帮我检查 README"
+                })
+                .count(),
+            1
+        );
+        mock_llm.abort();
+    }
+
+    #[tokio::test]
+    async fn new_conversation_sends_and_persists_current_user_message_once() {
+        let (base_url, requests, mock_llm) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"message": "帮我检查 README"}),
+        )
+        .await;
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            current_user_message_count(&requests[0], "帮我检查 README"),
+            1
+        );
+        drop(requests);
+
+        let conversations = server.db.list_conversations().unwrap();
+        assert_eq!(conversations.len(), 1);
+        let persisted = server.db.get_conversation(&conversations[0].id).unwrap();
+        assert_eq!(
+            persisted
+                .messages
+                .iter()
+                .filter(|message| {
+                    message.role == "user" && message.content == "帮我检查 README"
+                })
+                .count(),
+            1
+        );
+        mock_llm.abort();
+    }
 }
