@@ -22,6 +22,7 @@ frontend (:1420)          backend (:9420)           src-tauri (primary)
 ```powershell
 cd backend
 $env:OPENAI_API_KEY = "sk-your-key"   # 设置 API 密钥
+$env:YILIAN_CONTROL_SESSION_TOKEN = "local-dev-control-session-token-change-me"
 cargo run
 # → http://127.0.0.1:9420
 ```
@@ -31,11 +32,12 @@ cargo run
 ```powershell
 cd frontend
 npm install
+$env:VITE_CONTROL_SESSION_TOKEN = "local-dev-control-session-token-change-me"
 npm run dev
 # → http://localhost:1420
 ```
 
-浏览器打开 `http://localhost:1420` 可进行开发预览。
+浏览器打开 `http://localhost:1420` 可进行开发预览。前后端开发令牌必须完全一致，且至少 32 个字符；令牌只用于本地开发，不应提交到仓库。
 
 ### 3. 启动 Tauri 桌面客户端（主要入口）
 
@@ -44,6 +46,7 @@ npm run tauri dev
 ```
 
 默认窗口为 `1200 × 800`，最小可调整至 `800 × 600`。
+Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 command 交给 webview；无需手工配置，也不会把令牌写入日志或数据库。
 
 ## 桌面工作台
 
@@ -69,7 +72,8 @@ npm run tauri dev
 │       ├── agent/               # ReAct agent 引擎
 │       ├── llm/                 # LLM 客户端 (OpenAI兼容)
 │       ├── tools/               # 内置工具系统
-│       ├── db/                  # SQLite 持久化
+│       ├── safety/               # 风险、RBAC、脱敏、审计与控制会话
+│       ├── db/                  # SQLite 持久化（含安全审计表）
 │       └── config/              # 配置管理
 ├── frontend/                    # React 前端
 │   └── src/
@@ -93,7 +97,18 @@ npm run tauri dev
 | `GET` `/POST` `/DELETE` | `/api/conversations[/{id}]` | 对话 CRUD |
 | `GET` `/PUT` | `/api/settings` | 配置管理 |
 | `GET` | `/api/tools` | 工具列表 |
+| `GET` | `/api/security/audit` | 按时间、关联 ID、工具、事件、决策和风险筛选安全审计 |
+| `POST` | `/api/security/audit/export` | 导出版本化、已脱敏的 JSON 审计数据 |
+| `GET` | `/api/security/health` | 查询审计子系统与策略版本状态 |
 | `GET` | `/api/health` | 健康检查 |
+
+除 `/api/health` 外，所有 `/api/*` 请求都必须携带：
+
+```text
+X-Yilian-Control-Session: <本次进程的控制会话令牌>
+```
+
+控制会话用于隔离 Agent 执行面、用户控制面和无关的本地回环请求，不宣称能够抵御已取得相同操作系统用户权限的恶意软件。默认 CORS 仅允许 Tauri Origin 与 `localhost:1420` 开发 Origin；额外 Origin 必须通过 `YILIAN_ALLOWED_ORIGINS` 显式配置。
 
 ## 可用工具
 
@@ -133,6 +148,33 @@ PermissionManager.evaluate() → Allow / RequireApproval
   ↓
 执行 或 暂停等待用户审批（approval_required）
 ```
+
+### RBAC 与最小权限基础
+
+安全模块已经提供 `owner`、`standard`、`restricted` 三种内置角色，以及 capability、action、资源范围和参数敏感的工具安全描述。未知工具、无效描述或工具身份不匹配会默认拒绝。
+
+当前阶段只完成了确定性策略核心，Agent 运行时仍沿用现有 `SafetyPolicy` / `PermissionManager` 执行路径。新的 `PolicyEngine` 尚未通过统一 `SecurityExecutionGateway` 接入所有 Tool Call；这部分属于下一阶段，不能把本版本描述为已经完成统一运行时 RBAC 强制执行。
+
+### 持久化安全审计
+
+SQLite 已包含以下安全表：
+
+```text
+security_subjects
+security_role_bindings
+security_approvals
+security_audit_events
+```
+
+`AuditRecorder` 会在持久化前递归处理对象和数组：敏感键值替换为 `[REDACTED]`，data URI 不保存正文，长文本只保存受限预览、长度和 SHA-256 摘要。安全审计与 `/api/logs` 的内存运行日志相互独立，日志 drain 不会影响审计数据。
+
+安全审计首版只提供查询和 JSON 导出，不提供删除 API。`previous_hash`、`event_hash` 和 `signature` 仅为未来升级预留，目前不宣称日志防篡改。
+
+当前 Agent Tool Call 尚未接入 `AuditRecorder`，因此本版本不会自动生成完整的执行审计链；现阶段持久化层、脱敏、健康状态和查询/导出契约已经就绪，供后续 `SecurityExecutionGateway` 使用。
+
+### 当前沙箱边界
+
+本版本尚未实现统一 `SandboxPlan`、受限令牌、Windows Job Object、AppContainer 或独立安全 Worker。工具仍在现有后端进程内执行，各工具自身的路径和参数检查不等同于操作系统级强隔离。
 
 ### 用户审批
 

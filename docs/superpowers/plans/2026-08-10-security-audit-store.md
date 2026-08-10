@@ -32,7 +32,7 @@
 - Produces: `SecurityAuditEvent`, `NewSecurityAuditEvent`, `SecurityAuditQuery`, `Database::insert_security_audit_event`, and `Database::list_security_audit_events`.
 - Consumes: the existing `Database::conn()` and SQLite migration lifecycle.
 
-- [ ] **Step 1: Write a failing migration and persistence test**
+- [x] **Step 1: Write a failing migration and persistence test**
 
 Create a temporary database with a UUID filename, insert a complete `NewSecurityAuditEvent`, reopen it, and assert that filtering by `correlation_id`, `tool_name`, `event_type`, `decision_status`, and `risk_level` returns the same redacted row. Query `sqlite_master` to assert the seven required audit indexes exist. Remove only the UUID-named temporary file after handles are dropped.
 
@@ -57,13 +57,13 @@ fn security_audit_schema_persists_and_filters_events() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `cargo test db::security_audit::tests::security_audit_schema_persists_and_filters_events -- --nocapture`
 
 Expected: compilation fails because the security audit types and methods do not exist.
 
-- [ ] **Step 3: Implement schema and row mapping**
+- [x] **Step 3: Implement schema and row mapping**
 
 Add `security_subjects`, `security_role_bindings`, `security_approvals`, and `security_audit_events` to `run_migrations()`. Seed `local-user` and one active `owner` binding with `INSERT OR IGNORE`. Define the exact event/query structs from the design, store vector/value fields as JSON text, use bound SQL parameters, sort by `created_at DESC, event_id DESC`, and clamp `limit` to `1..=500`.
 
@@ -97,7 +97,7 @@ pub struct SecurityAuditEvent {
 }
 ```
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run:
 
@@ -127,7 +127,7 @@ Commit: `feat(audit): add persistent security event schema`
 - Produces: `RedactedJson`, `redact_and_digest(&Value)`, `redact_error(&str)`, and `sha256_hex(&[u8])`.
 - Consumes: `serde_json::Value` and `sha2::Sha256`.
 
-- [ ] **Step 1: Write failing recursive-redaction tests**
+- [x] **Step 1: Write failing recursive-redaction tests**
 
 Cover mixed-case sensitive keys, nested arrays, inline `Bearer`/`token=` values, data URIs, a 2,049-character string, deterministic object-key ordering, and proof that changing a raw secret under a sensitive key does not change the safe digest.
 
@@ -141,13 +141,13 @@ fn secret_values_never_affect_the_safe_digest() {
 }
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `cargo test safety::tests::redaction -- --nocapture`
 
 Expected: compilation fails because `redaction` and `sha2` are absent.
 
-- [ ] **Step 3: Implement the minimal redactor**
+- [x] **Step 3: Implement the minimal redactor**
 
 Add `sha2 = "0.10"`. Recursively sort object keys, redact sensitive-key values before hashing, replace data URIs with `{kind,length,sha256}`, replace long strings with `{kind,preview,length,sha256}`, and apply cached regular expressions to inline authorization/credential assignments.
 
@@ -163,7 +163,7 @@ pub fn redact_error(message: &str) -> String;
 pub fn sha256_hex(bytes: &[u8]) -> String;
 ```
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run:
 
@@ -191,7 +191,7 @@ Commit: `feat(safety): redact security audit evidence`
 - Produces: `AuditEventType`, `AuditEventInput`, `AuditRecorder`, `AuditHealth`, `AuditError`, and `AuditExportV1`.
 - Consumes: database audit repository plus `redact_and_digest`.
 
-- [ ] **Step 1: Write failing recorder behavior tests**
+- [x] **Step 1: Write failing recorder behavior tests**
 
 Test persistence of redacted request/result/details, filtering, `audit_exported` recording before export, degraded state after a forced database write error, and recovery after a later successful write.
 
@@ -213,13 +213,13 @@ fn recorder_persists_only_redacted_evidence() {
 }
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `cargo test safety::tests::audit -- --nocapture`
 
 Expected: compilation fails because the recorder interfaces do not exist.
 
-- [ ] **Step 3: Implement recorder and health state**
+- [x] **Step 3: Implement recorder and health state**
 
 `AuditRecorder` wraps a cloned `Database` and `Arc<AtomicBool>`. `record()` redacts before building `NewSecurityAuditEvent`; a failed insert sets degraded, and a successful insert clears it. `export()` first records `AuditExported`, then returns a versioned export containing applied filters and rows. Do not add delete methods.
 
@@ -240,7 +240,7 @@ impl AuditRecorder {
 
 Add `pub audit_recorder: AuditRecorder` to `AppServer`, initialized from the same database handle.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run:
 
@@ -270,7 +270,7 @@ Commit: `feat(audit): add fail-closed audit recorder`
 - Produces: `ControlSession`, `ControlSessionError`, and `CONTROL_SESSION_HEADER`.
 - Consumes: `AppServer` Axum state and UUID v4 randomness already present in the backend.
 
-- [ ] **Step 1: Write failing token tests**
+- [x] **Step 1: Write failing token tests**
 
 Test minimum token length, two generated tokens differing, correct/missing/wrong header verification, and case-sensitive exact token matching.
 
@@ -284,13 +284,13 @@ fn only_the_exact_control_session_token_is_accepted() {
 }
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `cargo test safety::tests::control_session -- --nocapture`
 
 Expected: compilation fails because control-session types are absent.
 
-- [ ] **Step 3: Implement token and middleware**
+- [x] **Step 3: Implement token and middleware**
 
 Generate 256 bits as two UUID v4 values without separators. Store the token only in `AppServer`. Build a public router containing `/api/health` and a protected router containing every other API route. Apply `require_control_session` as a route layer and use constant-work byte comparison. Return `401` JSON on missing/invalid tokens.
 
@@ -305,7 +305,7 @@ http://127.0.0.1:1420
 
 Allow extra exact origins through `YILIAN_ALLOWED_ORIGINS`. Never use `Any`.
 
-- [ ] **Step 4: Add router tests and verify GREEN**
+- [x] **Step 4: Add router tests and verify GREEN**
 
 Enable Tower's existing `util` feature for router tests. Using
 `tower::ServiceExt`, assert public health is `200`, the existing `/api/tools`
@@ -337,17 +337,17 @@ Commit: `feat(security): protect local control APIs`
 - Produces: `GET /api/security/audit`, `POST /api/security/audit/export`, and `GET /api/security/health`.
 - Consumes: `AppServer::audit_recorder`, `SecurityAuditQuery`, and control-session middleware.
 
-- [ ] **Step 1: Write failing handler tests**
+- [x] **Step 1: Write failing handler tests**
 
 Seed two events and assert bounded filtering, newest-first ordering, versioned export shape, export self-auditing, invalid `limit=0`/`limit=501` returning `400`, and persistence errors mapping to `500` without data leakage.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `cargo test api::security::tests -- --nocapture`
 
 Expected: compilation fails because the routes and response types do not exist.
 
-- [ ] **Step 3: Implement handlers**
+- [x] **Step 3: Implement handlers**
 
 Use typed query/body structures and a redacted error body:
 
@@ -367,7 +367,7 @@ struct SecurityHealthResponse {
 
 Export accepts `SecurityAuditQuery` JSON and invokes `AuditRecorder::export`; no filesystem path is accepted and no server-side file is written.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run:
 
@@ -399,7 +399,7 @@ Commit: `feat(api): expose protected security audit endpoints`
 - Produces: Tauri command `get_control_session_token`, frontend `initializeControlSession`, and `controlSessionHeaders`.
 - Consumes: `serve_in_background_with_control_token(token)` and `@tauri-apps/api/core::invoke`.
 
-- [ ] **Step 1: Write failing frontend token tests**
+- [x] **Step 1: Write failing frontend token tests**
 
 Test Tauri invoke selection, environment fallback, missing-token rejection, and exact header generation without logging token values.
 
@@ -415,19 +415,19 @@ it("builds the protected API header after initialization", async () => {
 });
 ```
 
-- [ ] **Step 2: Run frontend tests and verify RED**
+- [x] **Step 2: Run frontend tests and verify RED**
 
 Run: `npm run test -- controlSession.test.ts`
 
 Expected: test suite fails because the module does not exist.
 
-- [ ] **Step 3: Implement the shared token path**
+- [x] **Step 3: Implement the shared token path**
 
 Add `@tauri-apps/api` to frontend dependencies. Add a backend function that accepts a caller-provided token. Generate the token before the Tauri backend thread starts, pass a clone into the backend, store another clone in Tauri managed state, and expose only `get_control_session_token`.
 
 Initialize the frontend API client before rendering. In Tauri use `invoke`; in browser development require `VITE_CONTROL_SESSION_TOKEN`. Add the header to the shared client, chat SSE request, stop request, and approval fetches. Render a concise initialization error instead of starting an unauthenticated UI.
 
-- [ ] **Step 4: Verify frontend, Tauri, and commit**
+- [x] **Step 4: Verify frontend, Tauri, and commit**
 
 Run:
 
@@ -456,11 +456,11 @@ Commit: `feat(frontend): initialize authenticated control session`
 - Consumes: all previous tasks.
 - Produces: accurate security boundary and migration instructions.
 
-- [ ] **Step 1: Update README**
+- [x] **Step 1: Update README**
 
 Document the new audit tables, endpoints, header name, Tauri handoff, standalone development variables, no-delete rule, and the limits: audit is not yet wired into tool execution and no OS-level isolation/tamper evidence exists.
 
-- [ ] **Step 2: Run final verification from clean command starts**
+- [x] **Step 2: Run final verification from clean command starts**
 
 Run:
 
@@ -481,7 +481,7 @@ cargo check
 
 Expected: every command exits zero. Report existing dependency warnings separately.
 
-- [ ] **Step 3: Confirm scope and diff hygiene**
+- [x] **Step 3: Confirm scope and diff hygiene**
 
 Run:
 
@@ -493,7 +493,7 @@ git status --short
 
 Expected: no Agent Engine or ToolRegistry execution-path changes; only intended security, database, API, Tauri, frontend client, dependency, documentation, and test files differ.
 
-- [ ] **Step 4: Request code review and commit documentation**
+- [x] **Step 4: Request code review and commit documentation**
 
 Perform a requirements and security review, fix only verified findings through TDD, rerun affected tests, then commit:
 
