@@ -1,14 +1,14 @@
 # 忆涟千言 — 桌面级 AI 智能体
 
-基于 **Rust + React** 前后端分离架构的桌面级 AI 智能体，可以帮你控制电脑。
+基于 **Rust + React + Tauri** 的本地优先桌面 AI 智能体。Tauri 桌面客户端是主要交互入口，浏览器版本用于开发预览。
 
 ## 架构
 
 ```
-frontend (:1420)          backend (:9420)           src-tauri (optional)
+frontend (:1420)          backend (:9420)           src-tauri (primary)
 ┌──────────────┐   HTTP   ┌──────────────┐   IPC   ┌──────────────┐
 │ React + Vite │ ◄─SSE──► │ axum + Rust  │ ◄─────► │ Tauri shell  │
-│ 纯 web app   │          │ agent/tools  │         │ 桌面窗口     │
+│ React UI     │          │ agent/tools  │         │ 主要桌面入口 │
 └──────────────┘          └──────┬───────┘         └──────────────┘
                                  │ SQLite
                                  ▼
@@ -35,13 +35,24 @@ npm run dev
 # → http://localhost:1420
 ```
 
-浏览器打开 `http://localhost:1420` 即可使用。
+浏览器打开 `http://localhost:1420` 可进行开发预览。
 
-### 3. (可选) Tauri 桌面壳
+### 3. 启动 Tauri 桌面客户端（主要入口）
 
 ```powershell
 npm run tauri dev
 ```
+
+默认窗口为 `1200 × 800`，最小可调整至 `800 × 600`。
+
+## 桌面工作台
+
+- `>= 1180px`：任务列表、对话区、执行轨迹三栏常驻。
+- `960–1179px`：任务列表常驻，执行轨迹从右侧抽屉打开。
+- `800–959px`：任务列表与执行轨迹使用互斥的左右抽屉。
+- 默认主题为“暖色本地（warm-local）”，可切换“精密中性”“石墨专业”“高对比”；自定义背景、字号和面板透明度会本地持久化。
+- 工具执行结果与结果验证分别显示；工具返回成功不等于验证通过。
+- 高风险与严重风险操作仍会暂停并等待用户明确批准，拒绝后不会执行原工具调用。
 
 ## 项目结构
 
@@ -68,7 +79,7 @@ npm run tauri dev
 │       │   ├── sidebar/         # 对话列表
 │       │   └── settings/        # 设置面板
 │       └── types/               # TypeScript 类型
-├── src-tauri/                   # Tauri 桌面壳 (可选)
+├── src-tauri/                   # Tauri 桌面客户端（主要入口）
 ├── skills/                      # AI 技能目录
 └── .agents/                     # 子智能体目录
 ```
