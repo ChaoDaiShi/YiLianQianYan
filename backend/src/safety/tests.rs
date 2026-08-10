@@ -4,6 +4,8 @@
 
 use crate::tools::trait_def::RiskLevel;
 
+mod subject_capability;
+
 use super::permission::{PermissionDecision, PermissionManager};
 use super::policy::SafetyPolicy;
 
