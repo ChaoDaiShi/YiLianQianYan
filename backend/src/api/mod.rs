@@ -22,6 +22,7 @@ mod conversations;
 mod logs;
 mod memories;
 mod plugins;
+mod security;
 mod settings;
 mod skills_route;
 mod system;
@@ -103,6 +104,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         .route("/api/approvals/:id/reject", post(approvals::reject_handler))
         .route("/api/approvals/:id/cancel", post(approvals::cancel_handler))
+        // Security audit API (read/export only; deliberately no delete route)
+        .route("/api/security/audit", get(security::list_audit))
+        .route("/api/security/audit/export", post(security::export_audit))
+        .route("/api/security/health", get(security::security_health))
         .route_layer(middleware::from_fn_with_state(
             server.clone(),
             require_control_session,
