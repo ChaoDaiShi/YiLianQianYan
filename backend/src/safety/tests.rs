@@ -7,6 +7,7 @@ use crate::tools::trait_def::RiskLevel;
 mod descriptor;
 mod policy_engine;
 mod rbac;
+mod registry_coverage;
 mod subject_capability;
 
 use super::permission::{PermissionDecision, PermissionManager};
