@@ -15,6 +15,7 @@ pub mod permission;
 pub mod policy;
 pub mod policy_engine;
 pub mod rbac;
+pub mod redaction;
 pub mod subject;
 
 pub use approval::{ApprovalError, ApprovalStatus, ApprovalStore, PendingApproval};
@@ -27,6 +28,7 @@ pub use permission::{PermissionDecision, PermissionManager};
 pub use policy::SafetyPolicy;
 pub use policy_engine::{DecisionContext, PolicyDecision, PolicyEngine, POLICY_VERSION};
 pub use rbac::{GrantMode, RolePolicy};
+pub use redaction::{redact_and_digest, redact_error, sha256_hex, RedactedJson};
 pub use subject::{BuiltInRole, SecuritySubject, SubjectType};
 
 #[cfg(test)]

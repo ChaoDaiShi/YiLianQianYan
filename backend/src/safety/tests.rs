@@ -7,6 +7,7 @@ use crate::tools::trait_def::RiskLevel;
 mod descriptor;
 mod policy_engine;
 mod rbac;
+mod redaction;
 mod registry_coverage;
 mod subject_capability;
 
