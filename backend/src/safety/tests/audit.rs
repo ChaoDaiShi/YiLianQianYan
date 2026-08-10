@@ -122,3 +122,19 @@ fn incomplete_event_is_rejected_without_touching_health() {
     assert!(error.to_string().contains("correlation_id"));
     assert_eq!(recorder.health(), AuditHealth::Healthy);
 }
+
+#[test]
+fn unknown_role_is_rejected_without_persisting_an_event() {
+    let temp = TempDatabase::new("audit-recorder-role");
+    let (_db, recorder) = recorder_for(&temp.0);
+    let mut input = sample_input(AuditEventType::PolicyDecided);
+    input.role_key = "administrator".to_string();
+
+    let error = recorder.record(input).unwrap_err();
+    assert!(error.to_string().contains("role_key"));
+    assert!(recorder
+        .query(&SecurityAuditQuery::default())
+        .unwrap()
+        .is_empty());
+    assert_eq!(recorder.health(), AuditHealth::Healthy);
+}

@@ -88,13 +88,13 @@ fn redact_string(text: &str) -> Value {
         });
     }
 
+    let original_length = text.chars().count();
     let safe = redact_inline_secrets(text);
-    let length = safe.chars().count();
-    if length > MAX_TEXT_CHARS {
+    if original_length > MAX_TEXT_CHARS {
         return json!({
             "kind": "truncated_text",
             "preview": safe.chars().take(PREVIEW_CHARS).collect::<String>(),
-            "length": length,
+            "length": original_length,
             "sha256": sha256_hex(safe.as_bytes()),
         });
     }

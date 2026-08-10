@@ -51,4 +51,17 @@ describe("ControlSessionClient", () => {
       }),
     ).rejects.toThrow("at least 32 characters");
   });
+
+  it("clears a previous token before a failed reinitialization", async () => {
+    const session = new ControlSessionClient();
+    await session.initialize({
+      tauriAvailable: false,
+      environmentToken: "d".repeat(64),
+    });
+
+    await expect(
+      session.initialize({ tauriAvailable: false, environmentToken: "" }),
+    ).rejects.toThrow("control session token is required");
+    expect(() => session.headers()).toThrow("control session is not initialized");
+  });
 });

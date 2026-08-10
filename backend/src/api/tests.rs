@@ -151,6 +151,7 @@ async fn security_audit_endpoints_filter_validate_export_and_never_delete() {
         "/api/security/audit?limit=0",
         "/api/security/audit?limit=501",
         "/api/security/audit?start_at=20&end_at=10",
+        "/api/security/audit?offset=1000001",
     ] {
         let response = app
             .clone()

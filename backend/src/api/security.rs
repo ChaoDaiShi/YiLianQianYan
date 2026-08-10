@@ -71,6 +71,9 @@ fn validate_query(query: &SecurityAuditQuery) -> Result<(), ApiError> {
             return Err(bad_request("limit must be between 1 and 500"));
         }
     }
+    if query.offset.unwrap_or(0) > 1_000_000 {
+        return Err(bad_request("offset must not exceed 1000000"));
+    }
     if let (Some(start), Some(end)) = (query.start_at, query.end_at) {
         if start > end {
             return Err(bad_request("start_at must be less than or equal to end_at"));

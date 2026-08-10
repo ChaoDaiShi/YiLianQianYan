@@ -106,6 +106,11 @@ impl AuditEventInput {
                 )));
             }
         }
+        if !["owner", "standard", "restricted"].contains(&self.role_key.as_str()) {
+            return Err(AuditError::InvalidInput(
+                "role_key must be owner, standard, or restricted".to_string(),
+            ));
+        }
         Ok(())
     }
 }

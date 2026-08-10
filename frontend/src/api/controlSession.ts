@@ -18,6 +18,7 @@ export class ControlSessionClient {
   private token: string | null = null;
 
   async initialize(options: ControlSessionInitOptions = {}): Promise<void> {
+    this.token = null;
     const tauriAvailable =
       options.tauriAvailable ??
       (typeof window !== "undefined" && window.__TAURI_INTERNALS__ !== undefined);

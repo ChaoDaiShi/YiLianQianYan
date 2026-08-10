@@ -88,3 +88,13 @@ fn non_secret_changes_produce_a_different_digest() {
 
     assert_ne!(first.digest, second.digest);
 }
+
+#[test]
+fn long_inline_secret_keeps_original_length_without_storing_secret_text() {
+    let raw = format!("token={}", "s".repeat(3_000));
+    let redacted = redact_and_digest(&json!({"message": raw}));
+
+    assert_eq!(redacted.value["message"]["kind"], "truncated_text");
+    assert_eq!(redacted.value["message"]["length"], 3_006);
+    assert!(!redacted.value.to_string().contains(&"s".repeat(32)));
+}
