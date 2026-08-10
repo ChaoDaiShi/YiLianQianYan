@@ -13,6 +13,7 @@ pub mod capability;
 pub mod descriptor;
 pub mod permission;
 pub mod policy;
+pub mod policy_engine;
 pub mod rbac;
 pub mod subject;
 
@@ -24,6 +25,7 @@ pub use descriptor::{
 };
 pub use permission::{PermissionDecision, PermissionManager};
 pub use policy::SafetyPolicy;
+pub use policy_engine::{DecisionContext, PolicyDecision, PolicyEngine, POLICY_VERSION};
 pub use rbac::{GrantMode, RolePolicy};
 pub use subject::{BuiltInRole, SecuritySubject, SubjectType};
 

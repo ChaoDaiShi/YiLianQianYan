@@ -5,6 +5,7 @@
 use crate::tools::trait_def::RiskLevel;
 
 mod descriptor;
+mod policy_engine;
 mod rbac;
 mod subject_capability;
 
