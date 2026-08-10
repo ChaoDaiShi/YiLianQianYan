@@ -305,14 +305,21 @@ Expected:
 
 - [ ] **Step 7: Verify the real 27,237-character history path without modifying user data**
 
-Use a single PowerShell session so the background jobs are always cleaned up. Copy the user's database to a temporary data directory, run the backend copy on port `19420` with a fixed test token, run Vite on `1420`, and capture the known long conversation in headless Edge:
+First verify that `frontend/.env.local` does not already exist. If it is absent, use `apply_patch` to create this ignored temporary development configuration; never overwrite an existing user file:
+
+```dotenv
+VITE_API_BASE=http://127.0.0.1:19420
+VITE_CONTROL_SESSION_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Then use a single PowerShell session so the background jobs are always cleaned up. Copy the user's database to a temporary data directory, run the backend copy on port `19420` with the matching fixed test token, run Vite on `1420`, and capture the known long conversation in headless Edge:
 
 ```powershell
 $repo = 'F:\项目开发\忆涟千言\YiLianQianYan'
 $sourceDb = 'C:\Users\25113\AppData\Roaming\yilianqianyan\yilianqianyan.db'
 $testData = Join-Path $env:TEMP ('yilian-history-scroll-' + [guid]::NewGuid())
 $screenshot = Join-Path $testData 'history-conversation-scroll.png'
-$token = 'a' * 64
+$token = -join ('a' * 64)
 New-Item -ItemType Directory -Path $testData | Out-Null
 Copy-Item -LiteralPath $sourceDb -Destination (Join-Path $testData 'yilianqianyan.db')
 
@@ -338,12 +345,10 @@ try {
   if (-not $backendReady) { throw 'Temporary backend did not become ready' }
 
   $frontendJob = Start-Job -ScriptBlock {
-    param($frontendPath, $sessionToken)
-    $env:VITE_API_BASE = 'http://127.0.0.1:19420'
-    $env:VITE_CONTROL_SESSION_TOKEN = $sessionToken
+    param($frontendPath)
     Set-Location $frontendPath
     npm.cmd run dev -- --host 127.0.0.1
-  } -ArgumentList (Join-Path $repo 'frontend'), $token
+  } -ArgumentList (Join-Path $repo 'frontend')
 
   $frontendReady = $false
   for ($i = 0; $i -lt 40 -and -not $frontendReady; $i++) {
@@ -362,6 +367,9 @@ try {
     "--screenshot=$screenshot" `
     'http://127.0.0.1:1420/chat/ed1fae98-2acf-4a08-9823-d71fc9d9d6a5'
 
+  for ($i = 0; $i -lt 100 -and -not (Test-Path -LiteralPath $screenshot); $i++) {
+    Start-Sleep -Milliseconds 100
+  }
   if (-not (Test-Path -LiteralPath $screenshot)) {
     throw 'Edge did not create the verification screenshot'
   }
@@ -371,6 +379,8 @@ try {
   Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
 }
 ```
+
+Immediately delete the temporary `frontend/.env.local` with `apply_patch`, whether the browser verification passes or fails. Confirm that ports `1420` and `19420` no longer have listeners.
 
 Inspect the reported temporary `history-conversation-scroll.png` path with the image viewer. Required visual evidence:
 
