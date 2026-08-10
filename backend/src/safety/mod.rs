@@ -11,6 +11,7 @@
 pub mod approval;
 pub mod audit;
 pub mod capability;
+pub mod control_session;
 pub mod descriptor;
 pub mod permission;
 pub mod policy;
@@ -24,6 +25,7 @@ pub use audit::{
     AuditError, AuditEventInput, AuditEventType, AuditExportV1, AuditHealth, AuditRecorder,
 };
 pub use capability::{Action, Capability, PermissionId, RequestedPermission, ResourceScope};
+pub use control_session::{ControlSession, ControlSessionError, CONTROL_SESSION_HEADER};
 pub use descriptor::{
     describe_builtin_tool, DescriptorError, ResourceDescriptor, SideEffectKind,
     ToolSecurityDescriptor,

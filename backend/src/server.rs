@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::types::AppConfig;
 use crate::db::Database;
-use crate::safety::{approval::ApprovalStore, AuditRecorder};
+use crate::safety::{approval::ApprovalStore, AuditRecorder, ControlSession};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
 
@@ -95,10 +95,22 @@ pub struct AppServer {
     pub approval_store: ApprovalStore,
     /// Persistent, redacted security event recorder.
     pub audit_recorder: AuditRecorder,
+    /// In-memory credential for the local HTTP control plane.
+    pub control_session: ControlSession,
 }
 
 impl AppServer {
     pub fn new(db_path: &std::path::Path, workspace_root: &str) -> Result<Self, String> {
+        let control_session =
+            ControlSession::from_environment_or_generate().map_err(|error| error.to_string())?;
+        Self::new_with_control_session(db_path, workspace_root, control_session)
+    }
+
+    pub fn new_with_control_session(
+        db_path: &std::path::Path,
+        workspace_root: &str,
+        control_session: ControlSession,
+    ) -> Result<Self, String> {
         let db = Database::new(db_path).map_err(|e| e.to_string())?;
         let audit_recorder = AuditRecorder::new(db.clone_connection());
         let mut config = db.get_settings().unwrap_or_default();
@@ -146,6 +158,7 @@ impl AppServer {
             log_buffer,
             approval_store: ApprovalStore::new(),
             audit_recorder,
+            control_session,
         })
     }
 

@@ -3,12 +3,17 @@
 // ============================================================
 
 use axum::{
+    extract::{Request, State},
+    http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Method, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{delete, get, post, put},
-    Router,
+    Json, Router,
 };
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use crate::safety::CONTROL_SESSION_HEADER;
 use crate::server::AppServer;
 
 mod approvals;
@@ -26,13 +31,11 @@ mod workflows;
 pub use chat::chat_handler;
 pub use chat::stop_handler;
 
-pub fn build_router(server: Arc<AppServer>) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+#[cfg(test)]
+mod tests;
 
-    Router::new()
+pub fn build_router(server: Arc<AppServer>) -> Router {
+    let protected = Router::new()
         .route("/api/chat", post(chat::chat_handler))
         .route("/api/chat/stop", post(chat::stop_handler))
         .route("/api/conversations", get(conversations::list_handler))
@@ -100,7 +103,76 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         .route("/api/approvals/:id/reject", post(approvals::reject_handler))
         .route("/api/approvals/:id/cancel", post(approvals::cancel_handler))
+        .route_layer(middleware::from_fn_with_state(
+            server.clone(),
+            require_control_session,
+        ));
+
+    Router::new()
         .route("/api/health", get(|| async { "OK" }))
-        .layer(cors)
+        .merge(protected)
+        .layer(control_plane_cors())
         .with_state(server)
+}
+
+async fn require_control_session(
+    State(server): State<Arc<AppServer>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let candidate = request
+        .headers()
+        .get(CONTROL_SESSION_HEADER)
+        .and_then(|value| value.to_str().ok());
+
+    if server.control_session.verify(candidate).is_err() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "invalid_control_session",
+                "message": "有效的本地控制会话凭据是必需的"
+            })),
+        )
+            .into_response();
+    }
+
+    next.run(request).await
+}
+
+fn control_plane_cors() -> CorsLayer {
+    let mut origins = [
+        "http://tauri.localhost",
+        "tauri://localhost",
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+    ]
+    .into_iter()
+    .filter_map(|origin| HeaderValue::from_str(origin).ok())
+    .collect::<Vec<_>>();
+
+    if let Ok(configured) = std::env::var("YILIAN_ALLOWED_ORIGINS") {
+        origins.extend(
+            configured
+                .split(',')
+                .map(str::trim)
+                .filter(|origin| !origin.is_empty())
+                .filter_map(|origin| HeaderValue::from_str(origin).ok()),
+        );
+    }
+    origins.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    origins.dedup();
+
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            CONTENT_TYPE,
+            HeaderName::from_static(CONTROL_SESSION_HEADER),
+        ])
 }
