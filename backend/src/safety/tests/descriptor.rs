@@ -90,14 +90,24 @@ fn image_upscale_declares_file_and_network_side_effects() {
             ResourceDescriptor::File { path: output },
             ResourceDescriptor::Network { url, method },
             ResourceDescriptor::NetworkFromResponse {
-                source,
+                source: status_source,
+                target_template: status_template,
+                method: status_method,
+            },
+            ResourceDescriptor::NetworkFromResponse {
+                source: download_source,
+                target_template: download_template,
                 method: download_method,
             },
         ] if input == "image.png"
             && output == "image_upscaled.png"
             && url == "https://bigjpg.com/api/task/"
             && method == "POST"
-            && source == "bigjpg.task_result.url"
+            && status_source == "bigjpg.task_id"
+            && status_template == "https://bigjpg.com/api/task/{value}"
+            && status_method == "GET"
+            && download_source == "bigjpg.task_result.url"
+            && download_template == "{value}"
             && download_method == "GET"
     ));
 }

@@ -36,6 +36,7 @@ pub enum ResourceDescriptor {
     },
     NetworkFromResponse {
         source: String,
+        target_template: String,
         method: String,
     },
     Desktop {
@@ -316,13 +317,22 @@ fn builtin_descriptor_profile(
         },
         "upscale_image" => match descriptor.resources.as_slice() {
             [ResourceDescriptor::File { path: input }, ResourceDescriptor::File { path: output }, ResourceDescriptor::Network { url, method }, ResourceDescriptor::NetworkFromResponse {
-                source,
+                source: status_source,
+                target_template: status_template,
+                method: status_method,
+            }, ResourceDescriptor::NetworkFromResponse {
+                source: download_source,
+                target_template: download_template,
                 method: download_method,
             }] if !input.trim().is_empty()
                 && output == &upscale_output_path(input)
                 && url == "https://bigjpg.com/api/task/"
                 && method == "POST"
-                && source == "bigjpg.task_result.url"
+                && status_source == "bigjpg.task_id"
+                && status_template == "https://bigjpg.com/api/task/{value}"
+                && status_method == "GET"
+                && download_source == "bigjpg.task_result.url"
+                && download_template == "{value}"
                 && download_method == "GET" =>
             {
                 profile(
@@ -632,7 +642,13 @@ pub fn describe_builtin_tool(
                         method: "POST".to_string(),
                     },
                     ResourceDescriptor::NetworkFromResponse {
+                        source: "bigjpg.task_id".to_string(),
+                        target_template: "https://bigjpg.com/api/task/{value}".to_string(),
+                        method: "GET".to_string(),
+                    },
+                    ResourceDescriptor::NetworkFromResponse {
                         source: "bigjpg.task_result.url".to_string(),
+                        target_template: "{value}".to_string(),
                         method: "GET".to_string(),
                     },
                 ],
