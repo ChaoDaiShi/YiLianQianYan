@@ -4,7 +4,7 @@ use crate::tools::trait_def::RiskLevel;
 
 use super::{
     describe_builtin_tool, BuiltInRole, DecisionContext, DescriptorError, PolicyDecision,
-    PolicyEngine, ToolSecurityDescriptor, POLICY_VERSION,
+    PolicyEngine, SafetyPolicy, ToolSecurityDescriptor, POLICY_VERSION,
 };
 
 #[derive(Debug)]
@@ -40,6 +40,7 @@ impl SecurityExecutionGateway {
         request: &SecurityExecutionRequest,
         descriptor: &ToolSecurityDescriptor,
         role: BuiltInRole,
+        risk_level: RiskLevel,
     ) -> Result<DecisionContext, DescriptorError> {
         descriptor.validate_for_tool(&request.tool_name)?;
 
@@ -62,7 +63,7 @@ impl SecurityExecutionGateway {
 
         Ok(DecisionContext {
             role,
-            risk_level: descriptor.default_risk,
+            risk_level,
             policy_version: POLICY_VERSION.to_string(),
             requested_permissions,
             resource_scopes,
@@ -77,7 +78,12 @@ impl SecurityExecutionGateway {
         final_risk: RiskLevel,
     ) -> Result<PolicyDecision, DescriptorError> {
         let descriptor = self.resolve_descriptor(request)?;
-        let context = self.build_decision_context(request, &descriptor, role)?;
+        let assessed_risk = SafetyPolicy::assess(
+            &request.tool_name,
+            descriptor.default_risk,
+            &request.arguments,
+        );
+        let context = self.build_decision_context(request, &descriptor, role, assessed_risk)?;
 
         // PolicyEngine currently accepts raw role/descriptor/risk inputs and
         // rebuilds its own DecisionContext. Until that API accepts a context
@@ -148,7 +154,7 @@ mod tests {
         let descriptor = gateway.resolve_descriptor(&request).unwrap();
 
         let context = gateway
-            .build_decision_context(&request, &descriptor, BuiltInRole::Standard)
+            .build_decision_context(&request, &descriptor, BuiltInRole::Standard, RiskLevel::Low)
             .unwrap();
 
         assert_eq!(context.role, BuiltInRole::Standard);
@@ -173,9 +179,44 @@ mod tests {
             side_effects: vec![],
         };
 
-        let result = gateway.build_decision_context(&request, &descriptor, BuiltInRole::Standard);
+        let result = gateway.build_decision_context(
+            &request,
+            &descriptor,
+            BuiltInRole::Standard,
+            RiskLevel::Low,
+        );
 
         assert!(matches!(result, Err(DescriptorError::InvalidDescriptor(_))));
+    }
+
+    #[test]
+    fn gateway_keeps_dynamic_risk_low_for_ordinary_read() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .unwrap();
+
+        assert_eq!(decision.context().risk_level, RiskLevel::Low);
+    }
+
+    #[test]
+    fn gateway_promotes_sensitive_write_to_high_via_safety_policy() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request(
+            "write_file",
+            serde_json::json!({
+                "path": "C:\\Windows\\System32\\hosts",
+                "content": "blocked"
+            }),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .unwrap();
+
+        assert_eq!(decision.context().risk_level, RiskLevel::High);
     }
 
     #[test]
