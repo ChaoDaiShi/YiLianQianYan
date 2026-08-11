@@ -240,6 +240,50 @@ impl SecurityExecutionGateway {
         Ok(())
     }
 
+    fn record_approval_requested(
+        &self,
+        request: &SecurityExecutionRequest,
+        context: &DecisionContext,
+    ) -> Result<(), SecurityGatewayError> {
+        let Some(recorder) = &self.audit_recorder else {
+            return Ok(());
+        };
+
+        recorder.record(AuditEventInput {
+            event_type: AuditEventType::ApprovalRequested,
+            correlation_id: request.tool_call_id.clone(),
+            request_id: request.tool_call_id.clone(),
+            subject_id: "local-user".to_string(),
+            role_key: context.role.as_str().to_string(),
+            conversation_id: Some(request.conversation_id.clone()),
+            tool_call_id: Some(request.tool_call_id.clone()),
+            tool_name: Some(request.tool_name.clone()),
+            capabilities: context
+                .requested_permissions
+                .iter()
+                .map(|permission| permission.as_str().to_string())
+                .collect(),
+            actions: context
+                .requested_permissions
+                .iter()
+                .map(|permission| permission.as_str().to_string())
+                .collect(),
+            resources: serde_json::json!(context.resource_scopes),
+            policy_version: Some(context.policy_version.clone()),
+            risk_level: Some(context.risk_level.to_string()),
+            decision_status: Some("require_approval".to_string()),
+            request: None,
+            result: None,
+            details: serde_json::json!({
+                "phase": AuditEventType::ApprovalRequested.as_str(),
+                "reason": crate::utils::text::truncate_chars(&context.reason, 200),
+            }),
+            ..Default::default()
+        })?;
+
+        Ok(())
+    }
+
     fn record_execution_started(
         &self,
         request: &SecurityExecutionRequest,
@@ -597,6 +641,9 @@ impl SecurityExecutionGateway {
         };
 
         self.record_policy_decided(request, &decision)?;
+        if let PolicyDecision::RequireApproval(context) = &decision {
+            self.record_approval_requested(request, context)?;
+        }
         Ok(decision)
     }
 }
@@ -737,6 +784,19 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         events.into_iter().next().unwrap()
+    }
+
+    fn approval_events(
+        recorder: &AuditRecorder,
+        tool_call_id: &str,
+    ) -> Vec<crate::db::SecurityAuditEvent> {
+        recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(tool_call_id.to_string()),
+                event_type: Some("approval_requested".to_string()),
+                ..Default::default()
+            })
+            .unwrap()
     }
 
     fn sandbox_config(
@@ -983,13 +1043,14 @@ mod tests {
         assert_eq!(event.conversation_id.as_deref(), Some("conversation-1"));
         assert_eq!(event.tool_name.as_deref(), Some("read_file"));
         assert!(!serde_json::to_string(&event).unwrap().contains("README.md"));
+        assert!(approval_events(&recorder, &request.tool_call_id).is_empty());
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
-    fn evaluate_approval_records_policy_decided() {
+    fn evaluate_approval_records_policy_and_approval_requested() {
         let (recorder, db_path) = audit_recorder("policy-approval");
         let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
             sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
@@ -1014,6 +1075,16 @@ mod tests {
                 .as_deref(),
             Some("require_approval")
         );
+        let approval_events = approval_events(&recorder, &request.tool_call_id);
+        assert_eq!(approval_events.len(), 1);
+        let approval_event = &approval_events[0];
+        assert_eq!(
+            approval_event.conversation_id.as_deref(),
+            Some("conversation-1")
+        );
+        assert_eq!(approval_event.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(approval_event.tool_name.as_deref(), Some("bash"));
+        assert_eq!(approval_event.risk_level.as_deref(), Some("high"));
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
@@ -1045,6 +1116,7 @@ mod tests {
                 .as_deref(),
             Some("deny")
         );
+        assert!(approval_events(&recorder, &request.tool_call_id).is_empty());
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
@@ -1077,6 +1149,7 @@ mod tests {
                 .as_deref(),
             Some("deny")
         );
+        assert!(approval_events(&recorder, &request.tool_call_id).is_empty());
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
@@ -1407,8 +1480,13 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "policy_decided");
+        assert_eq!(events.len(), 2);
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "policy_decided"));
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "approval_requested"));
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
