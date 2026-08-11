@@ -175,6 +175,7 @@ impl SecurityExecutionGateway {
                     .verifier
                     .verify(&request.tool_name, &request.arguments, &tool_result)
                     .await;
+                self.record_verification_finished(request, &context, &verification)?;
 
                 Ok(SecurityExecutionOutcome::Executed {
                     tool_result,
@@ -258,6 +259,61 @@ impl SecurityExecutionGateway {
             request: None,
             result: result_ok.map(|ok| serde_json::json!({ "ok": ok })),
             details: serde_json::json!({ "phase": event_type.as_str() }),
+            ..Default::default()
+        })?;
+
+        Ok(())
+    }
+
+    fn record_verification_finished(
+        &self,
+        request: &SecurityExecutionRequest,
+        context: &DecisionContext,
+        verification: &VerificationResult,
+    ) -> Result<(), SecurityGatewayError> {
+        let Some(recorder) = &self.audit_recorder else {
+            return Ok(());
+        };
+
+        let capabilities = context
+            .requested_permissions
+            .iter()
+            .map(|permission| permission.as_str().to_string())
+            .collect();
+        let actions = context
+            .requested_permissions
+            .iter()
+            .map(|permission| permission.as_str().to_string())
+            .collect();
+
+        recorder.record(AuditEventInput {
+            event_type: AuditEventType::VerificationFinished,
+            correlation_id: request.tool_call_id.clone(),
+            request_id: request.tool_call_id.clone(),
+            subject_id: "local-user".to_string(),
+            role_key: context.role.as_str().to_string(),
+            conversation_id: Some(request.conversation_id.clone()),
+            tool_call_id: Some(request.tool_call_id.clone()),
+            tool_name: Some(request.tool_name.clone()),
+            capabilities,
+            actions,
+            resources: serde_json::json!(context.resource_scopes),
+            policy_version: Some(context.policy_version.clone()),
+            risk_level: Some(context.risk_level.to_string()),
+            decision_status: Some(
+                if verification.success {
+                    "verified"
+                } else {
+                    "verification_failed"
+                }
+                .to_string(),
+            ),
+            request: None,
+            result: Some(serde_json::json!({ "success": verification.success })),
+            details: serde_json::json!({
+                "phase": AuditEventType::VerificationFinished.as_str(),
+                "reason": crate::utils::text::truncate_chars(&verification.reason, 200),
+            }),
             ..Default::default()
         })?;
 
@@ -1033,7 +1089,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_allow_records_started_and_finished_audit() {
+    async fn execute_allow_records_execution_and_verification_audit() {
         let (registry, executions) = registry_with_counting_tool("read_file");
         let (verifier, verifications) = counting_verifier();
         let (recorder, db_path) = audit_recorder("allow");
@@ -1065,9 +1121,15 @@ mod tests {
             .iter()
             .map(|event| event.event_type.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert!(event_types.contains(&"execution_started"));
         assert!(event_types.contains(&"execution_finished"));
+        assert!(event_types.contains(&"verification_finished"));
+        let verification = events
+            .iter()
+            .find(|event| event.event_type == "verification_finished")
+            .expect("verification audit event");
+        assert_eq!(verification.details["result"]["success"], true);
         assert!(serde_json::to_string(&events)
             .unwrap()
             .find("README.md")
@@ -1107,12 +1169,17 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         let finished = events
             .iter()
             .find(|event| event.event_type == "execution_finished")
             .expect("finished audit event");
         assert_eq!(finished.details["result"]["ok"], false);
+        let verification = events
+            .iter()
+            .find(|event| event.event_type == "verification_finished")
+            .expect("verification audit event");
+        assert_eq!(verification.details["result"]["success"], true);
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
@@ -1244,16 +1311,18 @@ mod tests {
     #[tokio::test]
     async fn execute_verification_failure_keeps_tool_success() {
         let (registry, _executions) = registry_with_counting_tool("write_file");
+        let (recorder, db_path) = audit_recorder("verification-failure");
         let workspace_root =
             std::env::temp_dir().join(format!("yilian-gateway-verifier-{}", uuid::Uuid::new_v4()));
         let missing_path = format!("missing-{}.txt", uuid::Uuid::new_v4());
-        let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
             sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]),
             workspace_root.clone(),
             registry,
             Arc::new(DefaultVerifier::new(
                 workspace_root.to_string_lossy().as_ref(),
             )),
+            Arc::clone(&recorder),
         );
         let request = request(
             "write_file",
@@ -1275,6 +1344,21 @@ mod tests {
             }
             _ => panic!("expected executed outcome"),
         }
+
+        let events = recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(request.tool_call_id),
+                ..Default::default()
+            })
+            .unwrap();
+        let verification = events
+            .iter()
+            .find(|event| event.event_type == "verification_finished")
+            .expect("verification audit event");
+        assert_eq!(verification.details["result"]["success"], false);
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
