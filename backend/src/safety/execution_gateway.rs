@@ -2,7 +2,10 @@ use serde_json::Value;
 
 use crate::tools::trait_def::RiskLevel;
 
-use super::{BuiltInRole, PolicyDecision, PolicyEngine, ToolSecurityDescriptor};
+use super::{
+    describe_builtin_tool, BuiltInRole, DescriptorError, PolicyDecision, PolicyEngine,
+    ToolSecurityDescriptor,
+};
 
 #[derive(Debug)]
 pub struct SecurityExecutionRequest {
@@ -23,24 +26,39 @@ impl SecurityExecutionGateway {
         }
     }
 
+    pub fn resolve_descriptor(
+        &self,
+        request: &SecurityExecutionRequest,
+    ) -> Result<ToolSecurityDescriptor, DescriptorError> {
+        let descriptor = describe_builtin_tool(&request.tool_name, &request.arguments)?;
+        descriptor.validate_for_tool(&request.tool_name)?;
+        Ok(descriptor)
+    }
+
     pub fn evaluate(
         &self,
         request: &SecurityExecutionRequest,
         role: BuiltInRole,
-        descriptor: &ToolSecurityDescriptor,
         final_risk: RiskLevel,
-    ) -> PolicyDecision {
+    ) -> Result<PolicyDecision, DescriptorError> {
+        let descriptor = self.resolve_descriptor(request)?;
+
         // PolicyEngine currently exposes a static evaluation API; retain it as
         // the gateway's explicit policy dependency while forwarding to that API.
         let _policy_engine = &self.policy_engine;
-        PolicyEngine::evaluate(role, &request.tool_name, descriptor, final_risk)
+        Ok(PolicyEngine::evaluate(
+            role,
+            &request.tool_name,
+            &descriptor,
+            final_risk,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{SecurityExecutionGateway, SecurityExecutionRequest};
-    use crate::safety::{describe_builtin_tool, BuiltInRole, PolicyDecision};
+    use crate::safety::{BuiltInRole, DescriptorError, PolicyDecision};
     use crate::tools::trait_def::RiskLevel;
 
     fn request(tool_name: &str, arguments: serde_json::Value) -> SecurityExecutionRequest {
@@ -58,20 +76,38 @@ mod tests {
     }
 
     #[test]
+    fn gateway_resolves_descriptor_for_known_tool() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let descriptor = gateway.resolve_descriptor(&request).unwrap();
+
+        assert_eq!(descriptor.tool_name, "read_file");
+    }
+
+    #[test]
+    fn gateway_rejects_unknown_tool_descriptor() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request("definitely_not_a_tool", serde_json::json!({}));
+
+        let result = gateway.resolve_descriptor(&request);
+
+        assert!(matches!(
+            result,
+            Err(DescriptorError::UnknownTool(tool)) if tool == "definitely_not_a_tool"
+        ));
+    }
+
+    #[test]
     fn gateway_forwards_allow_decision_from_policy_engine() {
         let gateway = SecurityExecutionGateway::new();
         let request = request(
             "write_file",
             serde_json::json!({"path": "notes.txt", "content": "hello"}),
         );
-        let descriptor = describe_builtin_tool("write_file", &request.arguments).unwrap();
-
-        let decision = gateway.evaluate(
-            &request,
-            BuiltInRole::Standard,
-            &descriptor,
-            RiskLevel::Medium,
-        );
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Allow(_)));
     }
@@ -83,9 +119,9 @@ mod tests {
             "bash",
             serde_json::json!({"command": "git push origin develop"}),
         );
-        let descriptor = describe_builtin_tool("bash", &request.arguments).unwrap();
-
-        let decision = gateway.evaluate(&request, BuiltInRole::Owner, &descriptor, RiskLevel::High);
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Owner, RiskLevel::High)
+            .unwrap();
 
         assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
     }
@@ -97,14 +133,9 @@ mod tests {
             "write_file",
             serde_json::json!({"path": "notes.txt", "content": "hello"}),
         );
-        let descriptor = describe_builtin_tool("write_file", &request.arguments).unwrap();
-
-        let decision = gateway.evaluate(
-            &request,
-            BuiltInRole::Restricted,
-            &descriptor,
-            RiskLevel::Medium,
-        );
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Restricted, RiskLevel::Medium)
+            .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
     }
