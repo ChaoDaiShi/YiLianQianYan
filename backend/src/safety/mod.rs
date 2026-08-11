@@ -13,6 +13,7 @@ pub mod audit;
 pub mod capability;
 pub mod control_session;
 pub mod descriptor;
+pub mod execution_gateway;
 pub mod permission;
 pub mod policy;
 pub mod policy_engine;
@@ -29,6 +30,9 @@ pub use control_session::{ControlSession, ControlSessionError, CONTROL_SESSION_H
 pub use descriptor::{
     describe_builtin_tool, DescriptorError, ResourceDescriptor, SideEffectKind,
     ToolSecurityDescriptor,
+};
+pub use execution_gateway::{
+    SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest,
 };
 pub use permission::{PermissionDecision, PermissionManager};
 pub use policy::SafetyPolicy;
