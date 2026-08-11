@@ -39,7 +39,8 @@ pub fn is_within_root(root: &Path, target: &Path) -> bool {
     loop {
         match root_components.next() {
             Some(root_component) => match target_components.next() {
-                Some(target_component) if target_component == root_component => {}
+                Some(target_component)
+                    if path_components_equal(&root_component, &target_component) => {}
                 _ => return false,
             },
             None => return true,
@@ -47,24 +48,59 @@ pub fn is_within_root(root: &Path, target: &Path) -> bool {
     }
 }
 
+#[cfg(windows)]
+fn path_components_equal(left: &Component<'_>, right: &Component<'_>) -> bool {
+    left.as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy())
+}
+
+#[cfg(not(windows))]
+fn path_components_equal(left: &Component<'_>, right: &Component<'_>) -> bool {
+    left == right
+}
+
 /// Check whether a path is writable under the workspace-write boundary.
 /// The target does not need to exist on disk.
 pub fn can_write_workspace(workspace_root: &Path, target: &Path) -> Result<bool, SandboxPathError> {
-    if workspace_root.as_os_str().is_empty() {
-        return Err(SandboxPathError::EmptyWorkspaceRoot);
-    }
-
-    let workspace_base = if workspace_root.is_absolute() {
-        workspace_root.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|error| SandboxPathError::CurrentDirectory(error.to_string()))?
-            .join(workspace_root)
-    };
+    let workspace_base = resolve_workspace_base(workspace_root)?;
     let normalized_root = normalize_path(&workspace_base, Path::new("."))?;
     let normalized_target = normalize_path(&workspace_base, target)?;
 
     Ok(is_within_root(&normalized_root, &normalized_target))
+}
+
+/// Return whether a target is inside any denied write path.
+pub fn is_denied_write_path(
+    workspace_root: &Path,
+    target: &Path,
+    denied_paths: &[PathBuf],
+) -> Result<bool, SandboxPathError> {
+    let workspace_base = resolve_workspace_base(workspace_root)?;
+    let normalized_target = normalize_path(&workspace_base, target)?;
+
+    for denied_path in denied_paths {
+        let normalized_denied = normalize_path(&workspace_base, denied_path)?;
+        if is_within_root(&normalized_denied, &normalized_target) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn resolve_workspace_base(workspace_root: &Path) -> Result<PathBuf, SandboxPathError> {
+    if workspace_root.as_os_str().is_empty() {
+        return Err(SandboxPathError::EmptyWorkspaceRoot);
+    }
+
+    if workspace_root.is_absolute() {
+        Ok(workspace_root.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()
+            .map_err(|error| SandboxPathError::CurrentDirectory(error.to_string()))?
+            .join(workspace_root))
+    }
 }
 
 fn normalize_components(path: &Path) -> PathBuf {
@@ -104,7 +140,7 @@ fn normalize_components(path: &Path) -> PathBuf {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{can_write_workspace, is_within_root, normalize_path};
+    use super::{can_write_workspace, is_denied_write_path, is_within_root, normalize_path};
 
     #[test]
     fn normalizes_workspace_relative_file() {
@@ -208,5 +244,56 @@ mod tests {
         let target = std::env::temp_dir().join("workspace-evil").join("file.txt");
 
         assert!(!can_write_workspace(&root, &target).unwrap());
+    }
+
+    #[test]
+    fn denies_directory_descendants() {
+        let root = Path::new("workspace");
+        let denied = [PathBuf::from(".git")];
+
+        assert!(is_denied_write_path(root, Path::new(".git/config"), &denied).unwrap());
+    }
+
+    #[test]
+    fn denies_exact_file_path() {
+        let root = Path::new("workspace");
+        let denied = [PathBuf::from("secrets/key.txt")];
+
+        assert!(is_denied_write_path(root, Path::new("secrets/key.txt"), &denied).unwrap());
+    }
+
+    #[test]
+    fn allows_unlisted_workspace_file() {
+        let root = Path::new("workspace");
+        let denied = [PathBuf::from("secrets")];
+
+        assert!(!is_denied_write_path(root, Path::new("src/main.rs"), &denied).unwrap());
+    }
+
+    #[test]
+    fn does_not_deny_similar_prefix_directory() {
+        let root = Path::new("workspace");
+        let denied = [PathBuf::from("secret")];
+
+        assert!(!is_denied_write_path(root, Path::new("secret-copy/a.txt"), &denied).unwrap());
+    }
+
+    #[test]
+    fn resolves_relative_denied_path_against_workspace_root() {
+        let root = std::env::temp_dir().join("yilian-denied-root");
+        let target = root.join(".git").join("config");
+        let denied = [PathBuf::from(".git")];
+
+        assert!(is_denied_write_path(&root, &target, &denied).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn denies_windows_case_variant_path() {
+        let root = std::env::temp_dir().join("yilian-denied-case-root");
+        let target = root.join(".GIT").join("config");
+        let denied = [PathBuf::from(".git")];
+
+        assert!(is_denied_write_path(&root, &target, &denied).unwrap());
     }
 }
