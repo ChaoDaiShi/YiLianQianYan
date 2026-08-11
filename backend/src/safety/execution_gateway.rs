@@ -7,6 +7,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
+    agent::verifier::{DefaultVerifier, VerificationResult, Verifier},
     config::types::SandboxConfig,
     tools::{trait_def::RiskLevel, ToolRegistry, ToolResult},
 };
@@ -27,9 +28,14 @@ pub struct SecurityExecutionRequest {
 
 #[derive(Debug)]
 pub enum SecurityExecutionOutcome {
-    Executed { tool_result: ToolResult },
+    Executed {
+        tool_result: ToolResult,
+        verification: VerificationResult,
+    },
     RequiresApproval,
-    Denied { reason: String },
+    Denied {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -45,6 +51,7 @@ pub struct SecurityExecutionGateway {
     sandbox_config: SandboxConfig,
     workspace_root: PathBuf,
     tool_registry: Arc<ToolRegistry>,
+    verifier: Arc<dyn Verifier>,
 }
 
 impl SecurityExecutionGateway {
@@ -60,8 +67,16 @@ impl SecurityExecutionGateway {
         let tool_registry = Arc::new(ToolRegistry::with_defaults(
             workspace_root.to_string_lossy().as_ref(),
         ));
+        let verifier = Arc::new(DefaultVerifier::new(
+            workspace_root.to_string_lossy().as_ref(),
+        ));
 
-        Self::with_sandbox_and_registry(sandbox_config, workspace_root, tool_registry)
+        Self::with_sandbox_registry_and_verifier(
+            sandbox_config,
+            workspace_root,
+            tool_registry,
+            verifier,
+        )
     }
 
     pub fn with_sandbox_and_registry(
@@ -69,11 +84,31 @@ impl SecurityExecutionGateway {
         workspace_root: impl Into<PathBuf>,
         tool_registry: Arc<ToolRegistry>,
     ) -> Self {
+        let workspace_root = workspace_root.into();
+        let verifier = Arc::new(DefaultVerifier::new(
+            workspace_root.to_string_lossy().as_ref(),
+        ));
+
+        Self::with_sandbox_registry_and_verifier(
+            sandbox_config,
+            workspace_root,
+            tool_registry,
+            verifier,
+        )
+    }
+
+    pub fn with_sandbox_registry_and_verifier(
+        sandbox_config: SandboxConfig,
+        workspace_root: impl Into<PathBuf>,
+        tool_registry: Arc<ToolRegistry>,
+        verifier: Arc<dyn Verifier>,
+    ) -> Self {
         Self {
             policy_engine: PolicyEngine,
             sandbox_config,
             workspace_root: workspace_root.into(),
             tool_registry,
+            verifier,
         }
     }
 
@@ -90,8 +125,15 @@ impl SecurityExecutionGateway {
                     .execute(&request.tool_name, request.arguments.clone())
                     .await
                     .ok_or_else(|| SecurityGatewayError::ToolNotFound(request.tool_name.clone()))?;
+                let verification = self
+                    .verifier
+                    .verify(&request.tool_name, &request.arguments, &tool_result)
+                    .await;
 
-                Ok(SecurityExecutionOutcome::Executed { tool_result })
+                Ok(SecurityExecutionOutcome::Executed {
+                    tool_result,
+                    verification,
+                })
             }
             PolicyDecision::RequireApproval(_) => Ok(SecurityExecutionOutcome::RequiresApproval),
             PolicyDecision::Deny(context) => Ok(SecurityExecutionOutcome::Denied {
@@ -330,6 +372,7 @@ impl SecurityExecutionGateway {
 #[cfg(test)]
 mod tests {
     use super::{SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest};
+    use crate::agent::verifier::{DefaultVerifier, VerificationResult, Verifier};
     use crate::config::types::{SandboxConfig, SandboxProfile};
     use crate::safety::{
         BuiltInRole, DescriptorError, PermissionId, PolicyDecision, ResourceDescriptor,
@@ -346,6 +389,23 @@ mod tests {
     struct CountingTool {
         name: &'static str,
         executions: Arc<AtomicUsize>,
+    }
+
+    struct CountingVerifier {
+        verifications: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Verifier for CountingVerifier {
+        async fn verify(
+            &self,
+            _tool_name: &str,
+            _args: &serde_json::Value,
+            _tool_result: &ToolResult,
+        ) -> VerificationResult {
+            self.verifications.fetch_add(1, Ordering::SeqCst);
+            VerificationResult::success("counted", None)
+        }
     }
 
     #[async_trait]
@@ -376,6 +436,16 @@ mod tests {
             executions: Arc::clone(&executions),
         }));
         (Arc::new(registry), executions)
+    }
+
+    fn counting_verifier() -> (Arc<dyn Verifier>, Arc<AtomicUsize>) {
+        let verifications = Arc::new(AtomicUsize::new(0));
+        (
+            Arc::new(CountingVerifier {
+                verifications: Arc::clone(&verifications),
+            }),
+            verifications,
+        )
     }
 
     fn request(tool_name: &str, arguments: serde_json::Value) -> SecurityExecutionRequest {
@@ -801,5 +871,144 @@ mod tests {
 
         assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
         assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_allow_runs_verifier() {
+        let (registry, _executions) = registry_with_counting_tool("read_file");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+            Arc::new(DefaultVerifier::new("workspace")),
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .await
+            .unwrap();
+
+        match outcome {
+            SecurityExecutionOutcome::Executed {
+                tool_result,
+                verification,
+            } => {
+                assert!(tool_result.ok);
+                assert!(verification.success);
+            }
+            _ => panic!("expected executed outcome"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_allow_calls_injected_verifier_once() {
+        let (registry, executions) = registry_with_counting_tool("read_file");
+        let (verifier, verifications) = counting_verifier();
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+            verifier,
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Executed { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(verifications.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn execute_verification_failure_keeps_tool_success() {
+        let (registry, _executions) = registry_with_counting_tool("write_file");
+        let workspace_root =
+            std::env::temp_dir().join(format!("yilian-gateway-verifier-{}", uuid::Uuid::new_v4()));
+        let missing_path = format!("missing-{}.txt", uuid::Uuid::new_v4());
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+            sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]),
+            workspace_root.clone(),
+            registry,
+            Arc::new(DefaultVerifier::new(
+                workspace_root.to_string_lossy().as_ref(),
+            )),
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": missing_path, "content": "expected"}),
+        );
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .await
+            .unwrap();
+
+        match outcome {
+            SecurityExecutionOutcome::Executed {
+                tool_result,
+                verification,
+            } => {
+                assert!(tool_result.ok);
+                assert!(!verification.success);
+            }
+            _ => panic!("expected executed outcome"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_approval_skips_verifier() {
+        let (registry, executions) = registry_with_counting_tool("bash");
+        let (verifier, verifications) = counting_verifier();
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+            verifier,
+        );
+        let request = request(
+            "bash",
+            serde_json::json!({"command": "git push origin develop"}),
+        );
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            SecurityExecutionOutcome::RequiresApproval
+        ));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+        assert_eq!(verifications.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_deny_skips_verifier() {
+        let (registry, executions) = registry_with_counting_tool("write_file");
+        let (verifier, verifications) = counting_verifier();
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+            verifier,
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "hello"}),
+        );
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+        assert_eq!(verifications.load(Ordering::SeqCst), 0);
     }
 }
