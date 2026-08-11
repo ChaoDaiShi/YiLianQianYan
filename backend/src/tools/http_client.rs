@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 
 use super::trait_def::{RiskLevel, Tool, ToolResult};
+use crate::utils::text::truncate_chars;
 
 pub struct HttpRequestTool;
 
@@ -112,14 +113,15 @@ impl Tool for HttpRequestTool {
                 let body = response.text().await.unwrap_or_default();
 
                 // Truncate response body if too large
-                let body_display = if body.len() > 10000 {
+                let body_display = truncate_chars(&body, 10000);
+                let body_display = if body.chars().count() > 10000 {
                     format!(
-                        "{}...\n(响应体过大，已截断至10000字符，完整大小: {}字节)",
-                        &body[..10000],
+                        "{}\n(响应体过大，已截断至10000字符，完整大小: {}字节)",
+                        body_display,
                         body.len()
                     )
                 } else {
-                    body
+                    body_display
                 };
 
                 ToolResult::success(format!(

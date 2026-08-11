@@ -18,6 +18,7 @@ use crate::agent::state::AgentState;
 use crate::db::MessageRow;
 use crate::llm::client::LlmClient;
 use crate::server::AppServer;
+use crate::utils::text::truncate_chars;
 
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
@@ -150,22 +151,14 @@ pub async fn chat_handler(
     });
 
     // Auto-title: use first user message (trim to 40 chars)
-    let title = if req.message.len() > 40 {
-        format!("{}…", &req.message[..40])
-    } else {
-        req.message.clone()
-    };
+    let title = truncate_chars(&req.message, 40);
     let _ = db.update_conversation_title(&conv_id, &title);
 
     // Add the current user message to the LLM context exactly once.
     agent_state.add_user_message(req.message.clone());
 
     // Log chat request
-    let msg_preview = if req.message.len() > 60 {
-        format!("{}…", &req.message[..60])
-    } else {
-        req.message.clone()
-    };
+    let msg_preview = truncate_chars(&req.message, 60);
     server
         .log_buffer
         .push("chat", "api", &format!("收到消息: {}", msg_preview));

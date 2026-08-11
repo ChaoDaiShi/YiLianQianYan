@@ -11,6 +11,7 @@ pub mod llm;
 pub mod safety;
 pub mod server;
 pub mod tools;
+pub mod utils;
 
 use std::path::PathBuf;
 use std::sync::Arc;

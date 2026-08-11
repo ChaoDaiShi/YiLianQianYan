@@ -7,6 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use super::trait_def::{RiskLevel, Tool, ToolResult};
+use crate::utils::text::truncate_chars;
 
 pub struct BashTool {
     workspace_root: String,
@@ -104,17 +105,15 @@ impl Tool for BashTool {
 
                 if output.status.success() {
                     // Truncate if too long
-                    if result.len() > 20000 {
-                        result.truncate(20000);
-                        result.push_str("\n... (输出已截断)");
+                    if result.chars().count() > 20000 {
+                        result = format!("{}\n(输出已截断)", truncate_chars(&result, 20000));
                     }
                     ToolResult::success(result)
                 } else {
                     let code = output.status.code().unwrap_or(-1);
                     let mut error_msg = format!("Exit code: {}\n{}", code, result);
-                    if error_msg.len() > 20000 {
-                        error_msg.truncate(20000);
-                        error_msg.push_str("\n... (输出已截断)");
+                    if error_msg.chars().count() > 20000 {
+                        error_msg = format!("{}\n(输出已截断)", truncate_chars(&error_msg, 20000));
                     }
                     ToolResult::error(error_msg)
                 }
