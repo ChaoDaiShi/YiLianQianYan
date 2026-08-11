@@ -155,38 +155,96 @@ impl SecurityExecutionGateway {
         final_risk: RiskLevel,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
         match self.evaluate(request, role, final_risk)? {
-            PolicyDecision::Allow(context) => {
-                self.record_execution_started(request, &context)?;
-                let tool_result = match self
-                    .tool_registry
-                    .execute(&request.tool_name, request.arguments.clone())
-                    .await
-                {
-                    Some(tool_result) => tool_result,
-                    None => {
-                        self.record_execution_finished(request, &context, false)?;
-                        return Err(SecurityGatewayError::ToolNotFound(
-                            request.tool_name.clone(),
-                        ));
-                    }
-                };
-                self.record_execution_finished(request, &context, tool_result.ok)?;
-                let verification = self
-                    .verifier
-                    .verify(&request.tool_name, &request.arguments, &tool_result)
-                    .await;
-                self.record_verification_finished(request, &context, &verification)?;
-
-                Ok(SecurityExecutionOutcome::Executed {
-                    tool_result,
-                    verification,
-                })
-            }
+            PolicyDecision::Allow(context) => self.execute_allowed(request, context).await,
             PolicyDecision::RequireApproval(_) => Ok(SecurityExecutionOutcome::RequiresApproval),
             PolicyDecision::Deny(context) => Ok(SecurityExecutionOutcome::Denied {
                 reason: context.reason,
             }),
         }
+    }
+
+    pub async fn execute_approved(
+        &self,
+        request: &SecurityExecutionRequest,
+        role: BuiltInRole,
+        approved_risk: RiskLevel,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        let evaluated = self.evaluate_core(request, role, approved_risk)?;
+        let decision = match evaluated {
+            PolicyDecision::Deny(context) => PolicyDecision::Deny(context),
+            PolicyDecision::Allow(mut context) | PolicyDecision::RequireApproval(mut context) => {
+                if context.risk_level > approved_risk {
+                    context.reason = format!(
+                        "approved tool {} risk escalated from {} to {}",
+                        request.tool_name, approved_risk, context.risk_level
+                    );
+                    PolicyDecision::Deny(context)
+                } else {
+                    context.reason = format!(
+                        "tool {} execution authorized by consumed approval",
+                        request.tool_name
+                    );
+                    PolicyDecision::Allow(context)
+                }
+            }
+        };
+
+        self.record_policy_decided(request, &decision)?;
+        match decision {
+            PolicyDecision::Allow(context) => self.execute_allowed(request, context).await,
+            PolicyDecision::Deny(context) => Ok(SecurityExecutionOutcome::Denied {
+                reason: context.reason,
+            }),
+            PolicyDecision::RequireApproval(_) => {
+                unreachable!("approved execution must resolve require-approval before dispatch")
+            }
+        }
+    }
+
+    async fn execute_allowed(
+        &self,
+        request: &SecurityExecutionRequest,
+        context: DecisionContext,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        self.record_execution_started(request, &context)?;
+        let tool_result = match self
+            .tool_registry
+            .execute(&request.tool_name, request.arguments.clone())
+            .await
+        {
+            Some(tool_result) => tool_result,
+            None => {
+                self.record_execution_finished(request, &context, false)?;
+                return Err(SecurityGatewayError::ToolNotFound(
+                    request.tool_name.clone(),
+                ));
+            }
+        };
+        if let Err(error) = self.record_execution_finished(request, &context, tool_result.ok) {
+            tracing::error!(
+                tool_call_id = %request.tool_call_id,
+                tool_name = %request.tool_name,
+                error = %error,
+                "tool executed but execution-finished audit persistence failed"
+            );
+        }
+        let verification = self
+            .verifier
+            .verify(&request.tool_name, &request.arguments, &tool_result)
+            .await;
+        if let Err(error) = self.record_verification_finished(request, &context, &verification) {
+            tracing::error!(
+                tool_call_id = %request.tool_call_id,
+                tool_name = %request.tool_name,
+                error = %error,
+                "tool verified but verification-finished audit persistence failed"
+            );
+        }
+
+        Ok(SecurityExecutionOutcome::Executed {
+            tool_result,
+            verification,
+        })
     }
 
     fn record_policy_decided(
@@ -596,7 +654,7 @@ impl SecurityExecutionGateway {
             .map(Some)
     }
 
-    pub fn evaluate(
+    fn evaluate_core(
         &self,
         request: &SecurityExecutionRequest,
         role: BuiltInRole,
@@ -618,28 +676,36 @@ impl SecurityExecutionGateway {
             assessed_risk.max(final_risk),
         )?;
 
-        let decision = if sandbox_allows_file_write == Some(false) {
+        if sandbox_allows_file_write == Some(false) {
             context.reason = format!(
                 "sandbox denied tool {} file write request",
                 request.tool_name
             );
-            PolicyDecision::Deny(context)
-        } else {
-            // PolicyEngine currently accepts raw role/descriptor/risk inputs and
-            // rebuilds its own DecisionContext. Until that API accepts a context
-            // directly, this gateway validates the canonical context first and
-            // forwards its role and risk through the existing policy boundary.
-            // PolicyEngine currently exposes a static evaluation API; retain it as
-            // the gateway's explicit policy dependency while forwarding to that API.
-            let _policy_engine = &self.policy_engine;
-            PolicyEngine::evaluate(
-                context.role,
-                &request.tool_name,
-                &descriptor,
-                context.risk_level,
-            )
-        };
+            return Ok(PolicyDecision::Deny(context));
+        }
 
+        // PolicyEngine currently accepts raw role/descriptor/risk inputs and
+        // rebuilds its own DecisionContext. Until that API accepts a context
+        // directly, this gateway validates the canonical context first and
+        // forwards its role and risk through the existing policy boundary.
+        // PolicyEngine currently exposes a static evaluation API; retain it as
+        // the gateway's explicit policy dependency while forwarding to that API.
+        let _policy_engine = &self.policy_engine;
+        Ok(PolicyEngine::evaluate(
+            context.role,
+            &request.tool_name,
+            &descriptor,
+            context.risk_level,
+        ))
+    }
+
+    pub fn evaluate(
+        &self,
+        request: &SecurityExecutionRequest,
+        role: BuiltInRole,
+        final_risk: RiskLevel,
+    ) -> Result<PolicyDecision, SecurityGatewayError> {
+        let decision = self.evaluate_core(request, role, final_risk)?;
         self.record_policy_decided(request, &decision)?;
         if let PolicyDecision::RequireApproval(context) = &decision {
             self.record_approval_requested(request, context)?;
@@ -672,6 +738,11 @@ mod tests {
     }
 
     struct FailingTool;
+
+    struct AuditBreakingTool {
+        database_path: std::path::PathBuf,
+        executions: Arc<AtomicUsize>,
+    }
 
     struct CountingVerifier {
         verifications: Arc<AtomicUsize>,
@@ -726,6 +797,30 @@ mod tests {
 
         async fn execute(&self, _args: serde_json::Value) -> ToolResult {
             ToolResult::error("simulated tool failure")
+        }
+    }
+
+    #[async_trait]
+    impl Tool for AuditBreakingTool {
+        fn name(&self) -> &str {
+            "read_file"
+        }
+
+        fn description(&self) -> &str {
+            "breaks audit persistence after execution for gateway tests"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> ToolResult {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            let connection = rusqlite::Connection::open(&self.database_path).unwrap();
+            connection
+                .execute("DROP TABLE security_audit_events", [])
+                .unwrap();
+            ToolResult::success("executed before audit persistence failed")
         }
     }
 
@@ -1682,5 +1777,143 @@ mod tests {
         assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
         assert_eq!(executions.load(Ordering::SeqCst), 0);
         assert_eq!(verifications.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_approved_runs_original_high_risk_tool_once_without_reapproval() {
+        let (registry, executions) = registry_with_counting_tool("bash");
+        let (verifier, verifications) = counting_verifier();
+        let (recorder, db_path) = audit_recorder("approved-execution");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            "workspace",
+            registry,
+            verifier,
+            Arc::clone(&recorder),
+        );
+        let request = request("bash", serde_json::json!({"command": "echo approved"}));
+
+        let outcome = gateway
+            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Executed { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(verifications.load(Ordering::SeqCst), 1);
+        let events = recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(request.tool_call_id.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "policy_decided"
+                && event.decision_status.as_deref() == Some("allow")));
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "execution_started"));
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "execution_finished"));
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "verification_finished"));
+        assert!(!events
+            .iter()
+            .any(|event| event.event_type == "approval_requested"));
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn execute_approved_denies_sandbox_hard_deny_without_execution() {
+        let (registry, executions) = registry_with_counting_tool("write_file");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "blocked"}),
+        );
+
+        let outcome = gateway
+            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::Medium)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_approved_denies_dynamic_risk_escalation_without_execution() {
+        let (registry, executions) = registry_with_counting_tool("bash");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            "workspace",
+            registry,
+        );
+        let request = request("bash", serde_json::json!({"command": "diskpart"}));
+
+        let outcome = gateway
+            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+
+        match outcome {
+            SecurityExecutionOutcome::Denied { reason } => {
+                assert!(reason.contains("risk"));
+                assert!(reason.contains("critical"));
+            }
+            _ => panic!("expected approved execution to be denied"),
+        }
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_approved_preserves_result_and_verifies_after_post_execution_audit_failure() {
+        let (recorder, db_path) = audit_recorder("approved-post-execution-audit-failure");
+        let executions = Arc::new(AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(AuditBreakingTool {
+            database_path: db_path.clone(),
+            executions: Arc::clone(&executions),
+        }));
+        let (verifier, verifications) = counting_verifier();
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            "workspace",
+            Arc::new(registry),
+            verifier,
+            Arc::clone(&recorder),
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let outcome = gateway
+            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::Low)
+            .await
+            .unwrap();
+
+        match outcome {
+            SecurityExecutionOutcome::Executed {
+                tool_result,
+                verification,
+            } => {
+                assert!(tool_result.ok);
+                assert!(verification.success);
+            }
+            _ => panic!("expected executed outcome after post-execution audit failure"),
+        }
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(verifications.load(Ordering::SeqCst), 1);
+        assert_eq!(recorder.health(), crate::safety::AuditHealth::Degraded);
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
     }
 }
