@@ -13,9 +13,9 @@ use crate::{
 };
 
 use super::{
-    describe_builtin_tool, BuiltInRole, DecisionContext, DescriptorError, PermissionId,
-    PolicyDecision, PolicyEngine, ResourceDescriptor, ResourceScope, SafetyPolicy,
-    ToolSecurityDescriptor, POLICY_VERSION,
+    describe_builtin_tool, AuditError, AuditEventInput, AuditEventType, AuditRecorder, BuiltInRole,
+    DecisionContext, DescriptorError, PermissionId, PolicyDecision, PolicyEngine,
+    ResourceDescriptor, ResourceScope, SafetyPolicy, ToolSecurityDescriptor, POLICY_VERSION,
 };
 
 #[derive(Debug)]
@@ -42,6 +42,8 @@ pub enum SecurityExecutionOutcome {
 pub enum SecurityGatewayError {
     #[error(transparent)]
     Descriptor(#[from] DescriptorError),
+    #[error(transparent)]
+    Audit(#[from] AuditError),
     #[error("tool not found in registry: {0}")]
     ToolNotFound(String),
 }
@@ -52,6 +54,7 @@ pub struct SecurityExecutionGateway {
     workspace_root: PathBuf,
     tool_registry: Arc<ToolRegistry>,
     verifier: Arc<dyn Verifier>,
+    audit_recorder: Option<Arc<AuditRecorder>>,
 }
 
 impl SecurityExecutionGateway {
@@ -103,12 +106,45 @@ impl SecurityExecutionGateway {
         tool_registry: Arc<ToolRegistry>,
         verifier: Arc<dyn Verifier>,
     ) -> Self {
+        Self::with_sandbox_registry_verifier_and_optional_audit(
+            sandbox_config,
+            workspace_root,
+            tool_registry,
+            verifier,
+            None,
+        )
+    }
+
+    pub fn with_sandbox_registry_verifier_and_audit(
+        sandbox_config: SandboxConfig,
+        workspace_root: impl Into<PathBuf>,
+        tool_registry: Arc<ToolRegistry>,
+        verifier: Arc<dyn Verifier>,
+        audit_recorder: Arc<AuditRecorder>,
+    ) -> Self {
+        Self::with_sandbox_registry_verifier_and_optional_audit(
+            sandbox_config,
+            workspace_root,
+            tool_registry,
+            verifier,
+            Some(audit_recorder),
+        )
+    }
+
+    fn with_sandbox_registry_verifier_and_optional_audit(
+        sandbox_config: SandboxConfig,
+        workspace_root: impl Into<PathBuf>,
+        tool_registry: Arc<ToolRegistry>,
+        verifier: Arc<dyn Verifier>,
+        audit_recorder: Option<Arc<AuditRecorder>>,
+    ) -> Self {
         Self {
             policy_engine: PolicyEngine,
             sandbox_config,
             workspace_root: workspace_root.into(),
             tool_registry,
             verifier,
+            audit_recorder,
         }
     }
 
@@ -119,12 +155,22 @@ impl SecurityExecutionGateway {
         final_risk: RiskLevel,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
         match self.evaluate(request, role, final_risk)? {
-            PolicyDecision::Allow(_) => {
-                let tool_result = self
+            PolicyDecision::Allow(context) => {
+                self.record_execution_started(request, &context)?;
+                let tool_result = match self
                     .tool_registry
                     .execute(&request.tool_name, request.arguments.clone())
                     .await
-                    .ok_or_else(|| SecurityGatewayError::ToolNotFound(request.tool_name.clone()))?;
+                {
+                    Some(tool_result) => tool_result,
+                    None => {
+                        self.record_execution_finished(request, &context, false)?;
+                        return Err(SecurityGatewayError::ToolNotFound(
+                            request.tool_name.clone(),
+                        ));
+                    }
+                };
+                self.record_execution_finished(request, &context, tool_result.ok)?;
                 let verification = self
                     .verifier
                     .verify(&request.tool_name, &request.arguments, &tool_result)
@@ -140,6 +186,82 @@ impl SecurityExecutionGateway {
                 reason: context.reason,
             }),
         }
+    }
+
+    fn record_execution_started(
+        &self,
+        request: &SecurityExecutionRequest,
+        context: &DecisionContext,
+    ) -> Result<(), SecurityGatewayError> {
+        self.record_execution_event(
+            request,
+            context,
+            AuditEventType::ExecutionStarted,
+            None,
+            "started",
+        )
+    }
+
+    fn record_execution_finished(
+        &self,
+        request: &SecurityExecutionRequest,
+        context: &DecisionContext,
+        ok: bool,
+    ) -> Result<(), SecurityGatewayError> {
+        self.record_execution_event(
+            request,
+            context,
+            AuditEventType::ExecutionFinished,
+            Some(ok),
+            if ok { "succeeded" } else { "failed" },
+        )
+    }
+
+    fn record_execution_event(
+        &self,
+        request: &SecurityExecutionRequest,
+        context: &DecisionContext,
+        event_type: AuditEventType,
+        result_ok: Option<bool>,
+        status: &str,
+    ) -> Result<(), SecurityGatewayError> {
+        let Some(recorder) = &self.audit_recorder else {
+            return Ok(());
+        };
+
+        let capabilities = context
+            .requested_permissions
+            .iter()
+            .map(|permission| permission.as_str().to_string())
+            .collect();
+        let actions = context
+            .requested_permissions
+            .iter()
+            .map(|permission| permission.as_str().to_string())
+            .collect();
+
+        recorder.record(AuditEventInput {
+            event_type,
+            correlation_id: request.tool_call_id.clone(),
+            request_id: request.tool_call_id.clone(),
+            subject_id: "local-user".to_string(),
+            role_key: context.role.as_str().to_string(),
+            conversation_id: Some(request.conversation_id.clone()),
+            tool_call_id: Some(request.tool_call_id.clone()),
+            tool_name: Some(request.tool_name.clone()),
+            capabilities,
+            actions,
+            resources: serde_json::json!(context.resource_scopes),
+            policy_version: Some(context.policy_version.clone()),
+            risk_level: Some(context.risk_level.to_string()),
+            decision_status: Some(status.to_string()),
+            request: None,
+            result: result_ok.map(|ok| serde_json::json!({ "ok": ok })),
+            details: serde_json::json!({ "phase": event_type.as_str() }),
+            ..Default::default()
+        })?;
+
+        Ok(())
     }
 
     pub fn resolve_descriptor(
@@ -374,9 +496,10 @@ mod tests {
     use super::{SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest};
     use crate::agent::verifier::{DefaultVerifier, VerificationResult, Verifier};
     use crate::config::types::{SandboxConfig, SandboxProfile};
+    use crate::db::{Database, SecurityAuditQuery};
     use crate::safety::{
-        BuiltInRole, DescriptorError, PermissionId, PolicyDecision, ResourceDescriptor,
-        ResourceScope, ToolSecurityDescriptor,
+        AuditRecorder, BuiltInRole, DescriptorError, PermissionId, PolicyDecision,
+        ResourceDescriptor, ResourceScope, ToolSecurityDescriptor,
     };
     use crate::tools::trait_def::RiskLevel;
     use crate::tools::{Tool, ToolRegistry, ToolResult};
@@ -390,6 +513,8 @@ mod tests {
         name: &'static str,
         executions: Arc<AtomicUsize>,
     }
+
+    struct FailingTool;
 
     struct CountingVerifier {
         verifications: Arc<AtomicUsize>,
@@ -428,6 +553,25 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl Tool for FailingTool {
+        fn name(&self) -> &str {
+            "read_file"
+        }
+
+        fn description(&self) -> &str {
+            "returns a failed result for gateway audit tests"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> ToolResult {
+            ToolResult::error("simulated tool failure")
+        }
+    }
+
     fn registry_with_counting_tool(name: &'static str) -> (Arc<ToolRegistry>, Arc<AtomicUsize>) {
         let executions = Arc::new(AtomicUsize::new(0));
         let mut registry = ToolRegistry::new();
@@ -436,6 +580,12 @@ mod tests {
             executions: Arc::clone(&executions),
         }));
         (Arc::new(registry), executions)
+    }
+
+    fn registry_with_failing_tool() -> Arc<ToolRegistry> {
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(FailingTool));
+        Arc::new(registry)
     }
 
     fn counting_verifier() -> (Arc<dyn Verifier>, Arc<AtomicUsize>) {
@@ -455,6 +605,15 @@ mod tests {
             tool_name: tool_name.to_string(),
             arguments,
         }
+    }
+
+    fn audit_recorder(label: &str) -> (Arc<AuditRecorder>, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!(
+            "yilian-gateway-audit-{label}-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let db = Database::new(&path).unwrap();
+        (Arc::new(AuditRecorder::new(db.clone_connection())), path)
     }
 
     fn sandbox_config(
@@ -871,6 +1030,165 @@ mod tests {
 
         assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
         assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_allow_records_started_and_finished_audit() {
+        let (registry, executions) = registry_with_counting_tool("read_file");
+        let (verifier, verifications) = counting_verifier();
+        let (recorder, db_path) = audit_recorder("allow");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+            verifier,
+            Arc::clone(&recorder),
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Executed { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(verifications.load(Ordering::SeqCst), 1);
+
+        let events = recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(request.tool_call_id.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        let event_types = events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2);
+        assert!(event_types.contains(&"execution_started"));
+        assert!(event_types.contains(&"execution_finished"));
+        assert!(serde_json::to_string(&events)
+            .unwrap()
+            .find("README.md")
+            .is_none());
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn execute_failed_tool_still_records_finished_audit() {
+        let (verifier, verifications) = counting_verifier();
+        let (recorder, db_path) = audit_recorder("tool-failure");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry_with_failing_tool(),
+            verifier,
+            Arc::clone(&recorder),
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .await
+            .unwrap();
+
+        match outcome {
+            SecurityExecutionOutcome::Executed { tool_result, .. } => assert!(!tool_result.ok),
+            _ => panic!("expected executed outcome"),
+        }
+        assert_eq!(verifications.load(Ordering::SeqCst), 1);
+
+        let events = recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(request.tool_call_id),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        let finished = events
+            .iter()
+            .find(|event| event.event_type == "execution_finished")
+            .expect("finished audit event");
+        assert_eq!(finished.details["result"]["ok"], false);
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn execute_approval_does_not_record_execution_audit() {
+        let (registry, executions) = registry_with_counting_tool("bash");
+        let (recorder, db_path) = audit_recorder("approval");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+            Arc::new(DefaultVerifier::new("workspace")),
+            Arc::clone(&recorder),
+        );
+        let request = request(
+            "bash",
+            serde_json::json!({"command": "git push origin develop"}),
+        );
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            SecurityExecutionOutcome::RequiresApproval
+        ));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+        assert!(recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(request.tool_call_id),
+                ..Default::default()
+            })
+            .unwrap()
+            .is_empty());
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn execute_deny_does_not_record_execution_audit() {
+        let (registry, executions) = registry_with_counting_tool("write_file");
+        let (recorder, db_path) = audit_recorder("deny");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+            Arc::new(DefaultVerifier::new("workspace")),
+            Arc::clone(&recorder),
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "secret"}),
+        );
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+        assert!(recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(request.tool_call_id),
+                ..Default::default()
+            })
+            .unwrap()
+            .is_empty());
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
