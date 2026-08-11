@@ -22,16 +22,19 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::engine::{self, AgentEvent, RunOutcome};
 use crate::agent::state::AgentState;
-use crate::agent::verifier::Verifier;
+use crate::agent::verifier::DefaultVerifier;
 use crate::config::types::AppConfig;
 use crate::db::{Database, MessageRow};
 use crate::llm::client::LlmClient;
 use crate::llm::types::ChatMessage;
 use crate::safety::approval::{ApprovalError, PendingApproval};
-use crate::safety::{AuditEventInput, AuditEventType, PermissionDecision, PermissionManager};
+use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGatewayError};
+use crate::safety::{
+    AuditEventInput, AuditEventType, BuiltInRole, SecurityExecutionGateway,
+    SecurityExecutionRequest,
+};
 use crate::server::{AppServer, LogBuffer};
 use crate::tools::registry::ToolRegistry;
-use crate::tools::trait_def::RiskLevel;
 
 #[derive(Debug, Deserialize)]
 pub struct ApprovalDecisionRequest {
@@ -109,31 +112,28 @@ fn resolve_and_consume(
     Ok(approval)
 }
 
-/// Fail-closed sanity re-check before executing an approved tool.
-fn check_safety_sane(
+async fn execute_approved_tool(
     server: &AppServer,
+    config: &AppConfig,
     approval: &PendingApproval,
-) -> Result<(), (StatusCode, String)> {
-    let tool = server.tool_registry.get(&approval.tool_name).ok_or((
-        StatusCode::CONFLICT,
-        format!("工具 {} 不存在，已阻断", approval.tool_name),
-    ))?;
-    let decision =
-        PermissionManager::evaluate(&approval.tool_name, tool.risk_level(), &approval.arguments);
-    let current_risk = match decision {
-        PermissionDecision::Allow => RiskLevel::Low,
-        PermissionDecision::RequireApproval { risk_level, .. } => risk_level,
-        PermissionDecision::Deny { .. } => {
-            return Err((StatusCode::CONFLICT, "审批已被安全策略拒绝".to_string()))
-        }
+) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+    let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+        config.sandbox.clone(),
+        server.workspace_root.clone(),
+        Arc::clone(&server.tool_registry),
+        Arc::new(DefaultVerifier::new(&server.workspace_root)),
+        Arc::new(server.audit_recorder.clone()),
+    );
+    let request = SecurityExecutionRequest {
+        conversation_id: approval.conversation_id.clone(),
+        tool_call_id: approval.tool_call_id.clone(),
+        tool_name: approval.tool_name.clone(),
+        arguments: approval.arguments.clone(),
     };
-    if current_risk > approval.risk_level {
-        return Err((
-            StatusCode::CONFLICT,
-            "风险等级已升级，需要重新审批".to_string(),
-        ));
-    }
-    Ok(())
+
+    gateway
+        .execute_approved(&request, BuiltInRole::Owner, approval.risk_level)
+        .await
 }
 
 /// POST /api/approvals/:id/approve — SSE stream resuming the agent.
@@ -144,7 +144,6 @@ pub async fn approve_handler(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
     let approval =
         resolve_and_consume(&server, &approval_id, body.conversation_id.as_deref(), true)?;
-    check_safety_sane(&server, &approval)?;
     Ok(resume_stream(server, approval, true))
 }
 
@@ -291,79 +290,163 @@ fn resume_stream(
                 &format!("▶ {}（审批后执行）", approval.tool_name),
             );
 
-            let tool_result = match tool_registry
-                .execute(&approval.tool_name, approval.arguments.clone())
-                .await
-            {
-                Some(r) => r,
-                None => crate::tools::trait_def::ToolResult::error(format!(
-                    "未知工具: {}",
-                    approval.tool_name
-                )),
-            };
+            let gateway_outcome = execute_approved_tool(&server, &config, &approval).await;
+            match gateway_outcome {
+                Ok(SecurityExecutionOutcome::Executed {
+                    tool_result,
+                    verification,
+                }) => {
+                    let _ = tx
+                        .send(AgentEvent {
+                            event_type: "tool_end".into(),
+                            conversation_id: approval.conversation_id.clone(),
+                            token: None,
+                            tool_call_id: Some(approval.tool_call_id.clone()),
+                            tool_name: Some(approval.tool_name.clone()),
+                            args: None,
+                            result: Some(tool_result.content.clone()),
+                            status: Some(
+                                (if tool_result.ok { "success" } else { "error" }).to_string(),
+                            ),
+                            error: None,
+                            message_id: None,
+                            risk_level: None,
+                            reason: None,
+                            approval_id: Some(approval.approval_id.clone()),
+                            verification_success: None,
+                            verification_reason: None,
+                            should_replan: None,
+                        })
+                        .await;
 
-            let _ = tx
-                .send(AgentEvent {
-                    event_type: "tool_end".into(),
-                    conversation_id: approval.conversation_id.clone(),
-                    token: None,
-                    tool_call_id: Some(approval.tool_call_id.clone()),
-                    tool_name: Some(approval.tool_name.clone()),
-                    args: None,
-                    result: Some(tool_result.content.clone()),
-                    status: Some((if tool_result.ok { "success" } else { "error" }).to_string()),
-                    error: None,
-                    message_id: None,
-                    risk_level: None,
-                    reason: None,
-                    approval_id: Some(approval.approval_id.clone()),
-                    verification_success: None,
-                    verification_reason: None,
-                    should_replan: None,
-                })
-                .await;
+                    let _ = tx
+                        .send(AgentEvent {
+                            event_type: "verification".into(),
+                            conversation_id: approval.conversation_id.clone(),
+                            token: None,
+                            tool_call_id: Some(approval.tool_call_id.clone()),
+                            tool_name: Some(approval.tool_name.clone()),
+                            args: None,
+                            result: None,
+                            status: None,
+                            error: None,
+                            message_id: None,
+                            risk_level: None,
+                            reason: None,
+                            approval_id: Some(approval.approval_id.clone()),
+                            verification_success: Some(verification.success),
+                            verification_reason: Some(verification.reason.clone()),
+                            should_replan: Some(verification.should_replan),
+                        })
+                        .await;
 
-            // ── Verify the executed tool's real outcome (approved path) ──
-            let verifier = crate::agent::verifier::DefaultVerifier::new(&server.workspace_root);
-            let verification = verifier
-                .verify(&approval.tool_name, &approval.arguments, &tool_result)
-                .await;
-
-            let _ = tx
-                .send(AgentEvent {
-                    event_type: "verification".into(),
-                    conversation_id: approval.conversation_id.clone(),
-                    token: None,
-                    tool_call_id: Some(approval.tool_call_id.clone()),
-                    tool_name: Some(approval.tool_name.clone()),
-                    args: None,
-                    result: None,
-                    status: None,
-                    error: None,
-                    message_id: None,
-                    risk_level: None,
-                    reason: None,
-                    approval_id: Some(approval.approval_id.clone()),
-                    verification_success: Some(verification.success),
-                    verification_reason: Some(verification.reason.clone()),
-                    should_replan: Some(verification.should_replan),
-                })
-                .await;
-
-            // Persist the result back to the conversation — or the replan message
-            // when the outcome failed verification.
-            let llm_result = engine::summarize_tool_result(&tool_result.content);
-            let decision_msg = if verification.should_replan {
-                crate::agent::verifier::replan_message(&approval.tool_name, &verification.reason)
-            } else {
-                llm_result
-            };
-            add_tool_message(
-                &db,
-                &approval,
-                decision_msg,
-                chrono::Utc::now().timestamp_millis(),
-            );
+                    let llm_result = engine::summarize_tool_result(&tool_result.content);
+                    let decision_msg = if verification.should_replan {
+                        crate::agent::verifier::replan_message(
+                            &approval.tool_name,
+                            &verification.reason,
+                        )
+                    } else {
+                        llm_result
+                    };
+                    add_tool_message(
+                        &db,
+                        &approval,
+                        decision_msg,
+                        chrono::Utc::now().timestamp_millis(),
+                    );
+                }
+                Ok(SecurityExecutionOutcome::Denied { reason }) => {
+                    let reason = crate::utils::text::truncate_chars(&reason, 500);
+                    let _ = tx
+                        .send(AgentEvent {
+                            event_type: "tool_end".into(),
+                            conversation_id: approval.conversation_id.clone(),
+                            tool_call_id: Some(approval.tool_call_id.clone()),
+                            tool_name: Some(approval.tool_name.clone()),
+                            result: Some(reason.clone()),
+                            status: Some("error".to_string()),
+                            approval_id: Some(approval.approval_id.clone()),
+                            token: None,
+                            args: None,
+                            error: None,
+                            message_id: None,
+                            risk_level: Some(approval.risk_level.to_string()),
+                            reason: Some(reason.clone()),
+                            verification_success: None,
+                            verification_reason: None,
+                            should_replan: Some(true),
+                        })
+                        .await;
+                    add_tool_message(
+                        &db,
+                        &approval,
+                        format!(
+                            "Approved tool execution denied by current security policy: {reason}"
+                        ),
+                        chrono::Utc::now().timestamp_millis(),
+                    );
+                }
+                Ok(SecurityExecutionOutcome::RequiresApproval) => {
+                    let reason =
+                        "approved execution unexpectedly requested another approval".to_string();
+                    let _ = tx
+                        .send(AgentEvent {
+                            event_type: "tool_end".into(),
+                            conversation_id: approval.conversation_id.clone(),
+                            tool_call_id: Some(approval.tool_call_id.clone()),
+                            tool_name: Some(approval.tool_name.clone()),
+                            result: Some(reason.clone()),
+                            status: Some("error".to_string()),
+                            approval_id: Some(approval.approval_id.clone()),
+                            token: None,
+                            args: None,
+                            error: None,
+                            message_id: None,
+                            risk_level: Some(approval.risk_level.to_string()),
+                            reason: Some(reason.clone()),
+                            verification_success: None,
+                            verification_reason: None,
+                            should_replan: Some(true),
+                        })
+                        .await;
+                    add_tool_message(
+                        &db,
+                        &approval,
+                        reason,
+                        chrono::Utc::now().timestamp_millis(),
+                    );
+                }
+                Err(error) => {
+                    let reason = crate::utils::text::truncate_chars(&error.to_string(), 500);
+                    let _ = tx
+                        .send(AgentEvent {
+                            event_type: "tool_end".into(),
+                            conversation_id: approval.conversation_id.clone(),
+                            tool_call_id: Some(approval.tool_call_id.clone()),
+                            tool_name: Some(approval.tool_name.clone()),
+                            result: Some(reason.clone()),
+                            status: Some("error".to_string()),
+                            approval_id: Some(approval.approval_id.clone()),
+                            token: None,
+                            args: None,
+                            error: None,
+                            message_id: None,
+                            risk_level: Some(approval.risk_level.to_string()),
+                            reason: Some(reason.clone()),
+                            verification_success: None,
+                            verification_reason: None,
+                            should_replan: Some(true),
+                        })
+                        .await;
+                    add_tool_message(
+                        &db,
+                        &approval,
+                        format!("Approved tool execution failed closed: {reason}"),
+                        chrono::Utc::now().timestamp_millis(),
+                    );
+                }
+            }
         } else {
             // Reject: never execute; record the refusal so the agent can replan.
             let rejected = format!(
@@ -538,21 +621,59 @@ async fn resume_agent(
 
 #[cfg(test)]
 mod tests {
-    use super::{cancel_handler, resolve_and_consume, ApprovalDecisionRequest};
+    use super::{
+        cancel_handler, execute_approved_tool, resolve_and_consume, ApprovalDecisionRequest,
+    };
+    use async_trait::async_trait;
     use axum::{
         extract::{Path, State},
         Json,
     };
-    use std::{path::PathBuf, sync::Arc};
+    use parking_lot::Mutex;
+    use std::{
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
 
     use crate::{
         db::{SecurityAuditEvent, SecurityAuditQuery},
+        safety::execution_gateway::SecurityExecutionOutcome,
         safety::ControlSession,
         server::AppServer,
-        tools::trait_def::RiskLevel,
+        tools::{trait_def::RiskLevel, Tool, ToolRegistry, ToolResult},
     };
 
     struct TempDatabase(PathBuf);
+
+    struct CountingTool {
+        name: &'static str,
+        executions: Arc<AtomicUsize>,
+        arguments: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
+
+    #[async_trait]
+    impl Tool for CountingTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "approval gateway test tool"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        async fn execute(&self, args: serde_json::Value) -> ToolResult {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            self.arguments.lock().push(args);
+            ToolResult::success("executed")
+        }
+    }
 
     impl TempDatabase {
         fn new(label: &str) -> Self {
@@ -574,6 +695,101 @@ mod tests {
         let server =
             AppServer::new_with_control_session(&temp.0, ".", ControlSession::generate()).unwrap();
         (temp, Arc::new(server))
+    }
+
+    fn test_server_with_tool(
+        label: &str,
+        tool_name: &'static str,
+    ) -> (
+        TempDatabase,
+        Arc<AppServer>,
+        Arc<AtomicUsize>,
+        Arc<Mutex<Vec<serde_json::Value>>>,
+    ) {
+        let temp = TempDatabase::new(label);
+        let executions = Arc::new(AtomicUsize::new(0));
+        let arguments = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(CountingTool {
+            name: tool_name,
+            executions: Arc::clone(&executions),
+            arguments: Arc::clone(&arguments),
+        }));
+        let mut server =
+            AppServer::new_with_control_session(&temp.0, ".", ControlSession::generate()).unwrap();
+        server.tool_registry = Arc::new(registry);
+        (temp, Arc::new(server), executions, arguments)
+    }
+
+    #[tokio::test]
+    async fn approve_adapter_executes_exact_original_call_once_through_gateway() {
+        let (_temp, server, executions, arguments) = test_server_with_tool("gateway", "bash");
+        server.config.write().sandbox.profile = crate::config::types::SandboxProfile::Open;
+        let pending = server.approval_store.create(
+            "conversation-1".to_string(),
+            "tool-call-1".to_string(),
+            "bash".to_string(),
+            serde_json::json!({"command": "echo exact-original"}),
+            RiskLevel::High,
+            "approval required".to_string(),
+        );
+        let consumed = resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            true,
+        )
+        .unwrap();
+        let config = server.config.read().clone();
+
+        let outcome = execute_approved_tool(&server, &config, &consumed)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Executed { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            arguments.lock().as_slice(),
+            &[serde_json::json!({"command": "echo exact-original"})]
+        );
+        assert!(resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            true,
+        )
+        .is_err());
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn approve_adapter_sandbox_deny_does_not_execute_tool() {
+        let (_temp, server, executions, _arguments) =
+            test_server_with_tool("sandbox-deny", "write_file");
+        server.config.write().sandbox.profile = crate::config::types::SandboxProfile::ReadOnly;
+        let pending = server.approval_store.create(
+            "conversation-1".to_string(),
+            "tool-call-1".to_string(),
+            "write_file".to_string(),
+            serde_json::json!({"path": "notes.txt", "content": "blocked"}),
+            RiskLevel::Medium,
+            "approval required".to_string(),
+        );
+        let consumed = resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            true,
+        )
+        .unwrap();
+        let config = server.config.read().clone();
+
+        let outcome = execute_approved_tool(&server, &config, &consumed)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
     }
 
     fn create_pending(server: &AppServer) -> crate::safety::approval::PendingApproval {
