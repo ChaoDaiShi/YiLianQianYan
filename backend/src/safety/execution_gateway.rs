@@ -189,6 +189,57 @@ impl SecurityExecutionGateway {
         }
     }
 
+    fn record_policy_decided(
+        &self,
+        request: &SecurityExecutionRequest,
+        decision: &PolicyDecision,
+    ) -> Result<(), SecurityGatewayError> {
+        let Some(recorder) = &self.audit_recorder else {
+            return Ok(());
+        };
+
+        let context = decision.context();
+        let decision_status = match decision {
+            PolicyDecision::Allow(_) => "allow",
+            PolicyDecision::RequireApproval(_) => "require_approval",
+            PolicyDecision::Deny(_) => "deny",
+        };
+
+        recorder.record(AuditEventInput {
+            event_type: AuditEventType::PolicyDecided,
+            correlation_id: request.tool_call_id.clone(),
+            request_id: request.tool_call_id.clone(),
+            subject_id: "local-user".to_string(),
+            role_key: context.role.as_str().to_string(),
+            conversation_id: Some(request.conversation_id.clone()),
+            tool_call_id: Some(request.tool_call_id.clone()),
+            tool_name: Some(request.tool_name.clone()),
+            capabilities: context
+                .requested_permissions
+                .iter()
+                .map(|permission| permission.as_str().to_string())
+                .collect(),
+            actions: context
+                .requested_permissions
+                .iter()
+                .map(|permission| permission.as_str().to_string())
+                .collect(),
+            resources: serde_json::json!(context.resource_scopes),
+            policy_version: Some(context.policy_version.clone()),
+            risk_level: Some(context.risk_level.to_string()),
+            decision_status: Some(decision_status.to_string()),
+            request: None,
+            result: Some(serde_json::json!({ "decision": decision_status })),
+            details: serde_json::json!({
+                "phase": AuditEventType::PolicyDecided.as_str(),
+                "reason": crate::utils::text::truncate_chars(&context.reason, 200),
+            }),
+            ..Default::default()
+        })?;
+
+        Ok(())
+    }
+
     fn record_execution_started(
         &self,
         request: &SecurityExecutionRequest,
@@ -506,7 +557,7 @@ impl SecurityExecutionGateway {
         request: &SecurityExecutionRequest,
         role: BuiltInRole,
         final_risk: RiskLevel,
-    ) -> Result<PolicyDecision, DescriptorError> {
+    ) -> Result<PolicyDecision, SecurityGatewayError> {
         let descriptor = self.resolve_descriptor(request)?;
         let resource_scopes = self.resolve_resource_scopes(request, &descriptor)?;
         let sandbox_allows_file_write = self.sandbox_allows_file_write(&descriptor)?;
@@ -523,27 +574,30 @@ impl SecurityExecutionGateway {
             assessed_risk.max(final_risk),
         )?;
 
-        if sandbox_allows_file_write == Some(false) {
+        let decision = if sandbox_allows_file_write == Some(false) {
             context.reason = format!(
                 "sandbox denied tool {} file write request",
                 request.tool_name
             );
-            return Ok(PolicyDecision::Deny(context));
-        }
+            PolicyDecision::Deny(context)
+        } else {
+            // PolicyEngine currently accepts raw role/descriptor/risk inputs and
+            // rebuilds its own DecisionContext. Until that API accepts a context
+            // directly, this gateway validates the canonical context first and
+            // forwards its role and risk through the existing policy boundary.
+            // PolicyEngine currently exposes a static evaluation API; retain it as
+            // the gateway's explicit policy dependency while forwarding to that API.
+            let _policy_engine = &self.policy_engine;
+            PolicyEngine::evaluate(
+                context.role,
+                &request.tool_name,
+                &descriptor,
+                context.risk_level,
+            )
+        };
 
-        // PolicyEngine currently accepts raw role/descriptor/risk inputs and
-        // rebuilds its own DecisionContext. Until that API accepts a context
-        // directly, this gateway validates the canonical context first and
-        // forwards its role and risk through the existing policy boundary.
-        // PolicyEngine currently exposes a static evaluation API; retain it as
-        // the gateway's explicit policy dependency while forwarding to that API.
-        let _policy_engine = &self.policy_engine;
-        Ok(PolicyEngine::evaluate(
-            context.role,
-            &request.tool_name,
-            &descriptor,
-            context.risk_level,
-        ))
+        self.record_policy_decided(request, &decision)?;
+        Ok(decision)
     }
 }
 
@@ -670,6 +724,19 @@ mod tests {
         ));
         let db = Database::new(&path).unwrap();
         (Arc::new(AuditRecorder::new(db.clone_connection())), path)
+    }
+
+    fn policy_event(recorder: &AuditRecorder, tool_call_id: &str) -> crate::db::SecurityAuditEvent {
+        let events = recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(tool_call_id.to_string()),
+                event_type: Some("policy_decided".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        events.into_iter().next().unwrap()
     }
 
     fn sandbox_config(
@@ -891,6 +958,128 @@ mod tests {
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
+    }
+
+    #[test]
+    fn evaluate_allow_records_policy_decided() {
+        let (recorder, db_path) = audit_recorder("policy-allow");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DefaultVerifier::new("workspace")),
+            Arc::clone(&recorder),
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Allow(_)));
+        let event = policy_event(&recorder, &request.tool_call_id);
+        assert_eq!(event.decision_status.as_deref(), Some("allow"));
+        assert_eq!(event.risk_level.as_deref(), Some("low"));
+        assert_eq!(event.conversation_id.as_deref(), Some("conversation-1"));
+        assert_eq!(event.tool_name.as_deref(), Some("read_file"));
+        assert!(!serde_json::to_string(&event).unwrap().contains("README.md"));
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn evaluate_approval_records_policy_decided() {
+        let (recorder, db_path) = audit_recorder("policy-approval");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DefaultVerifier::new("workspace")),
+            Arc::clone(&recorder),
+        );
+        let request = request(
+            "bash",
+            serde_json::json!({"command": "git push origin develop"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Owner, RiskLevel::High)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
+        assert_eq!(
+            policy_event(&recorder, &request.tool_call_id)
+                .decision_status
+                .as_deref(),
+            Some("require_approval")
+        );
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn evaluate_policy_deny_records_policy_decided() {
+        let (recorder, db_path) = audit_recorder("policy-deny");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]),
+            "workspace",
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DefaultVerifier::new("workspace")),
+            Arc::clone(&recorder),
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "secret"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Restricted, RiskLevel::Medium)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+        assert_eq!(
+            policy_event(&recorder, &request.tool_call_id)
+                .decision_status
+                .as_deref(),
+            Some("deny")
+        );
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn evaluate_sandbox_deny_records_policy_decided() {
+        let (recorder, db_path) = audit_recorder("sandbox-deny");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DefaultVerifier::new("workspace")),
+            Arc::clone(&recorder),
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "secret"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+        assert!(decision.context().reason.contains("sandbox denied"));
+        assert_eq!(
+            policy_event(&recorder, &request.tool_call_id)
+                .decision_status
+                .as_deref(),
+            Some("deny")
+        );
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
@@ -1121,7 +1310,8 @@ mod tests {
             .iter()
             .map(|event| event.event_type.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 4);
+        assert!(event_types.contains(&"policy_decided"));
         assert!(event_types.contains(&"execution_started"));
         assert!(event_types.contains(&"execution_finished"));
         assert!(event_types.contains(&"verification_finished"));
@@ -1169,7 +1359,7 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 4);
         let finished = events
             .iter()
             .find(|event| event.event_type == "execution_finished")
@@ -1211,13 +1401,14 @@ mod tests {
             SecurityExecutionOutcome::RequiresApproval
         ));
         assert_eq!(executions.load(Ordering::SeqCst), 0);
-        assert!(recorder
+        let events = recorder
             .query(&SecurityAuditQuery {
                 correlation_id: Some(request.tool_call_id),
                 ..Default::default()
             })
-            .unwrap()
-            .is_empty());
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "policy_decided");
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
@@ -1246,13 +1437,14 @@ mod tests {
 
         assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
         assert_eq!(executions.load(Ordering::SeqCst), 0);
-        assert!(recorder
+        let events = recorder
             .query(&SecurityAuditQuery {
                 correlation_id: Some(request.tool_call_id),
                 ..Default::default()
             })
-            .unwrap()
-            .is_empty());
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "policy_decided");
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
