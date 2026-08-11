@@ -39,8 +39,8 @@ pub use policy_engine::{DecisionContext, PolicyDecision, PolicyEngine, POLICY_VE
 pub use rbac::{GrantMode, RolePolicy};
 pub use redaction::{redact_and_digest, redact_error, sha256_hex, RedactedJson};
 pub use sandbox::{
-    can_write_workspace, is_denied_write_path, is_within_root, is_writable_path, normalize_path,
-    SandboxPathError,
+    can_write, can_write_workspace, is_denied_write_path, is_within_root, is_writable_path,
+    normalize_path, SandboxPathError,
 };
 pub use subject::{BuiltInRole, SecuritySubject, SubjectType};
 
