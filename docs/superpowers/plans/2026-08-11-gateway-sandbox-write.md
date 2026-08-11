@@ -135,7 +135,7 @@ Run:
 
 ```powershell
 cd backend
-cargo test safety::execution_gateway::tests::workspace_write_file_outside_workspace_is_denied -- --exact
+cargo test safety::execution_gateway::tests::gateway_sandbox_workspace_write_denies_outside_write_file -- --exact
 ```
 
 Expected: FAIL because `with_sandbox` is not yet defined and the Gateway does not yet perform Sandbox checks.
@@ -216,7 +216,7 @@ Run:
 
 ```powershell
 cd backend
-cargo test safety::execution_gateway::tests -- --exact
+cargo test safety::execution_gateway::tests
 ```
 
 Expected: all Gateway tests pass, including the five Sandbox cases and existing Allow/Approval/Deny forwarding tests.

@@ -235,15 +235,19 @@ impl SecurityExecutionGateway {
             descriptor.default_risk,
             &request.arguments,
         );
-        let context = self.build_decision_context(
+        let mut context = self.build_decision_context(
             request,
             &descriptor,
             role,
             resource_scopes,
-            assessed_risk,
+            assessed_risk.max(final_risk),
         )?;
 
         if sandbox_allows_file_write == Some(false) {
+            context.reason = format!(
+                "sandbox denied tool {} file write request",
+                request.tool_name
+            );
             return Ok(PolicyDecision::Deny(context));
         }
 
@@ -258,7 +262,7 @@ impl SecurityExecutionGateway {
             context.role,
             &request.tool_name,
             &descriptor,
-            context.risk_level.max(final_risk),
+            context.risk_level,
         ))
     }
 }
@@ -558,6 +562,42 @@ mod tests {
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
+    }
+
+    #[test]
+    fn gateway_sandbox_read_only_allows_read_file() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Allow(_)));
+    }
+
+    #[test]
+    fn gateway_sandbox_deny_preserves_final_risk_and_reason() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "hello"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Critical)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+        assert_eq!(decision.context().risk_level, RiskLevel::Critical);
+        assert!(decision.context().reason.contains("sandbox denied"));
+        assert!(decision.context().reason.contains("write_file"));
     }
 
     #[test]
