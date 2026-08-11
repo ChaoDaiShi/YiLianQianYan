@@ -17,6 +17,7 @@ use crate::safety::{PermissionDecision, PermissionManager};
 use crate::server::LogBuffer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::trait_def::RiskLevel;
+use crate::utils::text::truncate_chars;
 
 /// Agent streaming event (shared with API layer)
 #[derive(Debug, Clone, Serialize)]
@@ -83,13 +84,9 @@ pub(crate) fn summarize_tool_result(content: &str) -> String {
 
     // General: truncate extremely long results to avoid flooding LLM context.
     // Use char boundary to avoid UTF-8 panic.
-    if content.len() > 8000 {
-        let mut end = 8000;
-        while end > 0 && !content.is_char_boundary(end) {
-            end -= 1;
-        }
-        let truncated = &content[..end];
-        return format!("{}...\n(输出已截断，完整内容已展示在界面中)", truncated);
+    if content.chars().count() > 8000 {
+        let truncated = truncate_chars(content, 8000);
+        return format!("{}\n(输出已截断，完整内容已展示在界面中)", truncated);
     }
 
     content.to_string()
@@ -236,11 +233,7 @@ pub async fn run_react_loop_with_channel(
 
                             // Log tool result
                             let log_level = if tool_result.ok { "tool" } else { "error" };
-                            let result_preview = if tool_result.content.len() > 80 {
-                                format!("{}…", &tool_result.content[..80])
-                            } else {
-                                tool_result.content.clone()
-                            };
+                            let result_preview = truncate_chars(&tool_result.content, 80);
                             log_buffer.push(
                                 log_level,
                                 "tool",

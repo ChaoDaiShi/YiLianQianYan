@@ -7,6 +7,7 @@ use regex::Regex;
 use std::path::Path;
 
 use super::trait_def::{Tool, ToolResult};
+use crate::utils::text::truncate_chars;
 
 // ── grep ──
 
@@ -170,11 +171,7 @@ impl GrepTool {
                             *match_count += 1;
                             let relative =
                                 path.strip_prefix(Path::new("")).unwrap_or(&path).display();
-                            let preview = if line.len() > 200 {
-                                format!("{}...", &line[..200])
-                            } else {
-                                line.to_string()
-                            };
+                            let preview = truncate_chars(line, 200);
                             results.push(format!("{}:{}: {}", relative, line_num + 1, preview));
 
                             if results.len() >= 100 {

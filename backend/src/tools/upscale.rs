@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::trait_def::{RiskLevel, Tool, ToolResult};
+use crate::utils::text::truncate_chars;
 
 pub struct UpscaleTool;
 
@@ -157,9 +158,9 @@ impl Tool for UpscaleTool {
                     Ok(j) => j,
                     Err(_) => {
                         // If JSON parse fails, check for HTML/error page
-                        let preview = if t.len() > 200 { &t[..200] } else { &t };
+                        let preview = truncate_chars(&t, 200);
                         return ToolResult::error(format!(
-                            "bigjpg API 返回非 JSON 响应 (HTTP {}): {}…",
+                            "bigjpg API 返回非 JSON 响应 (HTTP {}): {}",
                             status_code, preview
                         ));
                     }
@@ -195,11 +196,7 @@ impl Tool for UpscaleTool {
                 }
                 // Print response for debugging
                 let resp_str = serde_json::to_string_pretty(&task_json).unwrap_or_default();
-                let preview = if resp_str.len() > 500 {
-                    &resp_str[..500]
-                } else {
-                    &resp_str
-                };
+                let preview = truncate_chars(&resp_str, 500);
                 return ToolResult::error(format!(
                     "无法从 bigjpg 响应中解析任务 ID。\n响应内容: {}",
                     preview
