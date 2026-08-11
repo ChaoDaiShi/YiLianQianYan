@@ -4,7 +4,8 @@ use crate::tools::trait_def::RiskLevel;
 
 use super::{
     describe_builtin_tool, BuiltInRole, DecisionContext, DescriptorError, PolicyDecision,
-    PolicyEngine, SafetyPolicy, ToolSecurityDescriptor, POLICY_VERSION,
+    PolicyEngine, ResourceDescriptor, ResourceScope, SafetyPolicy, ToolSecurityDescriptor,
+    POLICY_VERSION,
 };
 
 #[derive(Debug)]
@@ -35,11 +36,99 @@ impl SecurityExecutionGateway {
         Ok(descriptor)
     }
 
+    fn resolve_resource_scopes(
+        &self,
+        request: &SecurityExecutionRequest,
+        descriptor: &ToolSecurityDescriptor,
+    ) -> Result<Vec<ResourceScope>, DescriptorError> {
+        descriptor.validate_for_tool(&request.tool_name)?;
+
+        let actual_descriptor = describe_builtin_tool(&request.tool_name, &request.arguments)?;
+        if actual_descriptor.resources != descriptor.resources {
+            return Err(DescriptorError::InvalidDescriptor(
+                "descriptor resources do not match the current tool request".to_string(),
+            ));
+        }
+
+        let declared_scopes = descriptor
+            .requested_permissions
+            .iter()
+            .map(|requested| requested.scope)
+            .collect::<Vec<_>>();
+        let mut scopes = Vec::new();
+
+        for resource in &descriptor.resources {
+            let scope = match resource {
+                ResourceDescriptor::File { path } if !path.trim().is_empty() => {
+                    ResourceScope::Workspace
+                }
+                ResourceDescriptor::Shell { command, .. } if !command.trim().is_empty() => {
+                    ResourceScope::ShellCommand
+                }
+                ResourceDescriptor::Process { action, .. } if !action.trim().is_empty() => {
+                    ResourceScope::Process
+                }
+                ResourceDescriptor::Network { url, method }
+                    if !url.trim().is_empty() && !method.trim().is_empty() =>
+                {
+                    ResourceScope::NetworkTarget
+                }
+                ResourceDescriptor::NetworkFromResponse {
+                    source,
+                    target_template,
+                    method,
+                } if !source.trim().is_empty()
+                    && !target_template.trim().is_empty()
+                    && !method.trim().is_empty() =>
+                {
+                    ResourceScope::NetworkTarget
+                }
+                ResourceDescriptor::Desktop { action, target }
+                    if !action.trim().is_empty()
+                        && target
+                            .as_deref()
+                            .map_or(true, |value| !value.trim().is_empty()) =>
+                {
+                    ResourceScope::DesktopTarget
+                }
+                ResourceDescriptor::Skill { name } if !name.trim().is_empty() => {
+                    ResourceScope::DiscoveredSkill
+                }
+                ResourceDescriptor::Agent { action } if !action.trim().is_empty() => {
+                    ResourceScope::AgentInternal
+                }
+                _ => {
+                    return Err(DescriptorError::InvalidDescriptor(
+                        "tool resource cannot be resolved to a security scope".to_string(),
+                    ));
+                }
+            };
+
+            if !declared_scopes.contains(&scope) {
+                return Err(DescriptorError::InvalidDescriptor(
+                    "resolved resource scope is not declared by the tool descriptor".to_string(),
+                ));
+            }
+            if !scopes.contains(&scope) {
+                scopes.push(scope);
+            }
+        }
+
+        if scopes.is_empty() {
+            return Err(DescriptorError::InvalidDescriptor(
+                "tool request contains no resolvable resources".to_string(),
+            ));
+        }
+
+        Ok(scopes)
+    }
+
     fn build_decision_context(
         &self,
         request: &SecurityExecutionRequest,
         descriptor: &ToolSecurityDescriptor,
         role: BuiltInRole,
+        resource_scopes: Vec<ResourceScope>,
         risk_level: RiskLevel,
     ) -> Result<DecisionContext, DescriptorError> {
         descriptor.validate_for_tool(&request.tool_name)?;
@@ -49,13 +138,18 @@ impl SecurityExecutionGateway {
             .iter()
             .map(|requested| requested.permission)
             .collect::<Vec<_>>();
-        let resource_scopes = descriptor
+        let declared_scopes = descriptor
             .requested_permissions
             .iter()
             .map(|requested| requested.scope)
             .collect::<Vec<_>>();
 
-        if requested_permissions.is_empty() || resource_scopes.is_empty() {
+        if requested_permissions.is_empty()
+            || resource_scopes.is_empty()
+            || resource_scopes
+                .iter()
+                .any(|scope| !declared_scopes.contains(scope))
+        {
             return Err(DescriptorError::InvalidDescriptor(
                 "security descriptor must declare permissions and resource scopes".to_string(),
             ));
@@ -78,12 +172,19 @@ impl SecurityExecutionGateway {
         final_risk: RiskLevel,
     ) -> Result<PolicyDecision, DescriptorError> {
         let descriptor = self.resolve_descriptor(request)?;
+        let resource_scopes = self.resolve_resource_scopes(request, &descriptor)?;
         let assessed_risk = SafetyPolicy::assess(
             &request.tool_name,
             descriptor.default_risk,
             &request.arguments,
         );
-        let context = self.build_decision_context(request, &descriptor, role, assessed_risk)?;
+        let context = self.build_decision_context(
+            request,
+            &descriptor,
+            role,
+            resource_scopes,
+            assessed_risk,
+        )?;
 
         // PolicyEngine currently accepts raw role/descriptor/risk inputs and
         // rebuilds its own DecisionContext. Until that API accepts a context
@@ -105,8 +206,8 @@ impl SecurityExecutionGateway {
 mod tests {
     use super::{SecurityExecutionGateway, SecurityExecutionRequest};
     use crate::safety::{
-        BuiltInRole, DescriptorError, PermissionId, PolicyDecision, ResourceScope,
-        ToolSecurityDescriptor,
+        BuiltInRole, DescriptorError, PermissionId, PolicyDecision, ResourceDescriptor,
+        ResourceScope, ToolSecurityDescriptor,
     };
     use crate::tools::trait_def::RiskLevel;
 
@@ -148,13 +249,73 @@ mod tests {
     }
 
     #[test]
+    fn gateway_resolves_file_resource_scope_from_request() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request("read_file", serde_json::json!({"path": "./README.md"}));
+        let descriptor = gateway.resolve_descriptor(&request).unwrap();
+
+        let scopes = gateway
+            .resolve_resource_scopes(&request, &descriptor)
+            .unwrap();
+
+        assert_eq!(scopes, vec![ResourceScope::Workspace]);
+    }
+
+    #[test]
+    fn gateway_rejects_missing_resource_argument() {
+        let gateway = SecurityExecutionGateway::new();
+        let descriptor_request = request("read_file", serde_json::json!({"path": "./README.md"}));
+        let descriptor = gateway.resolve_descriptor(&descriptor_request).unwrap();
+        let request_without_path = request("read_file", serde_json::json!({}));
+
+        let result = gateway.resolve_resource_scopes(&request_without_path, &descriptor);
+
+        assert!(matches!(
+            result,
+            Err(DescriptorError::MissingArgument { tool, argument })
+                if tool == "read_file" && argument == "path"
+        ));
+    }
+
+    #[test]
+    fn gateway_rejects_resource_type_mismatch() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request("read_file", serde_json::json!({"path": "./README.md"}));
+        let descriptor = ToolSecurityDescriptor {
+            tool_name: "read_file".to_string(),
+            requested_permissions: vec![
+                PermissionId::FilesystemRead.in_scope(ResourceScope::Workspace)
+            ],
+            resources: vec![ResourceDescriptor::Shell {
+                command: "pwd".to_string(),
+                working_directory: None,
+            }],
+            default_risk: RiskLevel::Low,
+            side_effects: vec![],
+        };
+
+        let result = gateway.resolve_resource_scopes(&request, &descriptor);
+
+        assert!(matches!(result, Err(DescriptorError::InvalidDescriptor(_))));
+    }
+
+    #[test]
     fn gateway_builds_decision_context_from_descriptor() {
         let gateway = SecurityExecutionGateway::new();
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
         let descriptor = gateway.resolve_descriptor(&request).unwrap();
+        let resource_scopes = gateway
+            .resolve_resource_scopes(&request, &descriptor)
+            .unwrap();
 
         let context = gateway
-            .build_decision_context(&request, &descriptor, BuiltInRole::Standard, RiskLevel::Low)
+            .build_decision_context(
+                &request,
+                &descriptor,
+                BuiltInRole::Standard,
+                resource_scopes,
+                RiskLevel::Low,
+            )
             .unwrap();
 
         assert_eq!(context.role, BuiltInRole::Standard);
@@ -183,6 +344,7 @@ mod tests {
             &request,
             &descriptor,
             BuiltInRole::Standard,
+            vec![],
             RiskLevel::Low,
         );
 
