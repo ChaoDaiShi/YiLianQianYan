@@ -1,8 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use serde_json::Value;
+use thiserror::Error;
 
-use crate::{config::types::SandboxConfig, tools::trait_def::RiskLevel};
+use crate::{
+    config::types::SandboxConfig,
+    tools::{trait_def::RiskLevel, ToolRegistry, ToolResult},
+};
 
 use super::{
     describe_builtin_tool, BuiltInRole, DecisionContext, DescriptorError, PermissionId,
@@ -18,10 +25,26 @@ pub struct SecurityExecutionRequest {
     pub arguments: Value,
 }
 
+#[derive(Debug)]
+pub enum SecurityExecutionOutcome {
+    Executed { tool_result: ToolResult },
+    RequiresApproval,
+    Denied { reason: String },
+}
+
+#[derive(Debug, Error)]
+pub enum SecurityGatewayError {
+    #[error(transparent)]
+    Descriptor(#[from] DescriptorError),
+    #[error("tool not found in registry: {0}")]
+    ToolNotFound(String),
+}
+
 pub struct SecurityExecutionGateway {
     policy_engine: PolicyEngine,
     sandbox_config: SandboxConfig,
     workspace_root: PathBuf,
+    tool_registry: Arc<ToolRegistry>,
 }
 
 impl SecurityExecutionGateway {
@@ -33,10 +56,47 @@ impl SecurityExecutionGateway {
     }
 
     pub fn with_sandbox(sandbox_config: SandboxConfig, workspace_root: impl Into<PathBuf>) -> Self {
+        let workspace_root = workspace_root.into();
+        let tool_registry = Arc::new(ToolRegistry::with_defaults(
+            workspace_root.to_string_lossy().as_ref(),
+        ));
+
+        Self::with_sandbox_and_registry(sandbox_config, workspace_root, tool_registry)
+    }
+
+    pub fn with_sandbox_and_registry(
+        sandbox_config: SandboxConfig,
+        workspace_root: impl Into<PathBuf>,
+        tool_registry: Arc<ToolRegistry>,
+    ) -> Self {
         Self {
             policy_engine: PolicyEngine,
             sandbox_config,
             workspace_root: workspace_root.into(),
+            tool_registry,
+        }
+    }
+
+    pub async fn execute(
+        &self,
+        request: &SecurityExecutionRequest,
+        role: BuiltInRole,
+        final_risk: RiskLevel,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        match self.evaluate(request, role, final_risk)? {
+            PolicyDecision::Allow(_) => {
+                let tool_result = self
+                    .tool_registry
+                    .execute(&request.tool_name, request.arguments.clone())
+                    .await
+                    .ok_or_else(|| SecurityGatewayError::ToolNotFound(request.tool_name.clone()))?;
+
+                Ok(SecurityExecutionOutcome::Executed { tool_result })
+            }
+            PolicyDecision::RequireApproval(_) => Ok(SecurityExecutionOutcome::RequiresApproval),
+            PolicyDecision::Deny(context) => Ok(SecurityExecutionOutcome::Denied {
+                reason: context.reason,
+            }),
         }
     }
 
@@ -269,13 +329,54 @@ impl SecurityExecutionGateway {
 
 #[cfg(test)]
 mod tests {
-    use super::{SecurityExecutionGateway, SecurityExecutionRequest};
+    use super::{SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest};
     use crate::config::types::{SandboxConfig, SandboxProfile};
     use crate::safety::{
         BuiltInRole, DescriptorError, PermissionId, PolicyDecision, ResourceDescriptor,
         ResourceScope, ToolSecurityDescriptor,
     };
     use crate::tools::trait_def::RiskLevel;
+    use crate::tools::{Tool, ToolRegistry, ToolResult};
+    use async_trait::async_trait;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct CountingTool {
+        name: &'static str,
+        executions: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Tool for CountingTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "counts executions for gateway tests"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> ToolResult {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            ToolResult::success("executed")
+        }
+    }
+
+    fn registry_with_counting_tool(name: &'static str) -> (Arc<ToolRegistry>, Arc<AtomicUsize>) {
+        let executions = Arc::new(AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(CountingTool {
+            name,
+            executions: Arc::clone(&executions),
+        }));
+        (Arc::new(registry), executions)
+    }
 
     fn request(tool_name: &str, arguments: serde_json::Value) -> SecurityExecutionRequest {
         SecurityExecutionRequest {
@@ -634,5 +735,71 @@ mod tests {
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
+    }
+
+    #[tokio::test]
+    async fn execute_allow_runs_tool_once() {
+        let (registry, executions) = registry_with_counting_tool("read_file");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Executed { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn execute_approval_does_not_run_tool() {
+        let (registry, executions) = registry_with_counting_tool("bash");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+        );
+        let request = request(
+            "bash",
+            serde_json::json!({"command": "git push origin develop"}),
+        );
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            SecurityExecutionOutcome::RequiresApproval
+        ));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_deny_does_not_run_tool() {
+        let (registry, executions) = registry_with_counting_tool("write_file");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "hello"}),
+        );
+
+        let outcome = gateway
+            .execute(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
     }
 }
