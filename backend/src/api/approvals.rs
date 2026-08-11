@@ -28,7 +28,7 @@ use crate::db::{Database, MessageRow};
 use crate::llm::client::LlmClient;
 use crate::llm::types::ChatMessage;
 use crate::safety::approval::{ApprovalError, PendingApproval};
-use crate::safety::{PermissionDecision, PermissionManager};
+use crate::safety::{AuditEventInput, AuditEventType, PermissionDecision, PermissionManager};
 use crate::server::{AppServer, LogBuffer};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::trait_def::RiskLevel;
@@ -46,6 +46,37 @@ fn status_for(e: &ApprovalError) -> StatusCode {
         | ApprovalError::Expired
         | ApprovalError::Cancelled
         | ApprovalError::ConversationMismatch => StatusCode::CONFLICT,
+    }
+}
+
+fn record_approval_resolved(server: &AppServer, approval: &PendingApproval) {
+    let resolution = approval.status.to_string();
+    if let Err(error) = server.audit_recorder.record(AuditEventInput {
+        event_type: AuditEventType::ApprovalResolved,
+        correlation_id: approval.tool_call_id.clone(),
+        request_id: approval.tool_call_id.clone(),
+        subject_id: "local-user".to_string(),
+        role_key: "owner".to_string(),
+        conversation_id: Some(approval.conversation_id.clone()),
+        tool_call_id: Some(approval.tool_call_id.clone()),
+        tool_name: Some(approval.tool_name.clone()),
+        risk_level: Some(approval.risk_level.to_string()),
+        decision_status: Some(resolution.clone()),
+        request: None,
+        result: None,
+        details: serde_json::json!({
+            "phase": AuditEventType::ApprovalResolved.as_str(),
+            "approval_id": approval.approval_id.clone(),
+            "resolution": resolution,
+        }),
+        ..Default::default()
+    }) {
+        tracing::error!(
+            approval_id = %approval.approval_id,
+            resolution = %approval.status,
+            error = %error,
+            "failed to persist approval resolution audit"
+        );
     }
 }
 
@@ -73,7 +104,9 @@ fn resolve_and_consume(
             .approval_store
             .consume_for_rejection(approval_id, &conv_id)
     };
-    result.map_err(|e| (status_for(&e), e.to_string()))
+    let approval = result.map_err(|e| (status_for(&e), e.to_string()))?;
+    record_approval_resolved(server, &approval);
+    Ok(approval)
 }
 
 /// Fail-closed sanity re-check before executing an approved tool.
@@ -148,6 +181,7 @@ pub async fn cancel_handler(
         .unwrap_or_else(|| lookup.conversation_id.clone());
     match server.approval_store.cancel(&approval_id, &conv_id) {
         Ok(a) => {
+            record_approval_resolved(&server, &a);
             // Keep the conversation chain valid: record that the operation never ran.
             let db = server.db.clone_connection();
             let now = chrono::Utc::now().timestamp_millis();
@@ -499,5 +533,163 @@ async fn resume_agent(
                 })
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cancel_handler, resolve_and_consume, ApprovalDecisionRequest};
+    use axum::{
+        extract::{Path, State},
+        Json,
+    };
+    use std::{path::PathBuf, sync::Arc};
+
+    use crate::{
+        db::{SecurityAuditEvent, SecurityAuditQuery},
+        safety::ControlSession,
+        server::AppServer,
+        tools::trait_def::RiskLevel,
+    };
+
+    struct TempDatabase(PathBuf);
+
+    impl TempDatabase {
+        fn new(label: &str) -> Self {
+            Self(std::env::temp_dir().join(format!(
+                "yilian-approval-audit-{label}-{}.db",
+                uuid::Uuid::new_v4()
+            )))
+        }
+    }
+
+    impl Drop for TempDatabase {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn test_server(label: &str) -> (TempDatabase, Arc<AppServer>) {
+        let temp = TempDatabase::new(label);
+        let server =
+            AppServer::new_with_control_session(&temp.0, ".", ControlSession::generate()).unwrap();
+        (temp, Arc::new(server))
+    }
+
+    fn create_pending(server: &AppServer) -> crate::safety::approval::PendingApproval {
+        server.approval_store.create(
+            "conversation-1".to_string(),
+            "tool-call-1".to_string(),
+            "bash".to_string(),
+            serde_json::json!({"command": "echo safe", "token": "must-not-be-audited"}),
+            RiskLevel::High,
+            "high-risk tool".to_string(),
+        )
+    }
+
+    fn resolution_events(server: &AppServer) -> Vec<SecurityAuditEvent> {
+        server
+            .audit_recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some("tool-call-1".to_string()),
+                event_type: Some("approval_resolved".to_string()),
+                ..Default::default()
+            })
+            .unwrap()
+    }
+
+    fn assert_resolution(event: &SecurityAuditEvent, approval_id: &str, resolution: &str) {
+        assert_eq!(event.conversation_id.as_deref(), Some("conversation-1"));
+        assert_eq!(event.tool_call_id.as_deref(), Some("tool-call-1"));
+        assert_eq!(event.tool_name.as_deref(), Some("bash"));
+        assert_eq!(event.risk_level.as_deref(), Some("high"));
+        assert_eq!(event.decision_status.as_deref(), Some(resolution));
+        assert_eq!(event.details["context"]["approval_id"], approval_id);
+        assert_eq!(event.details["context"]["resolution"], resolution);
+        assert!(!serde_json::to_string(event)
+            .unwrap()
+            .contains("must-not-be-audited"));
+    }
+
+    #[test]
+    fn approve_records_approved_resolution_once() {
+        let (_temp, server) = test_server("approve");
+        let pending = create_pending(&server);
+
+        let resolved = resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(resolved.status.to_string(), "approved");
+        let events = resolution_events(&server);
+        assert_eq!(events.len(), 1);
+        assert_resolution(&events[0], &pending.approval_id, "approved");
+    }
+
+    #[test]
+    fn reject_records_rejected_resolution_once() {
+        let (_temp, server) = test_server("reject");
+        let pending = create_pending(&server);
+
+        let resolved = resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(resolved.status.to_string(), "rejected");
+        let events = resolution_events(&server);
+        assert_eq!(events.len(), 1);
+        assert_resolution(&events[0], &pending.approval_id, "rejected");
+    }
+
+    #[tokio::test]
+    async fn cancel_records_cancelled_resolution_once() {
+        let (_temp, server) = test_server("cancel");
+        let pending = create_pending(&server);
+
+        let Json(response) = cancel_handler(
+            State(Arc::clone(&server)),
+            Path(pending.approval_id.clone()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: Some(pending.conversation_id.clone()),
+            }),
+        )
+        .await;
+
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["status"], "cancelled");
+        let events = resolution_events(&server);
+        assert_eq!(events.len(), 1);
+        assert_resolution(&events[0], &pending.approval_id, "cancelled");
+    }
+
+    #[test]
+    fn repeated_consumption_does_not_record_second_resolution() {
+        let (_temp, server) = test_server("duplicate");
+        let pending = create_pending(&server);
+
+        resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            true,
+        )
+        .unwrap();
+        assert!(resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            false,
+        )
+        .is_err());
+
+        assert_eq!(resolution_events(&server).len(), 1);
     }
 }
