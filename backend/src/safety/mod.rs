@@ -31,9 +31,7 @@ pub use descriptor::{
     describe_builtin_tool, DescriptorError, ResourceDescriptor, SideEffectKind,
     ToolSecurityDescriptor,
 };
-pub use execution_gateway::{
-    SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest,
-};
+pub use execution_gateway::{SecurityExecutionGateway, SecurityExecutionRequest};
 pub use permission::{PermissionDecision, PermissionManager};
 pub use policy::SafetyPolicy;
 pub use policy_engine::{DecisionContext, PolicyDecision, PolicyEngine, POLICY_VERSION};
