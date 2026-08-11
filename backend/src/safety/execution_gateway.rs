@@ -220,12 +220,26 @@ impl SecurityExecutionGateway {
                 ));
             }
         };
-        self.record_execution_finished(request, &context, tool_result.ok)?;
+        if let Err(error) = self.record_execution_finished(request, &context, tool_result.ok) {
+            tracing::error!(
+                tool_call_id = %request.tool_call_id,
+                tool_name = %request.tool_name,
+                error = %error,
+                "tool executed but execution-finished audit persistence failed"
+            );
+        }
         let verification = self
             .verifier
             .verify(&request.tool_name, &request.arguments, &tool_result)
             .await;
-        self.record_verification_finished(request, &context, &verification)?;
+        if let Err(error) = self.record_verification_finished(request, &context, &verification) {
+            tracing::error!(
+                tool_call_id = %request.tool_call_id,
+                tool_name = %request.tool_name,
+                error = %error,
+                "tool verified but verification-finished audit persistence failed"
+            );
+        }
 
         Ok(SecurityExecutionOutcome::Executed {
             tool_result,
@@ -725,6 +739,11 @@ mod tests {
 
     struct FailingTool;
 
+    struct AuditBreakingTool {
+        database_path: std::path::PathBuf,
+        executions: Arc<AtomicUsize>,
+    }
+
     struct CountingVerifier {
         verifications: Arc<AtomicUsize>,
     }
@@ -778,6 +797,30 @@ mod tests {
 
         async fn execute(&self, _args: serde_json::Value) -> ToolResult {
             ToolResult::error("simulated tool failure")
+        }
+    }
+
+    #[async_trait]
+    impl Tool for AuditBreakingTool {
+        fn name(&self) -> &str {
+            "read_file"
+        }
+
+        fn description(&self) -> &str {
+            "breaks audit persistence after execution for gateway tests"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> ToolResult {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            let connection = rusqlite::Connection::open(&self.database_path).unwrap();
+            connection
+                .execute("DROP TABLE security_audit_events", [])
+                .unwrap();
+            ToolResult::success("executed before audit persistence failed")
         }
     }
 
@@ -1830,5 +1873,47 @@ mod tests {
             _ => panic!("expected approved execution to be denied"),
         }
         assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_approved_preserves_result_and_verifies_after_post_execution_audit_failure() {
+        let (recorder, db_path) = audit_recorder("approved-post-execution-audit-failure");
+        let executions = Arc::new(AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(AuditBreakingTool {
+            database_path: db_path.clone(),
+            executions: Arc::clone(&executions),
+        }));
+        let (verifier, verifications) = counting_verifier();
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            "workspace",
+            Arc::new(registry),
+            verifier,
+            Arc::clone(&recorder),
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let outcome = gateway
+            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::Low)
+            .await
+            .unwrap();
+
+        match outcome {
+            SecurityExecutionOutcome::Executed {
+                tool_result,
+                verification,
+            } => {
+                assert!(tool_result.ok);
+                assert!(verification.success);
+            }
+            _ => panic!("expected executed outcome after post-execution audit failure"),
+        }
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(verifications.load(Ordering::SeqCst), 1);
+        assert_eq!(recorder.health(), crate::safety::AuditHealth::Degraded);
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
     }
 }
