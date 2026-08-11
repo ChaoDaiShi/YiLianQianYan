@@ -89,6 +89,25 @@ pub fn is_denied_write_path(
     Ok(false)
 }
 
+/// Return whether a target is inside any configured writable path.
+pub fn is_writable_path(
+    workspace_root: &Path,
+    target: &Path,
+    writable_paths: &[PathBuf],
+) -> Result<bool, SandboxPathError> {
+    let workspace_base = resolve_workspace_base(workspace_root)?;
+    let normalized_target = normalize_path(&workspace_base, target)?;
+
+    for writable_path in writable_paths {
+        let normalized_writable = normalize_path(&workspace_base, writable_path)?;
+        if is_within_root(&normalized_writable, &normalized_target) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 fn resolve_workspace_base(workspace_root: &Path) -> Result<PathBuf, SandboxPathError> {
     if workspace_root.as_os_str().is_empty() {
         return Err(SandboxPathError::EmptyWorkspaceRoot);
@@ -140,7 +159,9 @@ fn normalize_components(path: &Path) -> PathBuf {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{can_write_workspace, is_denied_write_path, is_within_root, normalize_path};
+    use super::{
+        can_write_workspace, is_denied_write_path, is_within_root, is_writable_path, normalize_path,
+    };
 
     #[test]
     fn normalizes_workspace_relative_file() {
@@ -295,5 +316,47 @@ mod tests {
         let denied = [PathBuf::from(".git")];
 
         assert!(is_denied_write_path(&root, &target, &denied).unwrap());
+    }
+
+    #[test]
+    fn allows_target_inside_writable_directory() {
+        let root = Path::new("workspace");
+        let writable = [PathBuf::from("src")];
+
+        assert!(is_writable_path(root, Path::new("src/main.rs"), &writable).unwrap());
+    }
+
+    #[test]
+    fn allows_new_file_inside_writable_directory() {
+        let root = Path::new("workspace");
+        let writable = [PathBuf::from("src")];
+
+        assert!(is_writable_path(root, Path::new("src/new.rs"), &writable).unwrap());
+    }
+
+    #[test]
+    fn rejects_target_outside_writable_directories() {
+        let root = Path::new("workspace");
+        let writable = [PathBuf::from("src"), PathBuf::from("docs")];
+
+        assert!(!is_writable_path(root, Path::new("tests/test.rs"), &writable).unwrap());
+    }
+
+    #[test]
+    fn rejects_similar_writable_prefix_directory() {
+        let root = std::env::temp_dir().join("yilian-writable-root");
+        let writable = [PathBuf::from("src")];
+        let target = root.join("src-old").join("main.rs");
+
+        assert!(!is_writable_path(&root, &target, &writable).unwrap());
+    }
+
+    #[test]
+    fn resolves_relative_writable_path_against_workspace_root() {
+        let root = std::env::temp_dir().join("yilian-writable-relative-root");
+        let target = root.join("docs").join("readme.md");
+        let writable = [PathBuf::from("docs")];
+
+        assert!(is_writable_path(&root, &target, &writable).unwrap());
     }
 }
