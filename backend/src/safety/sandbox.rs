@@ -1,5 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
+use crate::config::types::{SandboxConfig, SandboxProfile};
 use thiserror::Error;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -108,6 +109,38 @@ pub fn is_writable_path(
     Ok(false)
 }
 
+/// Apply the configured sandbox profile to a write target.
+///
+/// Explicit denied paths always take precedence over the selected profile.
+pub fn can_write(
+    config: &SandboxConfig,
+    workspace_root: &Path,
+    target: &Path,
+) -> Result<bool, SandboxPathError> {
+    let denied_paths = config
+        .denied_write_paths
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    if is_denied_write_path(workspace_root, target, &denied_paths)? {
+        return Ok(false);
+    }
+
+    match &config.profile {
+        SandboxProfile::ReadOnly => Ok(false),
+        SandboxProfile::WorkspaceWrite => can_write_workspace(workspace_root, target),
+        SandboxProfile::Custom => {
+            let writable_paths = config
+                .writable_paths
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            is_writable_path(workspace_root, target, &writable_paths)
+        }
+        SandboxProfile::Open => Ok(true),
+    }
+}
+
 fn resolve_workspace_base(workspace_root: &Path) -> Result<PathBuf, SandboxPathError> {
     if workspace_root.as_os_str().is_empty() {
         return Err(SandboxPathError::EmptyWorkspaceRoot);
@@ -159,9 +192,30 @@ fn normalize_components(path: &Path) -> PathBuf {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use crate::config::types::{SandboxConfig, SandboxProfile};
+
     use super::{
-        can_write_workspace, is_denied_write_path, is_within_root, is_writable_path, normalize_path,
+        can_write, can_write_workspace, is_denied_write_path, is_within_root, is_writable_path,
+        normalize_path,
     };
+
+    fn sandbox_config(
+        profile: SandboxProfile,
+        writable_paths: &[&str],
+        denied_write_paths: &[&str],
+    ) -> SandboxConfig {
+        SandboxConfig {
+            profile,
+            writable_paths: writable_paths
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect(),
+            denied_write_paths: denied_write_paths
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect(),
+        }
+    }
 
     #[test]
     fn normalizes_workspace_relative_file() {
@@ -358,5 +412,75 @@ mod tests {
         let writable = [PathBuf::from("docs")];
 
         assert!(is_writable_path(&root, &target, &writable).unwrap());
+    }
+
+    #[test]
+    fn read_only_profile_rejects_workspace_file() {
+        let config = sandbox_config(SandboxProfile::ReadOnly, &[], &[]);
+
+        assert!(!can_write(&config, Path::new("workspace"), Path::new("README.md")).unwrap());
+    }
+
+    #[test]
+    fn workspace_write_profile_allows_workspace_file() {
+        let config = sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]);
+
+        assert!(can_write(&config, Path::new("workspace"), Path::new("README.md")).unwrap());
+    }
+
+    #[test]
+    fn workspace_write_profile_rejects_outside_file() {
+        let config = sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]);
+        let workspace_root = std::env::temp_dir().join("yilian-can-write-root");
+        let outside = std::env::temp_dir()
+            .join("yilian-can-write-outside")
+            .join("file.txt");
+
+        assert!(!can_write(&config, &workspace_root, &outside).unwrap());
+    }
+
+    #[test]
+    fn custom_profile_allows_writable_path() {
+        let config = sandbox_config(SandboxProfile::Custom, &["src"], &[]);
+
+        assert!(can_write(&config, Path::new("workspace"), Path::new("src/main.rs")).unwrap());
+    }
+
+    #[test]
+    fn custom_profile_rejects_outside_writable_path() {
+        let config = sandbox_config(SandboxProfile::Custom, &["src"], &[]);
+
+        assert!(!can_write(&config, Path::new("workspace"), Path::new("tests/test.rs")).unwrap());
+    }
+
+    #[test]
+    fn custom_profile_denied_path_overrides_writable_path() {
+        let config = sandbox_config(SandboxProfile::Custom, &["src"], &["src/private"]);
+
+        assert!(!can_write(
+            &config,
+            Path::new("workspace"),
+            Path::new("src/private/file.rs")
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn open_profile_allows_ordinary_path() {
+        let config = sandbox_config(SandboxProfile::Open, &[], &[]);
+
+        assert!(can_write(
+            &config,
+            Path::new("workspace"),
+            Path::new("anywhere/file.txt")
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn open_profile_still_rejects_denied_path() {
+        let config = sandbox_config(SandboxProfile::Open, &[], &[".git"]);
+
+        assert!(!can_write(&config, Path::new("workspace"), Path::new(".git/config")).unwrap());
     }
 }
