@@ -3,8 +3,8 @@ use serde_json::Value;
 use crate::tools::trait_def::RiskLevel;
 
 use super::{
-    describe_builtin_tool, BuiltInRole, DescriptorError, PolicyDecision, PolicyEngine,
-    ToolSecurityDescriptor,
+    describe_builtin_tool, BuiltInRole, DecisionContext, DescriptorError, PolicyDecision,
+    PolicyEngine, ToolSecurityDescriptor, POLICY_VERSION,
 };
 
 #[derive(Debug)]
@@ -35,6 +35,41 @@ impl SecurityExecutionGateway {
         Ok(descriptor)
     }
 
+    fn build_decision_context(
+        &self,
+        request: &SecurityExecutionRequest,
+        descriptor: &ToolSecurityDescriptor,
+        role: BuiltInRole,
+    ) -> Result<DecisionContext, DescriptorError> {
+        descriptor.validate_for_tool(&request.tool_name)?;
+
+        let requested_permissions = descriptor
+            .requested_permissions
+            .iter()
+            .map(|requested| requested.permission)
+            .collect::<Vec<_>>();
+        let resource_scopes = descriptor
+            .requested_permissions
+            .iter()
+            .map(|requested| requested.scope)
+            .collect::<Vec<_>>();
+
+        if requested_permissions.is_empty() || resource_scopes.is_empty() {
+            return Err(DescriptorError::InvalidDescriptor(
+                "security descriptor must declare permissions and resource scopes".to_string(),
+            ));
+        }
+
+        Ok(DecisionContext {
+            role,
+            risk_level: descriptor.default_risk,
+            policy_version: POLICY_VERSION.to_string(),
+            requested_permissions,
+            resource_scopes,
+            reason: format!("tool {} requested security evaluation", request.tool_name),
+        })
+    }
+
     pub fn evaluate(
         &self,
         request: &SecurityExecutionRequest,
@@ -42,15 +77,20 @@ impl SecurityExecutionGateway {
         final_risk: RiskLevel,
     ) -> Result<PolicyDecision, DescriptorError> {
         let descriptor = self.resolve_descriptor(request)?;
+        let context = self.build_decision_context(request, &descriptor, role)?;
 
+        // PolicyEngine currently accepts raw role/descriptor/risk inputs and
+        // rebuilds its own DecisionContext. Until that API accepts a context
+        // directly, this gateway validates the canonical context first and
+        // forwards its role and risk through the existing policy boundary.
         // PolicyEngine currently exposes a static evaluation API; retain it as
         // the gateway's explicit policy dependency while forwarding to that API.
         let _policy_engine = &self.policy_engine;
         Ok(PolicyEngine::evaluate(
-            role,
+            context.role,
             &request.tool_name,
             &descriptor,
-            final_risk,
+            context.risk_level.max(final_risk),
         ))
     }
 }
@@ -58,7 +98,10 @@ impl SecurityExecutionGateway {
 #[cfg(test)]
 mod tests {
     use super::{SecurityExecutionGateway, SecurityExecutionRequest};
-    use crate::safety::{BuiltInRole, DescriptorError, PolicyDecision};
+    use crate::safety::{
+        BuiltInRole, DescriptorError, PermissionId, PolicyDecision, ResourceScope,
+        ToolSecurityDescriptor,
+    };
     use crate::tools::trait_def::RiskLevel;
 
     fn request(tool_name: &str, arguments: serde_json::Value) -> SecurityExecutionRequest {
@@ -96,6 +139,43 @@ mod tests {
             result,
             Err(DescriptorError::UnknownTool(tool)) if tool == "definitely_not_a_tool"
         ));
+    }
+
+    #[test]
+    fn gateway_builds_decision_context_from_descriptor() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+        let descriptor = gateway.resolve_descriptor(&request).unwrap();
+
+        let context = gateway
+            .build_decision_context(&request, &descriptor, BuiltInRole::Standard)
+            .unwrap();
+
+        assert_eq!(context.role, BuiltInRole::Standard);
+        assert_eq!(context.risk_level, RiskLevel::Low);
+        assert_eq!(
+            context.requested_permissions,
+            vec![PermissionId::FilesystemRead]
+        );
+        assert_eq!(context.resource_scopes, vec![ResourceScope::Workspace]);
+        assert!(context.reason.contains("read_file"));
+    }
+
+    #[test]
+    fn gateway_rejects_descriptor_missing_security_information() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+        let descriptor = ToolSecurityDescriptor {
+            tool_name: "read_file".to_string(),
+            requested_permissions: vec![],
+            resources: vec![],
+            default_risk: RiskLevel::Low,
+            side_effects: vec![],
+        };
+
+        let result = gateway.build_decision_context(&request, &descriptor, BuiltInRole::Standard);
+
+        assert!(matches!(result, Err(DescriptorError::InvalidDescriptor(_))));
     }
 
     #[test]
