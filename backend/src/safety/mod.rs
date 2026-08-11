@@ -38,7 +38,7 @@ pub use policy::SafetyPolicy;
 pub use policy_engine::{DecisionContext, PolicyDecision, PolicyEngine, POLICY_VERSION};
 pub use rbac::{GrantMode, RolePolicy};
 pub use redaction::{redact_and_digest, redact_error, sha256_hex, RedactedJson};
-pub use sandbox::{is_within_root, normalize_path, SandboxPathError};
+pub use sandbox::{can_write_workspace, is_within_root, normalize_path, SandboxPathError};
 pub use subject::{BuiltInRole, SecuritySubject, SubjectType};
 
 #[cfg(test)]
