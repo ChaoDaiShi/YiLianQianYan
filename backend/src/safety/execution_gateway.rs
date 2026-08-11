@@ -1,11 +1,13 @@
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
 
-use crate::tools::trait_def::RiskLevel;
+use crate::{config::types::SandboxConfig, tools::trait_def::RiskLevel};
 
 use super::{
-    describe_builtin_tool, BuiltInRole, DecisionContext, DescriptorError, PolicyDecision,
-    PolicyEngine, ResourceDescriptor, ResourceScope, SafetyPolicy, ToolSecurityDescriptor,
-    POLICY_VERSION,
+    describe_builtin_tool, BuiltInRole, DecisionContext, DescriptorError, PermissionId,
+    PolicyDecision, PolicyEngine, ResourceDescriptor, ResourceScope, SafetyPolicy,
+    ToolSecurityDescriptor, POLICY_VERSION,
 };
 
 #[derive(Debug)]
@@ -18,12 +20,23 @@ pub struct SecurityExecutionRequest {
 
 pub struct SecurityExecutionGateway {
     policy_engine: PolicyEngine,
+    sandbox_config: SandboxConfig,
+    workspace_root: PathBuf,
 }
 
 impl SecurityExecutionGateway {
     pub fn new() -> Self {
+        let sandbox_config = SandboxConfig::default();
+        let workspace_root = sandbox_config.workspace_root();
+
+        Self::with_sandbox(sandbox_config, workspace_root)
+    }
+
+    pub fn with_sandbox(sandbox_config: SandboxConfig, workspace_root: impl Into<PathBuf>) -> Self {
         Self {
             policy_engine: PolicyEngine,
+            sandbox_config,
+            workspace_root: workspace_root.into(),
         }
     }
 
@@ -165,6 +178,49 @@ impl SecurityExecutionGateway {
         })
     }
 
+    fn sandbox_allows_file_write(
+        &self,
+        descriptor: &ToolSecurityDescriptor,
+    ) -> Result<Option<bool>, DescriptorError> {
+        if !descriptor
+            .requested_permissions
+            .iter()
+            .any(|requested| requested.permission == PermissionId::FilesystemWrite)
+        {
+            return Ok(None);
+        }
+
+        let file_paths = descriptor
+            .resources
+            .iter()
+            .filter_map(|resource| match resource {
+                ResourceDescriptor::File { path } if !path.trim().is_empty() => Some(path),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if file_paths.is_empty() {
+            return Err(DescriptorError::InvalidDescriptor(
+                "filesystem write permission requires a non-empty file resource".to_string(),
+            ));
+        }
+
+        file_paths
+            .into_iter()
+            .map(|path| {
+                crate::safety::can_write(
+                    &self.sandbox_config,
+                    &self.workspace_root,
+                    Path::new(path),
+                )
+                .map_err(|error| DescriptorError::InvalidDescriptor(error.to_string()))
+            })
+            .try_fold(true, |allowed, write_allowed| {
+                write_allowed.map(|write_allowed| allowed && write_allowed)
+            })
+            .map(Some)
+    }
+
     pub fn evaluate(
         &self,
         request: &SecurityExecutionRequest,
@@ -173,18 +229,27 @@ impl SecurityExecutionGateway {
     ) -> Result<PolicyDecision, DescriptorError> {
         let descriptor = self.resolve_descriptor(request)?;
         let resource_scopes = self.resolve_resource_scopes(request, &descriptor)?;
+        let sandbox_allows_file_write = self.sandbox_allows_file_write(&descriptor)?;
         let assessed_risk = SafetyPolicy::assess(
             &request.tool_name,
             descriptor.default_risk,
             &request.arguments,
         );
-        let context = self.build_decision_context(
+        let mut context = self.build_decision_context(
             request,
             &descriptor,
             role,
             resource_scopes,
-            assessed_risk,
+            assessed_risk.max(final_risk),
         )?;
+
+        if sandbox_allows_file_write == Some(false) {
+            context.reason = format!(
+                "sandbox denied tool {} file write request",
+                request.tool_name
+            );
+            return Ok(PolicyDecision::Deny(context));
+        }
 
         // PolicyEngine currently accepts raw role/descriptor/risk inputs and
         // rebuilds its own DecisionContext. Until that API accepts a context
@@ -197,7 +262,7 @@ impl SecurityExecutionGateway {
             context.role,
             &request.tool_name,
             &descriptor,
-            context.risk_level.max(final_risk),
+            context.risk_level,
         ))
     }
 }
@@ -205,6 +270,7 @@ impl SecurityExecutionGateway {
 #[cfg(test)]
 mod tests {
     use super::{SecurityExecutionGateway, SecurityExecutionRequest};
+    use crate::config::types::{SandboxConfig, SandboxProfile};
     use crate::safety::{
         BuiltInRole, DescriptorError, PermissionId, PolicyDecision, ResourceDescriptor,
         ResourceScope, ToolSecurityDescriptor,
@@ -217,6 +283,24 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: tool_name.to_string(),
             arguments,
+        }
+    }
+
+    fn sandbox_config(
+        profile: SandboxProfile,
+        writable_paths: &[&str],
+        denied_write_paths: &[&str],
+    ) -> SandboxConfig {
+        SandboxConfig {
+            profile,
+            writable_paths: writable_paths
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect(),
+            denied_write_paths: denied_write_paths
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect(),
         }
     }
 
@@ -418,6 +502,135 @@ mod tests {
         );
         let decision = gateway
             .evaluate(&request, BuiltInRole::Restricted, RiskLevel::Medium)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+    }
+
+    #[test]
+    fn gateway_sandbox_workspace_write_allows_workspace_write_file() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]),
+            "workspace",
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "hello"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Allow(_)));
+    }
+
+    #[test]
+    fn gateway_sandbox_workspace_write_denies_outside_write_file() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]),
+            "workspace",
+        );
+        let outside_path = std::env::temp_dir()
+            .join("yilian-gateway-sandbox-outside")
+            .join("notes.txt");
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": outside_path, "content": "hello"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+    }
+
+    #[test]
+    fn gateway_sandbox_read_only_denies_write_file() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "hello"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+    }
+
+    #[test]
+    fn gateway_sandbox_read_only_allows_read_file() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+        );
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Allow(_)));
+    }
+
+    #[test]
+    fn gateway_sandbox_deny_preserves_final_risk_and_reason() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "hello"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Critical)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+        assert_eq!(decision.context().risk_level, RiskLevel::Critical);
+        assert!(decision.context().reason.contains("sandbox denied"));
+        assert!(decision.context().reason.contains("write_file"));
+    }
+
+    #[test]
+    fn gateway_sandbox_custom_allows_edit_file_in_writable_src() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::Custom, &["src"], &[]),
+            "workspace",
+        );
+        let request = request(
+            "edit_file",
+            serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Allow(_)));
+    }
+
+    #[test]
+    fn gateway_sandbox_custom_denied_path_overrides_writable_src() {
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::Custom, &["src"], &["src/private"]),
+            "workspace",
+        );
+        let request = request(
+            "write_file",
+            serde_json::json!({"path": "src/private/secret.txt", "content": "secret"}),
+        );
+
+        let decision = gateway
+            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
