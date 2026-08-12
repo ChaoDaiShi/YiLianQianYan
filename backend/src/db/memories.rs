@@ -14,8 +14,9 @@ pub struct Memory {
     pub category: String, // fact / preference / knowledge / note
     pub source: String,   // auto / manual / document
     pub source_conversation_id: Option<String>,
-    pub embedding: Option<String>, // reserved: JSON array of floats
-    pub metadata: Option<String>,  // reserved: extra JSON metadata
+    #[serde(skip_serializing)]
+    pub embedding: Option<String>, // internal only: JSON array of floats, never serialized
+    pub metadata: Option<String>, // reserved: extra JSON metadata
     pub created_at: i64,
     pub updated_at: i64,
 }

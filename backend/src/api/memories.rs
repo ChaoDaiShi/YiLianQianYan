@@ -1174,4 +1174,108 @@ mod tests {
         assert_eq!(results[0].vector_score, 0.0);
         std::fs::remove_file(&db_path).ok();
     }
+
+    // ── Embedding visibility tests ──
+
+    use crate::db::{Memory, ScoredMemory};
+
+    fn sample_memory(embedding: Option<String>) -> Memory {
+        Memory {
+            id: "mem-1".to_string(),
+            content: "测试记忆".to_string(),
+            category: "fact".to_string(),
+            source: "auto".to_string(),
+            source_conversation_id: Some("conv-1".to_string()),
+            embedding,
+            metadata: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn memory_serialization_does_not_include_embedding() {
+        let mem = sample_memory(Some("[0.1,0.2,0.3]".to_string()));
+        let json = serde_json::to_value(&mem).unwrap();
+        assert!(json.get("embedding").is_none());
+        // content/category still present
+        assert_eq!(json["content"], "测试记忆");
+    }
+
+    #[test]
+    fn memory_serialization_omits_none_embedding() {
+        let mem = sample_memory(None);
+        let json = serde_json::to_value(&mem).unwrap();
+        assert!(json.get("embedding").is_none());
+        assert!(json.get("embedding").is_none());
+    }
+
+    #[test]
+    fn scored_memory_does_not_leak_embedding() {
+        let scored = ScoredMemory {
+            memory: sample_memory(Some("[0.1,0.2,0.3]".to_string())),
+            score: 0.82,
+            lexical_score: 0.61,
+            vector_score: 0.91,
+        };
+        let json = serde_json::to_value(&scored).unwrap();
+        assert!(json.get("embedding").is_none());
+        // score fields must be present
+        assert_eq!(json["score"], 0.82);
+        assert_eq!(json["lexical_score"], 0.61);
+        assert_eq!(json["vector_score"], 0.91);
+    }
+
+    #[test]
+    fn db_internal_read_still_returns_embedding() {
+        let (server, db_path, conv_id) = test_server("embed-visibility-db");
+        let id = seed_memory(&server.db, &conv_id, "fact", "测试", 1);
+        server
+            .db
+            .update_memory_embedding(&id, &[0.1, 0.2, 0.3])
+            .unwrap();
+
+        let mem = server.db.get_memory(&id).unwrap();
+        // Internal Rust object still has the embedding
+        assert!(mem.embedding.is_some());
+
+        // But serialization hides it
+        let json = serde_json::to_value(&mem).unwrap();
+        assert!(json.get("embedding").is_none());
+
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn hybrid_retrieval_still_uses_stored_embedding() {
+        let (server, db_path, conv_id) = test_server("embed-visibility-hybrid");
+        let id = seed_memory(&server.db, &conv_id, "fact", "完全不同的话题", 1);
+        server
+            .db
+            .update_memory_embedding(&id, &[1.0, 0.0, 0.0])
+            .unwrap();
+
+        let results = server
+            .db
+            .retrieve_memories_hybrid(
+                &RetrieveQuery {
+                    q: "无关词".into(),
+                    top_k: 10,
+                    category: None,
+                },
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+
+        assert!(!results.is_empty());
+        // vector_score > 0 proves stored embedding was used internally
+        assert!(results[0].vector_score > 0.0);
+
+        // But serialization still hides raw embedding
+        let json = serde_json::to_value(&results[0]).unwrap();
+        assert!(json.get("embedding").is_none());
+        assert!(json.get("vector_score").is_some());
+
+        std::fs::remove_file(&db_path).ok();
+    }
 }
