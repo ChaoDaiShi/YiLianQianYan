@@ -118,6 +118,19 @@ pub struct ModelConfig {
     pub max_tokens: u32,
     #[serde(default = "default_timeout_ms")]
     pub invoke_timeout_ms: u64,
+    // ── Embedding model (independent from chat) ──
+    /// Embedding model name (empty = not configured).
+    #[serde(default)]
+    pub embedding_model: String,
+    /// Base URL for the embeddings endpoint.
+    #[serde(default)]
+    pub embedding_base_url: String,
+    /// Direct embedding API key.
+    #[serde(default)]
+    pub embedding_api_key: String,
+    /// Environment variable that holds the embedding API key.
+    #[serde(default)]
+    pub embedding_api_key_env: String,
 }
 
 impl Default for ModelConfig {
@@ -131,6 +144,10 @@ impl Default for ModelConfig {
             temperature: 0.0,
             max_tokens: default_max_tokens(),
             invoke_timeout_ms: default_timeout_ms(),
+            embedding_model: String::new(),
+            embedding_base_url: String::new(),
+            embedding_api_key: String::new(),
+            embedding_api_key_env: String::new(),
         }
     }
 }
@@ -145,6 +162,22 @@ impl ModelConfig {
             return std::env::var(&self.api_key_env).ok();
         }
         None
+    }
+
+    /// Resolve the embedding API key (independent from chat API key).
+    pub fn resolve_embedding_api_key(&self) -> Option<String> {
+        if !self.embedding_api_key.is_empty() {
+            return Some(self.embedding_api_key.clone());
+        }
+        if !self.embedding_api_key_env.is_empty() {
+            return std::env::var(&self.embedding_api_key_env).ok();
+        }
+        None
+    }
+
+    /// Whether an embedding model is configured.
+    pub fn has_embedding(&self) -> bool {
+        !self.embedding_model.is_empty() && !self.embedding_base_url.is_empty()
     }
 }
 
@@ -320,5 +353,88 @@ impl Default for SubagentsConfig {
         Self {
             directories: vec!["./.agents/agents".to_string()],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_config_deserializes_without_embedding_fields() {
+        let json = r#"{
+            "provider": "openai",
+            "name": "deepseek-v4-flash",
+            "base_url": "https://api.deepseek.com/v1",
+            "temperature": 0.0,
+            "max_tokens": 16384,
+            "invoke_timeout_ms": 120000
+        }"#;
+        let config: ModelConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.name, "deepseek-v4-flash");
+        assert!(config.embedding_model.is_empty());
+        assert!(config.embedding_base_url.is_empty());
+        assert!(!config.has_embedding());
+    }
+
+    #[test]
+    fn model_config_with_embedding_fields() {
+        let json = r#"{
+            "provider": "openai",
+            "name": "deepseek-v4-flash",
+            "base_url": "https://api.deepseek.com/v1",
+            "temperature": 0.0,
+            "max_tokens": 16384,
+            "invoke_timeout_ms": 120000,
+            "embedding_model": "text-embedding-3-small",
+            "embedding_base_url": "https://api.openai.com/v1",
+            "embedding_api_key": "sk-embed",
+            "embedding_api_key_env": "EMBED_KEY"
+        }"#;
+        let config: ModelConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.embedding_model, "text-embedding-3-small");
+        assert_eq!(config.embedding_base_url, "https://api.openai.com/v1");
+        assert!(config.has_embedding());
+        assert_eq!(
+            config.resolve_embedding_api_key(),
+            Some("sk-embed".to_string())
+        );
+    }
+
+    #[test]
+    fn embedding_api_key_falls_back_to_env_when_direct_is_empty() {
+        let temp_key = "test-embed-env-key-12345";
+        std::env::set_var("YILIAN_TEST_EMBED_KEY", temp_key);
+        let config = ModelConfig {
+            embedding_api_key: String::new(),
+            embedding_api_key_env: "YILIAN_TEST_EMBED_KEY".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_embedding_api_key(),
+            Some(temp_key.to_string())
+        );
+        std::env::remove_var("YILIAN_TEST_EMBED_KEY");
+    }
+
+    #[test]
+    fn embedding_api_key_env_wins_over_empty_direct() {
+        // No env var set for this one
+        let config = ModelConfig {
+            embedding_api_key: String::new(),
+            embedding_api_key_env: "EMBED_KEY_NOT_SET_XYZ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.resolve_embedding_api_key(), None);
+    }
+
+    #[test]
+    fn has_embedding_requires_both_model_and_base_url() {
+        let config = ModelConfig {
+            embedding_model: "text-embedding-3-small".to_string(),
+            embedding_base_url: String::new(),
+            ..Default::default()
+        };
+        assert!(!config.has_embedding());
     }
 }
