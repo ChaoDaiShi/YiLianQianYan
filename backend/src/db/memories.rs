@@ -67,6 +67,117 @@ pub struct MemoryQuery {
     pub offset: Option<usize>,
 }
 
+// ── Ranked Retrieval types ──
+
+/// A memory with a relevance score (not persisted).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScoredMemory {
+    #[serde(flatten)]
+    pub memory: Memory,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RetrieveQuery {
+    /// Free-text search query.
+    #[serde(default)]
+    pub q: String,
+    /// Maximum results to return (default 10, max 50).
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+    /// Optional category filter.
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+fn default_top_k() -> usize {
+    10
+}
+
+const RETRIEVAL_CANDIDATE_LIMIT: usize = 500;
+const MAX_TOP_K: usize = 50;
+
+// Final-score component weights
+const TEXT_WEIGHT: f64 = 0.75;
+const CATEGORY_WEIGHT: f64 = 0.10;
+const TIME_WEIGHT: f64 = 0.15;
+
+/// Lightweight category boost multipliers.
+fn category_boost(category: &str) -> f64 {
+    match category {
+        "preference" => 1.10,
+        "fact" => 1.05,
+        "knowledge" => 1.00,
+        "note" => 0.95,
+        _ => 1.00,
+    }
+}
+
+/// Compute a keyword-overlap relevance score for `content` against `query`.
+///
+/// Strategy (no external segmenter needed for Chinese):
+/// 1. Exact / full-substring match (case-insensitive) → 0.9
+/// 2. Character-level overlap (for CJK text)          → up to 0.7
+/// 3. Word-token overlap (for ASCII / Latin text)     → up to 0.6
+///
+/// Returns `0.0` when there is no match at all.
+fn compute_text_score(query: &str, content: &str) -> f64 {
+    let q = query.trim().to_lowercase();
+    let c = content.trim().to_lowercase();
+    if q.is_empty() || c.is_empty() {
+        return 0.0;
+    }
+
+    // 1 — full substring match
+    if c.contains(&q) {
+        return 0.9;
+    }
+
+    // 2 — character-level overlap (handles Chinese, emoji, mixed scripts)
+    let q_chars: Vec<char> = q.chars().collect();
+    let relevant_q_chars: Vec<char> = q_chars
+        .iter()
+        .filter(|c| !c.is_ascii_whitespace() && !c.is_ascii_punctuation())
+        .copied()
+        .collect();
+    if relevant_q_chars.is_empty() {
+        return 0.0; // query had only whitespace/punctuation
+    }
+    let mut matched = 0usize;
+    for qc in &relevant_q_chars {
+        if c.contains(*qc) {
+            matched += 1;
+        }
+    }
+    let char_overlap = matched as f64 / relevant_q_chars.len() as f64;
+
+    // 3 — ASCII word-token overlap
+    let token_overlap = if q.chars().any(|ch| ch.is_ascii_alphabetic()) {
+        let q_tokens: Vec<&str> = q
+            .split(|ch: char| ch.is_ascii_whitespace() || ch.is_ascii_punctuation())
+            .filter(|t| t.len() >= 2)
+            .collect();
+        if q_tokens.is_empty() {
+            0.0
+        } else {
+            let matched_tokens = q_tokens.iter().filter(|t| c.contains(*t)).count();
+            matched_tokens as f64 / q_tokens.len() as f64
+        }
+    } else {
+        0.0
+    };
+
+    // Combine: favour the higher of char-overlap and token-overlap,
+    // with char-overlap slightly higher priority for CJK text.
+    let best = if char_overlap >= token_overlap {
+        char_overlap * 0.7
+    } else {
+        token_overlap * 0.6
+    };
+
+    best.clamp(0.0, 0.85)
+}
+
 impl Database {
     pub fn create_memory(&self, req: &CreateMemoryRequest) -> Result<Memory, String> {
         let conn = self.conn();
@@ -262,6 +373,54 @@ impl Database {
             by_category,
             by_source,
         })
+    }
+
+    // ── Ranked Retrieval ──
+
+    /// Retrieve memories ranked by relevance to a query.
+    ///
+    /// Scoring is deterministic and local: keyword overlap, category boost,
+    /// and time decay — no embedding or LLM rerank.
+    pub fn retrieve_memories(&self, query: &RetrieveQuery) -> Result<Vec<ScoredMemory>, String> {
+        let candidates = self.list_memories(&MemoryQuery {
+            category: query.category.clone(),
+            source: None,
+            q: None,
+            limit: Some(RETRIEVAL_CANDIDATE_LIMIT),
+            offset: None,
+        })?;
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut scored: Vec<ScoredMemory> = candidates
+            .into_iter()
+            .filter_map(|mem| {
+                let text_score = compute_text_score(&query.q, &mem.content);
+                if text_score == 0.0 {
+                    return None; // no relevance → exclude
+                }
+                let cat_boost = category_boost(&mem.category);
+                let age_days = ((now - mem.updated_at) as f64) / (86_400_000.0);
+                let time_score = 1.0 / (1.0 + age_days / 30.0);
+                let final_score = text_score * TEXT_WEIGHT
+                    + cat_boost * CATEGORY_WEIGHT
+                    + time_score * TIME_WEIGHT;
+                Some(ScoredMemory {
+                    memory: mem,
+                    score: (final_score * 1000.0).round() / 1000.0,
+                })
+            })
+            .collect();
+
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.memory.updated_at.cmp(&a.memory.updated_at))
+        });
+
+        let top_k = query.top_k.clamp(1, MAX_TOP_K);
+        scored.truncate(top_k);
+        Ok(scored)
     }
 
     /// Batch delete memories (reserved for future use)

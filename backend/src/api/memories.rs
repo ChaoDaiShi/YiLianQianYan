@@ -8,7 +8,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::db::{CreateMemoryRequest, Memory, MemoryQuery, UpdateMemoryRequest};
+use crate::db::{CreateMemoryRequest, Memory, MemoryQuery, RetrieveQuery, UpdateMemoryRequest};
 use crate::llm::client::LlmClient;
 use crate::llm::types::ChatMessage;
 use crate::server::AppServer;
@@ -86,6 +86,33 @@ pub async fn stats_handler(State(server): State<Arc<AppServer>>) -> Json<serde_j
     match server.db.get_memory_stats() {
         Ok(stats) => Json(serde_json::to_value(stats).unwrap_or_default()),
         Err(e) => Json(serde_json::json!({"error": e})),
+    }
+}
+
+// ── Retrieve (ranked keyword retrieval) ──
+
+pub async fn retrieve_handler(
+    State(server): State<Arc<AppServer>>,
+    Query(query): Query<RetrieveQuery>,
+) -> Json<serde_json::Value> {
+    let q = query.q.trim().to_string();
+    if q.is_empty() {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "query parameter 'q' is required and must not be empty"
+        }));
+    }
+
+    match server.db.retrieve_memories(&query) {
+        Ok(scored) => Json(serde_json::json!({
+            "query": q,
+            "count": scored.len(),
+            "memories": scored,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "error": e
+        })),
     }
 }
 
@@ -722,6 +749,212 @@ mod tests {
         let saved = &value["memories"][0]["content"];
         assert!(saved.as_str().unwrap().contains("中文"));
 
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    // ── Retrieval tests ──
+
+    use crate::db::RetrieveQuery;
+
+    fn seed_memory(
+        db: &crate::db::Database,
+        conv_id: &str,
+        category: &str,
+        content: &str,
+        days_ago: i64,
+    ) -> String {
+        let now = chrono::Utc::now().timestamp_millis();
+        let past = now - days_ago * 86_400_000;
+        let id = uuid::Uuid::new_v4().to_string();
+        let conn = db.conn();
+        conn.execute(
+            "INSERT INTO memories (id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'auto', ?4, NULL, NULL, ?5, ?6)",
+            rusqlite::params![id, content, category, conv_id, past, past],
+        )
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn retrieve_ranks_strong_keyword_match_first() {
+        let (server, db_path, conv_id) = test_server("retrieve-rank");
+        seed_memory(
+            &server.db,
+            &conv_id,
+            "knowledge",
+            "今天学习 Rust 基础知识",
+            1,
+        );
+        seed_memory(
+            &server.db,
+            &conv_id,
+            "knowledge",
+            "Trusted Execution 安全网关",
+            1,
+        );
+        seed_memory(&server.db, &conv_id, "note", "用户今天喝了咖啡", 1);
+
+        let results = server
+            .db
+            .retrieve_memories(&RetrieveQuery {
+                q: "Trusted Execution".into(),
+                top_k: 10,
+                category: None,
+            })
+            .unwrap();
+
+        assert!(!results.is_empty());
+        assert!(results[0].memory.content.contains("Trusted Execution"));
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn retrieve_excludes_completely_unrelated() {
+        let (server, db_path, conv_id) = test_server("retrieve-exclude");
+        seed_memory(&server.db, &conv_id, "note", "用户喜欢学习概率论", 1);
+
+        let results = server
+            .db
+            .retrieve_memories(&RetrieveQuery {
+                q: "Cloudflare".into(),
+                top_k: 10,
+                category: None,
+            })
+            .unwrap();
+
+        assert!(results.is_empty());
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn retrieve_newer_memory_ranks_higher_equal_text_score() {
+        let (server, db_path, conv_id) = test_server("retrieve-time");
+        seed_memory(&server.db, &conv_id, "fact", "Rust 项目开发", 30);
+        seed_memory(&server.db, &conv_id, "fact", "Rust 项目进展", 1);
+
+        let results = server
+            .db
+            .retrieve_memories(&RetrieveQuery {
+                q: "Rust 项目".into(),
+                top_k: 10,
+                category: None,
+            })
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(results[0].memory.content.contains("进展"));
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn retrieve_text_relevance_beats_time() {
+        let (server, db_path, conv_id) = test_server("retrieve-text-beats-time");
+        seed_memory(&server.db, &conv_id, "knowledge", "Rust 安全执行框架", 60);
+        seed_memory(&server.db, &conv_id, "knowledge", "今天天气不错", 0);
+
+        let results = server
+            .db
+            .retrieve_memories(&RetrieveQuery {
+                q: "Rust 安全执行".into(),
+                top_k: 10,
+                category: None,
+            })
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].memory.content.contains("Rust 安全执行"));
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn retrieve_respects_top_k() {
+        let (server, db_path, conv_id) = test_server("retrieve-topk");
+        for i in 0..15 {
+            seed_memory(
+                &server.db,
+                &conv_id,
+                "knowledge",
+                &format!("Rust 安全测试 #{i}"),
+                1,
+            );
+        }
+
+        let results = server
+            .db
+            .retrieve_memories(&RetrieveQuery {
+                q: "Rust 安全".into(),
+                top_k: 5,
+                category: None,
+            })
+            .unwrap();
+
+        assert_eq!(results.len(), 5);
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn retrieve_filters_by_category() {
+        let (server, db_path, conv_id) = test_server("retrieve-cat-filter");
+        seed_memory(&server.db, &conv_id, "preference", "Rust 偏好", 1);
+        seed_memory(&server.db, &conv_id, "fact", "Rust 事实", 1);
+        seed_memory(&server.db, &conv_id, "knowledge", "Rust 知识", 1);
+
+        let results = server
+            .db
+            .retrieve_memories(&RetrieveQuery {
+                q: "Rust".into(),
+                top_k: 10,
+                category: Some("knowledge".into()),
+            })
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].memory.category, "knowledge");
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn retrieve_handles_chinese_query() {
+        let (server, db_path, conv_id) = test_server("retrieve-chinese");
+        seed_memory(
+            &server.db,
+            &conv_id,
+            "preference",
+            "用户偏好每次只进行最小范围代码修改",
+            1,
+        );
+        seed_memory(&server.db, &conv_id, "note", "今天天气不错", 1);
+
+        let results = server
+            .db
+            .retrieve_memories(&RetrieveQuery {
+                q: "最小修改".into(),
+                top_k: 10,
+                category: None,
+            })
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].memory.content.contains("最小范围代码修改"));
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn retrieve_utf8_no_panic() {
+        let (server, db_path, conv_id) = test_server("retrieve-utf8");
+        seed_memory(&server.db, &conv_id, "note", "😀🎉 测试 emoji", 1);
+
+        let results = server
+            .db
+            .retrieve_memories(&RetrieveQuery {
+                q: "😀".into(),
+                top_k: 10,
+                category: None,
+            })
+            .unwrap();
+
+        assert!(!results.is_empty());
         std::fs::remove_file(&db_path).ok();
     }
 }

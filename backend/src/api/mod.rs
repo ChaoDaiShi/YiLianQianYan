@@ -59,6 +59,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/memories", post(memories::create_handler))
         .route("/api/memories/stats", get(memories::stats_handler))
         .route("/api/memories/extract", post(memories::extract_handler))
+        .route("/api/memories/retrieve", get(memories::retrieve_handler))
         // Reserved future endpoints
         .route(
             "/api/memories/batch-import",
