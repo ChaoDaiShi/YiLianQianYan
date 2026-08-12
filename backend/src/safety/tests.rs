@@ -305,6 +305,46 @@ fn pending_for_returns_only_active() {
 }
 
 #[test]
+fn create_or_get_pending_is_atomic_per_conversation() {
+    use std::collections::HashSet;
+    use std::sync::{Arc, Barrier};
+
+    let store = Arc::new(ApprovalStore::new());
+    let barrier = Arc::new(Barrier::new(8));
+    let handles = (0..8)
+        .map(|index| {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                let (approval, created) = store.create_or_get_pending(
+                    "conversation-atomic".to_string(),
+                    format!("call-{index}"),
+                    "bash".to_string(),
+                    serde_json::json!({"command": format!("echo {index}")}),
+                    RiskLevel::High,
+                    "approval required".to_string(),
+                );
+                (approval.approval_id, created)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let results = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect::<Vec<_>>();
+    let approval_ids = results
+        .iter()
+        .map(|(approval_id, _)| approval_id.clone())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(approval_ids.len(), 1);
+    assert_eq!(results.iter().filter(|(_, created)| *created).count(), 1);
+    assert_eq!(store.list_pending().len(), 1);
+}
+
+#[test]
 fn concurrent_approve_executes_exactly_once() {
     // Proves the approve-once guarantee: even with many concurrent consumers,
     // exactly one transitions Pending → Approved (the tool runs once).

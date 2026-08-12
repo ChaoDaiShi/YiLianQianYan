@@ -9,11 +9,13 @@ use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
 use super::state::AgentState;
-use super::verifier::{replan_message, Verifier};
+use super::verifier::replan_message;
 use crate::config::types::AppConfig;
 use crate::llm::client::LlmClient;
+use crate::llm::types::ToolCall;
 use crate::safety::approval::ApprovalStore;
-use crate::safety::{PermissionDecision, PermissionManager};
+use crate::safety::execution_gateway::SecurityExecutionOutcome;
+use crate::safety::{BuiltInRole, SecurityExecutionGateway, SecurityExecutionRequest};
 use crate::server::LogBuffer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::trait_def::RiskLevel;
@@ -66,6 +68,247 @@ pub enum RunOutcome {
 const MAX_ITERATIONS: usize = 20;
 const MAX_CONSECUTIVE_SAME_TOOL: usize = 3;
 
+enum ToolDispatchOutcome {
+    Continue,
+    Replan,
+    Paused { approval_id: String },
+}
+
+async fn dispatch_tool_call(
+    state: &mut AgentState,
+    security_gateway: &SecurityExecutionGateway,
+    approval_store: &ApprovalStore,
+    conversation_id: &str,
+    tool_call: &ToolCall,
+    args: &serde_json::Value,
+    tx: &Sender<AgentEvent>,
+    log_buffer: &LogBuffer,
+) -> Result<ToolDispatchOutcome, String> {
+    let request = SecurityExecutionRequest {
+        conversation_id: conversation_id.to_string(),
+        tool_call_id: tool_call.id.clone(),
+        tool_name: tool_call.function.name.clone(),
+        arguments: args.clone(),
+    };
+    let execution_started = std::sync::atomic::AtomicBool::new(false);
+
+    let outcome = security_gateway
+        .execute_with_on_start(&request, BuiltInRole::Owner, RiskLevel::Low, || {
+            execution_started.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = tx.try_send(AgentEvent {
+                event_type: "tool_start".into(),
+                conversation_id: conversation_id.to_string(),
+                token: None,
+                tool_call_id: Some(tool_call.id.clone()),
+                tool_name: Some(tool_call.function.name.clone()),
+                args: Some(args.clone()),
+                result: None,
+                status: None,
+                error: None,
+                message_id: None,
+                risk_level: None,
+                reason: None,
+                approval_id: None,
+                verification_success: None,
+                verification_reason: None,
+                should_replan: None,
+            });
+            log_buffer.push("tool", "tool", &format!("▶ {}", tool_call.function.name));
+        })
+        .await;
+
+    match outcome {
+        Ok(SecurityExecutionOutcome::Executed {
+            tool_result,
+            verification,
+        }) => {
+            let status = if tool_result.ok { "success" } else { "error" };
+            let log_level = if tool_result.ok { "tool" } else { "error" };
+            let result_preview = truncate_chars(&tool_result.content, 80);
+            log_buffer.push(
+                log_level,
+                "tool",
+                &format!(
+                    "{} {} — {}",
+                    if tool_result.ok { "✓" } else { "✗" },
+                    tool_call.function.name,
+                    result_preview
+                ),
+            );
+
+            let _ = tx.try_send(AgentEvent {
+                event_type: "tool_end".into(),
+                conversation_id: conversation_id.to_string(),
+                token: None,
+                tool_call_id: Some(tool_call.id.clone()),
+                tool_name: Some(tool_call.function.name.clone()),
+                args: None,
+                result: Some(tool_result.content.clone()),
+                status: Some(status.to_string()),
+                error: None,
+                message_id: None,
+                risk_level: None,
+                reason: None,
+                approval_id: None,
+                verification_success: None,
+                verification_reason: None,
+                should_replan: None,
+            });
+
+            let _ = tx.try_send(AgentEvent {
+                event_type: "verification".into(),
+                conversation_id: conversation_id.to_string(),
+                token: None,
+                tool_call_id: Some(tool_call.id.clone()),
+                tool_name: Some(tool_call.function.name.clone()),
+                args: None,
+                result: None,
+                status: None,
+                error: None,
+                message_id: None,
+                risk_level: None,
+                reason: None,
+                approval_id: None,
+                verification_success: Some(verification.success),
+                verification_reason: Some(verification.reason.clone()),
+                should_replan: Some(verification.should_replan),
+            });
+
+            log_buffer.push(
+                if verification.success { "tool" } else { "warn" },
+                "verify",
+                &format!(
+                    "[VERIFY] {} tool={} reason={}",
+                    if verification.success {
+                        "success"
+                    } else {
+                        "failed"
+                    },
+                    tool_call.function.name,
+                    verification.reason
+                ),
+            );
+
+            if verification.should_replan {
+                state.add_tool_result(
+                    tool_call.id.clone(),
+                    tool_call.function.name.clone(),
+                    replan_message(&tool_call.function.name, &verification.reason),
+                );
+                return Ok(ToolDispatchOutcome::Replan);
+            }
+
+            state.add_tool_result(
+                tool_call.id.clone(),
+                tool_call.function.name.clone(),
+                summarize_tool_result(&tool_result.content),
+            );
+            Ok(ToolDispatchOutcome::Continue)
+        }
+        Ok(SecurityExecutionOutcome::RequiresApproval { risk_level, reason }) => {
+            let (approval, created) = approval_store.create_or_get_pending(
+                conversation_id.to_string(),
+                tool_call.id.clone(),
+                tool_call.function.name.clone(),
+                args.clone(),
+                risk_level,
+                reason,
+            );
+            if !created {
+                state.add_tool_result(
+                    tool_call.id.clone(),
+                    tool_call.function.name.clone(),
+                    format!(
+                        "Tool {} was skipped because another approval is already pending.",
+                        tool_call.function.name
+                    ),
+                );
+            }
+
+            let _ = tx.try_send(AgentEvent {
+                event_type: "approval_required".into(),
+                conversation_id: approval.conversation_id.clone(),
+                token: None,
+                tool_call_id: Some(approval.tool_call_id.clone()),
+                tool_name: Some(approval.tool_name.clone()),
+                args: Some(approval.arguments.clone()),
+                result: None,
+                status: None,
+                error: None,
+                message_id: None,
+                risk_level: Some(approval.risk_level.to_string()),
+                reason: Some(approval.reason.clone()),
+                approval_id: Some(approval.approval_id.clone()),
+                verification_success: None,
+                verification_reason: None,
+                should_replan: None,
+            });
+            log_buffer.push(
+                "warn",
+                "safety",
+                &format!(
+                    "⚠ {} waiting for approval — {}",
+                    approval.tool_name, approval.reason
+                ),
+            );
+
+            Ok(ToolDispatchOutcome::Paused {
+                approval_id: approval.approval_id,
+            })
+        }
+        Ok(SecurityExecutionOutcome::Denied { reason }) => {
+            state.add_tool_result(
+                tool_call.id.clone(),
+                tool_call.function.name.clone(),
+                format!(
+                    "Tool {} was denied by the security gateway: {}",
+                    tool_call.function.name, reason
+                ),
+            );
+            Ok(ToolDispatchOutcome::Continue)
+        }
+        Err(error) => {
+            if execution_started.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = tx.try_send(AgentEvent {
+                    event_type: "tool_end".into(),
+                    conversation_id: conversation_id.to_string(),
+                    token: None,
+                    tool_call_id: Some(tool_call.id.clone()),
+                    tool_name: Some(tool_call.function.name.clone()),
+                    args: None,
+                    result: Some(error.to_string()),
+                    status: Some("error".to_string()),
+                    error: None,
+                    message_id: None,
+                    risk_level: None,
+                    reason: None,
+                    approval_id: None,
+                    verification_success: None,
+                    verification_reason: None,
+                    should_replan: None,
+                });
+            }
+            log_buffer.push(
+                "error",
+                "safety",
+                &format!(
+                    "Security gateway failed closed for {}: {error}",
+                    tool_call.function.name
+                ),
+            );
+            state.add_tool_result(
+                tool_call.id.clone(),
+                tool_call.function.name.clone(),
+                format!(
+                    "Tool {} was not executed because the security gateway failed closed: {}",
+                    tool_call.function.name, error
+                ),
+            );
+            Ok(ToolDispatchOutcome::Continue)
+        }
+    }
+}
+
 /// Trim large binary payloads from tool results before sending to the LLM.
 /// The full result is still delivered to the frontend via SSE.
 pub(crate) fn summarize_tool_result(content: &str) -> String {
@@ -102,7 +345,7 @@ pub async fn run_react_loop_with_channel(
     client: &LlmClient,
     tool_registry: &ToolRegistry,
     approval_store: &ApprovalStore,
-    verifier: &dyn Verifier,
+    security_gateway: &SecurityExecutionGateway,
     _config: &AppConfig,
     conversation_id: &str,
     cancel_token: &CancellationToken,
@@ -187,211 +430,34 @@ pub async fn run_react_loop_with_channel(
                     let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
 
-                    // ── Safety gate: assess risk and check permission before executing ──
-                    let tool = tool_registry.get(&tc.function.name);
-                    let default_risk = tool.map(|t| t.risk_level()).unwrap_or(RiskLevel::Low);
-
-                    let decision =
-                        PermissionManager::evaluate(&tc.function.name, default_risk, &args);
-
-                    match decision {
-                        PermissionDecision::Allow => {
-                            let _ = tx.try_send(AgentEvent {
-                                event_type: "tool_start".into(),
-                                conversation_id: conversation_id.to_string(),
-                                token: None,
-                                tool_call_id: Some(tc.id.clone()),
-                                tool_name: Some(tc.function.name.clone()),
-                                args: Some(args.clone()),
-                                result: None,
-                                status: None,
-                                error: None,
-                                message_id: None,
-                                risk_level: None,
-                                reason: None,
-                                approval_id: None,
-                                verification_success: None,
-                                verification_reason: None,
-                                should_replan: None,
-                            });
-
-                            // Log tool start
-                            log_buffer.push("tool", "tool", &format!("▶ {}", tc.function.name));
-
-                            let tool_result = match tool_registry
-                                .execute(&tc.function.name, args.clone())
-                                .await
-                            {
-                                Some(r) => r,
-                                None => crate::tools::trait_def::ToolResult::error(format!(
-                                    "未知工具: {}",
-                                    tc.function.name
-                                )),
-                            };
-
-                            let status = if tool_result.ok { "success" } else { "error" };
-
-                            // Log tool result
-                            let log_level = if tool_result.ok { "tool" } else { "error" };
-                            let result_preview = truncate_chars(&tool_result.content, 80);
-                            log_buffer.push(
-                                log_level,
-                                "tool",
-                                &format!(
-                                    "{} {} – {}",
-                                    if tool_result.ok { "✓" } else { "✗" },
-                                    tc.function.name,
-                                    result_preview
-                                ),
-                            );
-
-                            // Send full result to frontend via SSE (includes images, etc.)
-                            let _ = tx.try_send(AgentEvent {
-                                event_type: "tool_end".into(),
-                                conversation_id: conversation_id.to_string(),
-                                token: None,
-                                tool_call_id: Some(tc.id.clone()),
-                                tool_name: Some(tc.function.name.clone()),
-                                args: None,
-                                result: Some(tool_result.content.clone()),
-                                status: Some(status.to_string()),
-                                error: None,
-                                message_id: None,
-                                risk_level: None,
-                                reason: None,
-                                approval_id: None,
-                                verification_success: None,
-                                verification_reason: None,
-                                should_replan: None,
-                            });
-
-                            // ── Verify the real outcome (ToolResult.ok ≠ success) ──
-                            let verification = verifier
-                                .verify(&tc.function.name, &args, &tool_result)
-                                .await;
-
-                            let _ = tx.try_send(AgentEvent {
-                                event_type: "verification".into(),
-                                conversation_id: conversation_id.to_string(),
-                                token: None,
-                                tool_call_id: Some(tc.id.clone()),
-                                tool_name: Some(tc.function.name.clone()),
-                                args: None,
-                                result: None,
-                                status: None,
-                                error: None,
-                                message_id: None,
-                                risk_level: None,
-                                reason: None,
-                                approval_id: None,
-                                verification_success: Some(verification.success),
-                                verification_reason: Some(verification.reason.clone()),
-                                should_replan: Some(verification.should_replan),
-                            });
-
-                            log_buffer.push(
-                                if verification.success { "tool" } else { "warn" },
-                                "verify",
-                                &format!(
-                                    "[VERIFY] {} tool={} reason={}",
-                                    if verification.success {
-                                        "success"
-                                    } else {
-                                        "failed"
-                                    },
-                                    tc.function.name,
-                                    verification.reason
-                                ),
-                            );
-
-                            // Trim data URIs before sending to LLM to avoid context pollution
-                            // LLMs can't interpret base64, so we replace with a human-readable summary
-                            let llm_result = summarize_tool_result(&tool_result.content);
-
-                            if verification.should_replan {
-                                // Verification failed: write back an actionable replan
-                                // message and stop the current batch.
-                                state.add_tool_result(
-                                    tc.id.clone(),
-                                    tc.function.name.clone(),
-                                    replan_message(&tc.function.name, &verification.reason),
+                    match dispatch_tool_call(
+                        state,
+                        security_gateway,
+                        approval_store,
+                        conversation_id,
+                        tc,
+                        &args,
+                        tx,
+                        log_buffer,
+                    )
+                    .await?
+                    {
+                        ToolDispatchOutcome::Continue => {}
+                        ToolDispatchOutcome::Replan => {
+                            for later in tool_calls.iter().skip(i + 1) {
+                                let skipped = format!(
+                                    "工具 {} 的调用因验证失败被跳过，未执行。",
+                                    later.function.name
                                 );
-                                for later in tool_calls.iter().skip(i + 1) {
-                                    let skipped = format!(
-                                        "工具 {} 的调用因验证失败被跳过，未执行。",
-                                        later.function.name
-                                    );
-                                    state.add_tool_result(
-                                        later.id.clone(),
-                                        later.function.name.clone(),
-                                        skipped,
-                                    );
-                                }
-                                break;
+                                state.add_tool_result(
+                                    later.id.clone(),
+                                    later.function.name.clone(),
+                                    skipped,
+                                );
                             }
-
-                            state.add_tool_result(
-                                tc.id.clone(),
-                                tc.function.name.clone(),
-                                llm_result,
-                            );
+                            break;
                         }
-
-                        PermissionDecision::RequireApproval { risk_level, reason } => {
-                            // One active approval per conversation: if a decision is
-                            // already pending, reuse it and skip this call.
-                            let existing = approval_store.pending_for(conversation_id);
-                            let approval = match existing {
-                                Some(a) => {
-                                    let skipped = format!(
-                                        "工具 {} 的调用因已有待审批操作而被跳过，未执行。",
-                                        tc.function.name
-                                    );
-                                    state.add_tool_result(
-                                        tc.id.clone(),
-                                        tc.function.name.clone(),
-                                        skipped,
-                                    );
-                                    a
-                                }
-                                None => approval_store.create(
-                                    conversation_id.to_string(),
-                                    tc.id.clone(),
-                                    tc.function.name.clone(),
-                                    args.clone(),
-                                    risk_level,
-                                    reason.clone(),
-                                ),
-                            };
-
-                            let _ = tx.try_send(AgentEvent {
-                                event_type: "approval_required".into(),
-                                conversation_id: conversation_id.to_string(),
-                                token: None,
-                                tool_call_id: Some(tc.id.clone()),
-                                tool_name: Some(tc.function.name.clone()),
-                                args: Some(args.clone()),
-                                result: None,
-                                status: None,
-                                error: None,
-                                message_id: None,
-                                risk_level: Some(risk_level.to_string()),
-                                reason: Some(reason.clone()),
-                                approval_id: Some(approval.approval_id.clone()),
-                                verification_success: None,
-                                verification_reason: None,
-                                should_replan: None,
-                            });
-
-                            log_buffer.push(
-                                "warn",
-                                "safety",
-                                &format!("⚠ {} 等待审批 — {}", tc.function.name, reason),
-                            );
-
-                            // Stop the current batch: mark any later tool calls in this
-                            // batch as skipped so every entry in the assistant message's
-                            // tool_calls has a matching tool message (chain integrity).
+                        ToolDispatchOutcome::Paused { approval_id } => {
                             for later in tool_calls.iter().skip(i + 1) {
                                 let skipped = format!(
                                     "工具 {} 的调用因等待审批被跳过，未执行。",
@@ -403,16 +469,7 @@ pub async fn run_react_loop_with_channel(
                                     skipped,
                                 );
                             }
-
-                            return Ok(RunOutcome::Paused {
-                                approval_id: approval.approval_id.clone(),
-                            });
-                        }
-
-                        PermissionDecision::Deny { reason } => {
-                            let denied =
-                                format!("工具 {} 已被安全策略拒绝：{}", tc.function.name, reason);
-                            state.add_tool_result(tc.id.clone(), tc.function.name.clone(), denied);
+                            return Ok(RunOutcome::Paused { approval_id });
                         }
                     }
                 }
@@ -446,5 +503,386 @@ pub async fn run_react_loop_with_channel(
         });
 
         return Ok(RunOutcome::Done { output });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    use async_trait::async_trait;
+    use serde_json::json;
+    use tokio::sync::mpsc;
+
+    use super::{dispatch_tool_call, AgentEvent, ToolDispatchOutcome};
+    use crate::agent::state::AgentState;
+    use crate::agent::verifier::{VerificationResult, Verifier};
+    use crate::config::types::{SandboxConfig, SandboxProfile};
+    use crate::llm::types::{ToolCall, ToolCallFunction};
+    use crate::safety::{ApprovalStore, SecurityExecutionGateway};
+    use crate::server::LogBuffer;
+    use crate::tools::{Tool, ToolRegistry, ToolResult};
+
+    struct CountingTool {
+        name: &'static str,
+        executions: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Tool for CountingTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "engine gateway test tool"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            json!({"type": "object"})
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> ToolResult {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            ToolResult::success("tool output")
+        }
+    }
+
+    struct FixedVerifier {
+        result: VerificationResult,
+    }
+
+    #[async_trait]
+    impl Verifier for FixedVerifier {
+        async fn verify(
+            &self,
+            _tool_name: &str,
+            _args: &serde_json::Value,
+            _tool_result: &ToolResult,
+        ) -> VerificationResult {
+            self.result.clone()
+        }
+    }
+
+    fn gateway(
+        tool_name: &'static str,
+        profile: SandboxProfile,
+        verification: VerificationResult,
+    ) -> (SecurityExecutionGateway, Arc<AtomicUsize>) {
+        let executions = Arc::new(AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(CountingTool {
+            name: tool_name,
+            executions: Arc::clone(&executions),
+        }));
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+            SandboxConfig {
+                profile,
+                writable_paths: Vec::new(),
+                denied_write_paths: Vec::new(),
+            },
+            ".",
+            Arc::new(registry),
+            Arc::new(FixedVerifier {
+                result: verification,
+            }),
+        );
+        (gateway, executions)
+    }
+
+    fn tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "call-1".to_string(),
+            call_type: "function".to_string(),
+            function: ToolCallFunction {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        }
+    }
+
+    fn events(receiver: &mut mpsc::Receiver<AgentEvent>) -> Vec<AgentEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+
+    #[tokio::test]
+    async fn dispatch_low_risk_tool_executes_once_through_gateway() {
+        let (gateway, executions) = gateway(
+            "read_file",
+            SandboxProfile::ReadOnly,
+            VerificationResult::success("verified", None),
+        );
+        let call = tool_call("read_file", json!({"path": "README.md"}));
+        let args = json!({"path": "README.md"});
+        let mut state = AgentState::new("system".to_string());
+        let approvals = ApprovalStore::new();
+        let (sender, mut receiver) = mpsc::channel(16);
+
+        let outcome = dispatch_tool_call(
+            &mut state,
+            &gateway,
+            &approvals,
+            "conversation-1",
+            &call,
+            &args,
+            &sender,
+            &LogBuffer::new(16),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, ToolDispatchOutcome::Continue));
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state.messages.last().unwrap().content.as_deref(),
+            Some("tool output")
+        );
+        let event_types = events(&mut receiver)
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(event_types, vec!["tool_start", "tool_end", "verification"]);
+    }
+
+    #[tokio::test]
+    async fn dispatch_high_risk_tool_pauses_without_execution() {
+        let (gateway, executions) = gateway(
+            "bash",
+            SandboxProfile::Open,
+            VerificationResult::success("unused", None),
+        );
+        let call = tool_call("bash", json!({"command": "git push origin develop"}));
+        let args = json!({"command": "git push origin develop"});
+        let mut state = AgentState::new("system".to_string());
+        let approvals = ApprovalStore::new();
+        let (sender, mut receiver) = mpsc::channel(16);
+
+        let outcome = dispatch_tool_call(
+            &mut state,
+            &gateway,
+            &approvals,
+            "conversation-1",
+            &call,
+            &args,
+            &sender,
+            &LogBuffer::new(16),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, ToolDispatchOutcome::Paused { .. }));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+        let approval = approvals.pending_for("conversation-1").unwrap();
+        assert_eq!(approval.tool_name, "bash");
+        let emitted = events(&mut receiver);
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].event_type, "approval_required");
+        assert_eq!(emitted[0].risk_level.as_deref(), Some("high"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_sandbox_deny_writes_reason_without_execution() {
+        let (gateway, executions) = gateway(
+            "write_file",
+            SandboxProfile::ReadOnly,
+            VerificationResult::success("unused", None),
+        );
+        let call = tool_call(
+            "write_file",
+            json!({"path": "notes.txt", "content": "blocked"}),
+        );
+        let args = json!({"path": "notes.txt", "content": "blocked"});
+        let mut state = AgentState::new("system".to_string());
+        let approvals = ApprovalStore::new();
+        let (sender, mut receiver) = mpsc::channel(16);
+
+        let outcome = dispatch_tool_call(
+            &mut state,
+            &gateway,
+            &approvals,
+            "conversation-1",
+            &call,
+            &args,
+            &sender,
+            &LogBuffer::new(16),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, ToolDispatchOutcome::Continue));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+        assert!(state
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("sandbox denied"));
+        assert!(events(&mut receiver).is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_verification_failure_returns_replan() {
+        let (gateway, executions) = gateway(
+            "read_file",
+            SandboxProfile::ReadOnly,
+            VerificationResult::failure("not observed", None),
+        );
+        let call = tool_call("read_file", json!({"path": "README.md"}));
+        let args = json!({"path": "README.md"});
+        let mut state = AgentState::new("system".to_string());
+        let approvals = ApprovalStore::new();
+        let (sender, mut receiver) = mpsc::channel(16);
+
+        let outcome = dispatch_tool_call(
+            &mut state,
+            &gateway,
+            &approvals,
+            "conversation-1",
+            &call,
+            &args,
+            &sender,
+            &LogBuffer::new(16),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, ToolDispatchOutcome::Replan));
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert!(state
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("not observed"));
+        let verification = events(&mut receiver)
+            .into_iter()
+            .find(|event| event.event_type == "verification")
+            .unwrap();
+        assert_eq!(verification.verification_success, Some(false));
+        assert_eq!(verification.should_replan, Some(true));
+    }
+
+    #[tokio::test]
+    async fn dispatch_registry_miss_pairs_tool_start_with_tool_end() {
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+            SandboxConfig {
+                profile: SandboxProfile::ReadOnly,
+                writable_paths: Vec::new(),
+                denied_write_paths: Vec::new(),
+            },
+            ".",
+            Arc::new(ToolRegistry::new()),
+            Arc::new(FixedVerifier {
+                result: VerificationResult::success("unused", None),
+            }),
+        );
+        let call = tool_call("read_file", json!({"path": "README.md"}));
+        let args = json!({"path": "README.md"});
+        let mut state = AgentState::new("system".to_string());
+        let approvals = ApprovalStore::new();
+        let (sender, mut receiver) = mpsc::channel(16);
+
+        let outcome = dispatch_tool_call(
+            &mut state,
+            &gateway,
+            &approvals,
+            "conversation-1",
+            &call,
+            &args,
+            &sender,
+            &LogBuffer::new(16),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, ToolDispatchOutcome::Continue));
+        let emitted = events(&mut receiver);
+        assert_eq!(
+            emitted
+                .iter()
+                .map(|event| event.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tool_start", "tool_end"]
+        );
+        assert_eq!(emitted[1].status.as_deref(), Some("error"));
+        assert!(emitted[1]
+            .result
+            .as_deref()
+            .unwrap()
+            .contains("tool not found"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_reuses_existing_approval_identity_in_sse() {
+        let (gateway, executions) = gateway(
+            "bash",
+            SandboxProfile::Open,
+            VerificationResult::success("unused", None),
+        );
+        let call = tool_call("bash", json!({"command": "git push origin develop"}));
+        let args = json!({"command": "git push origin develop"});
+        let mut state = AgentState::new("system".to_string());
+        let approvals = ApprovalStore::new();
+        let existing = approvals.create(
+            "conversation-1".to_string(),
+            "existing-call".to_string(),
+            "process".to_string(),
+            json!({"action": "kill", "pid": 42}),
+            crate::tools::RiskLevel::High,
+            "approve process kill".to_string(),
+        );
+        let (sender, mut receiver) = mpsc::channel(16);
+
+        let outcome = dispatch_tool_call(
+            &mut state,
+            &gateway,
+            &approvals,
+            "conversation-1",
+            &call,
+            &args,
+            &sender,
+            &LogBuffer::new(16),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            outcome,
+            ToolDispatchOutcome::Paused { approval_id } if approval_id == existing.approval_id
+        ));
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+        let emitted = events(&mut receiver);
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].tool_call_id.as_deref(), Some("existing-call"));
+        assert_eq!(emitted[0].tool_name.as_deref(), Some("process"));
+        assert_eq!(
+            emitted[0].args.as_ref(),
+            Some(&json!({"action": "kill", "pid": 42}))
+        );
+        assert_eq!(emitted[0].reason.as_deref(), Some("approve process kill"));
+        assert_eq!(emitted[0].risk_level.as_deref(), Some("high"));
+        assert_eq!(
+            emitted[0].approval_id.as_deref(),
+            Some(existing.approval_id.as_str())
+        );
+        assert!(state
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("skipped"));
     }
 }

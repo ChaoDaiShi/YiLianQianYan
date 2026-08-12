@@ -32,7 +32,10 @@ pub enum SecurityExecutionOutcome {
         tool_result: ToolResult,
         verification: VerificationResult,
     },
-    RequiresApproval,
+    RequiresApproval {
+        risk_level: RiskLevel,
+        reason: String,
+    },
     Denied {
         reason: String,
     },
@@ -154,9 +157,31 @@ impl SecurityExecutionGateway {
         role: BuiltInRole,
         final_risk: RiskLevel,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        self.execute_with_on_start(request, role, final_risk, || {})
+            .await
+    }
+
+    pub async fn execute_with_on_start<F>(
+        &self,
+        request: &SecurityExecutionRequest,
+        role: BuiltInRole,
+        final_risk: RiskLevel,
+        on_execution_start: F,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError>
+    where
+        F: FnOnce(),
+    {
         match self.evaluate(request, role, final_risk)? {
-            PolicyDecision::Allow(context) => self.execute_allowed(request, context).await,
-            PolicyDecision::RequireApproval(_) => Ok(SecurityExecutionOutcome::RequiresApproval),
+            PolicyDecision::Allow(context) => {
+                self.execute_allowed(request, context, on_execution_start)
+                    .await
+            }
+            PolicyDecision::RequireApproval(context) => {
+                Ok(SecurityExecutionOutcome::RequiresApproval {
+                    risk_level: context.risk_level,
+                    reason: context.reason,
+                })
+            }
             PolicyDecision::Deny(context) => Ok(SecurityExecutionOutcome::Denied {
                 reason: context.reason,
             }),
@@ -191,7 +216,7 @@ impl SecurityExecutionGateway {
 
         self.record_policy_decided(request, &decision)?;
         match decision {
-            PolicyDecision::Allow(context) => self.execute_allowed(request, context).await,
+            PolicyDecision::Allow(context) => self.execute_allowed(request, context, || {}).await,
             PolicyDecision::Deny(context) => Ok(SecurityExecutionOutcome::Denied {
                 reason: context.reason,
             }),
@@ -201,12 +226,17 @@ impl SecurityExecutionGateway {
         }
     }
 
-    async fn execute_allowed(
+    async fn execute_allowed<F>(
         &self,
         request: &SecurityExecutionRequest,
         context: DecisionContext,
-    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        on_execution_start: F,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError>
+    where
+        F: FnOnce(),
+    {
         self.record_execution_started(request, &context)?;
+        on_execution_start();
         let tool_result = match self
             .tool_registry
             .execute(&request.tool_name, request.arguments.clone())
@@ -1418,9 +1448,59 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            SecurityExecutionOutcome::RequiresApproval
+            SecurityExecutionOutcome::RequiresApproval { .. }
         ));
         assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_returns_approval_risk_and_reason() {
+        let (registry, executions) = registry_with_counting_tool("bash");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            "workspace",
+            registry,
+        );
+        let request = request(
+            "bash",
+            serde_json::json!({"command": "git push origin develop"}),
+        );
+
+        match gateway
+            .execute(&request, BuiltInRole::Owner, RiskLevel::Low)
+            .await
+            .unwrap()
+        {
+            SecurityExecutionOutcome::RequiresApproval { risk_level, reason } => {
+                assert_eq!(risk_level, RiskLevel::High);
+                assert!(!reason.is_empty());
+            }
+            other => panic!("expected approval, got {other:?}"),
+        }
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_callback_runs_once_only_for_allow() {
+        let (registry, executions) = registry_with_counting_tool("read_file");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+        );
+        let starts = AtomicUsize::new(0);
+        let request = request("read_file", serde_json::json!({"path": "README.md"}));
+
+        let outcome = gateway
+            .execute_with_on_start(&request, BuiltInRole::Owner, RiskLevel::Low, || {
+                starts.fetch_add(1, Ordering::SeqCst);
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, SecurityExecutionOutcome::Executed { .. }));
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -1566,7 +1646,7 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            SecurityExecutionOutcome::RequiresApproval
+            SecurityExecutionOutcome::RequiresApproval { .. }
         ));
         assert_eq!(executions.load(Ordering::SeqCst), 0);
         let events = recorder
@@ -1748,7 +1828,7 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            SecurityExecutionOutcome::RequiresApproval
+            SecurityExecutionOutcome::RequiresApproval { .. }
         ));
         assert_eq!(executions.load(Ordering::SeqCst), 0);
         assert_eq!(verifications.load(Ordering::SeqCst), 0);

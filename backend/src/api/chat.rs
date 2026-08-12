@@ -15,8 +15,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::engine::{self, AgentEvent};
 use crate::agent::state::AgentState;
+use crate::agent::verifier::DefaultVerifier;
 use crate::db::MessageRow;
 use crate::llm::client::LlmClient;
+use crate::safety::SecurityExecutionGateway;
 use crate::server::AppServer;
 use crate::utils::text::truncate_chars;
 
@@ -173,14 +175,20 @@ pub async fn chat_handler(
 
     tokio::spawn(async move {
         log_buffer.push("info", "agent", "Agent 循环开始");
-        let verifier = crate::agent::verifier::DefaultVerifier::new(&server.workspace_root);
+        let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            config_clone.sandbox.clone(),
+            server.workspace_root.clone(),
+            Arc::clone(&tool_registry),
+            Arc::new(DefaultVerifier::new(&server.workspace_root)),
+            Arc::new(server.audit_recorder.clone()),
+        );
 
         let result = engine::run_react_loop_with_channel(
             &mut agent_state,
             &llm_client,
             &tool_registry,
             &server.approval_store,
-            &verifier,
+            &security_gateway,
             &config_clone,
             &conv_clone,
             &cancel_token,
