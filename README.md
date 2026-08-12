@@ -126,38 +126,183 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 | `screenshot` | 屏幕截图 |
 | `upscale_image` | AI 图片放大 |
 
+## v0.2 Trusted Execution
+
+状态：**Completed**
+
+已完成：
+
+- Unified `SecurityExecutionGateway`
+- `PolicyEngine` Runtime Integration
+- Sandbox Path Enforcement
+- Approval Execution Unification
+- Deterministic Verification Pipeline
+- Redacted Security Audit Chain
+
+### 后续规划：v0.3 Memory & Extensions
+
+计划包括：
+
+- Memory Extraction
+- Embedding Retrieval
+- MCP Runtime
+- Subagent Runtime
+
+以上项目仍属于后续规划，不表示当前版本已经提供完整的 MCP Tool Runtime 或 Multi-Agent Runtime。现有 Workflow 能力仍是 Workflow Template，不是完整 Workflow Engine。
+
 ## 安全机制
 
-YiLianQianYan 对 Tool 进行风险分级，在执行前进行权限评估。
+YiLianQianYan 对 Tool Call 进行统一安全评估。Agent 主循环和审批恢复路径中已接入运行时的 Tool Call 均通过 `SecurityExecutionGateway`，不会由 Agent 或 Approval API 直接执行 Tool。
 
 | 风险等级 | 策略 |
 |----------|------|
-| `Low` | 自动执行 |
-| `Medium` | 默认允许 |
+| `Low` | 通常自动执行 |
+| `Medium` | 默认允许，但仍受角色、权限与 Sandbox 约束 |
 | `High` | 需要用户批准 |
 | `Critical` | 需要用户明确批准 |
 
-安全链路：
+### 统一安全执行链
 
 ```text
 Tool Call
   ↓
-SafetyPolicy.assess() → 最终风险等级
+ToolSecurityDescriptor
   ↓
-PermissionManager.evaluate() → Allow / RequireApproval
+ResourceScope Resolution
   ↓
-执行 或 暂停等待用户审批（approval_required）
+Sandbox Policy
+  ↓
+SafetyPolicy Risk Evaluation
+  ↓
+PolicyEngine Decision
+  ↓
+Allow / RequireApproval / Deny
+  ↓
+Tool Execution
+  ↓
+Deterministic Verification
+  ↓
+Redacted Audit Recording
 ```
 
-### RBAC 与最小权限基础
+未知 Tool、无效 Descriptor、身份不匹配或资源无法解析时，执行链默认关闭。执行前的必要审计若无法持久化，也不会继续启动 Tool；Tool 已实际执行后的审计异常则保留执行结果，不会把已发生的执行伪装成未执行。
 
-安全模块已经提供 `owner`、`standard`、`restricted` 三种内置角色，以及 capability、action、资源范围和参数敏感的工具安全描述。未知工具、无效描述或工具身份不匹配会默认拒绝。
+### SecurityExecutionGateway
 
-当前阶段只完成了确定性策略核心，Agent 运行时仍沿用现有 `SafetyPolicy` / `PermissionManager` 执行路径。新的 `PolicyEngine` 尚未通过统一 `SecurityExecutionGateway` 接入所有 Tool Call；这部分属于下一阶段，不能把本版本描述为已经完成统一运行时 RBAC 强制执行。
+`SecurityExecutionGateway` 是当前统一的 Tool 安全执行入口，负责连接：
+
+- `ToolSecurityDescriptor` 与实际 `ResourceScope` 解析；
+- Sandbox 写路径约束；
+- `SafetyPolicy` 动态风险评估；
+- `PolicyEngine` 权限决策；
+- `ToolRegistry` 单次执行；
+- `Verifier` 确定性结果验证；
+- `AuditRecorder` 脱敏审计。
+
+普通 Agent Tool Call 与审批通过后的原始 Tool Call 都通过 Gateway 执行。未来接入 Tool 执行能力的扩展模块也应复用该入口，不能绕过安全检查直接调用 `ToolRegistry.execute(...)`。
+
+### PolicyEngine 与最小权限
+
+`PolicyEngine` 负责统一处理：
+
+- RBAC 角色；
+- Capability；
+- Permission；
+- ResourceScope；
+- Tool 最终风险；
+- `Allow` / `RequireApproval` / `Deny`。
+
+安全模块提供 `owner`、`standard`、`restricted` 三种内置角色。`Owner` 不会绕过 High/Critical 风险的单次审批要求。Gateway 不复制 RBAC 规则，只向 `PolicyEngine` 提交真实 Descriptor、资源范围、角色与最终风险。
+
+### Sandbox 路径约束
+
+当前 Sandbox 是**应用层路径约束**，用于判断文件写入目标是否满足配置策略。
+
+支持的 profile：
+
+- `read-only`：拒绝文件写入；
+- `workspace-write`：仅允许工作区内写入；
+- `custom`：仅允许 `writable_paths` 范围内写入；
+- `open`：默认允许写入，但仍受显式拒绝路径限制。
+
+支持：
+
+- `writable_paths`
+- `denied_write_paths`
+
+`denied_write_paths` 的优先级始终高于 workspace 或 writable allow 规则。路径判断会规范化相对路径、绝对路径和 `..`，并按路径组件判断目录边界，避免把相似字符串前缀误判为同一目录。
+
+当前 Sandbox **不等价于**：
+
+- Windows AppContainer；
+- Windows 受限令牌或 Job Object；
+- Linux namespace；
+- 独立安全 Worker；
+- 操作系统级强隔离。
+
+Tool 仍在现有后端进程内执行。当前能力是应用层路径安全边界，不应宣传为 OS 级 Sandbox。
+
+### 用户审批
+
+高风险与关键风险 Tool Call 会暂停并进入以下流程：
+
+```text
+Tool Request
+  ↓
+Policy Decision
+  ↓
+RequireApproval
+  ↓
+用户批准 / 拒绝
+  ↓
+SecurityExecutionGateway Resume
+  ↓
+Execute Once
+  ↓
+Verify
+  ↓
+Audit
+```
+
+用户批准后执行的是审批时保存的**原始 Tool Call**，不会要求 LLM 重新生成另一个 Tool Call。审批采用原子消费，同一个 `approval_id` 最多执行一次；重复 approve 不会再次执行 Tool。
+
+拒绝或取消不会执行 Tool。Agent 可以在拒绝结果写回上下文后继续重新规划。
+
+审批 API：
+
+```text
+POST /api/approvals/:id/approve    允许 → Gateway 执行原始 Tool Call → 验证 → 继续 Agent（SSE）
+POST /api/approvals/:id/reject     拒绝 → 写回拒绝结果 → 继续 Agent（SSE）
+POST /api/approvals/:id/cancel     取消 → 标记取消，不执行
+GET  /api/approvals/:id            查询单个审批
+GET  /api/approvals/pending        列出待审批
+```
+
+注意：当前 `PendingApproval` 是内存中的运行时状态；后端重启后，未处理审批会失效。
 
 ### 持久化安全审计
 
-SQLite 已包含以下安全表：
+当前 Tool 安全执行链会持久化以下关键事件：
+
+```text
+policy_decided
+approval_requested
+approval_resolved
+execution_started
+execution_finished
+verification_finished
+```
+
+`Allow`、`RequireApproval` 和 `Deny` 都会记录策略决策；只有真正执行 Tool 时才记录 execution 事件，只有运行 Verifier 后才记录 `verification_finished`。
+
+`AuditRecorder` 会在持久化前递归脱敏对象和数组：
+
+- API Key、Token、Password、Cookie 等敏感值不会按原文保存；
+- data URI 不保存正文；
+- 长文本只保存受限预览、原始长度与 SHA-256 摘要；
+- Gateway 不把完整原始 arguments 或 `ToolResult` 直接写入审计数据库。
+
+SQLite 当前包含：
 
 ```text
 security_subjects
@@ -166,47 +311,30 @@ security_approvals
 security_audit_events
 ```
 
-`AuditRecorder` 会在持久化前递归处理对象和数组：敏感键值替换为 `[REDACTED]`，data URI 不保存正文，长文本只保存受限预览、长度和 SHA-256 摘要。安全审计与 `/api/logs` 的内存运行日志相互独立，日志 drain 不会影响审计数据。
-
-安全审计首版只提供查询和 JSON 导出，不提供删除 API。`previous_hash`、`event_hash` 和 `signature` 仅为未来升级预留，目前不宣称日志防篡改。
-
-当前 Agent Tool Call 尚未接入 `AuditRecorder`，因此本版本不会自动生成完整的执行审计链；现阶段持久化层、脱敏、健康状态和查询/导出契约已经就绪，供后续 `SecurityExecutionGateway` 使用。
-
-### 当前沙箱边界
-
-本版本尚未实现统一 `SandboxPlan`、受限令牌、Windows Job Object、AppContainer 或独立安全 Worker。工具仍在现有后端进程内执行，各工具自身的路径和参数检查不等同于操作系统级强隔离。
-
-### 用户审批
-
-高风险与关键风险操作会暂停执行并请求用户确认。
-
-只有用户明确选择"允许本次"后，系统才会执行最初请求的 Tool Call。
-
-拒绝后，该 Tool 不会执行，Agent 可以基于拒绝结果重新规划。
-
-审批 API：
-
-```text
-POST /api/approvals/:id/approve    允许 → 执行原始 Tool Call → 继续 Agent（SSE）
-POST /api/approvals/:id/reject     拒绝 → 写回拒绝结果 → 继续 Agent（SSE）
-POST /api/approvals/:id/cancel     取消 → 标记取消，不执行
-GET  /api/approvals/:id            查询单个审批
-GET  /api/approvals/pending        列出待审批
-```
-
-注意：当前 `PendingApproval` 为运行时状态（内存存储）；后端重启后，未处理审批会失效。
+安全审计支持查询和版本化 JSON 导出，不提供删除 API。`previous_hash`、`event_hash` 和 `signature` 仍是未来升级预留字段，当前不宣称审计日志具备防篡改签名能力。
 
 ### 结果验证
 
-YiLianQianYan 不会仅根据 Tool 返回 success 就认定任务完成。
+YiLianQianYan 不会仅根据 `ToolResult.ok == true` 就认定任务完成。
 
-对于支持确定性验证的操作，系统会在 Tool 执行后重新观察真实状态，例如：
+Tool 执行后统一进入现有 `Verifier`。对于支持确定性验证的操作，Verifier 会重新观察真实状态，例如：
 
-- 文件是否真实存在
-- 文件内容是否符合预期
-- 目标进程是否真实运行
+- 文件是否真实存在；
+- 文件内容是否符合预期；
+- 目标进程状态是否符合预期。
 
-验证失败时，Agent 会收到验证结果并重新规划。
+`ToolResult` 与 `VerificationResult` 分开保留。验证失败不等于 Tool 未执行；Agent 会收到验证失败和 `should_replan` 信息，并沿用现有 ReAct 流程重新规划。
 
-当前 Verifier 主要覆盖文件与进程等确定性场景。
-Windows UI 与视觉结果验证将在后续版本扩展。
+当前 Verifier 主要覆盖文件与进程等确定性场景。Windows UI 与视觉结果验证仍属于后续扩展。
+
+### 当前能力边界
+
+当前版本未完成：
+
+- MCP Tool Runtime；
+- 完整 Workflow Engine（当前为 Workflow Template）；
+- 完整 Multi-Agent Runtime（当前仅有 Subagent 基础设施）；
+- OS 级 Sandbox 隔离；
+- 跨后端重启持久化的 PendingApproval。
+
+README 只描述已经接入当前运行时并通过回归测试的 Trusted Execution 能力，不把以上后续项目写成已完成。
