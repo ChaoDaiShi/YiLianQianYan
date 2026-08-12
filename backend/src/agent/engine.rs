@@ -785,6 +785,11 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_registry_miss_pairs_tool_start_with_tool_end() {
+        let db_path = std::env::temp_dir().join(format!(
+            "yilian-engine-registry-miss-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let db = crate::db::Database::new(&db_path).unwrap();
         let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
             SandboxConfig {
                 profile: SandboxProfile::ReadOnly,
@@ -796,7 +801,8 @@ mod tests {
             Arc::new(FixedVerifier {
                 result: VerificationResult::success("unused", None),
             }),
-        );
+        )
+        .with_db(Arc::new(db.clone_connection()));
         let call = tool_call("read_file", json!({"path": "README.md"}));
         let args = json!({"path": "README.md"});
         let mut state = AgentState::new("system".to_string());

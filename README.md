@@ -213,7 +213,7 @@ Redacted Audit Recording
 - Tool 最终风险；
 - `Allow` / `RequireApproval` / `Deny`。
 
-安全模块提供 `owner`、`standard`、`restricted` 三种内置角色。角色的解析链路为 `SecuritySubject → security_role_bindings → BuiltInRole → PolicyEngine`，Agent 和 Approval 运行时不再硬编码角色。`Owner` 不会绕过 High/Critical 风险的单次审批要求。如果 subject 的 role binding 不存在或无效，Gateway 默认返回 `Restricted`（Fail Closed）。Gateway 不复制 RBAC 规则，只向 `PolicyEngine` 提交真实 Descriptor、资源范围、角色与最终风险。
+安全模块提供 `owner`、`standard`、`restricted` 三种内置角色。角色的解析链路为 `SecuritySubject → security_role_bindings → BuiltInRole → PolicyEngine`，Agent 和 Approval 运行时不再硬编码角色。`Owner` 不会绕过 High/Critical 风险的单次审批要求。role binding 不存在、无效或安全数据库不可用时，Gateway Fail Closed 并拒绝 Tool 执行（返回明确错误，不 fallback 到任何内置角色）。Gateway 不复制 RBAC 规则，只向 `PolicyEngine` 提交真实 Descriptor、资源范围、角色与最终风险。
 
 ### Sandbox 路径约束
 

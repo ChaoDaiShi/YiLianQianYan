@@ -54,6 +54,12 @@ pub enum SecurityGatewayError {
     Audit(#[from] AuditError),
     #[error("tool not found in registry: {0}")]
     ToolNotFound(String),
+    #[error("security database unavailable for subject role resolution")]
+    RoleDatabaseUnavailable,
+    #[error("no active role binding for subject: {0}")]
+    MissingRoleBinding(String),
+    #[error("invalid role binding '{role}' for subject: {subject_id}")]
+    InvalidRoleBinding { subject_id: String, role: String },
 }
 
 pub struct SecurityExecutionGateway {
@@ -168,21 +174,29 @@ impl SecurityExecutionGateway {
     /// Resolve the active [`BuiltInRole`] for a security subject from the
     /// database-backed `security_role_bindings` table.
     ///
-    /// **Fail-closed**: returns [`BuiltInRole::Restricted`] when the
-    /// database is unavailable, the subject has no active binding, or the
-    /// stored role key is unrecognised.
-    pub fn resolve_subject_role(&self, subject: &SecuritySubject) -> BuiltInRole {
-        match &self.db {
-            Some(db) => match db.resolve_active_role_binding(&subject.subject_id) {
-                Some(role_key) => match role_key.as_str() {
-                    "owner" => BuiltInRole::Owner,
-                    "standard" => BuiltInRole::Standard,
-                    "restricted" => BuiltInRole::Restricted,
-                    _ => BuiltInRole::Restricted,
-                },
-                None => BuiltInRole::Restricted,
-            },
-            None => BuiltInRole::Restricted,
+    /// **Fail-closed**: returns an error when the database is unavailable,
+    /// the subject has no active binding, or the stored role key is
+    /// unrecognised.  There is no fallback — callers must treat the error
+    /// as a hard deny.
+    pub fn resolve_subject_role(
+        &self,
+        subject: &SecuritySubject,
+    ) -> Result<BuiltInRole, SecurityGatewayError> {
+        let db = self
+            .db
+            .as_ref()
+            .ok_or(SecurityGatewayError::RoleDatabaseUnavailable)?;
+        let role_key = db
+            .resolve_active_role_binding(&subject.subject_id)
+            .ok_or_else(|| SecurityGatewayError::MissingRoleBinding(subject.subject_id.clone()))?;
+        match role_key.as_str() {
+            "owner" => Ok(BuiltInRole::Owner),
+            "standard" => Ok(BuiltInRole::Standard),
+            "restricted" => Ok(BuiltInRole::Restricted),
+            _ => Err(SecurityGatewayError::InvalidRoleBinding {
+                subject_id: subject.subject_id.clone(),
+                role: role_key,
+            }),
         }
     }
 
@@ -193,7 +207,7 @@ impl SecurityExecutionGateway {
         request: &SecurityExecutionRequest,
         final_risk: RiskLevel,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
-        let role = self.resolve_subject_role(&request.subject);
+        let role = self.resolve_subject_role(&request.subject)?;
         self.execute_with_role(request, role, final_risk).await
     }
 
@@ -208,7 +222,7 @@ impl SecurityExecutionGateway {
     where
         F: FnOnce(),
     {
-        let role = self.resolve_subject_role(&request.subject);
+        let role = self.resolve_subject_role(&request.subject)?;
         self.execute_with_role_and_on_start(request, role, final_risk, on_execution_start)
             .await
     }
@@ -261,7 +275,7 @@ impl SecurityExecutionGateway {
         request: &SecurityExecutionRequest,
         approved_risk: RiskLevel,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
-        let role = self.resolve_subject_role(&request.subject);
+        let role = self.resolve_subject_role(&request.subject)?;
         self.execute_approved_with_role(request, role, approved_risk)
             .await
     }
@@ -816,7 +830,7 @@ impl SecurityExecutionGateway {
         request: &SecurityExecutionRequest,
         final_risk: RiskLevel,
     ) -> Result<PolicyDecision, SecurityGatewayError> {
-        let role = self.resolve_subject_role(&request.subject);
+        let role = self.resolve_subject_role(&request.subject)?;
         self.evaluate_with_role(request, role, final_risk)
     }
 
@@ -839,7 +853,10 @@ impl SecurityExecutionGateway {
 
 #[cfg(test)]
 mod tests {
-    use super::{SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest};
+    use super::{
+        SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest,
+        SecurityGatewayError,
+    };
     use crate::agent::verifier::{DefaultVerifier, VerificationResult, Verifier};
     use crate::config::types::{SandboxConfig, SandboxProfile};
     use crate::db::{Database, SecurityAuditQuery};
@@ -2101,7 +2118,9 @@ mod tests {
         // DB migration seeds local-user → owner
         let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
 
-        let role = gateway.resolve_subject_role(&SecuritySubject::local_user());
+        let role = gateway
+            .resolve_subject_role(&SecuritySubject::local_user())
+            .unwrap();
         assert_eq!(role, BuiltInRole::Owner);
 
         drop(gateway);
@@ -2110,17 +2129,71 @@ mod tests {
     }
 
     #[test]
-    fn resolve_subject_role_falls_back_to_restricted_when_no_db() {
-        let gateway = SecurityExecutionGateway::new();
+    fn resolve_subject_role_standard_from_db() {
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-rbac-standard-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&db_path).unwrap();
+        // Override the default owner binding to standard
+        db.conn()
+            .execute(
+                "UPDATE security_role_bindings SET role_key = 'standard'
+                 WHERE subject_id = 'local-user' AND revoked_at IS NULL",
+                [],
+            )
+            .unwrap();
+        let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
 
-        let role = gateway.resolve_subject_role(&SecuritySubject::local_user());
-        assert_eq!(role, BuiltInRole::Restricted);
+        let role = gateway
+            .resolve_subject_role(&SecuritySubject::local_user())
+            .unwrap();
+        assert_eq!(role, BuiltInRole::Standard);
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
-    fn resolve_subject_role_returns_restricted_for_unknown_subject() {
+    fn resolve_subject_role_restricted_from_db() {
+        let db_path = std::env::temp_dir().join(format!(
+            "yilian-rbac-restricted-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let db = Database::new(&db_path).unwrap();
+        db.conn()
+            .execute(
+                "UPDATE security_role_bindings SET role_key = 'restricted'
+                 WHERE subject_id = 'local-user' AND revoked_at IS NULL",
+                [],
+            )
+            .unwrap();
+        let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
+
+        let role = gateway
+            .resolve_subject_role(&SecuritySubject::local_user())
+            .unwrap();
+        assert_eq!(role, BuiltInRole::Restricted);
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn resolve_subject_role_errors_when_no_db() {
+        let gateway = SecurityExecutionGateway::new();
+
+        let result = gateway.resolve_subject_role(&SecuritySubject::local_user());
+        assert!(
+            matches!(result, Err(SecurityGatewayError::RoleDatabaseUnavailable)),
+            "expected RoleDatabaseUnavailable, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_subject_role_errors_for_missing_binding() {
         let db_path =
-            std::env::temp_dir().join(format!("yilian-rbac-unknown-{}.db", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("yilian-rbac-missing-{}.db", uuid::Uuid::new_v4()));
         let db = Database::new(&db_path).unwrap();
         let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
 
@@ -2130,8 +2203,55 @@ mod tests {
             provider: "test".to_string(),
             external_ref: None,
         };
-        let role = gateway.resolve_subject_role(&unknown);
-        assert_eq!(role, BuiltInRole::Restricted);
+        let result = gateway.resolve_subject_role(&unknown);
+        assert!(
+            matches!(
+                &result,
+                Err(SecurityGatewayError::MissingRoleBinding(id)) if id == "unknown-user"
+            ),
+            "expected MissingRoleBinding, got {result:?}"
+        );
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn resolve_subject_role_errors_for_invalid_role_key() {
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-rbac-invalid-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&db_path).unwrap();
+        // Replace the schema-constrained table with one that accepts any role_key
+        // so the defence-in-depth match in resolve_subject_role can be exercised.
+        let conn = db.conn();
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS security_role_bindings;
+             CREATE TABLE security_role_bindings (
+                 binding_id TEXT PRIMARY KEY,
+                 subject_id TEXT NOT NULL,
+                 role_key TEXT NOT NULL,
+                 source TEXT NOT NULL,
+                 effective_at INTEGER NOT NULL,
+                 expires_at INTEGER,
+                 revoked_at INTEGER
+             );
+             INSERT INTO security_role_bindings VALUES
+                 ('test-invalid', 'local-user', 'administrator', 'test', 0, NULL, NULL);",
+        )
+        .unwrap();
+        drop(conn);
+        let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
+
+        let result = gateway.resolve_subject_role(&SecuritySubject::local_user());
+        assert!(
+            matches!(
+                &result,
+                Err(SecurityGatewayError::InvalidRoleBinding { subject_id, role })
+                    if subject_id == "local-user" && role == "administrator"
+            ),
+            "expected InvalidRoleBinding, got {result:?}"
+        );
 
         drop(gateway);
         drop(db);
@@ -2170,10 +2290,11 @@ mod tests {
             "write_file",
             serde_json::json!({"path": "notes.txt", "content": "hello"}),
         );
-        // No DB → resolve_subject_role returns Restricted
         request.subject = SecuritySubject::local_user();
 
-        let decision = gateway.evaluate(&request, RiskLevel::Medium).unwrap();
+        let decision = gateway
+            .evaluate_with_role(&request, BuiltInRole::Restricted, RiskLevel::Medium)
+            .unwrap();
         assert!(
             matches!(decision, PolicyDecision::Deny(_)),
             "restricted subject should be denied filesystem write"
@@ -2186,7 +2307,9 @@ mod tests {
         let mut request = request("bash", serde_json::json!({"command": "echo test"}));
         request.subject = SecuritySubject::local_user();
 
-        let decision = gateway.evaluate(&request, RiskLevel::Low).unwrap();
+        let decision = gateway
+            .evaluate_with_role(&request, BuiltInRole::Restricted, RiskLevel::Low)
+            .unwrap();
         assert!(
             matches!(decision, PolicyDecision::Deny(_)),
             "restricted subject should be denied shell execute"
@@ -2213,6 +2336,110 @@ mod tests {
             matches!(decision, PolicyDecision::RequireApproval(_)),
             "owner should require approval for high-risk bash"
         );
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test]
+    async fn execute_errors_when_no_db() {
+        let (registry, executions) = registry_with_counting_tool("read_file");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+        );
+        // No .with_db() — role resolution must fail
+        let mut request = request("read_file", serde_json::json!({"path": "README.md"}));
+        request.subject = SecuritySubject::local_user();
+
+        let result = gateway.execute(&request, RiskLevel::Low).await;
+        assert!(
+            matches!(result, Err(SecurityGatewayError::RoleDatabaseUnavailable)),
+            "expected RoleDatabaseUnavailable, got {result:?}"
+        );
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_errors_for_missing_binding() {
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-exec-missing-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&db_path).unwrap();
+        let (registry, executions) = registry_with_counting_tool("read_file");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+        )
+        .with_db(Arc::new(db.clone_connection()));
+
+        let mut request = request("read_file", serde_json::json!({"path": "README.md"}));
+        request.subject = SecuritySubject {
+            subject_id: "no-binding-user".to_string(),
+            ..SecuritySubject::local_user()
+        };
+
+        let result = gateway.execute(&request, RiskLevel::Low).await;
+        assert!(
+            matches!(
+                &result,
+                Err(SecurityGatewayError::MissingRoleBinding(id)) if id == "no-binding-user"
+            ),
+            "expected MissingRoleBinding, got {result:?}"
+        );
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test]
+    async fn execute_errors_for_invalid_role_key() {
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-exec-invalid-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&db_path).unwrap();
+        // Bypass the CHECK constraint to exercise the defence-in-depth match
+        let conn = db.conn();
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS security_role_bindings;
+             CREATE TABLE security_role_bindings (
+                 binding_id TEXT PRIMARY KEY,
+                 subject_id TEXT NOT NULL,
+                 role_key TEXT NOT NULL,
+                 source TEXT NOT NULL,
+                 effective_at INTEGER NOT NULL,
+                 expires_at INTEGER,
+                 revoked_at INTEGER
+             );
+             INSERT INTO security_role_bindings VALUES
+                 ('test-exec-invalid', 'local-user', 'administrator', 'test', 0, NULL, NULL);",
+        )
+        .unwrap();
+        drop(conn);
+        let (registry, executions) = registry_with_counting_tool("read_file");
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+        )
+        .with_db(Arc::new(db.clone_connection()));
+
+        let mut request = request("read_file", serde_json::json!({"path": "README.md"}));
+        request.subject = SecuritySubject::local_user();
+
+        let result = gateway.execute(&request, RiskLevel::Low).await;
+        assert!(
+            matches!(
+                &result,
+                Err(SecurityGatewayError::InvalidRoleBinding { subject_id, role })
+                    if subject_id == "local-user" && role == "administrator"
+            ),
+            "expected InvalidRoleBinding, got {result:?}"
+        );
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
 
         drop(gateway);
         drop(db);
