@@ -50,7 +50,24 @@ pub async fn create_handler(
     Json(req): Json<CreateMemoryRequest>,
 ) -> Json<serde_json::Value> {
     match server.db.create_memory(&req) {
-        Ok(mem) => Json(serde_json::to_value(mem).unwrap_or_default()),
+        Ok(mem) => {
+            // Auto-embed: best-effort, never fails the create
+            let model_cfg = server.config.read().model.clone();
+            if model_cfg.has_embedding() {
+                let llm = LlmClient::new(&model_cfg);
+                match llm.embed(&req.content).await {
+                    Ok(vec) => {
+                        if let Err(e) = server.db.update_memory_embedding(&mem.id, &vec) {
+                            tracing::warn!(memory_id = %mem.id, error = %e, "failed to persist embedding");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(memory_id = %mem.id, error = %e, "embedding generation failed, memory persisted without embedding");
+                    }
+                }
+            }
+            Json(serde_json::to_value(mem).unwrap_or_default())
+        }
         Err(e) => Json(serde_json::json!({"error": e})),
     }
 }
@@ -89,7 +106,7 @@ pub async fn stats_handler(State(server): State<Arc<AppServer>>) -> Json<serde_j
     }
 }
 
-// ── Retrieve (ranked keyword retrieval) ──
+// ── Retrieve (ranked keyword retrieval, hybrid when embedding is available) ──
 
 pub async fn retrieve_handler(
     State(server): State<Arc<AppServer>>,
@@ -103,10 +120,32 @@ pub async fn retrieve_handler(
         }));
     }
 
-    match server.db.retrieve_memories(&query) {
+    let model_cfg = server.config.read().model.clone();
+    let mut mode = "lexical";
+    let mut query_embedding: Option<Vec<f32>> = None;
+
+    if model_cfg.has_embedding() {
+        let llm = LlmClient::new(&model_cfg);
+        match llm.embed(&q).await {
+            Ok(vec) => {
+                query_embedding = Some(vec);
+                mode = "hybrid";
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "query embedding failed, falling back to lexical");
+                mode = "lexical_fallback";
+            }
+        }
+    }
+
+    match server
+        .db
+        .retrieve_memories_hybrid(&query, query_embedding.as_deref())
+    {
         Ok(scored) => Json(serde_json::json!({
             "query": q,
             "count": scored.len(),
+            "mode": mode,
             "memories": scored,
         })),
         Err(e) => Json(serde_json::json!({
@@ -353,7 +392,7 @@ pub async fn extract_handler(
                 .and_then(|c| c.message.content.as_deref())
                 .unwrap_or("");
             if let Ok(parsed) = serde_json::from_str::<ExtractMemoriesArgs>(raw_content.trim()) {
-                return process_extracted_memories(&server, &conv_id, parsed.memories);
+                return process_extracted_memories(&server, &conv_id, parsed.memories).await;
             }
             return Json(serde_json::json!({
                 "ok": false,
@@ -387,14 +426,16 @@ pub async fn extract_handler(
         }
     };
 
-    process_extracted_memories(&server, &conv_id, parsed.memories)
+    process_extracted_memories(&server, &conv_id, parsed.memories).await
 }
 
-fn process_extracted_memories(
+async fn process_extracted_memories(
     server: &AppServer,
     conv_id: &str,
     candidates: Vec<ExtractedMemory>,
 ) -> Json<serde_json::Value> {
+    let model_cfg = server.config.read().model.clone();
+    let has_embedding = model_cfg.has_embedding();
     let mut created = Vec::new();
     let mut skipped = 0usize;
 
@@ -435,19 +476,37 @@ fn process_extracted_memories(
         }
 
         // Write
-        match server.db.create_memory(&CreateMemoryRequest {
-            content,
+        let memory = match server.db.create_memory(&CreateMemoryRequest {
+            content: content.clone(),
             category: mem.category.clone(),
             source: "auto".to_string(),
             source_conversation_id: Some(conv_id.to_string()),
             metadata: None,
         }) {
-            Ok(memory) => created.push(memory),
+            Ok(memory) => memory,
             Err(e) => {
                 tracing::error!("Failed to create memory: {e}");
                 skipped += 1;
+                continue;
+            }
+        };
+
+        // Auto-embed: best-effort, never fails memory creation
+        if has_embedding {
+            let llm = LlmClient::new(&model_cfg);
+            match llm.embed(&content).await {
+                Ok(vec) => {
+                    if let Err(e) = server.db.update_memory_embedding(&memory.id, &vec) {
+                        tracing::warn!(memory_id = %memory.id, error = %e, "failed to persist embedding");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(memory_id = %memory.id, error = %e, "embedding generation failed, memory persisted without embedding");
+                }
             }
         }
+
+        created.push(memory);
     }
 
     Json(serde_json::json!({
@@ -635,8 +694,8 @@ mod tests {
 
     // ── Integration test: process_extracted_memories ──
 
-    #[test]
-    fn process_extracts_valid_preference_memory() {
+    #[tokio::test]
+    async fn process_extracts_valid_preference_memory() {
         let (server, db_path, conv_id) = test_server("process-valid");
 
         let candidates = vec![ExtractedMemory {
@@ -644,7 +703,7 @@ mod tests {
             content: "用户偏好每次只进行最小范围代码修改".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates);
+        let json = process_extracted_memories(&server, &conv_id, candidates).await;
         let value = json.0;
         assert_eq!(value["ok"], true);
         assert_eq!(value["created"], 1);
@@ -656,8 +715,8 @@ mod tests {
         std::fs::remove_file(&db_path).ok();
     }
 
-    #[test]
-    fn process_skips_duplicate_memory() {
+    #[tokio::test]
+    async fn process_skips_duplicate_memory() {
         let (server, db_path, conv_id) = test_server("process-dup");
         let candidates = vec![ExtractedMemory {
             category: "fact".to_string(),
@@ -665,23 +724,23 @@ mod tests {
         }];
 
         // First extraction
-        let json1 = process_extracted_memories(&server, &conv_id, candidates.clone());
+        let json1 = process_extracted_memories(&server, &conv_id, candidates.clone()).await;
         assert_eq!(json1.0["created"], 1);
 
         // Second extraction with identical content
-        let json2 = process_extracted_memories(&server, &conv_id, candidates);
+        let json2 = process_extracted_memories(&server, &conv_id, candidates).await;
         assert_eq!(json2.0["created"], 0);
         assert_eq!(json2.0["skipped"], 1);
 
         std::fs::remove_file(&db_path).ok();
     }
 
-    #[test]
-    fn process_skips_empty_candidates() {
+    #[tokio::test]
+    async fn process_skips_empty_candidates() {
         let (server, db_path, conv_id) = test_server("process-empty");
         let candidates: Vec<ExtractedMemory> = vec![];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates);
+        let json = process_extracted_memories(&server, &conv_id, candidates).await;
         assert_eq!(json.0["ok"], true);
         assert_eq!(json.0["created"], 0);
         assert_eq!(json.0["skipped"], 0);
@@ -689,60 +748,60 @@ mod tests {
         std::fs::remove_file(&db_path).ok();
     }
 
-    #[test]
-    fn process_skips_invalid_category() {
+    #[tokio::test]
+    async fn process_skips_invalid_category() {
         let (server, db_path, conv_id) = test_server("process-invalid-cat");
         let candidates = vec![ExtractedMemory {
             category: "random".to_string(),
             content: "some content".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates);
+        let json = process_extracted_memories(&server, &conv_id, candidates).await;
         assert_eq!(json.0["created"], 0);
         assert_eq!(json.0["skipped"], 1);
 
         std::fs::remove_file(&db_path).ok();
     }
 
-    #[test]
-    fn process_skips_empty_content() {
+    #[tokio::test]
+    async fn process_skips_empty_content() {
         let (server, db_path, conv_id) = test_server("process-empty-content");
         let candidates = vec![ExtractedMemory {
             category: "note".to_string(),
             content: "   ".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates);
+        let json = process_extracted_memories(&server, &conv_id, candidates).await;
         assert_eq!(json.0["created"], 0);
         assert_eq!(json.0["skipped"], 1);
 
         std::fs::remove_file(&db_path).ok();
     }
 
-    #[test]
-    fn process_rejects_sensitive_content() {
+    #[tokio::test]
+    async fn process_rejects_sensitive_content() {
         let (server, db_path, conv_id) = test_server("process-sensitive");
         let candidates = vec![ExtractedMemory {
             category: "knowledge".to_string(),
             content: "API key is sk-abc123".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates);
+        let json = process_extracted_memories(&server, &conv_id, candidates).await;
         assert_eq!(json.0["created"], 0);
         assert_eq!(json.0["skipped"], 1);
 
         std::fs::remove_file(&db_path).ok();
     }
 
-    #[test]
-    fn process_handles_chinese_content() {
+    #[tokio::test]
+    async fn process_handles_chinese_content() {
         let (server, db_path, conv_id) = test_server("process-chinese");
         let candidates = vec![ExtractedMemory {
             category: "preference".to_string(),
             content: "用户长期使用中文内容进行交互，偏好简洁回复".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates);
+        let json = process_extracted_memories(&server, &conv_id, candidates).await;
         let value = json.0;
         assert_eq!(value["ok"], true);
         assert_eq!(value["created"], 1);
@@ -955,6 +1014,164 @@ mod tests {
             .unwrap();
 
         assert!(!results.is_empty());
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    // ── Cosine similarity tests ──
+
+    use crate::db::cosine_similarity;
+
+    #[test]
+    fn cosine_identical_vectors() {
+        let a = vec![1.0_f32, 0.0, 0.0];
+        let b = vec![1.0_f32, 0.0, 0.0];
+        let sim = cosine_similarity(&a, &b).unwrap();
+        assert!((sim - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn cosine_orthogonal_vectors() {
+        let a = vec![1.0_f32, 0.0];
+        let b = vec![0.0_f32, 1.0];
+        let sim = cosine_similarity(&a, &b).unwrap();
+        assert!((sim - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn cosine_dimension_mismatch_is_none() {
+        let sim = cosine_similarity(&[1.0, 0.0], &[1.0, 0.0, 0.0]);
+        assert!(sim.is_none());
+    }
+
+    #[test]
+    fn cosine_zero_vector_is_none() {
+        let sim = cosine_similarity(&[0.0, 0.0], &[1.0, 0.0]);
+        assert!(sim.is_none());
+    }
+
+    // ── Embedding serialization tests ──
+
+    use crate::db::{parse_embedding, serialize_embedding};
+
+    #[test]
+    fn embedding_round_trip() {
+        let vec = vec![0.1_f32, -0.442, 0.031];
+        let json = serialize_embedding(&vec).unwrap();
+        let parsed = parse_embedding(&json).unwrap();
+        assert_eq!(parsed.len(), 3);
+        assert!((parsed[0] - 0.1).abs() < 0.001);
+        assert!((parsed[1] - (-0.442)).abs() < 0.001);
+        assert!((parsed[2] - 0.031).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_embedding_rejects_invalid_json() {
+        assert!(parse_embedding("not-json").is_none());
+    }
+
+    #[test]
+    fn parse_embedding_rejects_empty_array() {
+        assert!(parse_embedding("[]").is_none());
+    }
+
+    // ── Hybrid retrieval tests ──
+
+    #[test]
+    fn hybrid_retrieval_without_embedding_is_lexical_fallback() {
+        let (server, db_path, conv_id) = test_server("hybrid-no-embed");
+        seed_memory(
+            &server.db,
+            &conv_id,
+            "knowledge",
+            "Trusted Execution 安全网关",
+            1,
+        );
+        seed_memory(&server.db, &conv_id, "note", "无关内容", 1);
+
+        // No query_embedding → lexical-only behavior
+        let results = server
+            .db
+            .retrieve_memories_hybrid(
+                &RetrieveQuery {
+                    q: "Trusted Execution".into(),
+                    top_k: 10,
+                    category: None,
+                },
+                None,
+            )
+            .unwrap();
+
+        assert!(!results.is_empty());
+        assert!(results[0].memory.content.contains("Trusted Execution"));
+        // lexical_mode = no vector score
+        assert_eq!(results[0].vector_score, 0.0);
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn hybrid_retrieval_with_embedding_boosts_vector_match() {
+        let (server, db_path, conv_id) = test_server("hybrid-vector");
+        let q_embed = vec![1.0_f32, 0.0, 0.0];
+
+        // Memory A: high vector match, low lexical
+        let id_a = seed_memory(&server.db, &conv_id, "knowledge", "完全不同的话题", 1);
+        server
+            .db
+            .update_memory_embedding(&id_a, &[1.0, 0.1, 0.0])
+            .unwrap();
+
+        // Memory B: low vector match, OK lexical
+        seed_memory(&server.db, &conv_id, "knowledge", "vector 测试", 1);
+
+        let results = server
+            .db
+            .retrieve_memories_hybrid(
+                &RetrieveQuery {
+                    q: "vector".into(),
+                    top_k: 10,
+                    category: None,
+                },
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+
+        // Memory A should rank high due to strong vector match
+        assert!(!results.is_empty());
+        // The high-vector-match memory should be present
+        assert!(results
+            .iter()
+            .any(|s| s.memory.content.contains("完全不同")));
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn old_memory_without_embedding_still_returns_on_lexical_match() {
+        let (server, db_path, conv_id) = test_server("hybrid-old-mem");
+        seed_memory(
+            &server.db,
+            &conv_id,
+            "knowledge",
+            "Trusted Execution 安全执行框架",
+            1,
+        );
+        // No embedding set → embedding is NULL
+
+        let results = server
+            .db
+            .retrieve_memories_hybrid(
+                &RetrieveQuery {
+                    q: "Trusted Execution".into(),
+                    top_k: 10,
+                    category: None,
+                },
+                Some(&[1.0, 0.0]),
+            )
+            .unwrap();
+
+        assert!(!results.is_empty());
+        assert!(results[0].memory.content.contains("安全执行"));
+        // No embedding → vector_score = 0
+        assert_eq!(results[0].vector_score, 0.0);
         std::fs::remove_file(&db_path).ok();
     }
 }

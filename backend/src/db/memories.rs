@@ -75,6 +75,12 @@ pub struct ScoredMemory {
     #[serde(flatten)]
     pub memory: Memory,
     pub score: f64,
+    /// Lexical/keyword component of the score.
+    #[serde(default)]
+    pub lexical_score: f64,
+    /// Vector/cosine-similarity component of the score.
+    #[serde(default)]
+    pub vector_score: f64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -97,10 +103,71 @@ fn default_top_k() -> usize {
 const RETRIEVAL_CANDIDATE_LIMIT: usize = 500;
 const MAX_TOP_K: usize = 50;
 
-// Final-score component weights
+// Lexical-only scoring weights (Retrieval v2)
 const TEXT_WEIGHT: f64 = 0.75;
 const CATEGORY_WEIGHT: f64 = 0.10;
 const TIME_WEIGHT: f64 = 0.15;
+
+// Hybrid scoring weights (Retrieval v3)
+const HYBRID_TEXT_WEIGHT: f64 = 0.50;
+const HYBRID_VECTOR_WEIGHT: f64 = 0.30;
+const HYBRID_CATEGORY_WEIGHT: f64 = 0.08;
+const HYBRID_TIME_WEIGHT: f64 = 0.12;
+
+/// Minimum vector similarity for a memory to enter the candidate set when
+/// it has zero lexical overlap with the query.
+const MIN_VECTOR_RELEVANCE: f64 = 0.35;
+
+// ── Embedding serialization ──
+
+/// Serialize a vector of f32s to a compact JSON array string.
+pub fn serialize_embedding(vector: &[f32]) -> Result<String, String> {
+    if vector.is_empty() {
+        return Err("empty embedding vector".to_string());
+    }
+    if vector.iter().any(|v| !v.is_finite()) {
+        return Err("embedding contains non-finite values".to_string());
+    }
+    serde_json::to_string(vector).map_err(|e| e.to_string())
+}
+
+/// Parse a stored embedding string back to a Vec<f32>.
+/// Returns `None` for any invalid input (no panic).
+pub fn parse_embedding(raw: &str) -> Option<Vec<f32>> {
+    let parsed: Vec<f32> = serde_json::from_str(raw).ok()?;
+    if parsed.is_empty() {
+        return None;
+    }
+    if parsed.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    Some(parsed)
+}
+
+// ── Cosine similarity ──
+
+/// Compute cosine similarity between two equal-length vectors.
+/// Returns `None` on dimension mismatch, zero vector, or non-finite values.
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Option<f64> {
+    if a.len() != b.len() || a.is_empty() {
+        return None;
+    }
+    if a.iter().any(|v| !v.is_finite()) || b.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    let (dot, norm_a, norm_b) =
+        a.iter()
+            .zip(b.iter())
+            .fold((0.0_f64, 0.0_f64, 0.0_f64), |(d, na, nb), (x, y)| {
+                let x = *x as f64;
+                let y = *y as f64;
+                (d + x * y, na + x * x, nb + y * y)
+            });
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return None;
+    }
+    Some(dot / (norm_a.sqrt() * norm_b.sqrt()))
+}
 
 /// Lightweight category boost multipliers.
 fn category_boost(category: &str) -> f64 {
@@ -375,13 +442,37 @@ impl Database {
         })
     }
 
+    /// Update only the `embedding` column for an existing memory.
+    /// Does not touch content, category, or updated_at.
+    pub fn update_memory_embedding(&self, id: &str, embedding: &[f32]) -> Result<(), String> {
+        let json = serialize_embedding(embedding)?;
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE memories SET embedding = ?1 WHERE id = ?2",
+            rusqlite::params![json, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Ranked Retrieval ──
 
-    /// Retrieve memories ranked by relevance to a query.
-    ///
-    /// Scoring is deterministic and local: keyword overlap, category boost,
-    /// and time decay — no embedding or LLM rerank.
+    /// Lexical-only retrieval (Retrieval v2).
+    /// Delegates to `retrieve_memories_hybrid` with `query_embedding = None`.
     pub fn retrieve_memories(&self, query: &RetrieveQuery) -> Result<Vec<ScoredMemory>, String> {
+        self.retrieve_memories_hybrid(query, None)
+    }
+
+    /// Hybrid retrieval combining lexical, vector (cosine), category, and
+    /// time-decay scores.
+    ///
+    /// When `query_embedding` is `None` the behaviour is identical to
+    /// lexical-only Retrieval v2.
+    pub fn retrieve_memories_hybrid(
+        &self,
+        query: &RetrieveQuery,
+        query_embedding: Option<&[f32]>,
+    ) -> Result<Vec<ScoredMemory>, String> {
         let candidates = self.list_memories(&MemoryQuery {
             category: query.category.clone(),
             source: None,
@@ -391,22 +482,54 @@ impl Database {
         })?;
 
         let now = chrono::Utc::now().timestamp_millis();
+        let use_hybrid = query_embedding.is_some();
+        let q_embed = query_embedding;
+
         let mut scored: Vec<ScoredMemory> = candidates
             .into_iter()
             .filter_map(|mem| {
                 let text_score = compute_text_score(&query.q, &mem.content);
-                if text_score == 0.0 {
-                    return None; // no relevance → exclude
+
+                // Vector score
+                let vector_score = if use_hybrid {
+                    q_embed
+                        .and_then(|qe| {
+                            mem.embedding
+                                .as_deref()
+                                .and_then(parse_embedding)
+                                .and_then(|me| cosine_similarity(qe, &me))
+                        })
+                        .map(|cos| cos.clamp(0.0, 1.0))
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+
+                // Candidate filtering
+                if text_score == 0.0 && vector_score < MIN_VECTOR_RELEVANCE {
+                    return None;
                 }
+
                 let cat_boost = category_boost(&mem.category);
                 let age_days = ((now - mem.updated_at) as f64) / (86_400_000.0);
                 let time_score = 1.0 / (1.0 + age_days / 30.0);
-                let final_score = text_score * TEXT_WEIGHT
-                    + cat_boost * CATEGORY_WEIGHT
-                    + time_score * TIME_WEIGHT;
+
+                let final_score = if use_hybrid {
+                    text_score * HYBRID_TEXT_WEIGHT
+                        + vector_score * HYBRID_VECTOR_WEIGHT
+                        + cat_boost * HYBRID_CATEGORY_WEIGHT
+                        + time_score * HYBRID_TIME_WEIGHT
+                } else {
+                    text_score * TEXT_WEIGHT
+                        + cat_boost * CATEGORY_WEIGHT
+                        + time_score * TIME_WEIGHT
+                };
+
                 Some(ScoredMemory {
                     memory: mem,
                     score: (final_score * 1000.0).round() / 1000.0,
+                    lexical_score: text_score,
+                    vector_score,
                 })
             })
             .collect();
