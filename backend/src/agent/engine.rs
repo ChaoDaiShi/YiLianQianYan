@@ -15,7 +15,7 @@ use crate::llm::client::LlmClient;
 use crate::llm::types::ToolCall;
 use crate::safety::approval::ApprovalStore;
 use crate::safety::execution_gateway::SecurityExecutionOutcome;
-use crate::safety::{BuiltInRole, SecurityExecutionGateway, SecurityExecutionRequest};
+use crate::safety::{SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject};
 use crate::server::LogBuffer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::trait_def::RiskLevel;
@@ -89,11 +89,12 @@ async fn dispatch_tool_call(
         tool_call_id: tool_call.id.clone(),
         tool_name: tool_call.function.name.clone(),
         arguments: args.clone(),
+        subject: SecuritySubject::local_user(),
     };
     let execution_started = std::sync::atomic::AtomicBool::new(false);
 
     let outcome = security_gateway
-        .execute_with_on_start(&request, BuiltInRole::Owner, RiskLevel::Low, || {
+        .execute_with_on_start(&request, RiskLevel::Low, || {
             execution_started.store(true, std::sync::atomic::Ordering::SeqCst);
             let _ = tx.try_send(AgentEvent {
                 event_type: "tool_start".into(),
@@ -213,6 +214,7 @@ async fn dispatch_tool_call(
                 args.clone(),
                 risk_level,
                 reason,
+                SecuritySubject::local_user().subject_id,
             );
             if !created {
                 state.add_tool_result(
@@ -571,13 +573,20 @@ mod tests {
         tool_name: &'static str,
         profile: SandboxProfile,
         verification: VerificationResult,
-    ) -> (SecurityExecutionGateway, Arc<AtomicUsize>) {
+    ) -> (
+        SecurityExecutionGateway,
+        Arc<AtomicUsize>,
+        crate::db::Database,
+    ) {
         let executions = Arc::new(AtomicUsize::new(0));
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(CountingTool {
             name: tool_name,
             executions: Arc::clone(&executions),
         }));
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-engine-gateway-{}.db", uuid::Uuid::new_v4()));
+        let db = crate::db::Database::new(&db_path).unwrap();
         let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
             SandboxConfig {
                 profile,
@@ -589,8 +598,9 @@ mod tests {
             Arc::new(FixedVerifier {
                 result: verification,
             }),
-        );
-        (gateway, executions)
+        )
+        .with_db(std::sync::Arc::new(db.clone_connection()));
+        (gateway, executions, db)
     }
 
     fn tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {
@@ -614,7 +624,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_low_risk_tool_executes_once_through_gateway() {
-        let (gateway, executions) = gateway(
+        let (gateway, executions, _db) = gateway(
             "read_file",
             SandboxProfile::ReadOnly,
             VerificationResult::success("verified", None),
@@ -653,7 +663,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_high_risk_tool_pauses_without_execution() {
-        let (gateway, executions) = gateway(
+        let (gateway, executions, _db) = gateway(
             "bash",
             SandboxProfile::Open,
             VerificationResult::success("unused", None),
@@ -689,7 +699,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_sandbox_deny_writes_reason_without_execution() {
-        let (gateway, executions) = gateway(
+        let (gateway, executions, _db) = gateway(
             "write_file",
             SandboxProfile::ReadOnly,
             VerificationResult::success("unused", None),
@@ -731,7 +741,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_verification_failure_returns_replan() {
-        let (gateway, executions) = gateway(
+        let (gateway, executions, _db) = gateway(
             "read_file",
             SandboxProfile::ReadOnly,
             VerificationResult::failure("not observed", None),
@@ -825,7 +835,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_reuses_existing_approval_identity_in_sse() {
-        let (gateway, executions) = gateway(
+        let (gateway, executions, _db) = gateway(
             "bash",
             SandboxProfile::Open,
             VerificationResult::success("unused", None),
@@ -841,6 +851,7 @@ mod tests {
             json!({"action": "kill", "pid": 42}),
             crate::tools::RiskLevel::High,
             "approve process kill".to_string(),
+            "local-user".to_string(),
         );
         let (sender, mut receiver) = mpsc::channel(16);
 

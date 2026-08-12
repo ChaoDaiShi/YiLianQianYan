@@ -9,13 +9,15 @@ use thiserror::Error;
 use crate::{
     agent::verifier::{DefaultVerifier, VerificationResult, Verifier},
     config::types::SandboxConfig,
+    db::Database,
     tools::{trait_def::RiskLevel, ToolRegistry, ToolResult},
 };
 
 use super::{
     describe_builtin_tool, AuditError, AuditEventInput, AuditEventType, AuditRecorder, BuiltInRole,
     DecisionContext, DescriptorError, PermissionId, PolicyDecision, PolicyEngine,
-    ResourceDescriptor, ResourceScope, SafetyPolicy, ToolSecurityDescriptor, POLICY_VERSION,
+    ResourceDescriptor, ResourceScope, SafetyPolicy, SecuritySubject, ToolSecurityDescriptor,
+    POLICY_VERSION,
 };
 
 #[derive(Debug)]
@@ -24,6 +26,9 @@ pub struct SecurityExecutionRequest {
     pub tool_call_id: String,
     pub tool_name: String,
     pub arguments: Value,
+    /// The security subject that initiated this request.
+    /// The gateway resolves the active role from this subject at evaluation time.
+    pub subject: SecuritySubject,
 }
 
 #[derive(Debug)]
@@ -58,6 +63,7 @@ pub struct SecurityExecutionGateway {
     tool_registry: Arc<ToolRegistry>,
     verifier: Arc<dyn Verifier>,
     audit_recorder: Option<Arc<AuditRecorder>>,
+    db: Option<Arc<Database>>,
 }
 
 impl SecurityExecutionGateway {
@@ -148,20 +154,78 @@ impl SecurityExecutionGateway {
             tool_registry,
             verifier,
             audit_recorder,
+            db: None,
         }
     }
 
+    /// Attach a database handle so the gateway can resolve subject roles
+    /// from the `security_role_bindings` table at execution time.
+    pub fn with_db(mut self, db: Arc<Database>) -> Self {
+        self.db = Some(db);
+        self
+    }
+
+    /// Resolve the active [`BuiltInRole`] for a security subject from the
+    /// database-backed `security_role_bindings` table.
+    ///
+    /// **Fail-closed**: returns [`BuiltInRole::Restricted`] when the
+    /// database is unavailable, the subject has no active binding, or the
+    /// stored role key is unrecognised.
+    pub fn resolve_subject_role(&self, subject: &SecuritySubject) -> BuiltInRole {
+        match &self.db {
+            Some(db) => match db.resolve_active_role_binding(&subject.subject_id) {
+                Some(role_key) => match role_key.as_str() {
+                    "owner" => BuiltInRole::Owner,
+                    "standard" => BuiltInRole::Standard,
+                    "restricted" => BuiltInRole::Restricted,
+                    _ => BuiltInRole::Restricted,
+                },
+                None => BuiltInRole::Restricted,
+            },
+            None => BuiltInRole::Restricted,
+        }
+    }
+
+    /// Evaluate policy for the request, resolving the subject's role from the
+    /// database-backed role bindings, then execute or gate as appropriate.
     pub async fn execute(
+        &self,
+        request: &SecurityExecutionRequest,
+        final_risk: RiskLevel,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        let role = self.resolve_subject_role(&request.subject);
+        self.execute_with_role(request, role, final_risk).await
+    }
+
+    /// Same as [`execute`] but accepts a callback fired immediately before
+    /// tool dispatch (for SSE signalling).
+    pub async fn execute_with_on_start<F>(
+        &self,
+        request: &SecurityExecutionRequest,
+        final_risk: RiskLevel,
+        on_execution_start: F,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError>
+    where
+        F: FnOnce(),
+    {
+        let role = self.resolve_subject_role(&request.subject);
+        self.execute_with_role_and_on_start(request, role, final_risk, on_execution_start)
+            .await
+    }
+
+    /// Internal entry-point that accepts an explicit role (for tests that
+    /// inject specific role scenarios without a database).
+    pub async fn execute_with_role(
         &self,
         request: &SecurityExecutionRequest,
         role: BuiltInRole,
         final_risk: RiskLevel,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
-        self.execute_with_on_start(request, role, final_risk, || {})
+        self.execute_with_role_and_on_start(request, role, final_risk, || {})
             .await
     }
 
-    pub async fn execute_with_on_start<F>(
+    pub async fn execute_with_role_and_on_start<F>(
         &self,
         request: &SecurityExecutionRequest,
         role: BuiltInRole,
@@ -171,7 +235,7 @@ impl SecurityExecutionGateway {
     where
         F: FnOnce(),
     {
-        match self.evaluate(request, role, final_risk)? {
+        match self.evaluate_with_role(request, role, final_risk)? {
             PolicyDecision::Allow(context) => {
                 self.execute_allowed(request, context, on_execution_start)
                     .await
@@ -188,7 +252,23 @@ impl SecurityExecutionGateway {
         }
     }
 
+    /// Execute a previously-approved tool call, re-evaluating the subject's
+    /// *current* role (which may have been downgraded since the approval was
+    /// created).  If the current policy denies the operation the outcome will
+    /// be [`SecurityExecutionOutcome::Denied`].
     pub async fn execute_approved(
+        &self,
+        request: &SecurityExecutionRequest,
+        approved_risk: RiskLevel,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        let role = self.resolve_subject_role(&request.subject);
+        self.execute_approved_with_role(request, role, approved_risk)
+            .await
+    }
+
+    /// Internal variant of [`execute_approved`] that accepts an explicit
+    /// role — used by tests that exercise specific role scenarios.
+    pub async fn execute_approved_with_role(
         &self,
         request: &SecurityExecutionRequest,
         role: BuiltInRole,
@@ -729,7 +809,20 @@ impl SecurityExecutionGateway {
         ))
     }
 
+    /// Evaluate the security policy for a request using the subject's
+    /// currently-bound role.
     pub fn evaluate(
+        &self,
+        request: &SecurityExecutionRequest,
+        final_risk: RiskLevel,
+    ) -> Result<PolicyDecision, SecurityGatewayError> {
+        let role = self.resolve_subject_role(&request.subject);
+        self.evaluate_with_role(request, role, final_risk)
+    }
+
+    /// Internal variant of [`evaluate`] that accepts an explicit role
+    /// — used by tests.
+    pub fn evaluate_with_role(
         &self,
         request: &SecurityExecutionRequest,
         role: BuiltInRole,
@@ -752,7 +845,7 @@ mod tests {
     use crate::db::{Database, SecurityAuditQuery};
     use crate::safety::{
         AuditRecorder, BuiltInRole, DescriptorError, PermissionId, PolicyDecision,
-        ResourceDescriptor, ResourceScope, ToolSecurityDescriptor,
+        ResourceDescriptor, ResourceScope, SecuritySubject, ToolSecurityDescriptor,
     };
     use crate::tools::trait_def::RiskLevel;
     use crate::tools::{Tool, ToolRegistry, ToolResult};
@@ -886,6 +979,7 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: tool_name.to_string(),
             arguments,
+            subject: SecuritySubject::local_user(),
         }
     }
 
@@ -1079,7 +1173,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
             .unwrap();
 
         assert_eq!(decision.context().risk_level, RiskLevel::Low);
@@ -1097,7 +1191,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert_eq!(decision.context().risk_level, RiskLevel::High);
@@ -1111,7 +1205,7 @@ mod tests {
             serde_json::json!({"path": "notes.txt", "content": "hello"}),
         );
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Allow(_)));
@@ -1125,7 +1219,7 @@ mod tests {
             serde_json::json!({"command": "git push origin develop"}),
         );
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Owner, RiskLevel::High)
+            .evaluate_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
@@ -1139,7 +1233,7 @@ mod tests {
             serde_json::json!({"path": "notes.txt", "content": "hello"}),
         );
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Restricted, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Restricted, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
@@ -1158,7 +1252,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Allow(_)));
@@ -1190,7 +1284,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Owner, RiskLevel::High)
+            .evaluate_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
@@ -1231,7 +1325,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Restricted, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Restricted, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
@@ -1263,7 +1357,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
@@ -1292,7 +1386,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Allow(_)));
@@ -1313,7 +1407,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
@@ -1331,7 +1425,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
@@ -1346,7 +1440,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Allow(_)));
@@ -1364,7 +1458,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Critical)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Critical)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
@@ -1385,7 +1479,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Allow(_)));
@@ -1403,7 +1497,7 @@ mod tests {
         );
 
         let decision = gateway
-            .evaluate(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::Deny(_)));
@@ -1420,7 +1514,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
             .await
             .unwrap();
 
@@ -1442,7 +1536,7 @@ mod tests {
         );
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Owner, RiskLevel::High)
+            .execute_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
             .await
             .unwrap();
 
@@ -1467,7 +1561,7 @@ mod tests {
         );
 
         match gateway
-            .execute(&request, BuiltInRole::Owner, RiskLevel::Low)
+            .execute_with_role(&request, BuiltInRole::Owner, RiskLevel::Low)
             .await
             .unwrap()
         {
@@ -1492,7 +1586,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let outcome = gateway
-            .execute_with_on_start(&request, BuiltInRole::Owner, RiskLevel::Low, || {
+            .execute_with_role_and_on_start(&request, BuiltInRole::Owner, RiskLevel::Low, || {
                 starts.fetch_add(1, Ordering::SeqCst);
             })
             .await
@@ -1517,7 +1611,7 @@ mod tests {
         );
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .await
             .unwrap();
 
@@ -1540,7 +1634,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
             .await
             .unwrap();
 
@@ -1591,7 +1685,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
             .await
             .unwrap();
 
@@ -1640,7 +1734,7 @@ mod tests {
         );
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Owner, RiskLevel::High)
+            .execute_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
             .await
             .unwrap();
 
@@ -1684,7 +1778,7 @@ mod tests {
         );
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .await
             .unwrap();
 
@@ -1715,7 +1809,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
             .await
             .unwrap();
 
@@ -1744,7 +1838,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
             .await
             .unwrap();
 
@@ -1775,7 +1869,7 @@ mod tests {
         );
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .await
             .unwrap();
 
@@ -1822,7 +1916,7 @@ mod tests {
         );
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Owner, RiskLevel::High)
+            .execute_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
             .await
             .unwrap();
 
@@ -1850,7 +1944,7 @@ mod tests {
         );
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Standard, RiskLevel::Medium)
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Medium)
             .await
             .unwrap();
 
@@ -1874,7 +1968,7 @@ mod tests {
         let request = request("bash", serde_json::json!({"command": "echo approved"}));
 
         let outcome = gateway
-            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::High)
+            .execute_approved_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
             .await
             .unwrap();
 
@@ -1922,7 +2016,7 @@ mod tests {
         );
 
         let outcome = gateway
-            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::Medium)
+            .execute_approved_with_role(&request, BuiltInRole::Owner, RiskLevel::Medium)
             .await
             .unwrap();
 
@@ -1941,7 +2035,7 @@ mod tests {
         let request = request("bash", serde_json::json!({"command": "diskpart"}));
 
         let outcome = gateway
-            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::High)
+            .execute_approved_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
             .await
             .unwrap();
 
@@ -1975,7 +2069,7 @@ mod tests {
         let request = request("read_file", serde_json::json!({"path": "README.md"}));
 
         let outcome = gateway
-            .execute_approved(&request, BuiltInRole::Owner, RiskLevel::Low)
+            .execute_approved_with_role(&request, BuiltInRole::Owner, RiskLevel::Low)
             .await
             .unwrap();
 
@@ -1995,5 +2089,133 @@ mod tests {
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
+    }
+
+    // ── RBAC subject role resolution tests ──
+
+    #[test]
+    fn resolve_subject_role_returns_owner_from_db() {
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-rbac-owner-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&db_path).unwrap();
+        // DB migration seeds local-user → owner
+        let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
+
+        let role = gateway.resolve_subject_role(&SecuritySubject::local_user());
+        assert_eq!(role, BuiltInRole::Owner);
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn resolve_subject_role_falls_back_to_restricted_when_no_db() {
+        let gateway = SecurityExecutionGateway::new();
+
+        let role = gateway.resolve_subject_role(&SecuritySubject::local_user());
+        assert_eq!(role, BuiltInRole::Restricted);
+    }
+
+    #[test]
+    fn resolve_subject_role_returns_restricted_for_unknown_subject() {
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-rbac-unknown-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&db_path).unwrap();
+        let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
+
+        let unknown = SecuritySubject {
+            subject_id: "unknown-user".to_string(),
+            subject_type: crate::safety::SubjectType::LocalUser,
+            provider: "test".to_string(),
+            external_ref: None,
+        };
+        let role = gateway.resolve_subject_role(&unknown);
+        assert_eq!(role, BuiltInRole::Restricted);
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn evaluate_uses_subject_role_from_db() {
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-rbac-eval-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&db_path).unwrap();
+        let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
+
+        // local-user is owner → write_file should be allowed
+        let mut request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "hello"}),
+        );
+        request.subject = SecuritySubject::local_user();
+
+        let decision = gateway.evaluate(&request, RiskLevel::Medium).unwrap();
+        assert!(
+            matches!(decision, PolicyDecision::Allow(_)),
+            "owner should be allowed to write files"
+        );
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn restricted_subject_write_file_is_denied_by_policy() {
+        let gateway = SecurityExecutionGateway::new();
+        let mut request = request(
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "hello"}),
+        );
+        // No DB → resolve_subject_role returns Restricted
+        request.subject = SecuritySubject::local_user();
+
+        let decision = gateway.evaluate(&request, RiskLevel::Medium).unwrap();
+        assert!(
+            matches!(decision, PolicyDecision::Deny(_)),
+            "restricted subject should be denied filesystem write"
+        );
+    }
+
+    #[test]
+    fn restricted_subject_shell_execute_is_denied_by_policy() {
+        let gateway = SecurityExecutionGateway::new();
+        let mut request = request("bash", serde_json::json!({"command": "echo test"}));
+        request.subject = SecuritySubject::local_user();
+
+        let decision = gateway.evaluate(&request, RiskLevel::Low).unwrap();
+        assert!(
+            matches!(decision, PolicyDecision::Deny(_)),
+            "restricted subject should be denied shell execute"
+        );
+    }
+
+    #[test]
+    fn owner_subject_bash_requires_approval() {
+        let db_path = std::env::temp_dir().join(format!(
+            "yilian-rbac-owner-bash-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let db = Database::new(&db_path).unwrap();
+        let gateway = SecurityExecutionGateway::new().with_db(Arc::new(db.clone_connection()));
+
+        let mut request = request(
+            "bash",
+            serde_json::json!({"command": "git push origin develop"}),
+        );
+        request.subject = SecuritySubject::local_user();
+
+        let decision = gateway.evaluate(&request, RiskLevel::High).unwrap();
+        assert!(
+            matches!(decision, PolicyDecision::RequireApproval(_)),
+            "owner should require approval for high-risk bash"
+        );
+
+        drop(gateway);
+        drop(db);
+        let _ = std::fs::remove_file(&db_path);
     }
 }

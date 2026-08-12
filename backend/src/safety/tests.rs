@@ -176,6 +176,7 @@ fn create_pending(store: &ApprovalStore) -> PendingApproval {
         json_str(r#"{"command": "git push origin main"}"#),
         RiskLevel::High,
         "高风险操作".to_string(),
+        "local-user".to_string(),
     )
 }
 
@@ -324,6 +325,7 @@ fn create_or_get_pending_is_atomic_per_conversation() {
                     serde_json::json!({"command": format!("echo {index}")}),
                     RiskLevel::High,
                     "approval required".to_string(),
+                    "local-user".to_string(),
                 );
                 (approval.approval_id, created)
             })

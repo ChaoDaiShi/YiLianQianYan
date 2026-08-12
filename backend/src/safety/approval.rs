@@ -51,6 +51,8 @@ pub struct PendingApproval {
     pub status: ApprovalStatus,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// The security subject that initiated this approval request.
+    pub subject_id: String,
 }
 
 impl PendingApproval {
@@ -107,6 +109,7 @@ impl ApprovalStore {
         arguments: serde_json::Value,
         risk_level: RiskLevel,
         reason: String,
+        subject_id: String,
     ) -> PendingApproval {
         let now = Utc::now();
         let approval = PendingApproval {
@@ -120,6 +123,7 @@ impl ApprovalStore {
             status: ApprovalStatus::Pending,
             created_at: now,
             expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
+            subject_id,
         };
         self.approvals
             .write()
@@ -137,6 +141,7 @@ impl ApprovalStore {
         arguments: serde_json::Value,
         risk_level: RiskLevel,
         reason: String,
+        subject_id: String,
     ) -> (PendingApproval, bool) {
         let now = Utc::now();
         let mut approvals = self.approvals.write();
@@ -163,6 +168,7 @@ impl ApprovalStore {
             status: ApprovalStatus::Pending,
             created_at: now,
             expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
+            subject_id,
         };
         approvals.insert(approval.approval_id.clone(), approval.clone());
         (approval, true)

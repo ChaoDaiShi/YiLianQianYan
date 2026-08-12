@@ -264,6 +264,22 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())
     }
+
+    /// Resolve the active (non-revoked) role key for a security subject.
+    ///
+    /// Returns `Some("owner")`, `Some("standard")`, `Some("restricted")`,
+    /// or `None` when the subject has no active binding.
+    pub fn resolve_active_role_binding(&self, subject_id: &str) -> Option<String> {
+        let conn = self.conn();
+        conn.query_row(
+            "SELECT role_key FROM security_role_bindings
+             WHERE subject_id = ?1 AND revoked_at IS NULL
+             LIMIT 1",
+            [subject_id],
+            |row| row.get(0),
+        )
+        .ok()
+    }
 }
 
 #[cfg(test)]

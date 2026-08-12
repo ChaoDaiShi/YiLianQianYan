@@ -134,8 +134,9 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 
 - Unified `SecurityExecutionGateway`
 - `PolicyEngine` Runtime Integration
-- Sandbox Path Enforcement
-- Approval Execution Unification
+- SecuritySubject → Role → PolicyEngine 进入 Runtime（Agent 与 Approval 不再硬编码 `Owner`）
+- Sandbox Path Enforcement（含 symlink / junction 逃逸防护）
+- Approval Execution Unification（审批后执行使用原始 subject，重新评估当前 role）
 - Deterministic Verification Pipeline
 - Redacted Security Audit Chain
 
@@ -212,7 +213,7 @@ Redacted Audit Recording
 - Tool 最终风险；
 - `Allow` / `RequireApproval` / `Deny`。
 
-安全模块提供 `owner`、`standard`、`restricted` 三种内置角色。`Owner` 不会绕过 High/Critical 风险的单次审批要求。Gateway 不复制 RBAC 规则，只向 `PolicyEngine` 提交真实 Descriptor、资源范围、角色与最终风险。
+安全模块提供 `owner`、`standard`、`restricted` 三种内置角色。角色的解析链路为 `SecuritySubject → security_role_bindings → BuiltInRole → PolicyEngine`，Agent 和 Approval 运行时不再硬编码角色。`Owner` 不会绕过 High/Critical 风险的单次审批要求。如果 subject 的 role binding 不存在或无效，Gateway 默认返回 `Restricted`（Fail Closed）。Gateway 不复制 RBAC 规则，只向 `PolicyEngine` 提交真实 Descriptor、资源范围、角色与最终风险。
 
 ### Sandbox 路径约束
 
@@ -231,6 +232,8 @@ Redacted Audit Recording
 - `denied_write_paths`
 
 `denied_write_paths` 的优先级始终高于 workspace 或 writable allow 规则。路径判断会规范化相对路径、绝对路径和 `..`，并按路径组件判断目录边界，避免把相似字符串前缀误判为同一目录。
+
+路径判断会规范化相对路径、绝对路径和 `..`，并按路径组件判断目录边界，避免把相似字符串前缀误判为同一目录。写入目标路径会通过文件系统 `canonicalize` 解析 symlink / junction / reparse point 后再做边界检查，symlink 指向 workspace 外部时拒绝写入。
 
 当前 Sandbox **不等价于**：
 

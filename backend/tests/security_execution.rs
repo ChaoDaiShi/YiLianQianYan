@@ -27,7 +27,7 @@ use yilian_backend::{
     safety::{
         execution_gateway::SecurityExecutionOutcome, AuditEventInput, AuditEventType,
         AuditRecorder, BuiltInRole, ControlSession, PendingApproval, SecurityExecutionGateway,
-        SecurityExecutionRequest, CONTROL_SESSION_HEADER,
+        SecurityExecutionRequest, SecuritySubject, CONTROL_SESSION_HEADER,
     },
     server::AppServer,
     tools::{RiskLevel, Tool, ToolRegistry, ToolResult},
@@ -334,6 +334,7 @@ fn create_pending(
         arguments,
         risk_level,
         "trusted execution approval".to_string(),
+        "local-user".to_string(),
     )
 }
 
@@ -545,10 +546,11 @@ async fn gateway_allow_executes_tool_and_verifier_exactly_once() {
         tool_call_id: "gateway-allow-call".to_string(),
         tool_name: "read_file".to_string(),
         arguments: json!({"path": "README.md"}),
+        subject: SecuritySubject::local_user(),
     };
 
     let outcome = gateway
-        .execute(&request, BuiltInRole::Owner, RiskLevel::Low)
+        .execute_with_role(&request, BuiltInRole::Owner, RiskLevel::Low)
         .await
         .unwrap();
 
@@ -652,12 +654,13 @@ async fn gateway_enforces_workspace_custom_and_denied_write_paths() {
             tool_call_id: format!("gateway-sandbox-{}", case.label),
             tool_name: "write_file".to_string(),
             arguments: json!({"path": case.path, "content": "test"}),
+            subject: SecuritySubject::local_user(),
         };
         let executions_before = executions.load(Ordering::SeqCst);
         let verifications_before = verifier_invocations.load(Ordering::SeqCst);
 
         let outcome = gateway
-            .execute(&request, BuiltInRole::Owner, RiskLevel::Low)
+            .execute_with_role(&request, BuiltInRole::Owner, RiskLevel::Low)
             .await
             .unwrap();
 

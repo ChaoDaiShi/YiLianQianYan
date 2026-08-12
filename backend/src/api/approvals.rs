@@ -30,8 +30,8 @@ use crate::llm::types::ChatMessage;
 use crate::safety::approval::{ApprovalError, PendingApproval};
 use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGatewayError};
 use crate::safety::{
-    AuditEventInput, AuditEventType, BuiltInRole, SecurityExecutionGateway,
-    SecurityExecutionRequest,
+    AuditEventInput, AuditEventType, SecurityExecutionGateway, SecurityExecutionRequest,
+    SecuritySubject,
 };
 use crate::server::{AppServer, LogBuffer};
 use crate::tools::registry::ToolRegistry;
@@ -54,12 +54,16 @@ fn status_for(e: &ApprovalError) -> StatusCode {
 
 fn record_approval_resolved(server: &AppServer, approval: &PendingApproval) {
     let resolution = approval.status.to_string();
+    let role_key = server
+        .db
+        .resolve_active_role_binding(&approval.subject_id)
+        .unwrap_or_else(|| "restricted".to_string());
     if let Err(error) = server.audit_recorder.record(AuditEventInput {
         event_type: AuditEventType::ApprovalResolved,
         correlation_id: approval.tool_call_id.clone(),
         request_id: approval.tool_call_id.clone(),
-        subject_id: "local-user".to_string(),
-        role_key: "owner".to_string(),
+        subject_id: approval.subject_id.clone(),
+        role_key,
         conversation_id: Some(approval.conversation_id.clone()),
         tool_call_id: Some(approval.tool_call_id.clone()),
         tool_name: Some(approval.tool_name.clone()),
@@ -123,16 +127,18 @@ async fn execute_approved_tool(
         Arc::clone(&server.tool_registry),
         Arc::new(DefaultVerifier::new(&server.workspace_root)),
         Arc::new(server.audit_recorder.clone()),
-    );
+    )
+    .with_db(Arc::new(server.db.clone_connection()));
     let request = SecurityExecutionRequest {
         conversation_id: approval.conversation_id.clone(),
         tool_call_id: approval.tool_call_id.clone(),
         tool_name: approval.tool_name.clone(),
         arguments: approval.arguments.clone(),
+        subject: SecuritySubject::local_user(),
     };
 
     gateway
-        .execute_approved(&request, BuiltInRole::Owner, approval.risk_level)
+        .execute_approved(&request, approval.risk_level)
         .await
 }
 
@@ -548,7 +554,8 @@ async fn resume_agent(
         Arc::clone(tool_registry),
         Arc::new(DefaultVerifier::new(&server.workspace_root)),
         Arc::new(server.audit_recorder.clone()),
-    );
+    )
+    .with_db(Arc::new(server.db.clone_connection()));
 
     let result = engine::run_react_loop_with_channel(
         &mut agent_state,
@@ -738,6 +745,7 @@ mod tests {
             serde_json::json!({"command": "echo exact-original"}),
             RiskLevel::High,
             "approval required".to_string(),
+            "local-user".to_string(),
         );
         let consumed = resolve_and_consume(
             &server,
@@ -780,6 +788,7 @@ mod tests {
             serde_json::json!({"path": "notes.txt", "content": "blocked"}),
             RiskLevel::Medium,
             "approval required".to_string(),
+            "local-user".to_string(),
         );
         let consumed = resolve_and_consume(
             &server,
@@ -806,6 +815,7 @@ mod tests {
             serde_json::json!({"command": "echo safe", "token": "must-not-be-audited"}),
             RiskLevel::High,
             "high-risk tool".to_string(),
+            "local-user".to_string(),
         )
     }
 

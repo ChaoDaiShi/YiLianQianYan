@@ -9,6 +9,8 @@ pub enum SandboxPathError {
     EmptyWorkspaceRoot,
     #[error("failed to resolve current directory: {0}")]
     CurrentDirectory(String),
+    #[error("failed to canonicalize path: {0}")]
+    CanonicalizeFailed(String),
 }
 
 /// Resolve a path relative to `workspace_root` and normalize `.`/`..`
@@ -109,7 +111,56 @@ pub fn is_writable_path(
     Ok(false)
 }
 
+/// Resolve a write target path against the real filesystem, following
+/// symlinks / junctions / reparse points so that containment checks are
+/// not bypassed through indirection.
+///
+/// - If the full normalized path exists, canonicalize it directly.
+/// - If only ancestor directories exist, canonicalize the nearest
+///   existing parent and re-join the remainder.
+/// - If nothing exists up to the root, fail closed.
+pub fn resolve_write_target(
+    workspace_root: &Path,
+    target: &Path,
+) -> Result<PathBuf, SandboxPathError> {
+    let normalized = normalize_path(workspace_root, target)?;
+
+    if normalized.exists() {
+        return std::fs::canonicalize(&normalized)
+            .map_err(|error| SandboxPathError::CanonicalizeFailed(error.to_string()));
+    }
+
+    let mut current = normalized.clone();
+    let mut remainder = PathBuf::new();
+
+    loop {
+        if current.exists() {
+            let canonical_parent = std::fs::canonicalize(&current)
+                .map_err(|error| SandboxPathError::CanonicalizeFailed(error.to_string()))?;
+            return Ok(canonical_parent.join(&remainder));
+        }
+
+        match current.file_name().map(|name| name.to_os_string()) {
+            Some(name) if !name.is_empty() => {
+                remainder = PathBuf::from(&name).join(&remainder);
+                if !current.pop() {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    Err(SandboxPathError::CanonicalizeFailed(
+        "cannot resolve any existing parent directory for the write target".to_string(),
+    ))
+}
+
 /// Apply the configured sandbox profile to a write target.
+///
+/// Both the target path and every boundary path (root, denied paths,
+/// writable paths) are resolved against the real filesystem via
+/// [`resolve_write_target`] so symlink / junction escapes are caught.
 ///
 /// Explicit denied paths always take precedence over the selected profile.
 pub fn can_write(
@@ -117,26 +168,26 @@ pub fn can_write(
     workspace_root: &Path,
     target: &Path,
 ) -> Result<bool, SandboxPathError> {
-    let denied_paths = config
-        .denied_write_paths
-        .iter()
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
-    if is_denied_write_path(workspace_root, target, &denied_paths)? {
-        return Ok(false);
+    let workspace_base = resolve_workspace_base(workspace_root)?;
+    let real_root = resolve_write_target(&workspace_base, &workspace_base)?;
+    let real_target = resolve_write_target(&workspace_base, target)?;
+
+    // denied_write_paths always have highest priority
+    for denied in &config.denied_write_paths {
+        let real_denied = resolve_write_target(&workspace_base, &PathBuf::from(denied))?;
+        if is_within_root(&real_denied, &real_target) {
+            return Ok(false);
+        }
     }
 
     match &config.profile {
         SandboxProfile::ReadOnly => Ok(false),
-        SandboxProfile::WorkspaceWrite => can_write_workspace(workspace_root, target),
-        SandboxProfile::Custom => {
-            let writable_paths = config
-                .writable_paths
-                .iter()
-                .map(PathBuf::from)
-                .collect::<Vec<_>>();
-            is_writable_path(workspace_root, target, &writable_paths)
-        }
+        SandboxProfile::WorkspaceWrite => Ok(is_within_root(&real_root, &real_target)),
+        SandboxProfile::Custom => Ok(config.writable_paths.iter().any(|writable| {
+            resolve_write_target(&workspace_base, &PathBuf::from(writable))
+                .map(|real_writable| is_within_root(&real_writable, &real_target))
+                .unwrap_or(false)
+        })),
         SandboxProfile::Open => Ok(true),
     }
 }
@@ -482,5 +533,222 @@ mod tests {
         let config = sandbox_config(SandboxProfile::Open, &[], &[".git"]);
 
         assert!(!can_write(&config, Path::new("workspace"), Path::new(".git/config")).unwrap());
+    }
+
+    // ── resolve_write_target tests ──
+
+    #[test]
+    fn resolve_write_target_existing_file() {
+        let dir =
+            std::env::temp_dir().join(format!("yilian-resolve-existing-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("real.txt");
+        std::fs::write(&file, "hello").unwrap();
+
+        let resolved = super::resolve_write_target(&dir, Path::new("real.txt")).unwrap();
+        let expected = std::fs::canonicalize(&file).unwrap();
+        assert_eq!(resolved, expected);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_write_target_new_file() {
+        let dir = std::env::temp_dir().join(format!("yilian-resolve-new-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let resolved = super::resolve_write_target(&dir, Path::new("new/file.txt")).unwrap();
+        let expected = std::fs::canonicalize(&dir)
+            .unwrap()
+            .join("new")
+            .join("file.txt");
+        assert_eq!(resolved, expected);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_write_target_fails_closed_on_completely_nonexistent_root() {
+        // On Windows: use a non-existent drive letter whose root directory
+        // cannot be canonicalized.
+        // On Unix: canonicalize succeeds because "/" always exists, so we
+        // verify fail-closed behaviour through `can_write` instead (see
+        // `canonicalize_failure_is_not_allowed`).
+        #[cfg(windows)]
+        {
+            let result =
+                super::resolve_write_target(Path::new("."), Path::new("Q:\\nonexistent\\file.txt"));
+            assert!(result.is_err());
+        }
+    }
+
+    // ── can_write with real filesystem resolution ──
+
+    #[test]
+    fn can_write_allows_existing_workspace_file_with_real_paths() {
+        let dir =
+            std::env::temp_dir().join(format!("yilian-can-write-real-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, "hello").unwrap();
+
+        let config = sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]);
+        assert!(can_write(&config, &dir, Path::new("notes.txt")).unwrap());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn can_write_allows_new_file_with_real_workspace() {
+        let dir =
+            std::env::temp_dir().join(format!("yilian-new-file-real-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let config = sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]);
+        assert!(can_write(&config, &dir, Path::new("new/subdir/file.txt")).unwrap());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn can_write_denies_dotdot_escape_with_real_paths() {
+        let dir = std::env::temp_dir().join(format!("yilian-dotdot-real-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let config = sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]);
+        assert!(!can_write(&config, &dir, Path::new("../outside.txt")).unwrap());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ── Symlink escape tests ──
+
+    /// Helper: create a symlink (dir) on Unix or Windows. Returns Ok(()) or skips.
+    fn create_dir_symlink(original: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(original, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(original, link)
+        }
+    }
+
+    #[test]
+    fn symlink_inside_workspace_to_inside_is_allowed() {
+        let base =
+            std::env::temp_dir().join(format!("yilian-symlink-inside-{}", uuid::Uuid::new_v4()));
+        let workspace = base.join("workspace");
+        std::fs::create_dir_all(workspace.join("real")).unwrap();
+        // workspace/link → workspace/real
+        let link = workspace.join("link");
+        let result = create_dir_symlink(&workspace.join("real"), &link);
+        if result.is_err() {
+            eprintln!("skipping symlink test: cannot create symlink ({result:?})");
+            std::fs::remove_dir_all(&base).ok();
+            return;
+        }
+
+        // Writing to workspace/link/file.txt should be allowed (resolves inside workspace)
+        let config = sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]);
+        assert!(can_write(&config, &workspace, Path::new("link/file.txt")).unwrap());
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn symlink_inside_workspace_to_outside_is_denied() {
+        let base =
+            std::env::temp_dir().join(format!("yilian-symlink-outside-{}", uuid::Uuid::new_v4()));
+        let workspace = base.join("workspace");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        // workspace/link → base/outside (external to workspace)
+        let link = workspace.join("link");
+        let result = create_dir_symlink(&outside, &link);
+        if result.is_err() {
+            eprintln!("skipping symlink test: cannot create symlink ({result:?})");
+            std::fs::remove_dir_all(&base).ok();
+            return;
+        }
+
+        let config = sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]);
+        assert!(!can_write(&config, &workspace, Path::new("link/file.txt")).unwrap());
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn symlink_inside_custom_writable_to_outside_is_denied() {
+        let base =
+            std::env::temp_dir().join(format!("yilian-symlink-custom-{}", uuid::Uuid::new_v4()));
+        let workspace = base.join("workspace");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(workspace.join("writable")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        // workspace/writable/link → base/outside
+        let link = workspace.join("writable").join("link");
+        let result = create_dir_symlink(&outside, &link);
+        if result.is_err() {
+            eprintln!("skipping symlink test: cannot create symlink ({result:?})");
+            std::fs::remove_dir_all(&base).ok();
+            return;
+        }
+
+        let config = sandbox_config(SandboxProfile::Custom, &["writable"], &[]);
+        assert!(!can_write(&config, &workspace, Path::new("writable/link/file.txt")).unwrap());
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn denied_path_accessed_via_symlink_is_denied() {
+        let base =
+            std::env::temp_dir().join(format!("yilian-symlink-denied-{}", uuid::Uuid::new_v4()));
+        let workspace = base.join("workspace");
+        let secret_dir = workspace.join("secret");
+        std::fs::create_dir_all(&secret_dir).unwrap();
+        std::fs::write(secret_dir.join("key.txt"), "classified").unwrap();
+        // workspace/link → workspace/secret
+        let link = workspace.join("link");
+        let result = create_dir_symlink(&secret_dir, &link);
+        if result.is_err() {
+            eprintln!("skipping symlink test: cannot create symlink ({result:?})");
+            std::fs::remove_dir_all(&base).ok();
+            return;
+        }
+
+        // Deny writes to workspace/secret but allow workspace/*
+        let config = sandbox_config(SandboxProfile::WorkspaceWrite, &[], &["secret"]);
+        // Accessing secret/key.txt via symlink workspace/link/key.txt should still be denied
+        assert!(!can_write(&config, &workspace, Path::new("link/key.txt")).unwrap());
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn canonicalize_failure_is_not_allowed() {
+        // A path whose parent chain cannot be resolved should fail closed.
+        // On Windows, a non-existent drive letter triggers this.
+        #[cfg(windows)]
+        {
+            let result = can_write(
+                &sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]),
+                Path::new("Q:\\nonexistent\\workspace"),
+                Path::new("file.txt"),
+            );
+            assert!(result.is_err());
+        }
+        #[cfg(not(windows))]
+        {
+            let result = can_write(
+                &sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]),
+                Path::new("/nonexistent/deep/path/workspace"),
+                Path::new("file.txt"),
+            );
+            assert!(result.is_err());
+        }
     }
 }

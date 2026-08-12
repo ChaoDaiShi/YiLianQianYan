@@ -40,7 +40,7 @@ pub use rbac::{GrantMode, RolePolicy};
 pub use redaction::{redact_and_digest, redact_error, sha256_hex, RedactedJson};
 pub use sandbox::{
     can_write, can_write_workspace, is_denied_write_path, is_within_root, is_writable_path,
-    normalize_path, SandboxPathError,
+    normalize_path, resolve_write_target, SandboxPathError,
 };
 pub use subject::{BuiltInRole, SecuritySubject, SubjectType};
 
