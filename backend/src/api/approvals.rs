@@ -387,7 +387,7 @@ fn resume_stream(
                         chrono::Utc::now().timestamp_millis(),
                     );
                 }
-                Ok(SecurityExecutionOutcome::RequiresApproval) => {
+                Ok(SecurityExecutionOutcome::RequiresApproval { .. }) => {
                     let reason =
                         "approved execution unexpectedly requested another approval".to_string();
                     let _ = tx
@@ -542,14 +542,20 @@ async fn resume_agent(
         .insert(approval.conversation_id.clone(), cancel_token.clone());
 
     let llm_client = LlmClient::new(&config.model);
-    let verifier = crate::agent::verifier::DefaultVerifier::new(&server.workspace_root);
+    let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+        config.sandbox.clone(),
+        server.workspace_root.clone(),
+        Arc::clone(tool_registry),
+        Arc::new(DefaultVerifier::new(&server.workspace_root)),
+        Arc::new(server.audit_recorder.clone()),
+    );
 
     let result = engine::run_react_loop_with_channel(
         &mut agent_state,
         &llm_client,
         tool_registry,
         &server.approval_store,
-        &verifier,
+        &security_gateway,
         config,
         &approval.conversation_id,
         &cancel_token,

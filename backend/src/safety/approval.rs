@@ -127,6 +127,47 @@ impl ApprovalStore {
         approval
     }
 
+    /// Atomically reuse the active approval for a conversation or create one.
+    /// Returns the approval and whether this call created it.
+    pub fn create_or_get_pending(
+        &self,
+        conversation_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+        risk_level: RiskLevel,
+        reason: String,
+    ) -> (PendingApproval, bool) {
+        let now = Utc::now();
+        let mut approvals = self.approvals.write();
+
+        if let Some(existing) = approvals
+            .values()
+            .find(|approval| {
+                approval.conversation_id == conversation_id
+                    && approval.status == ApprovalStatus::Pending
+            })
+            .cloned()
+        {
+            return (existing, false);
+        }
+
+        let approval = PendingApproval {
+            approval_id: uuid::Uuid::new_v4().to_string(),
+            conversation_id,
+            tool_call_id,
+            tool_name,
+            arguments,
+            risk_level,
+            reason,
+            status: ApprovalStatus::Pending,
+            created_at: now,
+            expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
+        };
+        approvals.insert(approval.approval_id.clone(), approval.clone());
+        (approval, true)
+    }
+
     /// Fetch an approval by id.
     pub fn get(&self, approval_id: &str) -> Option<PendingApproval> {
         self.approvals.read().get(approval_id).cloned()
