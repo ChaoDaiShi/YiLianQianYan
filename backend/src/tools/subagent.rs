@@ -88,9 +88,20 @@ impl SubagentToolAdapter {
         } else {
             &definition.description
         };
-        let truncated =
-            crate::utils::text::truncate_chars(raw_desc, MAX_SUBAGENT_DESCRIPTION_CHARS);
-        let description = format!("[Subagent:{}] {}", definition.name, truncated);
+        // Bound the FINAL LLM-visible description, keeping the prefix intact.
+        // `truncate_chars` appends a "..." ellipsis when truncating, so reserve
+        // 3 chars so the assembled string never exceeds the budget.
+        let prefix = format!("[Subagent:{}] ", definition.name);
+        let prefix_len = prefix.chars().count();
+        if prefix_len + 3 >= MAX_SUBAGENT_DESCRIPTION_CHARS {
+            // The prefix (plus minimum truncation overhead) cannot fit within
+            // the budget while remaining intact — fail closed rather than
+            // truncating the prefix.
+            return Err(SubagentToolAdapterError::InvalidName);
+        }
+        let content_budget = MAX_SUBAGENT_DESCRIPTION_CHARS - prefix_len - 3;
+        let truncated = crate::utils::text::truncate_chars(raw_desc, content_budget);
+        let description = format!("{prefix}{truncated}");
 
         Ok(Self {
             exposed_name,
@@ -288,11 +299,31 @@ mod tests {
     fn long_description_is_truncated_utf8_safe() {
         let long = "长".repeat(3000);
         let adapter = SubagentToolAdapter::new(&definition("researcher", &long, "body")).unwrap();
-        let prefix_len = "[Subagent:researcher] ".chars().count();
-        assert!(adapter.description().chars().count() <= 1000 + 3 + prefix_len);
+        assert!(
+            adapter.description().chars().count() <= MAX_SUBAGENT_DESCRIPTION_CHARS,
+            "description exceeded budget: {}",
+            adapter.description().chars().count()
+        );
         assert!(adapter
             .description()
             .is_char_boundary(adapter.description().len()));
+    }
+
+    #[test]
+    fn long_chinese_description_is_bounded_and_utf8_safe() {
+        let long =
+            "这是一个非常长的中文子智能体描述，用于验证 UTF-8 截断不会破坏多字节字符。".repeat(200);
+        let adapter = SubagentToolAdapter::new(&definition("researcher", &long, "body")).unwrap();
+        assert!(
+            adapter.description().chars().count() <= MAX_SUBAGENT_DESCRIPTION_CHARS,
+            "description exceeded budget: {}",
+            adapter.description().chars().count()
+        );
+        assert!(adapter
+            .description()
+            .is_char_boundary(adapter.description().len()));
+        // The prefix is fully preserved.
+        assert!(adapter.description().starts_with("[Subagent:researcher] "));
     }
 
     #[test]
