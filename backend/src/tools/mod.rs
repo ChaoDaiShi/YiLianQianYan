@@ -8,6 +8,7 @@ pub mod registry;
 pub mod screenshot;
 pub mod search;
 pub mod skill;
+pub mod subagent;
 pub mod trait_def;
 pub mod upscale;
 
@@ -17,5 +18,6 @@ pub use process::ProcessTool;
 pub use registry::*;
 pub use screenshot::ScreenshotTool;
 pub use skill::{DiscoveredSkill, LoadSkillTool, SkillDiscovery, WriteTodosTool};
+pub use subagent::{SubagentToolAdapter, SubagentToolAdapterError};
 pub use trait_def::*;
 pub use upscale::UpscaleTool;
