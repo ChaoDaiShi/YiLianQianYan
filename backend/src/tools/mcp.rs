@@ -36,6 +36,8 @@ const MAX_EXPOSED_TOOL_NAME_LEN: usize = 64;
 const MAX_MCP_TOOL_DESCRIPTION_CHARS: usize = 1000;
 /// Length of the server namespace prefix derived from `server.id`.
 const SERVER_NAMESPACE_LEN: usize = 8;
+/// Length of the SHA-256 binding tag exposed in the tool name.
+const MCP_BINDING_TAG_LEN: usize = 12;
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpToolAdapterError {
@@ -96,7 +98,8 @@ impl McpToolAdapter {
         let server_ns = derive_server_namespace(&server.id)?;
         let tool_ns =
             sanitize_tool_name(remote_tool_name).ok_or(McpToolAdapterError::InvalidToolName)?;
-        let exposed_name = build_exposed_name(&server_ns, &tool_ns)?;
+        let binding_tag = derive_binding_tag(server, tool)?;
+        let exposed_name = build_exposed_name(&server_ns, &binding_tag, &tool_ns)?;
 
         // Description: prefix with an MCP marker, truncate the raw description first.
         let fallback_desc = format!("MCP tool {remote_tool_name} from {}", server.name);
@@ -187,9 +190,13 @@ fn sanitize_tool_name(name: &str) -> Option<String> {
     }
 }
 
-/// Build `mcp_<server>_<tool>`, truncating the tool part if needed.
-fn build_exposed_name(server_ns: &str, tool_ns: &str) -> Result<String, McpToolAdapterError> {
-    let prefix = format!("mcp_{server_ns}_");
+/// Build `mcp_<server>_<binding>_<tool>`, truncating only the tool part.
+fn build_exposed_name(
+    server_ns: &str,
+    binding_tag: &str,
+    tool_ns: &str,
+) -> Result<String, McpToolAdapterError> {
+    let prefix = format!("mcp_{server_ns}_{binding_tag}_");
     let budget = MAX_EXPOSED_TOOL_NAME_LEN.saturating_sub(prefix.len());
     if budget == 0 {
         return Err(McpToolAdapterError::InvalidToolName);
@@ -200,6 +207,35 @@ fn build_exposed_name(server_ns: &str, tool_ns: &str) -> Result<String, McpToolA
         return Err(McpToolAdapterError::InvalidToolName);
     }
     Ok(format!("{prefix}{tool_part}"))
+}
+
+/// Derive a deterministic short SHA-256 fingerprint binding the adapter to the
+/// server's current runtime config and the tool contract.
+///
+/// Secrets in `server.env` deliberately participate in the hash (so an env
+/// change rotates the identity), but only the short hex tag is ever exposed.
+fn derive_binding_tag(server: &McpServer, tool: &McpTool) -> Result<String, McpToolAdapterError> {
+    let payload = serde_json::json!({
+        "server": {
+            "id": &server.id,
+            "name": &server.name,
+            "transport": &server.transport,
+            "command": &server.command,
+            "args": &server.args,
+            "url": &server.url,
+            "env": &server.env,
+            "enabled": server.enabled,
+            "updated_at": server.updated_at,
+        },
+        "tool": {
+            "name": &tool.name,
+            "description": &tool.description,
+            "input_schema": &tool.input_schema,
+        }
+    });
+    let bytes = serde_json::to_vec(&payload).map_err(|_| McpToolAdapterError::InvalidToolName)?;
+    let digest = crate::safety::sha256_hex(&bytes);
+    Ok(digest[..MCP_BINDING_TAG_LEN].to_string())
 }
 
 #[async_trait]
@@ -323,6 +359,15 @@ mod tests {
         }
     }
 
+    /// Compute the full expected exposed name for a server/tool pair using the
+    /// same internal derivation as the adapter constructor.
+    fn expected_exposed_name(server: &McpServer, tool: &McpTool) -> String {
+        let ns = derive_server_namespace(&server.id).unwrap();
+        let tool_ns = sanitize_tool_name(tool.name.as_str()).unwrap();
+        let tag = derive_binding_tag(server, tool).unwrap();
+        build_exposed_name(&ns, &tag, &tool_ns).unwrap()
+    }
+
     #[test]
     fn adapter_builds_namespaced_name() {
         let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "filesystem");
@@ -332,7 +377,9 @@ mod tests {
             serde_json::json!({"type": "object"}),
         );
         let adapter = McpToolAdapter::new(&server, &tool).unwrap();
-        assert_eq!(adapter.name(), "mcp_550e8400_read_file");
+        assert_eq!(adapter.name(), expected_exposed_name(&server, &tool));
+        assert!(adapter.name().starts_with("mcp_550e8400_"));
+        assert!(adapter.name().ends_with("_read_file"));
         assert_eq!(adapter.remote_tool_name(), "read-file");
         assert_eq!(adapter.server_id(), "550e8400-e29b-41d4-a716-446655440000");
     }
@@ -354,8 +401,10 @@ mod tests {
         let a = McpToolAdapter::new(&server_a, &tool).unwrap();
         let b = McpToolAdapter::new(&server_b, &tool).unwrap();
         assert_ne!(a.name(), b.name());
-        assert_eq!(a.name(), "mcp_aaaaaaaa_search");
-        assert_eq!(b.name(), "mcp_bbbbbbbb_search");
+        assert_eq!(a.name(), expected_exposed_name(&server_a, &tool));
+        assert_eq!(b.name(), expected_exposed_name(&server_b, &tool));
+        assert!(a.name().starts_with("mcp_aaaaaaaa_"));
+        assert!(b.name().starts_with("mcp_bbbbbbbb_"));
     }
 
     #[test]
@@ -449,9 +498,10 @@ mod tests {
         let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
         let adapter = McpToolAdapter::new(&server, &tool).unwrap();
 
+        let name = adapter.name().to_string();
         let mut registry = crate::tools::ToolRegistry::new();
         registry.register(std::sync::Arc::new(adapter));
-        assert!(registry.get("mcp_550e8400_search").is_some());
+        assert!(registry.get(&name).is_some());
         assert_eq!(registry.list_tools().len(), 1);
     }
 
@@ -464,7 +514,10 @@ mod tests {
         let adapter = McpToolAdapter::new(&server, &tool).unwrap();
 
         let def = adapter.to_openai_tool();
-        assert_eq!(def["function"]["name"], "mcp_550e8400_search");
+        assert_eq!(
+            def["function"]["name"],
+            expected_exposed_name(&server, &tool)
+        );
         assert!(def["function"]["description"]
             .as_str()
             .unwrap()
@@ -541,15 +594,14 @@ mod tests {
     #[test]
     fn new_unique_detects_name_collision() {
         use std::collections::HashSet;
-        let server_a = mcp_server("abcdef12-1111-0000-0000-000000000000", "A");
-        let server_b = mcp_server("abcdef12-2222-0000-0000-000000000000", "B");
+        let server = mcp_server("abcdef12-1111-0000-0000-000000000000", "A");
         let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
 
         let mut occupied = HashSet::new();
-        // First insert succeeds.
-        McpToolAdapter::new_unique(&server_a, &tool, &mut occupied).unwrap();
-        // Same 8-char namespace + same tool name collides.
-        let err = McpToolAdapter::new_unique(&server_b, &tool, &mut occupied).unwrap_err();
+        // First insert claims the derived name.
+        McpToolAdapter::new_unique(&server, &tool, &mut occupied).unwrap();
+        // Re-registering the identical server+tool collides (same binding tag).
+        let err = McpToolAdapter::new_unique(&server, &tool, &mut occupied).unwrap_err();
         assert!(matches!(err, McpToolAdapterError::NameCollision(_)));
     }
 
@@ -573,7 +625,7 @@ mod tests {
 
         let mut occupied = HashSet::new();
         // Simulate an already-registered builtin with the same exposed name.
-        occupied.insert("mcp_550e8400_search".to_string());
+        occupied.insert(expected_exposed_name(&server, &tool));
         let err = McpToolAdapter::new_unique(&server, &tool, &mut occupied).unwrap_err();
         assert!(matches!(err, McpToolAdapterError::NameCollision(_)));
     }
@@ -613,14 +665,15 @@ mod tests {
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("bash").is_some());
         // MCP tool present.
-        assert!(registry.get("mcp_aaaaaaaa_search").is_some());
+        let expected = expected_exposed_name(&server, &tools[0]);
+        assert!(registry.get(&expected).is_some());
         // And exposed as an OpenAI function definition.
         let openai_tools = registry.to_openai_tools();
         let names: Vec<&str> = openai_tools
             .iter()
             .filter_map(|t| t["function"]["name"].as_str())
             .collect();
-        assert!(names.contains(&"mcp_aaaaaaaa_search"));
+        assert!(names.contains(&expected.as_str()));
     }
 
     #[test]
@@ -633,8 +686,12 @@ mod tests {
         ];
         let (registry, n) = register_helper(&server, &tools, &mut occupied);
         assert_eq!(n, 2);
-        assert!(registry.get("mcp_aaaaaaaa_search").is_some());
-        assert!(registry.get("mcp_aaaaaaaa_read").is_some());
+        assert!(registry
+            .get(&expected_exposed_name(&server, &tools[0]))
+            .is_some());
+        assert!(registry
+            .get(&expected_exposed_name(&server, &tools[1]))
+            .is_some());
     }
 
     #[test]
@@ -651,29 +708,34 @@ mod tests {
         let (reg_b, n_b) = register_helper(&server_b, &tools, &mut occupied);
         assert_eq!(n_a, 1);
         assert_eq!(n_b, 1);
-        assert!(reg_a.get("mcp_aaaaaaaa_search").is_some());
-        assert!(reg_b.get("mcp_bbbbbbbb_search").is_some());
+        assert!(reg_a
+            .get(&expected_exposed_name(&server_a, &tools[0]))
+            .is_some());
+        assert!(reg_b
+            .get(&expected_exposed_name(&server_b, &tools[0]))
+            .is_some());
     }
 
     #[test]
     fn registry_helper_collision_is_skipped_not_overwritten() {
         let mut occupied = HashSet::new();
-        let server_a = mcp_server("abcdef12-1111-0000-0000-000000000000", "A");
-        let server_b = mcp_server("abcdef12-2222-0000-0000-000000000000", "B");
+        let server = mcp_server("abcdef12-1111-0000-0000-000000000000", "A");
         let tools = vec![mcp_tool(
             "search",
             None,
             serde_json::json!({"type": "object"}),
         )];
 
-        let (reg_a, n_a) = register_helper(&server_a, &tools, &mut occupied);
+        // First registration succeeds and claims the name.
+        let (reg_a, n_a) = register_helper(&server, &tools, &mut occupied);
         assert_eq!(n_a, 1);
-        assert!(reg_a.get("mcp_abcdef12_search").is_some());
+        let name = expected_exposed_name(&server, &tools[0]);
+        assert!(reg_a.get(&name).is_some());
 
-        // Second server with same 8-char namespace + same tool → collision → skipped.
-        let (reg_b, n_b) = register_helper(&server_b, &tools, &mut occupied);
+        // Re-registering the same server+tool collides and is skipped.
+        let (reg_b, n_b) = register_helper(&server, &tools, &mut occupied);
         assert_eq!(n_b, 0);
-        assert!(reg_b.get("mcp_abcdef12_search").is_none());
+        assert!(reg_b.get(&name).is_none());
     }
 
     #[test]
@@ -687,9 +749,156 @@ mod tests {
         ];
         let (registry, n) = register_helper(&server, &tools, &mut occupied);
         assert_eq!(n, 2);
-        assert!(registry.get("mcp_aaaaaaaa_valid_search").is_some());
-        assert!(registry.get("mcp_aaaaaaaa_valid_read").is_some());
+        assert!(registry
+            .get(&expected_exposed_name(&server, &tools[0]))
+            .is_some());
+        assert!(registry
+            .get(&expected_exposed_name(&server, &tools[2]))
+            .is_some());
         // The invalid (unrepresentable) tool was skipped, not fatal.
         assert_eq!(registry.list_tools().len(), 2);
+    }
+
+    // ── binding identity tests ──
+
+    #[test]
+    fn same_input_is_deterministic() {
+        let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool = mcp_tool(
+            "search",
+            Some("Search"),
+            serde_json::json!({"type": "object"}),
+        );
+        let a = McpToolAdapter::new(&server, &tool).unwrap();
+        let b = McpToolAdapter::new(&server, &tool).unwrap();
+        assert_eq!(a.name(), b.name());
+    }
+
+    #[test]
+    fn server_command_change_rotates_identity() {
+        let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+        let before = McpToolAdapter::new(&server, &tool).unwrap();
+
+        server.command = Some("another-command".to_string());
+        server.updated_at += 1;
+        let after = McpToolAdapter::new(&server, &tool).unwrap();
+        assert_ne!(before.name(), after.name());
+    }
+
+    #[test]
+    fn server_args_change_rotates_identity() {
+        let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        server.args = Some(vec!["--root".to_string(), "A".to_string()]);
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+        let before = McpToolAdapter::new(&server, &tool).unwrap();
+
+        server.args = Some(vec!["--root".to_string(), "B".to_string()]);
+        server.updated_at += 1;
+        let after = McpToolAdapter::new(&server, &tool).unwrap();
+        assert_ne!(before.name(), after.name());
+    }
+
+    #[test]
+    fn server_env_secret_change_rotates_identity_without_leaking() {
+        let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        server.env = Some(serde_json::json!({ "TOKEN": "SECRET_A" }));
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+        let a = McpToolAdapter::new(&server, &tool).unwrap();
+
+        server.env = Some(serde_json::json!({ "TOKEN": "SECRET_B" }));
+        server.updated_at += 1;
+        let b = McpToolAdapter::new(&server, &tool).unwrap();
+        assert_ne!(a.name(), b.name());
+
+        // Secrets never appear in name / Debug / description.
+        for probe in [a.name(), &format!("{:?}", a), a.description()] {
+            assert!(!probe.contains("SECRET_A"));
+            assert!(!probe.contains("SECRET_B"));
+        }
+    }
+
+    #[test]
+    fn input_schema_change_rotates_identity() {
+        let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool_a = mcp_tool(
+            "search",
+            None,
+            serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}}),
+        );
+        let tool_b = mcp_tool(
+            "search",
+            None,
+            serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        );
+        let a = McpToolAdapter::new(&server, &tool_a).unwrap();
+        let b = McpToolAdapter::new(&server, &tool_b).unwrap();
+        assert_ne!(a.name(), b.name());
+    }
+
+    #[test]
+    fn description_change_rotates_identity() {
+        let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool_a = mcp_tool(
+            "search",
+            Some("Search files"),
+            serde_json::json!({"type": "object"}),
+        );
+        let tool_b = mcp_tool(
+            "search",
+            Some("Delete matching files"),
+            serde_json::json!({"type": "object"}),
+        );
+        let a = McpToolAdapter::new(&server, &tool_a).unwrap();
+        let b = McpToolAdapter::new(&server, &tool_b).unwrap();
+        assert_ne!(a.name(), b.name());
+    }
+
+    #[test]
+    fn binding_tag_is_only_12_hex_chars() {
+        let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+        let name = McpToolAdapter::new(&server, &tool)
+            .unwrap()
+            .name()
+            .to_string();
+        // mcp_<8>_<12>_<tool>
+        let parts: Vec<&str> = name.split('_').collect();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0], "mcp");
+        assert_eq!(parts[1].len(), 8);
+        assert_eq!(parts[2].len(), MCP_BINDING_TAG_LEN);
+        assert!(parts[2].chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(parts[3], "search");
+    }
+
+    #[test]
+    fn stale_approval_tool_name_fails_to_resolve_after_config_change() {
+        // Old config → request-time adapter.
+        let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        server.command = Some("old-command".to_string());
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+        let old_adapter = McpToolAdapter::new(&server, &tool).unwrap();
+        let approved_tool_name = old_adapter.name().to_string();
+
+        // Config changes while user waits for approval.
+        server.command = Some("new-command".to_string());
+        server.updated_at += 1;
+        let new_adapter = McpToolAdapter::new(&server, &tool).unwrap();
+        assert_ne!(approved_tool_name, new_adapter.name());
+
+        // Rebuilt registry only contains the new adapter → stale name not found.
+        let mut registry = crate::tools::ToolRegistry::new();
+        registry.register(std::sync::Arc::new(new_adapter));
+        assert!(registry.get(&approved_tool_name).is_none());
+    }
+
+    #[test]
+    fn unchanged_config_keeps_approval_identity_stable() {
+        let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+        let request_time = McpToolAdapter::new(&server, &tool).unwrap();
+        let approval_time = McpToolAdapter::new(&server, &tool).unwrap();
+        assert_eq!(request_time.name(), approval_time.name());
     }
 }
