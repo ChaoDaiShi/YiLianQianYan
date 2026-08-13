@@ -49,6 +49,10 @@ pub enum ResourceDescriptor {
     Agent {
         action: String,
     },
+    Mcp {
+        server_id: String,
+        tool_name: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -354,6 +358,22 @@ fn builtin_descriptor_profile(
         "read_file" | "write_file" | "edit_file" | "grep" | "glob" => {
             return Err(invalid_resources())
         }
+        // MCP tools: namespaced `mcp_*` names, always an external-service
+        // invocation at minimum High risk regardless of any metadata claims.
+        m if m.starts_with("mcp_") => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Mcp {
+                server_id,
+                tool_name,
+            }] if !server_id.trim().is_empty() && !tool_name.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::McpInvoke,
+                    ResourceScope::McpServer,
+                )],
+                RiskLevel::High,
+                vec![SideEffectKind::ExternalService],
+            ),
+            _ => return Err(invalid_resources()),
+        },
         _ => return Err(DescriptorError::UnknownTool(descriptor.tool_name.clone())),
     };
 

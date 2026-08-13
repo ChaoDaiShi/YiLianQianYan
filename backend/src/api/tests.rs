@@ -180,7 +180,7 @@ async fn security_audit_endpoints_filter_validate_export_and_never_delete() {
     let health_body: Value =
         serde_json::from_slice(&to_bytes(health.into_body(), 1024 * 1024).await.unwrap()).unwrap();
     assert_eq!(health_body["audit"], "healthy");
-    assert_eq!(health_body["policy_version"], "security-rbac-v1");
+    assert_eq!(health_body["policy_version"], crate::safety::POLICY_VERSION);
 
     let export = app
         .clone()

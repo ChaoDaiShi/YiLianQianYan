@@ -16,6 +16,10 @@
 use async_trait::async_trait;
 
 use crate::mcp::McpTool;
+use crate::safety::{
+    DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
+    ToolSecurityDescriptor,
+};
 use crate::tools::trait_def::{RiskLevel, Tool, ToolResult};
 
 /// Maximum length of the final exposed tool name.
@@ -35,12 +39,15 @@ pub enum McpToolAdapterError {
     InvalidToolName,
     #[error("MCP inputSchema must be a JSON object")]
     InvalidInputSchema,
+    #[error("MCP exposed tool name collides with an existing name: {0}")]
+    NameCollision(String),
 }
 
 /// A Tool-trait adapter around a single remote MCP tool.
 ///
 /// `exposed_name` is what the LLM / Agent sees; `remote_tool_name` is the
 /// name that must be sent verbatim in a future `tools/call`.
+#[derive(Debug)]
 pub struct McpToolAdapter {
     exposed_name: String,
     server_id: String,
@@ -83,6 +90,27 @@ impl McpToolAdapter {
             description,
             input_schema: tool.input_schema.clone(),
         })
+    }
+
+    /// Construct an adapter while enforcing exposed-name uniqueness against
+    /// an accumulator of already-occupied names.
+    ///
+    /// This is the boundary where production registrations should guard
+    /// against collisions (including built-in tool names pre-populated into
+    /// `occupied_names`). Returns [`McpToolAdapterError::NameCollision`] if
+    /// the derived exposed name is already taken.
+    pub fn new_unique(
+        server: &crate::db::McpServer,
+        tool: &McpTool,
+        occupied_names: &mut std::collections::HashSet<String>,
+    ) -> Result<Self, McpToolAdapterError> {
+        let adapter = Self::new(server, tool)?;
+        if !occupied_names.insert(adapter.name().to_string()) {
+            return Err(McpToolAdapterError::NameCollision(
+                adapter.name().to_string(),
+            ));
+        }
+        Ok(adapter)
     }
 
     pub fn server_id(&self) -> &str {
@@ -168,6 +196,30 @@ impl Tool for McpToolAdapter {
         RiskLevel::High
     }
 
+    /// Produce an MCP-specific security descriptor.
+    ///
+    /// All MCP tools are treated as High-risk external-service invocations.
+    /// The server / remote tool names come from the adapter's trusted binding,
+    /// never from arguments or remote metadata. The descriptor is validated
+    /// through the standard profile chain (no bypass).
+    fn security_descriptor(
+        &self,
+        _args: &serde_json::Value,
+    ) -> Result<ToolSecurityDescriptor, DescriptorError> {
+        let descriptor = ToolSecurityDescriptor {
+            tool_name: self.name().to_string(),
+            requested_permissions: vec![PermissionId::McpInvoke.in_scope(ResourceScope::McpServer)],
+            resources: vec![ResourceDescriptor::Mcp {
+                server_id: self.server_id.clone(),
+                tool_name: self.remote_tool_name.clone(),
+            }],
+            default_risk: RiskLevel::High,
+            side_effects: vec![SideEffectKind::ExternalService],
+        };
+        descriptor.validate_for_tool(self.name())?;
+        Ok(descriptor)
+    }
+
     async fn execute(&self, _args: serde_json::Value) -> ToolResult {
         ToolResult::error("MCP tool execution is not enabled yet")
     }
@@ -177,7 +229,7 @@ impl Tool for McpToolAdapter {
 mod tests {
     use super::*;
     use crate::db::McpServer;
-    use crate::safety::DescriptorError;
+    use crate::safety::{PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind};
 
     fn mcp_server(id: &str, name: &str) -> McpServer {
         McpServer {
@@ -372,12 +424,69 @@ mod tests {
     }
 
     #[test]
-    fn security_descriptor_still_fails_closed() {
+    fn security_descriptor_is_valid_mcp_descriptor() {
         let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
         let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
         let adapter = McpToolAdapter::new(&server, &tool).unwrap();
 
-        let result = adapter.security_descriptor(&serde_json::json!({"q": "x"}));
-        assert!(matches!(result, Err(DescriptorError::UnknownTool(_))));
+        let desc = adapter
+            .security_descriptor(&serde_json::json!({"q": "x"}))
+            .unwrap();
+        assert_eq!(desc.tool_name, adapter.name());
+        assert_eq!(
+            desc.requested_permissions,
+            vec![PermissionId::McpInvoke.in_scope(ResourceScope::McpServer)]
+        );
+        assert_eq!(
+            desc.resources,
+            vec![ResourceDescriptor::Mcp {
+                server_id: adapter.server_id().to_string(),
+                tool_name: adapter.remote_tool_name().to_string(),
+            }]
+        );
+        assert_eq!(desc.default_risk, RiskLevel::High);
+        assert_eq!(desc.side_effects, vec![SideEffectKind::ExternalService]);
+        // Must pass standard validation (no bypass).
+        assert!(desc.validate_for_tool(adapter.name()).is_ok());
+    }
+
+    #[test]
+    fn new_unique_detects_name_collision() {
+        use std::collections::HashSet;
+        let server_a = mcp_server("abcdef12-1111-0000-0000-000000000000", "A");
+        let server_b = mcp_server("abcdef12-2222-0000-0000-000000000000", "B");
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+
+        let mut occupied = HashSet::new();
+        // First insert succeeds.
+        McpToolAdapter::new_unique(&server_a, &tool, &mut occupied).unwrap();
+        // Same 8-char namespace + same tool name collides.
+        let err = McpToolAdapter::new_unique(&server_b, &tool, &mut occupied).unwrap_err();
+        assert!(matches!(err, McpToolAdapterError::NameCollision(_)));
+    }
+
+    #[test]
+    fn new_unique_allows_distinct_namespaces() {
+        use std::collections::HashSet;
+        let server_a = mcp_server("aaaaaaaa-0000-0000-0000-000000000000", "A");
+        let server_b = mcp_server("bbbbbbbb-0000-0000-0000-000000000000", "B");
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+
+        let mut occupied = HashSet::new();
+        McpToolAdapter::new_unique(&server_a, &tool, &mut occupied).unwrap();
+        McpToolAdapter::new_unique(&server_b, &tool, &mut occupied).unwrap();
+    }
+
+    #[test]
+    fn new_unique_detects_builtin_name_collision() {
+        use std::collections::HashSet;
+        let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+
+        let mut occupied = HashSet::new();
+        // Simulate an already-registered builtin with the same exposed name.
+        occupied.insert("mcp_550e8400_search".to_string());
+        let err = McpToolAdapter::new_unique(&server, &tool, &mut occupied).unwrap_err();
+        assert!(matches!(err, McpToolAdapterError::NameCollision(_)));
     }
 }

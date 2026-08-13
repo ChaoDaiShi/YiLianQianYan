@@ -1,6 +1,7 @@
 use crate::safety::{
-    describe_builtin_tool, BuiltInRole, PermissionId, PolicyDecision, PolicyEngine,
-    ResourceDescriptor, ResourceScope, ToolSecurityDescriptor,
+    describe_builtin_tool, BuiltInRole, DescriptorError, GrantMode, PermissionId, PolicyDecision,
+    PolicyEngine, ResourceDescriptor, ResourceScope, RolePolicy, SideEffectKind,
+    ToolSecurityDescriptor,
 };
 use crate::tools::trait_def::RiskLevel;
 
@@ -161,4 +162,184 @@ fn policy_engine_rejects_descriptor_for_a_different_tool() {
         ),
         PolicyDecision::Deny(_)
     ));
+}
+
+// ── MCP security descriptor ──
+
+fn mcp_descriptor(
+    tool_name: &str,
+    server_id: &str,
+    remote_tool: &str,
+    permission: PermissionId,
+    scope: ResourceScope,
+    risk: RiskLevel,
+    side_effects: Vec<SideEffectKind>,
+) -> ToolSecurityDescriptor {
+    ToolSecurityDescriptor {
+        tool_name: tool_name.to_string(),
+        requested_permissions: vec![permission.in_scope(scope)],
+        resources: vec![ResourceDescriptor::Mcp {
+            server_id: server_id.to_string(),
+            tool_name: remote_tool.to_string(),
+        }],
+        default_risk: risk,
+        side_effects,
+    }
+}
+
+fn valid_mcp_descriptor() -> ToolSecurityDescriptor {
+    mcp_descriptor(
+        "mcp_550e8400_read_file",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "read-file",
+        PermissionId::McpInvoke,
+        ResourceScope::McpServer,
+        RiskLevel::High,
+        vec![SideEffectKind::ExternalService],
+    )
+}
+
+#[test]
+fn mcp_descriptor_validates() {
+    valid_mcp_descriptor()
+        .validate_for_tool("mcp_550e8400_read_file")
+        .unwrap();
+}
+
+#[test]
+fn mcp_descriptor_rejects_empty_server_id() {
+    let desc = mcp_descriptor(
+        "mcp_550e8400_read_file",
+        "",
+        "read-file",
+        PermissionId::McpInvoke,
+        ResourceScope::McpServer,
+        RiskLevel::High,
+        vec![SideEffectKind::ExternalService],
+    );
+    assert!(matches!(
+        desc.validate(),
+        Err(DescriptorError::InvalidDescriptor(_))
+    ));
+}
+
+#[test]
+fn mcp_descriptor_rejects_empty_remote_tool_name() {
+    let desc = mcp_descriptor(
+        "mcp_550e8400_read_file",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "",
+        PermissionId::McpInvoke,
+        ResourceScope::McpServer,
+        RiskLevel::High,
+        vec![SideEffectKind::ExternalService],
+    );
+    assert!(matches!(
+        desc.validate(),
+        Err(DescriptorError::InvalidDescriptor(_))
+    ));
+}
+
+#[test]
+fn mcp_descriptor_rejects_wrong_permission() {
+    let desc = mcp_descriptor(
+        "mcp_550e8400_read_file",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "read-file",
+        PermissionId::FilesystemRead,
+        ResourceScope::McpServer,
+        RiskLevel::High,
+        vec![SideEffectKind::ExternalService],
+    );
+    assert!(matches!(
+        desc.validate(),
+        Err(DescriptorError::InvalidDescriptor(_))
+    ));
+}
+
+#[test]
+fn mcp_descriptor_rejects_low_risk() {
+    let desc = mcp_descriptor(
+        "mcp_550e8400_read_file",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "read-file",
+        PermissionId::McpInvoke,
+        ResourceScope::McpServer,
+        RiskLevel::Low,
+        vec![SideEffectKind::ExternalService],
+    );
+    assert!(matches!(
+        desc.validate(),
+        Err(DescriptorError::InvalidDescriptor(_))
+    ));
+}
+
+#[test]
+fn mcp_descriptor_requires_external_service_side_effect() {
+    let desc = mcp_descriptor(
+        "mcp_550e8400_read_file",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "read-file",
+        PermissionId::McpInvoke,
+        ResourceScope::McpServer,
+        RiskLevel::High,
+        vec![],
+    );
+    assert!(matches!(
+        desc.validate(),
+        Err(DescriptorError::InvalidDescriptor(_))
+    ));
+}
+
+#[test]
+fn owner_and_standard_mcp_require_approval_restricted_denies() {
+    use GrantMode::{Deny, RequireApproval};
+    assert_eq!(
+        RolePolicy::grant(BuiltInRole::Owner, PermissionId::McpInvoke),
+        RequireApproval
+    );
+    assert_eq!(
+        RolePolicy::grant(BuiltInRole::Standard, PermissionId::McpInvoke),
+        RequireApproval
+    );
+    assert_eq!(
+        RolePolicy::grant(BuiltInRole::Restricted, PermissionId::McpInvoke),
+        Deny
+    );
+}
+
+#[test]
+fn policy_engine_mcp_owner_requires_approval() {
+    let descriptor = valid_mcp_descriptor();
+    let decision = PolicyEngine::evaluate(
+        BuiltInRole::Owner,
+        "mcp_550e8400_read_file",
+        &descriptor,
+        RiskLevel::High,
+    );
+    assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
+}
+
+#[test]
+fn policy_engine_mcp_standard_requires_approval() {
+    let descriptor = valid_mcp_descriptor();
+    let decision = PolicyEngine::evaluate(
+        BuiltInRole::Standard,
+        "mcp_550e8400_read_file",
+        &descriptor,
+        RiskLevel::High,
+    );
+    assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
+}
+
+#[test]
+fn policy_engine_mcp_restricted_denies() {
+    let descriptor = valid_mcp_descriptor();
+    let decision = PolicyEngine::evaluate(
+        BuiltInRole::Restricted,
+        "mcp_550e8400_read_file",
+        &descriptor,
+        RiskLevel::High,
+    );
+    assert!(matches!(decision, PolicyDecision::Deny(_)));
 }

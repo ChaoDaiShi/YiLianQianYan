@@ -17,6 +17,7 @@ fn role_matrix_matches_the_approved_specification() {
         (DesktopInteract, [Allow, RequireApproval, Deny]),
         (SkillLoad, [Allow, Allow, Allow]),
         (AgentPlan, [Allow, Allow, Allow]),
+        (McpInvoke, [RequireApproval, RequireApproval, Deny]),
     ];
 
     for (permission, grants) in expected {

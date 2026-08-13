@@ -321,7 +321,7 @@ mod tests {
             capabilities: vec!["filesystem.write".to_string()],
             actions: vec!["write".to_string()],
             resources: json!([{"kind": "file", "path": "notes.txt"}]),
-            policy_version: Some("security-rbac-v1".to_string()),
+            policy_version: Some(crate::safety::POLICY_VERSION.to_string()),
             risk_level: Some("medium".to_string()),
             decision_status: Some("allow".to_string()),
             request_digest: Some("request-digest".to_string()),
