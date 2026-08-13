@@ -14,6 +14,7 @@ pub enum SideEffectKind {
     NetworkEgress,
     DesktopMutation,
     ExternalService,
+    AgentDelegation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -52,6 +53,9 @@ pub enum ResourceDescriptor {
     Mcp {
         server_id: String,
         tool_name: String,
+    },
+    Subagent {
+        name: String,
     },
 }
 
@@ -371,6 +375,20 @@ fn builtin_descriptor_profile(
                 )],
                 RiskLevel::High,
                 vec![SideEffectKind::ExternalService],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        // Subagent tools: namespaced `subagent_*` names, always an
+        // agent-delegation invocation at minimum High risk. The delegated
+        // subagent identity is a trusted `ResourceDescriptor::Subagent` binding.
+        m if m.starts_with("subagent_") => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Subagent { name }] if !name.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::AgentDelegate,
+                    ResourceScope::Subagent,
+                )],
+                RiskLevel::High,
+                vec![SideEffectKind::AgentDelegation],
             ),
             _ => return Err(invalid_resources()),
         },

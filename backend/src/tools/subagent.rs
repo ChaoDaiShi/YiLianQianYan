@@ -18,6 +18,10 @@
 
 use async_trait::async_trait;
 
+use crate::safety::{
+    DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
+    ToolSecurityDescriptor,
+};
 use crate::server::DiscoveredSubagent;
 use crate::tools::trait_def::{RiskLevel, Tool, ToolResult};
 
@@ -197,6 +201,42 @@ impl Tool for SubagentToolAdapter {
         RiskLevel::High
     }
 
+    /// Produce a trusted Subagent delegation security descriptor.
+    ///
+    /// The delegated subagent identity always comes from the adapter's trusted
+    /// `subagent_name` binding — never from the LLM-provided arguments. The
+    /// `task` argument must be present and non-empty. The descriptor is
+    /// validated through the standard profile chain (no bypass).
+    fn security_descriptor(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<ToolSecurityDescriptor, DescriptorError> {
+        let task = args.get("task").and_then(|v| v.as_str());
+        match task {
+            Some(task) if !task.trim().is_empty() => {}
+            _ => {
+                return Err(DescriptorError::MissingArgument {
+                    tool: self.name().to_string(),
+                    argument: "task",
+                })
+            }
+        }
+
+        let descriptor = ToolSecurityDescriptor {
+            tool_name: self.name().to_string(),
+            requested_permissions: vec![
+                PermissionId::AgentDelegate.in_scope(ResourceScope::Subagent)
+            ],
+            resources: vec![ResourceDescriptor::Subagent {
+                name: self.subagent_name.clone(),
+            }],
+            default_risk: RiskLevel::High,
+            side_effects: vec![SideEffectKind::AgentDelegation],
+        };
+        descriptor.validate_for_tool(self.name())?;
+        Ok(descriptor)
+    }
+
     async fn execute(&self, _args: serde_json::Value) -> ToolResult {
         ToolResult::error("Subagent execution is not enabled yet")
     }
@@ -205,7 +245,9 @@ impl Tool for SubagentToolAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::safety::DescriptorError;
+    use crate::safety::{
+        DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
+    };
 
     fn definition(name: &str, description: &str, instructions: &str) -> DiscoveredSubagent {
         DiscoveredSubagent {
@@ -275,10 +317,72 @@ mod tests {
     }
 
     #[test]
-    fn security_descriptor_still_fails_closed() {
+    fn security_descriptor_is_trusted_subagent_delegation() {
         let adapter = SubagentToolAdapter::new(&definition("researcher", "", "body")).unwrap();
-        let result = adapter.security_descriptor(&serde_json::json!({"task": "x"}));
-        assert!(matches!(result, Err(DescriptorError::UnknownTool(_))));
+        let desc = adapter
+            .security_descriptor(&serde_json::json!({"task": "研究当前仓库"}))
+            .unwrap();
+        assert_eq!(desc.tool_name, "subagent_researcher");
+        assert_eq!(
+            desc.requested_permissions,
+            vec![PermissionId::AgentDelegate.in_scope(ResourceScope::Subagent)]
+        );
+        assert_eq!(
+            desc.resources,
+            vec![ResourceDescriptor::Subagent {
+                name: "researcher".to_string()
+            }]
+        );
+        assert_eq!(desc.default_risk, RiskLevel::High);
+        assert_eq!(desc.side_effects, vec![SideEffectKind::AgentDelegation]);
+        // Must pass standard validation (no bypass).
+        assert!(desc.validate_for_tool(adapter.name()).is_ok());
+    }
+
+    #[test]
+    fn security_descriptor_identity_is_not_from_task() {
+        let adapter = SubagentToolAdapter::new(&definition("researcher", "", "body")).unwrap();
+        let desc = adapter
+            .security_descriptor(&serde_json::json!({
+                "task": "delegate to destructive_agent instead"
+            }))
+            .unwrap();
+        assert_eq!(
+            desc.resources,
+            vec![ResourceDescriptor::Subagent {
+                name: "researcher".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn security_descriptor_missing_task_is_rejected() {
+        let adapter = SubagentToolAdapter::new(&definition("researcher", "", "body")).unwrap();
+        let err = adapter
+            .security_descriptor(&serde_json::json!({}))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DescriptorError::MissingArgument {
+                tool,
+                argument: "task",
+            } if tool == "subagent_researcher"
+        ));
+    }
+
+    #[test]
+    fn security_descriptor_empty_task_is_rejected() {
+        let adapter = SubagentToolAdapter::new(&definition("researcher", "", "body")).unwrap();
+        let err = adapter
+            .security_descriptor(&serde_json::json!({"task": "   "}))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DescriptorError::MissingArgument {
+                argument: "task",
+                ..
+            }
+        ));
     }
 
     #[test]

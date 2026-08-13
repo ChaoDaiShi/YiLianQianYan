@@ -27,6 +27,7 @@ pub enum Action {
     Load,
     Plan,
     Invoke,
+    Delegate,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -53,10 +54,12 @@ pub enum PermissionId {
     AgentPlan,
     #[serde(rename = "mcp.invoke")]
     McpInvoke,
+    #[serde(rename = "agent.delegate")]
+    AgentDelegate,
 }
 
 impl PermissionId {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::ShellExecute,
@@ -68,6 +71,7 @@ impl PermissionId {
         Self::SkillLoad,
         Self::AgentPlan,
         Self::McpInvoke,
+        Self::AgentDelegate,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -83,6 +87,7 @@ impl PermissionId {
             Self::SkillLoad => "skill.load",
             Self::AgentPlan => "agent.plan",
             Self::McpInvoke => "mcp.invoke",
+            Self::AgentDelegate => "agent.delegate",
         }
     }
 
@@ -94,7 +99,7 @@ impl PermissionId {
             Self::NetworkRequest => Capability::Network,
             Self::DesktopObserve | Self::DesktopInteract => Capability::Desktop,
             Self::SkillLoad => Capability::Skill,
-            Self::AgentPlan => Capability::Agent,
+            Self::AgentPlan | Self::AgentDelegate => Capability::Agent,
             Self::McpInvoke => Capability::Mcp,
         }
     }
@@ -112,6 +117,7 @@ impl PermissionId {
             Self::SkillLoad => Action::Load,
             Self::AgentPlan => Action::Plan,
             Self::McpInvoke => Action::Invoke,
+            Self::AgentDelegate => Action::Delegate,
         }
     }
 
@@ -140,6 +146,7 @@ pub enum ResourceScope {
     DiscoveredSkill,
     AgentInternal,
     McpServer,
+    Subagent,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]

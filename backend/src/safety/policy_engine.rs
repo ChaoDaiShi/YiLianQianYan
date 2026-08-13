@@ -6,7 +6,7 @@ use super::{
     BuiltInRole, GrantMode, PermissionId, ResourceScope, RolePolicy, ToolSecurityDescriptor,
 };
 
-pub const POLICY_VERSION: &str = "security-rbac-v2";
+pub const POLICY_VERSION: &str = "security-rbac-v3";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecisionContext {

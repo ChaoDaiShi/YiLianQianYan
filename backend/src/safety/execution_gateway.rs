@@ -695,6 +695,9 @@ impl SecurityExecutionGateway {
                 } if !server_id.trim().is_empty() && !tool_name.trim().is_empty() => {
                     ResourceScope::McpServer
                 }
+                ResourceDescriptor::Subagent { name } if !name.trim().is_empty() => {
+                    ResourceScope::Subagent
+                }
                 _ => {
                     return Err(DescriptorError::InvalidDescriptor(
                         "tool resource cannot be resolved to a security scope".to_string(),
@@ -2472,5 +2475,51 @@ mod tests {
         drop(gateway);
         drop(db);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    // ── Subagent delegation through the runtime dynamic-tool fallback ──
+
+    fn subagent_gateway() -> SecurityExecutionGateway {
+        let definition = crate::server::DiscoveredSubagent {
+            name: "researcher".to_string(),
+            description: "研究助手".to_string(),
+            path: ".agents/agents/researcher/AGENT.md".to_string(),
+            allowed_tools: vec!["read_file".to_string(), "grep".to_string()],
+            model: Some("deepseek-v4-flash".to_string()),
+            workdir: None,
+            instructions: "research body".to_string(),
+        };
+        let adapter = crate::tools::SubagentToolAdapter::new(&definition).unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.register(std::sync::Arc::new(adapter));
+        SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            "workspace",
+            Arc::new(registry),
+        )
+    }
+
+    #[test]
+    fn subagent_delegation_owner_and_standard_require_approval_restricted_denies() {
+        let gateway = subagent_gateway();
+        let request = request(
+            "subagent_researcher",
+            serde_json::json!({"task": "研究当前仓库"}),
+        );
+
+        let owner = gateway
+            .evaluate_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
+            .unwrap();
+        assert!(matches!(owner, PolicyDecision::RequireApproval(_)));
+
+        let standard = gateway
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::High)
+            .unwrap();
+        assert!(matches!(standard, PolicyDecision::RequireApproval(_)));
+
+        let restricted = gateway
+            .evaluate_with_role(&request, BuiltInRole::Restricted, RiskLevel::High)
+            .unwrap();
+        assert!(matches!(restricted, PolicyDecision::Deny(_)));
     }
 }

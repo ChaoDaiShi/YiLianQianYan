@@ -31,6 +31,8 @@ impl RolePolicy {
             (Restricted, DesktopInteract) => Deny,
             (Owner | Standard, McpInvoke) => RequireApproval,
             (Restricted, McpInvoke) => Deny,
+            (Owner | Standard, AgentDelegate) => RequireApproval,
+            (Restricted, AgentDelegate) => Deny,
         }
     }
 }
