@@ -212,9 +212,19 @@ fn build_exposed_name(
 /// Derive a deterministic short SHA-256 fingerprint binding the adapter to the
 /// server's current runtime config and the tool contract.
 ///
-/// Secrets in `server.env` deliberately participate in the hash (so an env
-/// change rotates the identity), but only the short hex tag is ever exposed.
+/// Only the *names* of env variables (sorted) participate in the hash — never
+/// their values. A normal config update bumps `server.updated_at`, so even a
+/// secret value rotation rotates the identity without the exposed tag being a
+/// function of the secret itself.
 fn derive_binding_tag(server: &McpServer, tool: &McpTool) -> Result<String, McpToolAdapterError> {
+    let mut env_keys: Vec<String> = Vec::new();
+    if let Some(env) = &server.env {
+        if let Some(obj) = env.as_object() {
+            env_keys.extend(obj.keys().cloned());
+        }
+    }
+    env_keys.sort();
+
     let payload = serde_json::json!({
         "server": {
             "id": &server.id,
@@ -223,7 +233,7 @@ fn derive_binding_tag(server: &McpServer, tool: &McpTool) -> Result<String, McpT
             "command": &server.command,
             "args": &server.args,
             "url": &server.url,
-            "env": &server.env,
+            "env_keys": env_keys,
             "enabled": server.enabled,
             "updated_at": server.updated_at,
         },
@@ -800,12 +810,13 @@ mod tests {
     }
 
     #[test]
-    fn server_env_secret_change_rotates_identity_without_leaking() {
+    fn server_env_value_change_with_updated_at_rotates_identity_without_leaking() {
         let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
         server.env = Some(serde_json::json!({ "TOKEN": "SECRET_A" }));
         let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
         let a = McpToolAdapter::new(&server, &tool).unwrap();
 
+        // A normal config update changes the secret AND bumps updated_at.
         server.env = Some(serde_json::json!({ "TOKEN": "SECRET_B" }));
         server.updated_at += 1;
         let b = McpToolAdapter::new(&server, &tool).unwrap();
@@ -816,6 +827,36 @@ mod tests {
             assert!(!probe.contains("SECRET_A"));
             assert!(!probe.contains("SECRET_B"));
         }
+    }
+
+    #[test]
+    fn env_value_change_alone_does_not_rotate_identity() {
+        // Same env KEYS, same updated_at: identity must be identical.
+        // This proves the exposed identity is NOT a function of the secret value.
+        let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+
+        server.env = Some(serde_json::json!({ "TOKEN": "SECRET_A" }));
+        let a = McpToolAdapter::new(&server, &tool).unwrap();
+
+        // Keep updated_at identical; only the secret value changes.
+        server.env = Some(serde_json::json!({ "TOKEN": "SECRET_B" }));
+        let b = McpToolAdapter::new(&server, &tool).unwrap();
+        assert_eq!(a.name(), b.name());
+    }
+
+    #[test]
+    fn env_key_change_rotates_identity_without_updated_at_change() {
+        let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+
+        server.env = Some(serde_json::json!({ "TOKEN": "x" }));
+        let a = McpToolAdapter::new(&server, &tool).unwrap();
+
+        // Same updated_at, but the set of env keys changes.
+        server.env = Some(serde_json::json!({ "API_KEY": "x" }));
+        let b = McpToolAdapter::new(&server, &tool).unwrap();
+        assert_ne!(a.name(), b.name());
     }
 
     #[test]
