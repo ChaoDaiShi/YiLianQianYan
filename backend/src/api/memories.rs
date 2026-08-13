@@ -562,12 +562,95 @@ pub async fn merge_handler(
     }))
 }
 
-// ── Reserved: Reindex embeddings ──
+// ── Reindex embeddings (historical backfill) ──
 
-pub async fn reindex_handler(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
+const DEFAULT_REINDEX_LIMIT: usize = 50;
+const MAX_REINDEX_LIMIT: usize = 200;
+
+#[derive(serde::Deserialize)]
+pub struct ReindexRequest {
+    #[serde(default = "default_reindex_limit")]
+    pub limit: usize,
+}
+
+fn default_reindex_limit() -> usize {
+    DEFAULT_REINDEX_LIMIT
+}
+
+pub async fn reindex_handler(
+    State(server): State<Arc<AppServer>>,
+    Json(req): Json<ReindexRequest>,
+) -> Json<serde_json::Value> {
+    // Clamp limit: 1..=MAX_REINDEX_LIMIT
+    let requested = req.limit.clamp(1, MAX_REINDEX_LIMIT);
+
+    // Reject when embedding provider is not configured
+    let config = server.config.read().clone();
+    if !config.model.has_embedding() {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "embedding provider is not configured"
+        }));
+    }
+
+    // Load memories missing embedding
+    let missing = match server.db.list_memories_without_embedding(requested) {
+        Ok(memories) => memories,
+        Err(e) => {
+            tracing::error!("reindex: failed to load missing-embedding memories: {e}");
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": format!("failed to load memories: {e}")
+            }));
+        }
+    };
+
+    let processed = missing.len();
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+
+    let llm_client = LlmClient::new(&config.model);
+
+    for memory in &missing {
+        match llm_client.embed(&memory.content).await {
+            Ok(vector) => match server.db.update_memory_embedding(&memory.id, &vector) {
+                Ok(()) => {
+                    succeeded += 1;
+                    tracing::debug!(
+                        memory_id = %memory.id,
+                        dim = vector.len(),
+                        "reindex: embedded memory"
+                    );
+                }
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!(
+                        memory_id = %memory.id,
+                        error = %e,
+                        "reindex: failed to persist embedding"
+                    );
+                }
+            },
+            Err(e) => {
+                failed += 1;
+                tracing::warn!(
+                    memory_id = %memory.id,
+                    error = %e,
+                    "reindex: embedding request failed"
+                );
+            }
+        }
+    }
+
+    let remaining = server.db.count_memories_without_embedding().unwrap_or(0);
+
     Json(serde_json::json!({
-        "status": "reserved",
-        "message": "Reindex embeddings endpoint — reserved for future use"
+        "ok": true,
+        "requested": requested,
+        "processed": processed,
+        "succeeded": succeeded,
+        "failed": failed,
+        "remaining": remaining,
     }))
 }
 
@@ -1275,6 +1358,269 @@ mod tests {
         let json = serde_json::to_value(&results[0]).unwrap();
         assert!(json.get("embedding").is_none());
         assert!(json.get("vector_score").is_some());
+
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    // ── Backfill / reindex tests ──
+
+    fn seed_memory_with_embedding(
+        db: &crate::db::Database,
+        conv_id: &str,
+        category: &str,
+        content: &str,
+        embedding: &str,
+    ) -> String {
+        let now = chrono::Utc::now().timestamp_millis();
+        let id = uuid::Uuid::new_v4().to_string();
+        let conn = db.conn();
+        conn.execute(
+            "INSERT INTO memories (id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'auto', ?4, ?5, NULL, ?6, ?6)",
+            rusqlite::params![id, content, category, conv_id, embedding, now],
+        )
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn list_without_embedding_only_returns_missing() {
+        let (server, db_path, conv_id) = test_server("backfill-query");
+        seed_memory(&server.db, &conv_id, "fact", "A 无 embedding", 1);
+        seed_memory_with_embedding(&server.db, &conv_id, "fact", "B 有 embedding", "[0.1,0.2]");
+        seed_memory(&server.db, &conv_id, "fact", "C 无 embedding", 1);
+
+        let missing = server.db.list_memories_without_embedding(10).unwrap();
+        let contents: Vec<&str> = missing.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(missing.len(), 2);
+        assert!(contents.contains(&"A 无 embedding"));
+        assert!(contents.contains(&"C 无 embedding"));
+        assert!(!contents.contains(&"B 有 embedding"));
+
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn list_without_embedding_respects_limit() {
+        let (server, db_path, conv_id) = test_server("backfill-limit");
+        for i in 0..5 {
+            seed_memory(&server.db, &conv_id, "fact", &format!("M{i}"), 1);
+        }
+        let missing = server.db.list_memories_without_embedding(2).unwrap();
+        assert_eq!(missing.len(), 2);
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[test]
+    fn count_without_embedding_is_accurate() {
+        let (server, db_path, conv_id) = test_server("backfill-count");
+        seed_memory(&server.db, &conv_id, "fact", "A", 1);
+        seed_memory(&server.db, &conv_id, "fact", "B", 1);
+        seed_memory(&server.db, &conv_id, "fact", "C", 1);
+        seed_memory_with_embedding(&server.db, &conv_id, "fact", "D", "[0.1]");
+        seed_memory_with_embedding(&server.db, &conv_id, "fact", "E", "[0.2]");
+
+        assert_eq!(server.db.count_memories_without_embedding().unwrap(), 3);
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn reindex_rejects_when_provider_not_configured() {
+        let (server, db_path, conv_id) = test_server("reindex-unconfigured");
+        seed_memory(&server.db, &conv_id, "fact", "A", 1);
+
+        // Default config has empty embedding model → not configured
+        let json = reindex_handler(
+            State(Arc::clone(&server)),
+            Json(ReindexRequest { limit: 10 }),
+        )
+        .await;
+
+        let value = json.0;
+        assert_eq!(value["ok"], false);
+        assert!(value["error"].as_str().unwrap().contains("not configured"));
+        // No embedding written
+        assert_eq!(server.db.count_memories_without_embedding().unwrap(), 1);
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    // Mock embedding provider for backfill tests
+    use axum::{extract::State as AxumState, routing::post, Router as AxumRouter};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct BackfillMockState {
+        counter: Arc<AtomicUsize>,
+        fail_on: Arc<std::sync::Mutex<Option<usize>>>, // fail the Nth request (0-based)
+    }
+
+    async fn start_backfill_mock(
+        fail_on: Option<usize>,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let state = BackfillMockState {
+            counter: Arc::clone(&counter),
+            fail_on: Arc::new(std::sync::Mutex::new(fail_on)),
+        };
+        let s = state.clone();
+        let app = AxumRouter::new()
+            .route("/embeddings", post(backfill_embed_handler))
+            .with_state(s);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (addr, counter, handle)
+    }
+
+    async fn backfill_embed_handler(
+        AxumState(state): AxumState<BackfillMockState>,
+        Json(body): Json<serde_json::Value>,
+    ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+        let idx = state.counter.fetch_add(1, Ordering::SeqCst);
+        let should_fail = state
+            .fail_on
+            .lock()
+            .unwrap()
+            .map(|f| f == idx)
+            .unwrap_or(false);
+        if should_fail {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "mock failure"})),
+            );
+        }
+        let _ = body;
+        (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({
+                "data": [{"embedding": [0.5, 0.25, 0.125]}]
+            })),
+        )
+    }
+
+    fn configure_embedding(server: &AppServer, base_url: &str) {
+        let mut config = server.config.write();
+        config.model.embedding_model = "test-embed-model".to_string();
+        config.model.embedding_base_url = base_url.to_string();
+        config.model.embedding_api_key = "test-key".to_string();
+    }
+
+    #[tokio::test]
+    async fn reindex_backfills_all_missing() {
+        let (server, db_path, conv_id) = test_server("reindex-backfill");
+        let a = seed_memory(&server.db, &conv_id, "fact", "A", 1);
+        let b = seed_memory(&server.db, &conv_id, "fact", "B", 1);
+
+        let (addr, _counter, _handle) = start_backfill_mock(None).await;
+        configure_embedding(&server, &addr);
+
+        let json = reindex_handler(
+            State(Arc::clone(&server)),
+            Json(ReindexRequest { limit: 10 }),
+        )
+        .await;
+        let value = json.0;
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["processed"], 2);
+        assert_eq!(value["succeeded"], 2);
+        assert_eq!(value["failed"], 0);
+
+        // Both now have embeddings
+        assert!(server.db.get_memory(&a).unwrap().embedding.is_some());
+        assert!(server.db.get_memory(&b).unwrap().embedding.is_some());
+        assert_eq!(server.db.count_memories_without_embedding().unwrap(), 0);
+
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn reindex_single_failure_does_not_abort() {
+        let (server, db_path, conv_id) = test_server("reindex-failure");
+        seed_memory(&server.db, &conv_id, "fact", "A", 1); // will succeed
+        seed_memory(&server.db, &conv_id, "fact", "B", 1); // will fail (2nd request)
+        seed_memory(&server.db, &conv_id, "fact", "C", 1); // will succeed
+
+        // Fail the 2nd request (0-based index 1)
+        let (addr, _counter, _handle) = start_backfill_mock(Some(1)).await;
+        configure_embedding(&server, &addr);
+
+        let json = reindex_handler(
+            State(Arc::clone(&server)),
+            Json(ReindexRequest { limit: 10 }),
+        )
+        .await;
+        let value = json.0;
+        assert_eq!(value["processed"], 3);
+        assert_eq!(value["succeeded"], 2);
+        assert_eq!(value["failed"], 1);
+        // 1 memory still missing embedding
+        assert_eq!(server.db.count_memories_without_embedding().unwrap(), 1);
+
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn reindex_is_idempotent() {
+        let (server, db_path, conv_id) = test_server("reindex-idempotent");
+        seed_memory(&server.db, &conv_id, "fact", "A", 1);
+        seed_memory(&server.db, &conv_id, "fact", "B", 1);
+
+        let (addr, counter, _handle) = start_backfill_mock(None).await;
+        configure_embedding(&server, &addr);
+
+        // First run
+        let json1 = reindex_handler(
+            State(Arc::clone(&server)),
+            Json(ReindexRequest { limit: 10 }),
+        )
+        .await;
+        assert_eq!(json1.0["succeeded"], 2);
+        let calls_after_first = counter.load(Ordering::SeqCst);
+
+        // Second run — nothing to process
+        let json2 = reindex_handler(
+            State(Arc::clone(&server)),
+            Json(ReindexRequest { limit: 10 }),
+        )
+        .await;
+        assert_eq!(json2.0["processed"], 0);
+        assert_eq!(json2.0["succeeded"], 0);
+        // No additional provider calls
+        assert_eq!(counter.load(Ordering::SeqCst), calls_after_first);
+
+        std::fs::remove_file(&db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn reindex_does_not_overwrite_existing_embedding() {
+        let (server, db_path, conv_id) = test_server("reindex-no-overwrite");
+        let existing = seed_memory_with_embedding(
+            &server.db,
+            &conv_id,
+            "fact",
+            "已有 embedding",
+            "[0.11,0.22]",
+        );
+        seed_memory(&server.db, &conv_id, "fact", "新 memory", 1);
+
+        let (addr, counter, _handle) = start_backfill_mock(None).await;
+        configure_embedding(&server, &addr);
+
+        let json = reindex_handler(
+            State(Arc::clone(&server)),
+            Json(ReindexRequest { limit: 10 }),
+        )
+        .await;
+        // Only 1 memory was missing (the "新 memory")
+        assert_eq!(json.0["processed"], 1);
+        assert_eq!(json.0["succeeded"], 1);
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        // Existing embedding unchanged
+        let mem = server.db.get_memory(&existing).unwrap();
+        assert_eq!(mem.embedding.as_deref(), Some("[0.11,0.22]"));
 
         std::fs::remove_file(&db_path).ok();
     }

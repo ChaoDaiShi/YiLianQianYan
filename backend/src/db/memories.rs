@@ -456,6 +456,49 @@ impl Database {
         Ok(())
     }
 
+    /// List memories that are still missing an embedding (NULL or empty).
+    /// Ordered by `created_at ASC` so older memories are backfilled first.
+    pub fn list_memories_without_embedding(&self, limit: usize) -> Result<Vec<Memory>, String> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at
+                 FROM memories
+                 WHERE embedding IS NULL OR TRIM(embedding) = ''
+                 ORDER BY created_at ASC
+                 LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([limit as i64], |row| {
+                Ok(Memory {
+                    id: row.get(0)?,
+                    content: row.get(1)?,
+                    category: row.get(2)?,
+                    source: row.get(3)?,
+                    source_conversation_id: row.get(4)?,
+                    embedding: row.get(5)?,
+                    metadata: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Count memories still missing an embedding (NULL or empty).
+    pub fn count_memories_without_embedding(&self) -> Result<usize, String> {
+        let conn = self.conn();
+        conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE embedding IS NULL OR TRIM(embedding) = ''",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())
+    }
+
     // ── Ranked Retrieval ──
 
     /// Lexical-only retrieval (Retrieval v2).
