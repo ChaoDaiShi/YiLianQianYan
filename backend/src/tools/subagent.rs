@@ -17,6 +17,7 @@
 // ============================================================
 
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use crate::safety::{
     DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
@@ -29,6 +30,41 @@ use crate::tools::trait_def::{RiskLevel, Tool, ToolResult};
 const MAX_EXPOSED_SUBAGENT_NAME_LEN: usize = 64;
 /// Maximum description characters (UTF-8 safe truncation).
 const MAX_SUBAGENT_DESCRIPTION_CHARS: usize = 1000;
+/// Maximum delegated task length. Oversized tasks are rejected, never silently
+/// truncated (the approved task must be the executed task).
+const MAX_SUBAGENT_TASK_CHARS: usize = 8000;
+
+/// Executes a subagent delegation. Crate-private; production wiring is a later
+/// step (6D). The execution result is always a bounded [`ToolResult`].
+#[async_trait]
+pub(crate) trait SubagentExecutor: Send + Sync {
+    async fn execute_subagent(&self, spec: &SubagentExecutionSpec, task: &str) -> ToolResult;
+}
+
+/// Trusted, cloned subagent execution parameters. Everything here comes from
+/// the discovered definition — never from LLM arguments.
+#[derive(Clone)]
+pub(crate) struct SubagentExecutionSpec {
+    pub(crate) name: String,
+    /// Read by the child runtime once wired (Step 6D); kept private from Debug.
+    #[allow(dead_code)]
+    pub(crate) instructions: String,
+    pub(crate) allowed_tools: Vec<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) workdir: Option<String>,
+}
+
+// Manual Debug: never print the instructions body.
+impl std::fmt::Debug for SubagentExecutionSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubagentExecutionSpec")
+            .field("name", &self.name)
+            .field("allowed_tools", &self.allowed_tools)
+            .field("model", &self.model)
+            .field("workdir", &self.workdir)
+            .finish()
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum SubagentToolAdapterError {
@@ -50,8 +86,6 @@ pub struct SubagentToolAdapter {
     exposed_name: String,
     subagent_name: String,
     description: String,
-    /// Reserved for the future delegation runtime; kept private.
-    #[allow(dead_code)]
     instructions: String,
     allowed_tools: Vec<String>,
     model: Option<String>,
@@ -59,9 +93,11 @@ pub struct SubagentToolAdapter {
     /// Reserved for the future delegation runtime; kept private.
     #[allow(dead_code)]
     definition_path: String,
+    /// Optional runtime executor. `None` keeps the adapter fail-closed.
+    executor: Option<Arc<dyn SubagentExecutor>>,
 }
 
-// Manual Debug: never print the instructions body.
+// Manual Debug: never print the instructions body or the executor.
 impl std::fmt::Debug for SubagentToolAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SubagentToolAdapter")
@@ -75,7 +111,42 @@ impl std::fmt::Debug for SubagentToolAdapter {
 }
 
 impl SubagentToolAdapter {
+    /// Construct a fail-closed adapter (executor = `None`).
     pub fn new(definition: &DiscoveredSubagent) -> Result<Self, SubagentToolAdapterError> {
+        Self::new_internal(definition, None)
+    }
+
+    /// Construct an executable adapter backed by a subagent runtime executor.
+    /// Production wiring lands in Step 6D.
+    #[allow(dead_code)]
+    pub(crate) fn new_executable(
+        definition: &DiscoveredSubagent,
+        executor: Arc<dyn SubagentExecutor>,
+    ) -> Result<Self, SubagentToolAdapterError> {
+        Self::new_internal(definition, Some(executor))
+    }
+
+    /// Collision-safe executable constructor for the future production
+    /// registry (Step 6D).
+    #[allow(dead_code)]
+    pub(crate) fn new_unique_executable(
+        definition: &DiscoveredSubagent,
+        occupied_names: &mut std::collections::HashSet<String>,
+        executor: Arc<dyn SubagentExecutor>,
+    ) -> Result<Self, SubagentToolAdapterError> {
+        let adapter = Self::new_executable(definition, executor)?;
+        if !occupied_names.insert(adapter.name().to_string()) {
+            return Err(SubagentToolAdapterError::NameCollision(
+                adapter.name().to_string(),
+            ));
+        }
+        Ok(adapter)
+    }
+
+    fn new_internal(
+        definition: &DiscoveredSubagent,
+        executor: Option<Arc<dyn SubagentExecutor>>,
+    ) -> Result<Self, SubagentToolAdapterError> {
         if definition.name.trim().is_empty() {
             return Err(SubagentToolAdapterError::EmptyName);
         }
@@ -116,6 +187,7 @@ impl SubagentToolAdapter {
             model: definition.model.clone(),
             workdir: definition.workdir.clone(),
             definition_path: definition.path.clone(),
+            executor,
         })
     }
 
@@ -237,8 +309,36 @@ impl Tool for SubagentToolAdapter {
         Ok(descriptor)
     }
 
-    async fn execute(&self, _args: serde_json::Value) -> ToolResult {
-        ToolResult::error("Subagent execution is not enabled yet")
+    /// Execute the delegated task through the bound executor.
+    ///
+    /// Defensively validates `task` even though the Security Gateway already
+    /// checked it: it must be a non-empty string within the length cap. The
+    /// execution spec is always built from the adapter's trusted binding, never
+    /// from extra LLM arguments.
+    async fn execute(&self, args: serde_json::Value) -> ToolResult {
+        let task = match args.get("task").and_then(|v| v.as_str()) {
+            Some(task) => task.trim(),
+            None => return ToolResult::error("Subagent task is missing or empty"),
+        };
+        if task.is_empty() {
+            return ToolResult::error("Subagent task is missing or empty");
+        }
+        if task.chars().count() > MAX_SUBAGENT_TASK_CHARS {
+            return ToolResult::error("Subagent task exceeds maximum length");
+        }
+
+        let Some(executor) = &self.executor else {
+            return ToolResult::error("Subagent execution is not enabled yet");
+        };
+
+        let spec = SubagentExecutionSpec {
+            name: self.subagent_name.clone(),
+            instructions: self.instructions.clone(),
+            allowed_tools: self.allowed_tools.clone(),
+            model: self.model.clone(),
+            workdir: self.workdir.clone(),
+        };
+        executor.execute_subagent(&spec, task).await
     }
 }
 
@@ -454,5 +554,180 @@ mod tests {
     fn empty_instructions_are_rejected() {
         let err = SubagentToolAdapter::new(&definition("researcher", "desc", "  ")).unwrap_err();
         assert!(matches!(err, SubagentToolAdapterError::EmptyInstructions));
+    }
+
+    // ── Executable adapter (runtime foundation) ──
+
+    struct FakeSubagentExecutor {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        seen_name: std::sync::Mutex<Option<String>>,
+        seen_allowed_tools: std::sync::Mutex<Option<Vec<String>>>,
+        seen_model: std::sync::Mutex<Option<Option<String>>>,
+        seen_task: std::sync::Mutex<Option<String>>,
+        seen_instructions: std::sync::Mutex<Option<String>>,
+    }
+
+    #[async_trait]
+    impl SubagentExecutor for FakeSubagentExecutor {
+        async fn execute_subagent(&self, spec: &SubagentExecutionSpec, task: &str) -> ToolResult {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.seen_name.lock().unwrap() = Some(spec.name.clone());
+            *self.seen_allowed_tools.lock().unwrap() = Some(spec.allowed_tools.clone());
+            *self.seen_model.lock().unwrap() = Some(spec.model.clone());
+            *self.seen_task.lock().unwrap() = Some(task.to_string());
+            *self.seen_instructions.lock().unwrap() = Some(spec.instructions.clone());
+            ToolResult::success("child result")
+        }
+    }
+
+    fn fake_executor() -> (
+        Arc<FakeSubagentExecutor>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let executor = Arc::new(FakeSubagentExecutor {
+            calls: Arc::clone(&calls),
+            seen_name: std::sync::Mutex::new(None),
+            seen_allowed_tools: std::sync::Mutex::new(None),
+            seen_model: std::sync::Mutex::new(None),
+            seen_task: std::sync::Mutex::new(None),
+            seen_instructions: std::sync::Mutex::new(None),
+        });
+        (executor, calls)
+    }
+
+    #[tokio::test]
+    async fn executable_adapter_runs_fake_executor_with_trusted_spec() {
+        let (executor, calls) = fake_executor();
+        let adapter = SubagentToolAdapter::new_executable(
+            &definition("researcher", "", "research body"),
+            executor.clone(),
+        )
+        .unwrap();
+
+        let result = adapter
+            .execute(serde_json::json!({"task": "research this"}))
+            .await;
+        assert!(result.ok);
+        assert_eq!(result.content, "child result");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            *executor.seen_name.lock().unwrap(),
+            Some("researcher".to_string())
+        );
+        assert_eq!(
+            *executor.seen_task.lock().unwrap(),
+            Some("research this".to_string())
+        );
+        assert_eq!(
+            *executor.seen_allowed_tools.lock().unwrap(),
+            Some(vec!["read_file".to_string(), "grep".to_string()])
+        );
+        assert_eq!(
+            *executor.seen_model.lock().unwrap(),
+            Some(Some("deepseek-v4-flash".to_string()))
+        );
+        assert_eq!(
+            *executor.seen_instructions.lock().unwrap(),
+            Some("research body".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn executable_adapter_spec_ignores_extra_arguments() {
+        let (executor, _calls) = fake_executor();
+        let adapter = SubagentToolAdapter::new_executable(
+            &definition("researcher", "", "trusted instructions"),
+            executor.clone(),
+        )
+        .unwrap();
+
+        let result = adapter
+            .execute(serde_json::json!({
+                "task": "x",
+                "model": "evil-model",
+                "allowed_tools": ["bash"],
+                "subagent": "evil"
+            }))
+            .await;
+        assert!(result.ok);
+        // Everything the executor saw comes from the definition, not args.
+        assert_eq!(
+            *executor.seen_name.lock().unwrap(),
+            Some("researcher".to_string())
+        );
+        assert_eq!(
+            *executor.seen_allowed_tools.lock().unwrap(),
+            Some(vec!["read_file".to_string(), "grep".to_string()])
+        );
+        assert_eq!(
+            *executor.seen_model.lock().unwrap(),
+            Some(Some("deepseek-v4-flash".to_string()))
+        );
+        assert_eq!(
+            *executor.seen_instructions.lock().unwrap(),
+            Some("trusted instructions".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn executable_adapter_missing_task_does_not_call_executor() {
+        let (executor, calls) = fake_executor();
+        let adapter =
+            SubagentToolAdapter::new_executable(&definition("researcher", "", "body"), executor)
+                .unwrap();
+
+        for args in [serde_json::json!({}), serde_json::json!({"task": "   "})] {
+            let result = adapter.execute(args).await;
+            assert!(!result.ok);
+            assert!(result.content.contains("missing or empty"));
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn executable_adapter_oversized_task_is_rejected() {
+        let (executor, calls) = fake_executor();
+        let adapter =
+            SubagentToolAdapter::new_executable(&definition("researcher", "", "body"), executor)
+                .unwrap();
+
+        let long_task = "任".repeat(MAX_SUBAGENT_TASK_CHARS + 100);
+        let result = adapter
+            .execute(serde_json::json!({"task": long_task}))
+            .await;
+        assert!(!result.ok);
+        assert!(result.content.contains("exceeds maximum length"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn disabled_adapter_still_fails_closed() {
+        let adapter = SubagentToolAdapter::new(&definition("researcher", "", "body")).unwrap();
+        let result = adapter.execute(serde_json::json!({"task": "x"})).await;
+        assert!(!result.ok);
+        assert!(result
+            .content
+            .contains("Subagent execution is not enabled yet"));
+    }
+
+    #[test]
+    fn new_unique_executable_is_collision_safe() {
+        use std::collections::HashSet;
+        let (executor, _calls) = fake_executor();
+        let mut occupied = HashSet::new();
+        SubagentToolAdapter::new_unique_executable(
+            &definition("researcher", "", "body"),
+            &mut occupied,
+            executor.clone(),
+        )
+        .unwrap();
+        let err = SubagentToolAdapter::new_unique_executable(
+            &definition("researcher", "", "body"),
+            &mut occupied,
+            executor,
+        )
+        .unwrap_err();
+        assert!(matches!(err, SubagentToolAdapterError::NameCollision(_)));
     }
 }
