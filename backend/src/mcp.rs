@@ -1,5 +1,6 @@
 // ============================================================
-// MCP Client Protocol Foundation — stdio JSON-RPC handshake.
+// MCP Client Protocol Foundation — stdio JSON-RPC handshake +
+// one-shot tool execution.
 //
 // Implements the minimal MCP client lifecycle over a stdio child
 // process:
@@ -7,10 +8,11 @@
 //   initialize
 //   → notifications/initialized
 //   → tools/list (with pagination)
+//   → tools/call (single remote tool execution)
 //
-// No tools are registered with the Agent, and tools/call is NOT
-// implemented. This module only proves that a stdio server is a real
-// MCP server by completing the protocol handshake.
+// The tools/call protocol and a bounded ToolResult bridge are provided
+// as an execution foundation. MCP tools are NOT registered with the
+// Agent, and McpToolAdapter::execute() remains fail-closed.
 // ============================================================
 
 use std::time::Duration;
@@ -19,12 +21,19 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::db::McpServer;
+use crate::tools::trait_def::ToolResult;
 
 /// MCP protocol version supported by this client.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
 /// Whole-probe timeout (spawn + handshake + tools/list).
 pub const MCP_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Timeout for a one-shot stdio tools/call (initialize + initialized + call).
+pub const MCP_TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Maximum characters of the final `ToolResult.content` (UTF-8 safe truncation).
+pub const MAX_MCP_TOOL_RESULT_CHARS: usize = 16_000;
 
 /// Safety cap on pages fetched from a single tools/list pagination loop.
 pub const MAX_TOOL_LIST_PAGES: usize = 20;
@@ -52,6 +61,8 @@ pub enum McpError {
     Timeout,
     #[error("MCP tools/list exceeded pagination limit")]
     PaginationLimit,
+    #[error("invalid MCP tool call: {0}")]
+    InvalidToolCall(String),
 }
 
 // ── Result types ──
@@ -78,6 +89,20 @@ pub struct McpInitializeInfo {
     pub protocol_version: String,
     pub server_name: Option<String>,
     pub server_version: Option<String>,
+}
+
+/// The `CallToolResult` returned by a `tools/call` request.
+///
+/// `is_error` is a tool-level error (e.g. invalid input), distinct from a
+/// JSON-RPC error which is a protocol/request failure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpCallResult {
+    #[serde(default)]
+    pub content: Vec<serde_json::Value>,
+    #[serde(rename = "structuredContent", default)]
+    pub structured_content: Option<serde_json::Value>,
+    #[serde(rename = "isError", default)]
+    pub is_error: bool,
 }
 
 // ── Public entry point ──
@@ -157,6 +182,145 @@ where
         server_version: init.server_version,
         tools,
     })
+}
+
+// ── One-shot tools/call execution ──
+
+/// Spawn a stdio MCP server, handshake, execute one remote tool, and
+/// return the bounded [`ToolResult`].
+///
+/// The child process is owned OUTSIDE the timeout so that on timeout (or any
+/// error) we can explicitly kill + reap it. `kill_on_drop(true)` remains as a
+/// final safety net.
+pub async fn call_stdio_tool(
+    server: &McpServer,
+    remote_tool_name: &str,
+    arguments: serde_json::Value,
+) -> Result<ToolResult, McpError> {
+    if remote_tool_name.trim().is_empty() {
+        return Err(McpError::InvalidToolCall(
+            "remote tool name is empty".to_string(),
+        ));
+    }
+    if !arguments.is_object() {
+        return Err(McpError::InvalidToolCall(
+            "arguments must be a JSON object".to_string(),
+        ));
+    }
+
+    let command = server
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|cmd| !cmd.is_empty())
+        .ok_or_else(|| McpError::InvalidConfig("command is required".to_string()))?;
+    let args = server.args.clone().unwrap_or_default();
+    let envs = resolve_env(&server.env)?;
+
+    let mut cmd = tokio::process::Command::new(command);
+    cmd.args(&args);
+    for (key, value) in &envs {
+        cmd.env(key, value);
+    }
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| McpError::Spawn(e.to_string()))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| McpError::Io("child stdout unavailable".to_string()))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| McpError::Io("child stdin unavailable".to_string()))?;
+    let io = tokio::io::join(stdout, stdin);
+
+    let mut session = McpSession::new(io);
+
+    let protocol_result = tokio::time::timeout(
+        MCP_TOOL_CALL_TIMEOUT,
+        run_tool_call(&mut session, remote_tool_name, arguments),
+    )
+    .await;
+
+    // Child ownership is outside the timeout: always clean up explicitly.
+    drop(session);
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+
+    match protocol_result {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(McpError::Timeout),
+    }
+}
+
+async fn run_tool_call<IO>(
+    session: &mut McpSession<IO>,
+    remote_tool_name: &str,
+    arguments: serde_json::Value,
+) -> Result<ToolResult, McpError>
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+{
+    session.initialize().await?;
+    session.send_initialized().await?;
+    let result = session.call_tool(remote_tool_name, arguments).await?;
+    Ok(result.into_tool_result())
+}
+
+impl McpCallResult {
+    /// Convert an MCP `CallToolResult` into the project's [`ToolResult`].
+    ///
+    /// Text content blocks are joined in order; non-text blocks are replaced
+    /// with short placeholders so binary/base64 payloads are never leaked.
+    pub fn into_tool_result(self) -> ToolResult {
+        let mut parts: Vec<String> = Vec::new();
+
+        for block in &self.content {
+            let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            match block_type {
+                "text" => {
+                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                        parts.push(text.to_string());
+                    }
+                }
+                "image" => parts.push("[MCP image content omitted]".to_string()),
+                "audio" => parts.push("[MCP audio content omitted]".to_string()),
+                "resource" => parts.push("[MCP resource content omitted]".to_string()),
+                "resource_link" => parts.push("[MCP resource_link content omitted]".to_string()),
+                "" => parts.push("[MCP content block without type]".to_string()),
+                other => parts.push(format!("[MCP unsupported content type: {other}]")),
+            }
+        }
+
+        if let Some(structured) = &self.structured_content {
+            parts.push("[MCP structured content]".to_string());
+            parts.push(structured.to_string());
+        }
+
+        let content = if parts.is_empty() {
+            if self.is_error {
+                "MCP tool failed without error content".to_string()
+            } else {
+                "MCP tool returned no content".to_string()
+            }
+        } else {
+            let joined = parts.join("\n");
+            crate::utils::text::truncate_chars(&joined, MAX_MCP_TOOL_RESULT_CHARS)
+        };
+
+        if self.is_error {
+            ToolResult::error(content)
+        } else {
+            ToolResult::success(content)
+        }
+    }
 }
 
 // ── Config resolution ──
@@ -322,6 +486,75 @@ where
         }
 
         Err(McpError::PaginationLimit)
+    }
+
+    /// Execute a single remote tool via `tools/call`.
+    ///
+    /// `remote_tool_name` must be the MCP server's original tool name (not the
+    /// namespaced `mcp_*` adapter name). `arguments` must be a JSON object.
+    pub async fn call_tool(
+        &mut self,
+        remote_tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<McpCallResult, McpError> {
+        if remote_tool_name.trim().is_empty() {
+            return Err(McpError::InvalidToolCall(
+                "remote tool name is empty".to_string(),
+            ));
+        }
+        if !arguments.is_object() {
+            return Err(McpError::InvalidToolCall(
+                "arguments must be a JSON object".to_string(),
+            ));
+        }
+
+        let id = self.next_request_id();
+        let params = serde_json::json!({
+            "name": remote_tool_name,
+            "arguments": arguments,
+        });
+        self.write_request(id, "tools/call", params).await?;
+        let resp = self.read_response_for_id(id).await?;
+
+        if let Some(error) = resp.get("error") {
+            return Err(McpError::Rpc {
+                code: error["code"].as_i64().unwrap_or(0),
+                message: error["message"]
+                    .as_str()
+                    .unwrap_or("unknown MCP error")
+                    .to_string(),
+            });
+        }
+
+        let result = resp.get("result").ok_or_else(|| {
+            McpError::InvalidMessage("tools/call response missing 'result'".to_string())
+        })?;
+        let content = result.get("content").ok_or_else(|| {
+            McpError::InvalidMessage("tools/call result missing 'content'".to_string())
+        })?;
+        if !content.is_array() {
+            return Err(McpError::InvalidMessage(
+                "tools/call result 'content' must be an array".to_string(),
+            ));
+        }
+
+        let structured_content = result.get("structuredContent");
+        if let Some(sc) = structured_content {
+            if !sc.is_object() {
+                return Err(McpError::InvalidMessage(
+                    "tools/call 'structuredContent' must be a JSON object".to_string(),
+                ));
+            }
+        }
+
+        Ok(McpCallResult {
+            content: content.as_array().cloned().unwrap_or_default(),
+            structured_content: structured_content.cloned(),
+            is_error: result
+                .get("isError")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        })
     }
 
     async fn write_request(
@@ -740,5 +973,407 @@ mod tests {
         assert!(result.is_err()); // timed out
         assert!(start.elapsed() < Duration::from_secs(5));
         mock.abort();
+    }
+
+    // ── tools/call protocol tests ──
+
+    async fn run_call_session(
+        mock: tokio::task::JoinHandle<()>,
+        client: DuplexStream,
+        remote_name: &str,
+        args: serde_json::Value,
+    ) -> Result<McpCallResult, McpError> {
+        let mut session = McpSession::new(client);
+        session.initialize().await.unwrap();
+        session.send_initialized().await.unwrap();
+        let result = session.call_tool(remote_name, args).await;
+        drop(session);
+        mock.await.unwrap();
+        result
+    }
+
+    #[tokio::test]
+    async fn tools_call_request_uses_remote_name_and_arguments() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await; // initialize
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await; // initialized
+            let call = read_server_line(&mut reader).await;
+            assert_eq!(call["method"], "tools/call");
+            assert_eq!(call["params"]["name"], "read-file");
+            assert_eq!(call["params"]["arguments"], json!({"path": "/tmp/a"}));
+            let id = call["id"].as_i64().unwrap();
+            write_server_line(
+                &mut reader,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "content": [{ "type": "text", "text": "hello" }], "isError": false }
+                }),
+            )
+            .await;
+        });
+
+        let result = run_call_session(mock, client, "read-file", json!({"path": "/tmp/a"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn tools_call_success_returns_tool_result_ok() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await;
+            let call = read_server_line(&mut reader).await;
+            let id = call["id"].as_i64().unwrap();
+            write_server_line(
+                &mut reader,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "content": [{ "type": "text", "text": "hello" }], "isError": false }
+                }),
+            )
+            .await;
+        });
+
+        let result = run_call_session(mock, client, "echo", json!({}))
+            .await
+            .unwrap();
+        let tr = result.into_tool_result();
+        assert!(tr.ok);
+        assert_eq!(tr.content, "hello");
+    }
+
+    #[tokio::test]
+    async fn tools_call_tool_error_is_not_rpc_error() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await;
+            let call = read_server_line(&mut reader).await;
+            let id = call["id"].as_i64().unwrap();
+            write_server_line(
+                &mut reader,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "content": [{ "type": "text", "text": "invalid input" }],
+                        "isError": true
+                    }
+                }),
+            )
+            .await;
+        });
+
+        let result = run_call_session(mock, client, "echo", json!({}))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        let tr = result.into_tool_result();
+        assert!(!tr.ok);
+    }
+
+    #[tokio::test]
+    async fn tools_call_jsonrpc_error_is_rpc_error() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await;
+            let call = read_server_line(&mut reader).await;
+            let id = call["id"].as_i64().unwrap();
+            write_server_line(
+                &mut reader,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": "Unknown tool" }
+                }),
+            )
+            .await;
+        });
+
+        let err = run_call_session(mock, client, "nope", json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, McpError::Rpc { code: -32602, .. }));
+    }
+
+    #[tokio::test]
+    async fn tools_call_handles_notification_before_response() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await;
+            let call = read_server_line(&mut reader).await;
+            let id = call["id"].as_i64().unwrap();
+            // Notification first, then the actual response.
+            write_server_line(
+                &mut reader,
+                &json!({ "jsonrpc": "2.0", "method": "notifications/message", "params": {} }),
+            )
+            .await;
+            write_server_line(
+                &mut reader,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "content": [{ "type": "text", "text": "ok" }], "isError": false }
+                }),
+            )
+            .await;
+        });
+
+        let result = run_call_session(mock, client, "echo", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result.content[0]["text"], "ok");
+    }
+
+    #[tokio::test]
+    async fn tools_call_multiple_text_blocks_join_in_order() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await;
+            let call = read_server_line(&mut reader).await;
+            let id = call["id"].as_i64().unwrap();
+            write_server_line(
+                &mut reader,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "content": [
+                            { "type": "text", "text": "A" },
+                            { "type": "text", "text": "B" }
+                        ],
+                        "isError": false
+                    }
+                }),
+            )
+            .await;
+        });
+
+        let result = run_call_session(mock, client, "echo", json!({}))
+            .await
+            .unwrap();
+        let tr = result.into_tool_result();
+        assert_eq!(tr.content, "A\nB");
+    }
+
+    // ── ToolResult bridge tests (no protocol needed) ──
+
+    fn raw_call_result(value: serde_json::Value) -> McpCallResult {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn image_payload_is_not_leaked() {
+        let result = raw_call_result(json!({
+            "content": [
+                { "type": "text", "text": "visible" },
+                { "type": "image", "data": "VERY_SECRET_BASE64_PAYLOAD", "mimeType": "image/png" }
+            ],
+            "isError": false
+        }));
+        let tr = result.into_tool_result();
+        assert!(tr.content.contains("visible"));
+        assert!(tr.content.contains("[MCP image content omitted]"));
+        assert!(!tr.content.contains("VERY_SECRET_BASE64_PAYLOAD"));
+    }
+
+    #[test]
+    fn audio_payload_is_not_leaked() {
+        let result = raw_call_result(json!({
+            "content": [
+                { "type": "audio", "data": "VERY_SECRET_BASE64_PAYLOAD", "mimeType": "audio/wav" }
+            ],
+            "isError": false
+        }));
+        let tr = result.into_tool_result();
+        assert!(tr.content.contains("[MCP audio content omitted]"));
+        assert!(!tr.content.contains("VERY_SECRET_BASE64_PAYLOAD"));
+    }
+
+    #[test]
+    fn structured_content_is_included() {
+        let result = raw_call_result(json!({
+            "content": [],
+            "structuredContent": { "answer": 42 }
+        }));
+        let tr = result.into_tool_result();
+        assert!(tr.content.contains("[MCP structured content]"));
+        assert!(tr.content.contains("\"answer\":42"));
+    }
+
+    #[test]
+    fn empty_success_result_gets_default_text() {
+        let result = raw_call_result(json!({ "content": [], "isError": false }));
+        let tr = result.into_tool_result();
+        assert_eq!(tr.content, "MCP tool returned no content");
+        assert!(tr.ok);
+    }
+
+    #[test]
+    fn empty_error_result_gets_default_text() {
+        let result = raw_call_result(json!({ "content": [], "isError": true }));
+        let tr = result.into_tool_result();
+        assert_eq!(tr.content, "MCP tool failed without error content");
+        assert!(!tr.ok);
+    }
+
+    #[test]
+    fn result_is_truncated_utf8_safe() {
+        let long = "长".repeat(MAX_MCP_TOOL_RESULT_CHARS + 5000);
+        let result = raw_call_result(json!({
+            "content": [{ "type": "text", "text": long }],
+            "isError": false
+        }));
+        let tr = result.into_tool_result();
+        assert!(tr.content.chars().count() <= MAX_MCP_TOOL_RESULT_CHARS + 3);
+        assert!(tr.content.is_char_boundary(tr.content.len()));
+    }
+
+    // ── argument / name validation ──
+
+    #[tokio::test]
+    async fn call_tool_rejects_non_object_arguments() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            // Server must never receive a tools/call for bad arguments.
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let notif = read_server_line(&mut reader).await;
+            assert_eq!(notif["method"], "notifications/initialized");
+            // Then the client returns InvalidToolCall and drops; EOF expected.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+
+        let mut session = McpSession::new(client);
+        session.initialize().await.unwrap();
+        session.send_initialized().await.unwrap();
+        let err = session
+            .call_tool("search", json!(["bad"]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, McpError::InvalidToolCall(_)));
+        drop(session);
+        mock.abort();
+    }
+
+    #[tokio::test]
+    async fn call_tool_rejects_empty_remote_name() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+
+        let mut session = McpSession::new(client);
+        session.initialize().await.unwrap();
+        session.send_initialized().await.unwrap();
+        let err = session.call_tool("", json!({})).await.unwrap_err();
+        assert!(matches!(err, McpError::InvalidToolCall(_)));
+        drop(session);
+        mock.abort();
+    }
+
+    #[tokio::test]
+    async fn call_tool_missing_content_is_invalid_message() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await;
+            let call = read_server_line(&mut reader).await;
+            let id = call["id"].as_i64().unwrap();
+            write_server_line(
+                &mut reader,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "isError": false }
+                }),
+            )
+            .await;
+        });
+
+        let err = run_call_session(mock, client, "echo", json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, McpError::InvalidMessage(_)));
+    }
+
+    #[tokio::test]
+    async fn call_tool_non_object_structured_content_is_invalid() {
+        let (client, server) = duplex_pair();
+        let mock = tokio::spawn(async move {
+            let mut reader = BufReader::new(server);
+            let _ = read_server_line(&mut reader).await;
+            write_server_line(&mut reader, &initialize_response(MCP_PROTOCOL_VERSION)).await;
+            let _ = read_server_line(&mut reader).await;
+            let call = read_server_line(&mut reader).await;
+            let id = call["id"].as_i64().unwrap();
+            write_server_line(
+                &mut reader,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "content": [], "structuredContent": [] }
+                }),
+            )
+            .await;
+        });
+
+        let err = run_call_session(mock, client, "echo", json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, McpError::InvalidMessage(_)));
+    }
+
+    #[test]
+    fn call_stdio_tool_rejects_non_object_arguments() {
+        let server = McpServer {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("echo".to_string()),
+            args: None,
+            url: None,
+            env: None,
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let err = rt
+            .block_on(call_stdio_tool(&server, "search", json!(["bad"])))
+            .unwrap_err();
+        assert!(matches!(err, McpError::InvalidToolCall(_)));
     }
 }
