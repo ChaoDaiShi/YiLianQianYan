@@ -6,15 +6,23 @@
 // registered in a temporary ToolRegistry and exposed as an
 // OpenAI-compatible tool definition.
 //
-// Deliberately fail-closed:
+// Security posture:
 //   - risk_level is always High (remote side effects are unknown)
-//   - execute() always errors (tools/call is not implemented yet)
-//   - security_descriptor() keeps the default UnknownTool fail-closed
-//     behaviour — a namespaced `mcp_*` name is not a builtin tool.
+//   - security_descriptor() emits an MCP-specific descriptor
+//     (McpInvoke / McpServer / High / ExternalService), validated through
+//     the standard profile chain — no bypass.
+//   - execute() calls the real stdio executor. Approval decisions remain the
+//     SecurityExecutionGateway's responsibility; the adapter never evaluates
+//     roles itself.
+//
+// The adapter retains a private clone of the full [`McpServer`] config for
+// execution. It is never Serialized, and Debug output omits the server config
+// (which may contain command / env / secrets).
 // ============================================================
 
 use async_trait::async_trait;
 
+use crate::db::McpServer;
 use crate::mcp::McpTool;
 use crate::safety::{
     DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
@@ -46,8 +54,8 @@ pub enum McpToolAdapterError {
 /// A Tool-trait adapter around a single remote MCP tool.
 ///
 /// `exposed_name` is what the LLM / Agent sees; `remote_tool_name` is the
-/// name that must be sent verbatim in a future `tools/call`.
-#[derive(Debug)]
+/// name that must be sent verbatim in a future `tools/call`. The full
+/// `server` config is kept privately for execution.
 pub struct McpToolAdapter {
     exposed_name: String,
     server_id: String,
@@ -55,10 +63,25 @@ pub struct McpToolAdapter {
     remote_tool_name: String,
     description: String,
     input_schema: serde_json::Value,
+    server: McpServer,
+}
+
+// Manual Debug: never print the full server config (may contain command/env/secrets).
+impl std::fmt::Debug for McpToolAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpToolAdapter")
+            .field("exposed_name", &self.exposed_name)
+            .field("server_id", &self.server_id)
+            .field("server_name", &self.server_name)
+            .field("remote_tool_name", &self.remote_tool_name)
+            .field("description", &self.description)
+            .field("input_schema", &self.input_schema)
+            .finish()
+    }
 }
 
 impl McpToolAdapter {
-    pub fn new(server: &crate::db::McpServer, tool: &McpTool) -> Result<Self, McpToolAdapterError> {
+    pub fn new(server: &McpServer, tool: &McpTool) -> Result<Self, McpToolAdapterError> {
         if server.id.trim().is_empty() {
             return Err(McpToolAdapterError::EmptyServerId);
         }
@@ -89,6 +112,7 @@ impl McpToolAdapter {
             remote_tool_name: remote_tool_name.to_string(),
             description,
             input_schema: tool.input_schema.clone(),
+            server: server.clone(),
         })
     }
 
@@ -220,9 +244,54 @@ impl Tool for McpToolAdapter {
         Ok(descriptor)
     }
 
-    async fn execute(&self, _args: serde_json::Value) -> ToolResult {
-        ToolResult::error("MCP tool execution is not enabled yet")
+    /// Execute the remote tool via the stdio executor.
+    ///
+    /// Protocol/execution errors are converted to a bounded [`ToolResult`]
+    /// (never a panic, never propagated as an `Err`). Approval decisions are
+    /// handled upstream by the SecurityExecutionGateway.
+    async fn execute(&self, args: serde_json::Value) -> ToolResult {
+        match crate::mcp::call_stdio_tool(&self.server, &self.remote_tool_name, args).await {
+            Ok(result) => result,
+            Err(error) => {
+                let safe = crate::utils::text::truncate_chars(&error.to_string(), 500);
+                ToolResult::error(format!("MCP tool execution failed: {safe}"))
+            }
+        }
     }
+}
+
+/// Register a batch of discovered MCP tools into a runtime registry snapshot.
+///
+/// Pure and side-effect free: does NOT spawn, connect, or execute anything.
+/// Each tool is wrapped in a namespaced [`McpToolAdapter`] via `new_unique`.
+///
+/// Returns the number of tools successfully registered. Individual tools with
+/// invalid metadata or a name collision are skipped (logged as debug) without
+/// failing the rest of the batch.
+pub fn register_discovered_mcp_tools(
+    registry: &mut crate::tools::ToolRegistry,
+    occupied_names: &mut std::collections::HashSet<String>,
+    server: &McpServer,
+    tools: &[McpTool],
+) -> usize {
+    let mut registered = 0usize;
+    for tool in tools {
+        match McpToolAdapter::new_unique(server, tool, occupied_names) {
+            Ok(adapter) => {
+                registry.register(std::sync::Arc::new(adapter));
+                registered += 1;
+            }
+            Err(e) => {
+                tracing::debug!(
+                    server_id = %server.id,
+                    tool_name = %tool.name,
+                    error = %e,
+                    "skipping MCP tool with invalid metadata or name collision"
+                );
+            }
+        }
+    }
+    registered
 }
 
 #[cfg(test)]
@@ -413,14 +482,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_fails_closed() {
-        let server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+    async fn execute_is_wired_to_stdio_executor() {
+        // command = None → call_stdio_tool rejects config before spawning.
+        let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        server.command = None;
         let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
         let adapter = McpToolAdapter::new(&server, &tool).unwrap();
 
         let result = adapter.execute(serde_json::json!({"q": "x"})).await;
         assert!(!result.ok);
-        assert!(result.content.contains("not enabled"));
+        // Proves execute() now goes through the real executor and converts
+        // the McpError into a bounded ToolResult.
+        assert!(result.content.contains("MCP tool execution failed"));
+        assert!(!result.content.contains("not enabled"));
+    }
+
+    #[tokio::test]
+    async fn execute_never_panics_and_converts_errors_to_tool_result() {
+        // A missing command is only one failure mode; the key is that the
+        // Tool trait boundary never sees a Rust Err / panic.
+        let mut server = mcp_server("550e8400-e29b-41d4-a716-446655440000", "fs");
+        server.command = None;
+        let tool = mcp_tool("search", None, serde_json::json!({"type": "object"}));
+        let adapter = McpToolAdapter::new(&server, &tool).unwrap();
+
+        let result = adapter.execute(serde_json::json!({})).await;
+        assert!(!result.ok);
+        assert!(result.error.is_some());
     }
 
     #[test]
@@ -488,5 +576,120 @@ mod tests {
         occupied.insert("mcp_550e8400_search".to_string());
         let err = McpToolAdapter::new_unique(&server, &tool, &mut occupied).unwrap_err();
         assert!(matches!(err, McpToolAdapterError::NameCollision(_)));
+    }
+
+    // ── register_discovered_mcp_tools (pure, no spawn) ──
+
+    use std::collections::HashSet;
+
+    fn register_helper(
+        server: &McpServer,
+        tools: &[McpTool],
+        occupied: &mut HashSet<String>,
+    ) -> (crate::tools::ToolRegistry, usize) {
+        let mut registry = crate::tools::ToolRegistry::new();
+        let n = register_discovered_mcp_tools(&mut registry, occupied, server, tools);
+        (registry, n)
+    }
+
+    #[test]
+    fn registry_helper_preserves_builtins_and_adds_mcp() {
+        let mut registry = crate::tools::ToolRegistry::with_defaults(".");
+        let mut occupied: HashSet<String> = registry
+            .list_tools()
+            .into_iter()
+            .map(|info| info.name)
+            .collect();
+        let server = mcp_server("aaaaaaaa-0000-0000-0000-000000000000", "fs");
+        let tools = vec![mcp_tool(
+            "search",
+            None,
+            serde_json::json!({"type": "object"}),
+        )];
+
+        let n = register_discovered_mcp_tools(&mut registry, &mut occupied, &server, &tools);
+        assert_eq!(n, 1);
+        // Builtins preserved.
+        assert!(registry.get("read_file").is_some());
+        assert!(registry.get("bash").is_some());
+        // MCP tool present.
+        assert!(registry.get("mcp_aaaaaaaa_search").is_some());
+        // And exposed as an OpenAI function definition.
+        let openai_tools = registry.to_openai_tools();
+        let names: Vec<&str> = openai_tools
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert!(names.contains(&"mcp_aaaaaaaa_search"));
+    }
+
+    #[test]
+    fn registry_helper_registers_multiple_tools_from_one_server() {
+        let mut occupied = HashSet::new();
+        let server = mcp_server("aaaaaaaa-0000-0000-0000-000000000000", "fs");
+        let tools = vec![
+            mcp_tool("search", None, serde_json::json!({"type": "object"})),
+            mcp_tool("read", None, serde_json::json!({"type": "object"})),
+        ];
+        let (registry, n) = register_helper(&server, &tools, &mut occupied);
+        assert_eq!(n, 2);
+        assert!(registry.get("mcp_aaaaaaaa_search").is_some());
+        assert!(registry.get("mcp_aaaaaaaa_read").is_some());
+    }
+
+    #[test]
+    fn registry_helper_handles_cross_server_same_tool() {
+        let mut occupied = HashSet::new();
+        let server_a = mcp_server("aaaaaaaa-0000-0000-0000-000000000000", "A");
+        let server_b = mcp_server("bbbbbbbb-0000-0000-0000-000000000000", "B");
+        let tools = vec![mcp_tool(
+            "search",
+            None,
+            serde_json::json!({"type": "object"}),
+        )];
+        let (reg_a, n_a) = register_helper(&server_a, &tools, &mut occupied);
+        let (reg_b, n_b) = register_helper(&server_b, &tools, &mut occupied);
+        assert_eq!(n_a, 1);
+        assert_eq!(n_b, 1);
+        assert!(reg_a.get("mcp_aaaaaaaa_search").is_some());
+        assert!(reg_b.get("mcp_bbbbbbbb_search").is_some());
+    }
+
+    #[test]
+    fn registry_helper_collision_is_skipped_not_overwritten() {
+        let mut occupied = HashSet::new();
+        let server_a = mcp_server("abcdef12-1111-0000-0000-000000000000", "A");
+        let server_b = mcp_server("abcdef12-2222-0000-0000-000000000000", "B");
+        let tools = vec![mcp_tool(
+            "search",
+            None,
+            serde_json::json!({"type": "object"}),
+        )];
+
+        let (reg_a, n_a) = register_helper(&server_a, &tools, &mut occupied);
+        assert_eq!(n_a, 1);
+        assert!(reg_a.get("mcp_abcdef12_search").is_some());
+
+        // Second server with same 8-char namespace + same tool → collision → skipped.
+        let (reg_b, n_b) = register_helper(&server_b, &tools, &mut occupied);
+        assert_eq!(n_b, 0);
+        assert!(reg_b.get("mcp_abcdef12_search").is_none());
+    }
+
+    #[test]
+    fn registry_helper_invalid_metadata_skips_only_that_tool() {
+        let mut occupied = HashSet::new();
+        let server = mcp_server("aaaaaaaa-0000-0000-0000-000000000000", "fs");
+        let tools = vec![
+            mcp_tool("valid_search", None, serde_json::json!({"type": "object"})),
+            mcp_tool("中文工具", None, serde_json::json!({"type": "object"})),
+            mcp_tool("valid_read", None, serde_json::json!({"type": "object"})),
+        ];
+        let (registry, n) = register_helper(&server, &tools, &mut occupied);
+        assert_eq!(n, 2);
+        assert!(registry.get("mcp_aaaaaaaa_valid_search").is_some());
+        assert!(registry.get("mcp_aaaaaaaa_valid_read").is_some());
+        // The invalid (unrepresentable) tool was skipped, not fatal.
+        assert_eq!(registry.list_tools().len(), 2);
     }
 }

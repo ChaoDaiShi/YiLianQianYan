@@ -3,7 +3,7 @@
 // ============================================================
 
 use parking_lot::{Mutex, RwLock};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -224,6 +224,63 @@ impl AppServer {
                 crate::utils::text::truncate_chars(&scored.memory.content, CHAT_MEMORY_MAX_CHARS);
             prompt.push_str(&format!("- [{}] {}\n", category_label, content));
         }
+    }
+
+    /// Build an MCP-aware Agent Runtime ToolRegistry snapshot.
+    ///
+    /// Starts from the built-in tool registry, then discovers tools from every
+    /// enabled stdio MCP server via `probe_stdio_server`. Discovery is
+    /// best-effort: a failing server or an invalid tool is skipped, never
+    /// blocking the built-in tools.
+    ///
+    /// The returned snapshot is independent of `self.tool_registry` (which stays
+    /// the immutable builtin registry). This method does NOT wire the snapshot
+    /// into chat / approval; it only constructs it.
+    pub async fn build_agent_tool_registry(&self) -> Arc<ToolRegistry> {
+        let mut registry = ToolRegistry::with_defaults(&self.workspace_root);
+        let mut occupied_names: HashSet<String> = registry
+            .list_tools()
+            .into_iter()
+            .map(|info| info.name)
+            .collect();
+
+        let servers = match self.db.list_mcp_servers() {
+            Ok(servers) => servers,
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to load MCP servers; using builtin-only registry");
+                return Arc::new(registry);
+            }
+        };
+
+        for server in servers {
+            if !server.enabled || server.transport != "stdio" {
+                continue;
+            }
+            match crate::mcp::probe_stdio_server(&server).await {
+                Ok(probe) => {
+                    let registered = crate::tools::mcp::register_discovered_mcp_tools(
+                        &mut registry,
+                        &mut occupied_names,
+                        &server,
+                        &probe.tools,
+                    );
+                    tracing::info!(
+                        server_id = %server.id,
+                        registered,
+                        "MCP tools discovered for runtime registry"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        server_id = %server.id,
+                        error = %error,
+                        "MCP discovery failed; skipping server"
+                    );
+                }
+            }
+        }
+
+        Arc::new(registry)
     }
 
     fn discover_subagents(root: &str, dirs: &[String]) -> Vec<DiscoveredSubagent> {
