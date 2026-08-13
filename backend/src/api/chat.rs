@@ -16,10 +16,10 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::engine::{self, AgentEvent};
 use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
-use crate::db::MessageRow;
+use crate::db::{MessageRow, RetrieveQuery};
 use crate::llm::client::LlmClient;
 use crate::safety::SecurityExecutionGateway;
-use crate::server::AppServer;
+use crate::server::{AppServer, CHAT_MEMORY_TOP_K};
 use crate::utils::text::truncate_chars;
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +88,45 @@ pub async fn chat_handler(
 
     if let Some(extra) = workflow_prompt {
         system_prompt.push_str(&extra);
+    }
+
+    // Retrieve relevant memories using the current user message as the query.
+    // Best-effort enhancement: any retrieval/embedding failure must not block chat.
+    let mut memory_mode = "lexical";
+    let mut query_embedding: Option<Vec<f32>> = None;
+    if config.model.has_embedding() {
+        let llm = LlmClient::new(&config.model);
+        match llm.embed(&req.message).await {
+            Ok(vec) => {
+                query_embedding = Some(vec);
+                memory_mode = "hybrid";
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "chat query embedding failed, falling back to lexical memory retrieval");
+                memory_mode = "lexical_fallback";
+            }
+        }
+    }
+
+    let retrieval_query = RetrieveQuery {
+        q: req.message.clone(),
+        top_k: CHAT_MEMORY_TOP_K,
+        category: None,
+    };
+    match db.retrieve_memories_hybrid(&retrieval_query, query_embedding.as_deref()) {
+        Ok(scored) => {
+            if !scored.is_empty() {
+                server.append_memory_context(&mut system_prompt, &scored);
+                tracing::info!(
+                    mode = memory_mode,
+                    count = scored.len(),
+                    "memory context injected"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "memory retrieval failed; continuing chat without memory context");
+        }
     }
 
     // Get or create conversation
@@ -524,6 +563,231 @@ mod tests {
                 .count(),
             1
         );
+        mock_llm.abort();
+    }
+
+    // ── Memory context injection tests ──
+
+    use crate::db::{Memory, ScoredMemory};
+
+    fn scored_memory(category: &str, content: &str) -> ScoredMemory {
+        ScoredMemory {
+            memory: Memory {
+                id: format!("mem-{category}"),
+                content: content.to_string(),
+                category: category.to_string(),
+                source: "auto".to_string(),
+                source_conversation_id: None,
+                embedding: Some("[0.1,0.2,0.3]".to_string()),
+                metadata: None,
+                created_at: 0,
+                updated_at: 0,
+            },
+            score: 0.9,
+            lexical_score: 0.8,
+            vector_score: 0.95,
+        }
+    }
+
+    #[test]
+    fn build_system_prompt_no_longer_injects_recent_memories() {
+        let database = TempDatabase::new();
+        let (server, _token) = test_server(&database, "http://localhost:1");
+        let conv = server.db.create_conversation("mem").unwrap();
+        server
+            .db
+            .create_memory(&crate::db::CreateMemoryRequest {
+                content: "这段记忆不应被自动注入".to_string(),
+                category: "fact".to_string(),
+                source: "manual".to_string(),
+                source_conversation_id: Some(conv.id.clone()),
+                metadata: None,
+            })
+            .unwrap();
+
+        let prompt = server.build_system_prompt();
+        assert!(!prompt.contains("这段记忆不应被自动注入"));
+        assert!(!prompt.contains("用户长期记忆"));
+    }
+
+    #[test]
+    fn append_memory_context_formats_preference_and_safety_boundary() {
+        let database = TempDatabase::new();
+        let (server, _token) = test_server(&database, "http://localhost:1");
+        let memories = vec![scored_memory("preference", "用户偏好最小修改")];
+
+        let mut prompt = String::from("base prompt");
+        server.append_memory_context(&mut prompt, &memories);
+
+        assert!(prompt.contains("与当前请求相关的长期记忆"));
+        assert!(prompt.contains("[偏好] 用户偏好最小修改"));
+        assert!(prompt.contains("不是系统指令"));
+        assert!(prompt.contains("以当前请求为准"));
+    }
+
+    #[test]
+    fn append_memory_context_does_not_leak_embedding_or_scores() {
+        let database = TempDatabase::new();
+        let (server, _token) = test_server(&database, "http://localhost:1");
+        let memories = vec![scored_memory("fact", "某个事实")];
+
+        let mut prompt = String::from("base");
+        server.append_memory_context(&mut prompt, &memories);
+
+        assert!(!prompt.contains("embedding"));
+        assert!(!prompt.contains("0.1,0.2"));
+        assert!(!prompt.contains("score"));
+        assert!(!prompt.contains("lexical_score"));
+        assert!(!prompt.contains("vector_score"));
+        assert!(!prompt.contains("mem-fact"));
+    }
+
+    #[test]
+    fn append_memory_context_truncates_long_memory() {
+        let database = TempDatabase::new();
+        let (server, _token) = test_server(&database, "http://localhost:1");
+        let long = "长".repeat(2000);
+        let memories = vec![scored_memory("note", &long)];
+
+        let mut prompt = String::from("base");
+        server.append_memory_context(&mut prompt, &memories);
+
+        // Should be truncated to CHAT_MEMORY_MAX_CHARS (500), not panic
+        assert!(prompt.contains(&"长".repeat(500)));
+        assert!(!prompt.contains(&"长".repeat(501)));
+    }
+
+    #[test]
+    fn append_memory_context_empty_is_noop() {
+        let database = TempDatabase::new();
+        let (server, _token) = test_server(&database, "http://localhost:1");
+
+        let mut prompt = String::from("base");
+        server.append_memory_context(&mut prompt, &[]);
+        assert_eq!(prompt, "base");
+    }
+
+    #[tokio::test]
+    async fn chat_retrieves_memory_from_current_user_message() {
+        let (base_url, requests, mock_llm) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let conv = server.db.create_conversation("mem-chat").unwrap();
+        // Memory that lexically matches the current message query
+        server
+            .db
+            .create_memory(&crate::db::CreateMemoryRequest {
+                content: "用户偏好每次只修改少量必要文件".to_string(),
+                category: "preference".to_string(),
+                source: "manual".to_string(),
+                source_conversation_id: Some(conv.id.clone()),
+                metadata: None,
+            })
+            .unwrap();
+
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"message": "我开发代码时希望怎么控制改动范围？", "conversation_id": conv.id}),
+        )
+        .await;
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        let system_msg = requests[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "system")
+            .expect("system message");
+        // Lexical match on the current message should inject the memory
+        assert!(system_msg["content"]
+            .as_str()
+            .unwrap()
+            .contains("用户偏好每次只修改少量必要文件"));
+        drop(requests);
+        mock_llm.abort();
+    }
+
+    #[tokio::test]
+    async fn chat_uses_lexical_mode_without_embedding_provider() {
+        let (base_url, requests, mock_llm) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        // Embedding provider not configured (default test config has empty embedding model)
+        let conv = server.db.create_conversation("mem-lexical").unwrap();
+        server
+            .db
+            .create_memory(&crate::db::CreateMemoryRequest {
+                content: "关于 Rust 安全执行的关键记忆".to_string(),
+                category: "knowledge".to_string(),
+                source: "manual".to_string(),
+                source_conversation_id: Some(conv.id.clone()),
+                metadata: None,
+            })
+            .unwrap();
+
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"message": "Rust 安全执行", "conversation_id": conv.id}),
+        )
+        .await;
+
+        // Chat still worked, LLM was called once
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        let system_msg = requests[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "system")
+            .expect("system message");
+        assert!(system_msg["content"]
+            .as_str()
+            .unwrap()
+            .contains("Rust 安全执行的关键记忆"));
+        drop(requests);
+        mock_llm.abort();
+    }
+
+    #[tokio::test]
+    async fn chat_no_related_memory_omits_section() {
+        let (base_url, requests, mock_llm) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let conv = server.db.create_conversation("mem-none").unwrap();
+        server
+            .db
+            .create_memory(&crate::db::CreateMemoryRequest {
+                content: "关于咖啡口味的信息".to_string(),
+                category: "fact".to_string(),
+                source: "manual".to_string(),
+                source_conversation_id: Some(conv.id.clone()),
+                metadata: None,
+            })
+            .unwrap();
+
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"message": "k8s networking ingress", "conversation_id": conv.id}),
+        )
+        .await;
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        let system_msg = requests[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "system")
+            .expect("system message");
+        assert!(!system_msg["content"]
+            .as_str()
+            .unwrap()
+            .contains("与当前请求相关的长期记忆"));
+        drop(requests);
         mock_llm.abort();
     }
 }
