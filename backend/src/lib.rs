@@ -8,6 +8,7 @@ pub mod api;
 pub mod config;
 pub mod db;
 pub mod llm;
+pub mod mcp;
 pub mod safety;
 pub mod server;
 pub mod tools;

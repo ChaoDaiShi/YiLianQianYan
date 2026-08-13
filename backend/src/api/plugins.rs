@@ -190,31 +190,27 @@ pub async fn test_mcp(
 
     match mcp.transport.as_str() {
         "stdio" => {
-            match &mcp.command {
-                Some(cmd) => {
-                    // Simple check: try running command with --version
-                    let ok = std::process::Command::new(cmd)
-                        .arg("--version")
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .status()
-                        .map(|s| s.success())
-                        .unwrap_or(false);
-                    if ok {
-                        Json(TestResult {
-                            ok: true,
-                            message: format!("命令 {} 可执行", cmd),
-                        })
-                    } else {
-                        Json(TestResult {
-                            ok: false,
-                            message: format!("命令 {} 不可用，请检查安装", cmd),
-                        })
-                    }
+            // Real MCP handshake probe: initialize → initialized → tools/list.
+            match crate::mcp::probe_stdio_server(&mcp).await {
+                Ok(result) => {
+                    let server_desc = match (&result.server_name, &result.server_version) {
+                        (Some(name), Some(version)) => format!("{name} {version}"),
+                        (Some(name), None) => name.clone(),
+                        (None, Some(version)) => version.clone(),
+                        (None, None) => "unknown".to_string(),
+                    };
+                    Json(TestResult {
+                        ok: true,
+                        message: format!(
+                            "MCP 连接成功：server={}，发现 {} 个 tools",
+                            server_desc,
+                            result.tools.len()
+                        ),
+                    })
                 }
-                None => Json(TestResult {
+                Err(e) => Json(TestResult {
                     ok: false,
-                    message: "未配置 command".to_string(),
+                    message: format!("MCP 连接失败: {e}"),
                 }),
             }
         }
