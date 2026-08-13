@@ -597,11 +597,33 @@ impl SecurityExecutionGateway {
         Ok(())
     }
 
+    /// Describe a tool call, consulting the runtime registry when the tool is
+    /// not a static builtin.
+    ///
+    /// Builtin tools keep using [`describe_builtin_tool`]. For names the static
+    /// builder does not know (e.g. namespaced `mcp_*` tools), fall back to the
+    /// tool's own `security_descriptor()` from the registry — so registered MCP
+    /// adapters are evaluated through the same policy chain as builtins.
+    fn describe_tool(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> Result<ToolSecurityDescriptor, DescriptorError> {
+        match describe_builtin_tool(tool_name, args) {
+            Ok(descriptor) => Ok(descriptor),
+            Err(DescriptorError::UnknownTool(_)) => match self.tool_registry.get(tool_name) {
+                Some(tool) => tool.security_descriptor(args),
+                None => Err(DescriptorError::UnknownTool(tool_name.to_string())),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn resolve_descriptor(
         &self,
         request: &SecurityExecutionRequest,
     ) -> Result<ToolSecurityDescriptor, DescriptorError> {
-        let descriptor = describe_builtin_tool(&request.tool_name, &request.arguments)?;
+        let descriptor = self.describe_tool(&request.tool_name, &request.arguments)?;
         descriptor.validate_for_tool(&request.tool_name)?;
         Ok(descriptor)
     }
@@ -613,7 +635,7 @@ impl SecurityExecutionGateway {
     ) -> Result<Vec<ResourceScope>, DescriptorError> {
         descriptor.validate_for_tool(&request.tool_name)?;
 
-        let actual_descriptor = describe_builtin_tool(&request.tool_name, &request.arguments)?;
+        let actual_descriptor = self.describe_tool(&request.tool_name, &request.arguments)?;
         if actual_descriptor.resources != descriptor.resources {
             return Err(DescriptorError::InvalidDescriptor(
                 "descriptor resources do not match the current tool request".to_string(),
@@ -666,6 +688,12 @@ impl SecurityExecutionGateway {
                 }
                 ResourceDescriptor::Agent { action } if !action.trim().is_empty() => {
                     ResourceScope::AgentInternal
+                }
+                ResourceDescriptor::Mcp {
+                    server_id,
+                    tool_name,
+                } if !server_id.trim().is_empty() && !tool_name.trim().is_empty() => {
+                    ResourceScope::McpServer
                 }
                 _ => {
                     return Err(DescriptorError::InvalidDescriptor(

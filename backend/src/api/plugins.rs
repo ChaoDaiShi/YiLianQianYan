@@ -76,7 +76,10 @@ pub async fn list_plugins(State(server): State<Arc<AppServer>>) -> Json<PluginLi
     Json(PluginListResponse {
         builtin,
         mcp,
-        mcp_runtime_ready: false, // MCP runtime injection not yet implemented
+        // stdio MCP runtime is integrated into Agent execution: chat builds a
+        // MCP-aware runtime registry and approval resume rebuilds it. This does
+        // NOT imply SSE / Streamable HTTP / MCP Tasks are ready.
+        mcp_runtime_ready: true,
     })
 }
 

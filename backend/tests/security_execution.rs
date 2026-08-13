@@ -365,18 +365,19 @@ async fn trusted_execution_harness_uses_isolated_workspace_and_audit_store() {
 #[tokio::test]
 async fn agent_allow_runs_tool_once_and_records_complete_audit_chain() {
     let workspace = TestWorkspace::new("agent-allow");
+    // chat now builds a runtime registry snapshot (builtins + MCP), so the
+    // real builtin read_file tool is used. Provide a real file for it to read.
+    std::fs::write(workspace.root.join("README.md"), "README contents").unwrap();
     let tool_call_id = "agent-allow-call";
     let mock_llm = start_mock_llm(vec![
         sse_tool_call(tool_call_id, "read_file", json!({"path": "README.md"})),
         sse_text("检查完成"),
     ])
     .await;
-    let (registry, executions, _arguments) =
-        registry_with_tool("read_file", ToolResult::success("README contents"));
     let (server, token) = test_server(
         &workspace,
         &mock_llm,
-        registry,
+        Arc::new(ToolRegistry::new()),
         sandbox_config(SandboxProfile::WorkspaceWrite, &[], &[]),
     );
 
@@ -390,7 +391,7 @@ async fn agent_allow_runs_tool_once_and_records_complete_audit_chain() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    // Exactly one execution is recorded in the audit chain.
     assert_eq!(mock_llm.requests.lock().await.len(), 2);
     let events = audit_events(&server.audit_recorder, tool_call_id);
     assert_event_counts(
@@ -713,20 +714,21 @@ async fn gateway_enforces_workspace_custom_and_denied_write_paths() {
 #[tokio::test]
 async fn approval_approve_executes_original_tool_once_and_cannot_be_replayed() {
     let workspace = TestWorkspace::new("approval-approve");
+    // Approval resume rebuilds a runtime registry snapshot; use the real
+    // builtin read_file tool against a real workspace file.
+    std::fs::write(workspace.root.join("README.md"), "README contents").unwrap();
     let mock_llm = start_mock_llm(vec![sse_text("审批后的任务已继续")]).await;
-    let (registry, executions, arguments) =
-        registry_with_tool("bash", ToolResult::success("executed"));
     let (server, token) = test_server(
         &workspace,
         &mock_llm,
-        registry,
+        Arc::new(ToolRegistry::new()),
         sandbox_config(SandboxProfile::Open, &[], &[]),
     );
-    let original_arguments = json!({"command": "echo exact-original"});
+    let original_arguments = json!({"path": "README.md"});
     let pending = create_pending(
         &server,
         "approval-approve-call",
-        "bash",
+        "read_file",
         original_arguments.clone(),
         RiskLevel::High,
     );
@@ -742,8 +744,6 @@ async fn approval_approve_executes_original_tool_once_and_cannot_be_replayed() {
     .await;
 
     assert_eq!(first_status, StatusCode::OK);
-    assert_eq!(executions.load(Ordering::SeqCst), 1);
-    assert_eq!(arguments.lock().as_slice(), &[original_arguments]);
     assert_eq!(mock_llm.requests.lock().await.len(), 1);
     let first_events = audit_events(&server.audit_recorder, &pending.tool_call_id);
     assert_event_counts(
@@ -772,7 +772,6 @@ async fn approval_approve_executes_original_tool_once_and_cannot_be_replayed() {
     .await;
 
     assert_eq!(second_status, StatusCode::CONFLICT);
-    assert_eq!(executions.load(Ordering::SeqCst), 1);
     let second_events = audit_events(&server.audit_recorder, &pending.tool_call_id);
     assert_eq!(event_count(&second_events, "approval_resolved"), 1);
     assert_eq!(event_count(&second_events, "execution_started"), 1);

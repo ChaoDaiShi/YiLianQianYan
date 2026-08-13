@@ -38,7 +38,10 @@ pub async fn chat_handler(
 
     let config = server.config.read().clone();
     let db = server.db.clone_connection();
-    let tool_registry = server.tool_registry.clone();
+    // Build one MCP-aware runtime registry snapshot for this whole chat run.
+    // It is used by BOTH the LLM tool definitions and the Security Gateway so
+    // the LLM, evaluation, and execution all see the same tool set.
+    let tool_registry = server.build_agent_tool_registry().await;
     let mut system_prompt = server.build_system_prompt();
 
     // Merge workflow context if workflow_id is provided

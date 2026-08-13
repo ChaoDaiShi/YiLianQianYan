@@ -120,11 +120,12 @@ async fn execute_approved_tool(
     server: &AppServer,
     config: &AppConfig,
     approval: &PendingApproval,
+    tool_registry: &Arc<ToolRegistry>,
 ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
     let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
         config.sandbox.clone(),
         server.workspace_root.clone(),
-        Arc::clone(&server.tool_registry),
+        Arc::clone(tool_registry),
         Arc::new(DefaultVerifier::new(&server.workspace_root)),
         Arc::new(server.audit_recorder.clone()),
     )
@@ -239,7 +240,11 @@ fn resume_stream(
 
     tokio::spawn(async move {
         let db = server.db.clone_connection();
-        let tool_registry = server.tool_registry.clone();
+        // Build ONE MCP-aware runtime registry snapshot for the whole resume.
+        // The same registry is used to (1) execute the approved original tool
+        // and (2) resume the ReAct loop, so evaluation and execution agree and
+        // stale binding approvals fail closed.
+        let tool_registry = server.build_agent_tool_registry().await;
         let config = server.config.read().clone();
         let log_buffer = server.log_buffer.clone();
         let system_prompt = server.build_system_prompt();
@@ -296,7 +301,8 @@ fn resume_stream(
                 &format!("▶ {}（审批后执行）", approval.tool_name),
             );
 
-            let gateway_outcome = execute_approved_tool(&server, &config, &approval).await;
+            let gateway_outcome =
+                execute_approved_tool(&server, &config, &approval, &tool_registry).await;
             match gateway_outcome {
                 Ok(SecurityExecutionOutcome::Executed {
                     tool_result,
@@ -716,6 +722,7 @@ mod tests {
     ) -> (
         TempDatabase,
         Arc<AppServer>,
+        Arc<ToolRegistry>,
         Arc<AtomicUsize>,
         Arc<Mutex<Vec<serde_json::Value>>>,
     ) {
@@ -728,15 +735,17 @@ mod tests {
             executions: Arc::clone(&executions),
             arguments: Arc::clone(&arguments),
         }));
+        let registry = Arc::new(registry);
         let mut server =
             AppServer::new_with_control_session(&temp.0, ".", ControlSession::generate()).unwrap();
-        server.tool_registry = Arc::new(registry);
-        (temp, Arc::new(server), executions, arguments)
+        server.tool_registry = Arc::clone(&registry);
+        (temp, Arc::new(server), registry, executions, arguments)
     }
 
     #[tokio::test]
     async fn approve_adapter_executes_exact_original_call_once_through_gateway() {
-        let (_temp, server, executions, arguments) = test_server_with_tool("gateway", "bash");
+        let (_temp, server, registry, executions, arguments) =
+            test_server_with_tool("gateway", "bash");
         server.config.write().sandbox.profile = crate::config::types::SandboxProfile::Open;
         let pending = server.approval_store.create(
             "conversation-1".to_string(),
@@ -756,7 +765,7 @@ mod tests {
         .unwrap();
         let config = server.config.read().clone();
 
-        let outcome = execute_approved_tool(&server, &config, &consumed)
+        let outcome = execute_approved_tool(&server, &config, &consumed, &registry)
             .await
             .unwrap();
 
@@ -778,7 +787,7 @@ mod tests {
 
     #[tokio::test]
     async fn approve_adapter_sandbox_deny_does_not_execute_tool() {
-        let (_temp, server, executions, _arguments) =
+        let (_temp, server, registry, executions, _arguments) =
             test_server_with_tool("sandbox-deny", "write_file");
         server.config.write().sandbox.profile = crate::config::types::SandboxProfile::ReadOnly;
         let pending = server.approval_store.create(
@@ -799,7 +808,7 @@ mod tests {
         .unwrap();
         let config = server.config.read().clone();
 
-        let outcome = execute_approved_tool(&server, &config, &consumed)
+        let outcome = execute_approved_tool(&server, &config, &consumed, &registry)
             .await
             .unwrap();
 
@@ -923,5 +932,127 @@ mod tests {
         .is_err());
 
         assert_eq!(resolution_events(&server).len(), 1);
+    }
+
+    // ── MCP runtime integration ──
+
+    use crate::db::McpServer;
+    use crate::mcp::McpTool;
+    use crate::tools::McpToolAdapter;
+
+    fn mcp_server(id: &str, command: Option<&str>) -> McpServer {
+        McpServer {
+            id: id.to_string(),
+            name: "filesystem".to_string(),
+            transport: "stdio".to_string(),
+            command: command.map(str::to_string),
+            args: None,
+            url: None,
+            env: None,
+            enabled: true,
+            created_at: 1,
+            updated_at: 1,
+        }
+    }
+
+    fn mcp_tool(name: &str) -> McpTool {
+        McpTool {
+            name: name.to_string(),
+            description: Some("MCP test tool".to_string()),
+            input_schema: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    #[tokio::test]
+    async fn approved_mcp_tool_reaches_adapter_executor_and_fails_closed() {
+        // command = None: the adapter's execute() goes through call_stdio_tool,
+        // which rejects config before spawning. This proves the approved MCP
+        // tool really reaches the adapter executor (no spawn needed).
+        let (_temp, server, _server_registry, _executions, _arguments) =
+            test_server_with_tool("mcp-gateway", "x");
+        server.config.write().sandbox.profile = crate::config::types::SandboxProfile::Open;
+
+        let mcp = mcp_server("550e8400-e29b-41d4-a716-446655440000", None);
+        let adapter = McpToolAdapter::new(&mcp, &mcp_tool("search")).unwrap();
+        let exposed = adapter.name().to_string();
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(adapter));
+        let registry = Arc::new(registry);
+
+        let pending = server.approval_store.create(
+            "conversation-1".to_string(),
+            "mcp-call-1".to_string(),
+            exposed.clone(),
+            serde_json::json!({"q": "x"}),
+            RiskLevel::High,
+            "mcp approval required".to_string(),
+            "local-user".to_string(),
+        );
+        let consumed = resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            true,
+        )
+        .unwrap();
+        let config = server.config.read().clone();
+
+        let outcome = execute_approved_tool(&server, &config, &consumed, &registry)
+            .await
+            .unwrap();
+
+        // Reached the adapter executor (not ToolNotFound / RequiresApproval),
+        // and the underlying call_stdio_tool failed closed on missing command.
+        match outcome {
+            SecurityExecutionOutcome::Executed { tool_result, .. } => {
+                assert!(!tool_result.ok);
+                assert!(tool_result.content.contains("MCP tool execution failed"));
+            }
+            other => panic!("expected executed outcome, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_mcp_approval_fails_closed() {
+        // Old binding: command = "old-command" → approved_tool_name.
+        let old_server = mcp_server("550e8400-e29b-41d4-a716-446655440000", Some("old-command"));
+        let old_adapter = McpToolAdapter::new(&old_server, &mcp_tool("search")).unwrap();
+        let approved_tool_name = old_adapter.name().to_string();
+
+        // Config changed while waiting for approval → new binding identity.
+        let mut new_server =
+            mcp_server("550e8400-e29b-41d4-a716-446655440000", Some("new-command"));
+        new_server.updated_at += 1;
+        let new_adapter = McpToolAdapter::new(&new_server, &mcp_tool("search")).unwrap();
+        assert_ne!(approved_tool_name, new_adapter.name());
+
+        // Runtime registry only contains the NEW adapter.
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(new_adapter));
+        let registry = Arc::new(registry);
+
+        let (_temp, server, _server_registry, _executions, _arguments) =
+            test_server_with_tool("stale-mcp", "x");
+        let pending = server.approval_store.create(
+            "conversation-1".to_string(),
+            "stale-call-1".to_string(),
+            approved_tool_name.clone(),
+            serde_json::json!({"q": "x"}),
+            RiskLevel::High,
+            "mcp approval required".to_string(),
+            "local-user".to_string(),
+        );
+        let consumed = resolve_and_consume(
+            &server,
+            &pending.approval_id,
+            Some(&pending.conversation_id),
+            true,
+        )
+        .unwrap();
+        let config = server.config.read().clone();
+
+        // Old approval's tool_name cannot resolve in the new registry → Err.
+        let outcome = execute_approved_tool(&server, &config, &consumed, &registry).await;
+        assert!(outcome.is_err(), "stale approval must fail closed");
     }
 }
