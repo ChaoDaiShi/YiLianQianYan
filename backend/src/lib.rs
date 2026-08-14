@@ -7,6 +7,7 @@ pub mod agent;
 pub mod api;
 pub mod config;
 pub mod db;
+pub mod execution;
 pub mod llm;
 pub mod mcp;
 pub mod safety;
