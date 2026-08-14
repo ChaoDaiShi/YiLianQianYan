@@ -275,6 +275,19 @@ export async function testMcpServer(id: string) {
   return request<{ ok: boolean; message: string }>("POST", `/api/plugins/mcp/${id}/test`);
 }
 
+export interface SubagentMetadata {
+  name: string;
+  description: string;
+  allowed_tools: string[];
+  model?: string | null;
+  workdir?: string | null;
+  runtime_ready: boolean;
+}
+
+export async function listSubagents() {
+  return request<SubagentMetadata[]>("GET", "/api/subagents");
+}
+
 // ── Workflows ──
 
 export interface Workflow {

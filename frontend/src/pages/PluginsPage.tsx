@@ -6,13 +6,16 @@ import {
 import {
   listPlugins, createMcpServer, updateMcpServer, deleteMcpServer,
   toggleMcpServer, testMcpServer,
+  listSubagents,
   MCP_RUNTIME_STATUS_LABELS, mcpTransportRuntimeLabel,
-  type McpServer, type PluginListResponse,
+  type McpServer, type PluginListResponse, type SubagentMetadata,
 } from "../api/client";
 import { PageHeader, Button, Badge, Modal, Input, EmptyState, Spinner, Panel } from "../components/ui";
 
 export default function PluginsPage() {
   const [data, setData] = useState<PluginListResponse | null>(null);
+  const [subagents, setSubagents] = useState<SubagentMetadata[]>([]);
+  const [subagentError, setSubagentError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -31,12 +34,18 @@ export default function PluginsPage() {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   const load = async () => {
-    const res = await listPlugins();
+    const [res, subagentRes] = await Promise.all([listPlugins(), listSubagents()]);
     if (res) {
       setData(res);
       setError("");
     } else {
       setError("无法连接到后端");
+    }
+    if (subagentRes) {
+      setSubagents(subagentRes);
+      setSubagentError("");
+    } else {
+      setSubagentError("无法加载 Subagent metadata");
     }
     setLoading(false);
   };
@@ -288,6 +297,60 @@ export default function PluginsPage() {
             </div>
           </div>
         )}
+
+        <div className="flex items-center gap-3">
+          <div className="flex-1 border-t border-[var(--border)]" />
+          <span className="text-xs text-[var(--text-faint)] font-mono uppercase">Subagents</span>
+          <div className="flex-1 border-t border-[var(--border)]" />
+        </div>
+
+        <Panel>
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <h3 className="text-sm font-semibold">Subagent Runtime</h3>
+              <p className="text-xs text-[var(--text-muted)] mt-1">已发现的安全 metadata；不显示 private instructions 或内部路径。</p>
+            </div>
+            <Badge tone={subagents.some((agent) => agent.runtime_ready) ? "success" : "default"}>
+              {subagents.some((agent) => agent.runtime_ready) ? "可用" : "未就绪"}
+            </Badge>
+          </div>
+
+          {subagentError ? (
+            <p className="text-sm text-[var(--danger)]">{subagentError}</p>
+          ) : subagents.length === 0 ? (
+            <p className="text-sm text-[var(--text-faint)]">当前未发现可用 Subagent。</p>
+          ) : (
+            <div className="space-y-3">
+              {subagents.map((agent) => (
+                <div key={agent.name} className="rounded-lg border border-[var(--border)] px-3 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-medium">{agent.name}</h4>
+                      <p className="text-xs text-[var(--text-muted)] mt-1">{agent.description}</p>
+                    </div>
+                    <Badge tone={agent.runtime_ready ? "success" : "default"}>
+                      {agent.runtime_ready ? "可用" : "未就绪"}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-[var(--text-faint)] mt-2">
+                    Model：{agent.model || "继承 Parent 配置"}
+                  </p>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {agent.allowed_tools.map((tool) => (
+                      <Badge key={tool} tone="default">{tool}</Badge>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 space-y-1 text-xs text-[var(--text-muted)]">
+            <p>当前仅支持：Parent → Child 单层委派。</p>
+            <p>暂不支持：嵌套审批、递归 Subagent、workdir override、AGENT.md hot reload。</p>
+            <p>Subagent 调用属于高风险 Agent Delegation，Owner / Standard 需要审批，Restricted 拒绝。</p>
+          </div>
+        </Panel>
       </div>
 
       {/* Add/Edit MCP Modal */}

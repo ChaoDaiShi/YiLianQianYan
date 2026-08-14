@@ -25,6 +25,7 @@ mod plugins;
 mod security;
 mod settings;
 mod skills_route;
+mod subagents;
 mod system;
 mod tools;
 mod workflows;
@@ -83,6 +84,8 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/plugins/mcp/:id", delete(plugins::delete_mcp))
         .route("/api/plugins/mcp/:id/toggle", post(plugins::toggle_mcp))
         .route("/api/plugins/mcp/:id/test", post(plugins::test_mcp))
+        // Subagent metadata is read-only and excludes private instructions/paths.
+        .route("/api/subagents", get(subagents::list_subagents))
         // Workflows API
         .route("/api/workflows", get(workflows::list_workflows))
         .route("/api/workflows", post(workflows::create_workflow))
