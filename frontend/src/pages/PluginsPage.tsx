@@ -6,6 +6,7 @@ import {
 import {
   listPlugins, createMcpServer, updateMcpServer, deleteMcpServer,
   toggleMcpServer, testMcpServer,
+  MCP_RUNTIME_STATUS_LABELS, mcpTransportRuntimeLabel,
   type McpServer, type PluginListResponse,
 } from "../api/client";
 import { PageHeader, Button, Badge, Modal, Input, EmptyState, Spinner, Panel } from "../components/ui";
@@ -25,7 +26,9 @@ export default function PluginsPage() {
   const [formArgs, setFormArgs] = useState("");
   const [formUrl, setFormUrl] = useState("");
   const [formEnv, setFormEnv] = useState("");
+  const [formEnvKeyCount, setFormEnvKeyCount] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   const load = async () => {
     const res = await listPlugins();
@@ -48,6 +51,7 @@ export default function PluginsPage() {
     setFormArgs("");
     setFormUrl("");
     setFormEnv("");
+    setFormEnvKeyCount(0);
     setShowModal(true);
   };
 
@@ -58,20 +62,24 @@ export default function PluginsPage() {
     setFormCommand(mcp.command || "");
     setFormArgs(mcp.args ? JSON.stringify(mcp.args) : "");
     setFormUrl(mcp.url || "");
-    setFormEnv(mcp.env ? JSON.stringify(mcp.env) : "");
+    setFormEnv("");
+    setFormEnvKeyCount(mcp.env && typeof mcp.env === "object" ? Object.keys(mcp.env).length : 0);
     setShowModal(true);
   };
 
   const handleSave = async () => {
     if (!formName.trim()) return;
     setSaving(true);
+    const env = formEnv.trim()
+      ? (() => { try { return JSON.parse(formEnv) as Record<string, string>; } catch { return {}; } })()
+      : editingId ? undefined : {};
     const payload: Partial<McpServer> = {
       name: formName.trim(),
       transport: formTransport,
       command: formTransport === "stdio" ? formCommand.trim() || null : null,
       args: formArgs.trim() ? (() => { try { return JSON.parse(formArgs); } catch { return [formArgs.trim()]; } })() : [],
       url: formTransport === "sse" ? formUrl.trim() || null : null,
-      env: formEnv.trim() ? (() => { try { return JSON.parse(formEnv); } catch { return {}; } })() : {},
+      ...(env === undefined ? {} : { env }),
     };
     if (editingId) {
       await updateMcpServer(editingId, payload);
@@ -97,9 +105,7 @@ export default function PluginsPage() {
   const handleTest = async (id: string) => {
     setTestingId(id);
     const result = await testMcpServer(id);
-    if (result) {
-      alert(`${result.ok ? "测试通过" : "测试失败"}：${result.message}`);
-    }
+    if (result) setTestResults((current) => ({ ...current, [id]: result }));
     setTestingId(null);
   };
 
@@ -136,6 +142,18 @@ export default function PluginsPage() {
       />
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
+        <Panel className="flex items-start gap-3">
+          <Wrench className="w-5 h-5 text-[var(--accent)] flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium">
+              {data?.mcp_runtime_ready ? MCP_RUNTIME_STATUS_LABELS.ready : MCP_RUNTIME_STATUS_LABELS.unready}
+            </p>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              当前生产 Runtime 仅支持 stdio；sse / http 配置不会进入可运行 Runtime。
+            </p>
+          </div>
+        </Panel>
+
         {/* Builtin Tools */}
         <div>
           <h3 className="text-sm font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">
@@ -189,15 +207,31 @@ export default function PluginsPage() {
                         )}
                         {!data.mcp_runtime_ready && mcp.enabled && (
                           <span className="text-[10px] text-[var(--text-faint)] italic">
-                            已保存，待运行时接入
+                            不会进入 Agent Runtime registry
+                          </span>
+                        )}
+                        {!mcp.enabled && (
+                          <span className="text-[10px] text-[var(--text-faint)] italic">
+                            不会进入 Agent Runtime registry
                           </span>
                         )}
                       </div>
                       <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">
                         {mcp.transport === "stdio"
                           ? `stdio · ${mcp.command || "(未配置)"}`
-                          : `sse · ${mcp.url || "(未配置)"}`}
+                          : `${mcp.transport} · ${mcp.url || "(未配置)"}`}
                       </p>
+                      <p className="text-[10px] text-[var(--text-faint)] mt-1">
+                        {mcpTransportRuntimeLabel(mcp.transport)} · 参数 {mcp.args?.length || 0} 个 · 环境变量 {mcp.env ? Object.keys(mcp.env).length : 0} 个（值不展示）
+                      </p>
+                      <p className="text-[10px] text-[var(--text-faint)] mt-0.5">
+                        运行状态：{mcp.runtime_status || mcpTransportRuntimeLabel(mcp.transport)}
+                      </p>
+                      {testResults[mcp.id] && (
+                        <p className={`text-xs mt-2 ${testResults[mcp.id].ok ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
+                          {testResults[mcp.id].ok ? "连接成功" : "连接失败"}：{testResults[mcp.id].message}
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -247,10 +281,9 @@ export default function PluginsPage() {
           <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10">
             <AlertTriangle className="w-5 h-5 text-[var(--warning)] flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-medium text-[var(--warning)]">MCP 运行时未就绪</p>
+              <p className="text-sm font-medium text-[var(--warning)]">{MCP_RUNTIME_STATUS_LABELS.unready}</p>
               <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                当前启用的一期 MCP 配置已保存，但运行时注入暂未接入。
-                后续版本中将支持自动加载 MCP 工具到 Agent 运行时。
+                当前启用配置不会进入 Agent Runtime registry，请先确认 stdio Runtime 已就绪。
               </p>
             </div>
           </div>
@@ -316,7 +349,10 @@ export default function PluginsPage() {
           )}
 
           <div>
-            <label className="block text-sm font-medium mb-1">环境变量 (JSON 对象)</label>
+            <label className="block text-sm font-medium mb-1">环境变量 (JSON 对象；留空则保留现有值)</label>
+            {editingId && formEnvKeyCount > 0 && (
+              <p className="text-xs text-[var(--text-muted)] mb-1">已配置 {formEnvKeyCount} 个环境变量键；为保护 Secret，不回显值。</p>
+            )}
             <textarea
               value={formEnv}
               onChange={(e) => setFormEnv(e.target.value)}

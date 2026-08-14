@@ -225,7 +225,7 @@ export async function retrieveMemories(q: string, topK = 10, category?: string) 
 export interface McpServer {
   id: string;
   name: string;
-  transport: "stdio" | "sse";
+  transport: string;
   command?: string | null;
   args?: string[];
   url?: string | null;
@@ -234,6 +234,15 @@ export interface McpServer {
   created_at: number;
   updated_at: number;
   runtime_status?: string;
+}
+
+export const MCP_RUNTIME_STATUS_LABELS = {
+  ready: "MCP stdio Runtime 已启用",
+  unready: "MCP Runtime 未就绪",
+} as const;
+
+export function mcpTransportRuntimeLabel(transport: string): string {
+  return transport === "stdio" ? "Runtime supported" : "Not supported by current runtime";
 }
 
 export interface PluginListResponse {
