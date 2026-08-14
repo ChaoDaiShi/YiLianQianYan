@@ -3,14 +3,18 @@
 // subagent definition.
 //
 // Converts a strictly-parsed [`DiscoveredSubagent`] into a [`Tool`] so it can
-// be exposed as an OpenAI-compatible tool definition and, in a later step,
-// registered into a runtime registry.
+// be exposed as an OpenAI-compatible tool definition and registered into a
+// runtime registry.
 //
-// Deliberately fail-closed this round:
+// Security posture:
 //   - risk_level is always High (delegation would run another agent chain)
-//   - execute() always errors ("Subagent execution is not enabled yet")
-//   - security_descriptor() keeps the default: a namespaced `subagent_*` name
-//     is not a builtin tool, so it resolves to `UnknownTool` -> deny.
+//   - the disabled constructor (`new`) keeps the adapter fail-closed
+//     ("Subagent execution is not enabled yet")
+//   - the executable constructors bind a [`SubagentExecutor`]; production
+//     registration must always use `new_unique_executable`
+//   - `security_descriptor()` emits the formal agent.delegate policy
+//     (AgentDelegate @ Subagent / High / AgentDelegation); execution is
+//     authorized upstream by the SecurityExecutionGateway
 //
 // The full instructions body is kept private: it is not part of the Tool
 // description, parameters, Debug output, or any serialization.
@@ -206,6 +210,43 @@ impl SubagentToolAdapter {
         }
         Ok(adapter)
     }
+}
+
+/// Register discovered subagent definitions as executable adapters into a
+/// runtime registry snapshot.
+///
+/// Pure and side-effect free: no AGENT.md re-read, no LLM, no Child Agent.
+/// Every adapter is built via `new_unique_executable` so a name collision or
+/// invalid definition is skipped without failing the rest of the batch.
+///
+/// Returns the number of tools successfully registered.
+pub(crate) fn register_discovered_subagent_tools(
+    registry: &mut crate::tools::ToolRegistry,
+    occupied_names: &mut std::collections::HashSet<String>,
+    definitions: &[DiscoveredSubagent],
+    executor: Arc<dyn SubagentExecutor>,
+) -> usize {
+    let mut registered = 0usize;
+    for definition in definitions {
+        match SubagentToolAdapter::new_unique_executable(
+            definition,
+            occupied_names,
+            Arc::clone(&executor),
+        ) {
+            Ok(adapter) => {
+                registry.register(Arc::new(adapter));
+                registered += 1;
+            }
+            Err(error) => {
+                tracing::debug!(
+                    subagent_name = %definition.name,
+                    error = %error,
+                    "skipping subagent definition (invalid or name collision)"
+                );
+            }
+        }
+    }
+    registered
 }
 
 /// Sanitize a subagent name into a stable ASCII identifier.
@@ -729,5 +770,72 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, SubagentToolAdapterError::NameCollision(_)));
+    }
+
+    // ── production registration helper ──
+
+    #[tokio::test]
+    async fn register_helper_registers_executable_subagents() {
+        use std::collections::HashSet;
+        let (executor, calls) = fake_executor();
+        let mut registry = crate::tools::ToolRegistry::new();
+        let mut occupied = HashSet::new();
+        let defs = vec![
+            definition("researcher", "", "body"),
+            definition("reviewer", "", "body"),
+        ];
+
+        let n = register_discovered_subagent_tools(&mut registry, &mut occupied, &defs, executor);
+        assert_eq!(n, 2);
+        assert!(registry.get("subagent_researcher").is_some());
+        assert!(registry.get("subagent_reviewer").is_some());
+
+        // Prove the registered adapters are executable (never the disabled new()).
+        let researcher = registry.get("subagent_researcher").unwrap();
+        let result = researcher.execute(serde_json::json!({"task": "x"})).await;
+        assert!(result.ok);
+        assert_eq!(result.content, "child result");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn register_helper_collision_skips_without_overwriting() {
+        use std::collections::HashSet;
+        let (executor, _calls) = fake_executor();
+        let mut registry = crate::tools::ToolRegistry::new();
+        let mut occupied = HashSet::new();
+        occupied.insert("subagent_researcher".to_string());
+        let defs = vec![
+            definition("researcher", "", "body"),
+            definition("reviewer", "", "body"),
+        ];
+
+        let n = register_discovered_subagent_tools(&mut registry, &mut occupied, &defs, executor);
+        assert_eq!(n, 1);
+        assert!(registry.get("subagent_researcher").is_none());
+        assert!(registry.get("subagent_reviewer").is_some());
+    }
+
+    #[test]
+    fn register_helper_skips_invalid_definition() {
+        use std::collections::HashSet;
+        let (executor, _calls) = fake_executor();
+        let mut registry = crate::tools::ToolRegistry::new();
+        let mut occupied = HashSet::new();
+        let bad = DiscoveredSubagent {
+            name: "bad".to_string(),
+            description: String::new(),
+            path: String::new(),
+            allowed_tools: vec![],
+            model: None,
+            workdir: None,
+            instructions: "   ".to_string(), // empty instructions -> invalid
+        };
+        let defs = vec![bad, definition("reviewer", "", "body")];
+
+        let n = register_discovered_subagent_tools(&mut registry, &mut occupied, &defs, executor);
+        assert_eq!(n, 1);
+        assert!(registry.get("subagent_bad").is_none());
+        assert!(registry.get("subagent_reviewer").is_some());
     }
 }

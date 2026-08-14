@@ -230,29 +230,41 @@ impl AppServer {
         }
     }
 
-    /// Build an MCP-aware Agent Runtime ToolRegistry snapshot.
+    /// Build a Dynamic Agent Runtime ToolRegistry snapshot.
     ///
-    /// Starts from the built-in tool registry, then discovers tools from every
-    /// enabled stdio MCP server via `probe_stdio_server`. Discovery is
-    /// best-effort: a failing server or an invalid tool is skipped, never
-    /// blocking the built-in tools.
+    /// The snapshot contains:
+    ///   - all built-in tools
+    ///   - tools from every enabled stdio MCP server (`probe_stdio_server`)
+    ///   - executable discovered Subagents
+    ///
+    /// Discovery is best-effort: a failing MCP server, an invalid tool, or an
+    /// invalid subagent definition is skipped without blocking the rest.
+    ///
+    /// The registry is assembled in two phases:
+    ///   Phase A — a Child Source snapshot = builtins + successfully discovered
+    ///   MCP tools (never any `subagent_*` tool). This is what a subagent's
+    ///   Child Runtime may draw its whitelist from.
+    ///   Phase B — the Parent registry = a fresh copy of the Child Source
+    ///   snapshot + executable Subagent adapters.
     ///
     /// The returned snapshot is independent of `self.tool_registry` (which stays
-    /// the immutable builtin registry). This method does NOT wire the snapshot
-    /// into chat / approval; it only constructs it.
+    /// the immutable builtin registry).
     pub async fn build_agent_tool_registry(&self) -> Arc<ToolRegistry> {
-        let mut registry = ToolRegistry::with_defaults(&self.workspace_root);
-        let mut occupied_names: HashSet<String> = registry
+        // ── Phase A: Child Source snapshot (builtins + MCP) ──
+        let mut base_registry = ToolRegistry::with_defaults(&self.workspace_root);
+        let mut occupied_names: HashSet<String> = base_registry
             .list_tools()
             .into_iter()
             .map(|info| info.name)
             .collect();
 
+        // MCP DB failure must not close Subagent registration: treat it as an
+        // empty server list and keep building.
         let servers = match self.db.list_mcp_servers() {
             Ok(servers) => servers,
             Err(error) => {
-                tracing::warn!(error = %error, "failed to load MCP servers; using builtin-only registry");
-                return Arc::new(registry);
+                tracing::warn!(error = %error, "failed to load MCP servers; continuing without MCP");
+                Vec::new()
             }
         };
 
@@ -263,7 +275,7 @@ impl AppServer {
             match crate::mcp::probe_stdio_server(&server).await {
                 Ok(probe) => {
                     let registered = crate::tools::mcp::register_discovered_mcp_tools(
-                        &mut registry,
+                        &mut base_registry,
                         &mut occupied_names,
                         &server,
                         &probe.tools,
@@ -284,7 +296,35 @@ impl AppServer {
             }
         }
 
-        Arc::new(registry)
+        // Freeze the Child Source snapshot (builtins + MCP, never subagents).
+        let child_source_registry = Arc::new(base_registry);
+
+        // ── Phase B: Parent registry = Child Source copy + Subagents ──
+        let mut parent_registry = ToolRegistry::new();
+        for tool in child_source_registry.all() {
+            parent_registry.register(Arc::clone(tool));
+        }
+        // occupied_names already covers builtins + MCP names.
+
+        let executor: Arc<dyn crate::tools::subagent::SubagentExecutor> =
+            Arc::new(crate::agent::subagent_runtime::LocalSubagentExecutor::new(
+                self.config.read().clone(),
+                self.workspace_root.clone(),
+                Arc::clone(&child_source_registry),
+                self.db.clone_connection(),
+                self.audit_recorder.clone(),
+                self.log_buffer.clone(),
+            ));
+
+        let registered = crate::tools::subagent::register_discovered_subagent_tools(
+            &mut parent_registry,
+            &mut occupied_names,
+            &self.subagents,
+            executor,
+        );
+        tracing::info!(registered, "Subagent tools registered for runtime registry");
+
+        Arc::new(parent_registry)
     }
 
     fn discover_subagents(root: &str, dirs: &[String]) -> Vec<DiscoveredSubagent> {
@@ -530,5 +570,56 @@ mod tests {
         assert_eq!(d.name, "researcher");
         assert!(d.tools.is_empty());
         assert!(d.instructions.contains("name: impostor"));
+    }
+
+    // ── runtime registry presence (no MCP / no LLM execution) ──
+
+    #[tokio::test]
+    async fn runtime_registry_includes_builtins_and_executable_subagent() {
+        use crate::tools::trait_def::Tool;
+
+        let base =
+            std::env::temp_dir().join(format!("yilian-subagent-reg-{}", uuid::Uuid::new_v4()));
+        let workspace = base.join("workspace");
+        let agent_dir = workspace.join(".agents/agents/researcher");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("AGENT.md"),
+            "---\nname: researcher\ndescription: 研究助手\ntools: [read_file, grep]\n---\n\n研究指令",
+        )
+        .unwrap();
+        let db_path = base.join("test.db");
+        let server = AppServer::new_with_control_session(
+            &db_path,
+            workspace.to_string_lossy().as_ref(),
+            ControlSession::generate(),
+        )
+        .unwrap();
+
+        let registry = server.build_agent_tool_registry().await;
+
+        // Builtins preserved.
+        assert!(registry.get("read_file").is_some());
+        // Executable subagent registered.
+        assert!(registry.get("subagent_researcher").is_some());
+
+        // Parent LLM sees it as an OpenAI function.
+        let openai = registry.to_openai_tools();
+        assert!(openai
+            .iter()
+            .any(|t| t["function"]["name"] == "subagent_researcher"));
+
+        // 6B security descriptor unchanged.
+        let adapter = registry.get("subagent_researcher").unwrap();
+        let desc = adapter
+            .security_descriptor(&serde_json::json!({"task": "x"}))
+            .unwrap();
+        assert_eq!(
+            desc.requested_permissions,
+            vec![crate::safety::PermissionId::AgentDelegate
+                .in_scope(crate::safety::ResourceScope::Subagent)]
+        );
+
+        std::fs::remove_dir_all(&base).ok();
     }
 }
