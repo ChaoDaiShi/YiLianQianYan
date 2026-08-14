@@ -347,6 +347,13 @@ impl Database {
 
     pub fn update_memory(&self, id: &str, req: &UpdateMemoryRequest) -> Result<Memory, String> {
         let mut memory = self.get_memory(id)?;
+        let content_changed = req
+            .content
+            .as_ref()
+            .map_or(false, |content| content != &memory.content);
+        if content_changed {
+            memory.embedding = None;
+        }
         if let Some(ref content) = req.content {
             memory.content = content.clone();
         }
@@ -360,11 +367,12 @@ impl Database {
 
         let conn = self.conn();
         conn.execute(
-            "UPDATE memories SET content=?1, category=?2, metadata=?3, updated_at=?4 WHERE id=?5",
+            "UPDATE memories SET content=?1, category=?2, metadata=?3, embedding=?4, updated_at=?5 WHERE id=?6",
             params![
                 memory.content,
                 memory.category,
                 memory.metadata,
+                memory.embedding,
                 memory.updated_at,
                 id
             ],
@@ -603,5 +611,165 @@ impl Database {
             }
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CreateMemoryRequest, UpdateMemoryRequest};
+    use crate::db::Database;
+
+    fn test_database() -> (Database, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!(
+            "yilianqianyan-memory-test-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let db = Database::new(&path).expect("temporary memory database should open");
+        (db, path)
+    }
+
+    fn create_embedded_memory(db: &Database) -> String {
+        let memory = db
+            .create_memory(&CreateMemoryRequest {
+                content: "content A".to_string(),
+                category: "fact".to_string(),
+                source: "manual".to_string(),
+                source_conversation_id: None,
+                metadata: Some(r#"{"source":"test"}"#.to_string()),
+            })
+            .expect("memory should be created");
+        db.update_memory_embedding(&memory.id, &[0.1, 0.2, 0.3])
+            .expect("embedding should be stored");
+        memory.id
+    }
+
+    #[test]
+    fn content_change_invalidates_embedding_and_marks_memory_for_reindex() {
+        let (db, path) = test_database();
+        let id = create_embedded_memory(&db);
+
+        let updated = db
+            .update_memory(
+                &id,
+                &UpdateMemoryRequest {
+                    content: Some("content B".to_string()),
+                    category: None,
+                    metadata: None,
+                },
+            )
+            .expect("memory should update");
+
+        assert_eq!(updated.content, "content B");
+        assert_eq!(updated.embedding, None);
+        assert_eq!(db.get_memory(&id).unwrap().embedding, None);
+        assert_eq!(db.list_memories_without_embedding(10).unwrap().len(), 1);
+        assert_eq!(db.count_memories_without_embedding().unwrap(), 1);
+
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn category_only_update_preserves_embedding() {
+        let (db, path) = test_database();
+        let id = create_embedded_memory(&db);
+
+        db.update_memory(
+            &id,
+            &UpdateMemoryRequest {
+                content: None,
+                category: Some("preference".to_string()),
+                metadata: None,
+            },
+        )
+        .expect("category should update");
+
+        assert_eq!(
+            db.get_memory(&id).unwrap().embedding,
+            Some("[0.1,0.2,0.3]".to_string())
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn metadata_only_update_preserves_embedding() {
+        let (db, path) = test_database();
+        let id = create_embedded_memory(&db);
+
+        db.update_memory(
+            &id,
+            &UpdateMemoryRequest {
+                content: None,
+                category: None,
+                metadata: Some(r#"{"source":"updated"}"#.to_string()),
+            },
+        )
+        .expect("metadata should update");
+
+        assert_eq!(
+            db.get_memory(&id).unwrap().embedding,
+            Some("[0.1,0.2,0.3]".to_string())
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn same_content_update_preserves_embedding() {
+        let (db, path) = test_database();
+        let id = create_embedded_memory(&db);
+
+        db.update_memory(
+            &id,
+            &UpdateMemoryRequest {
+                content: Some("content A".to_string()),
+                category: None,
+                metadata: None,
+            },
+        )
+        .expect("same content should update");
+
+        assert_eq!(
+            db.get_memory(&id).unwrap().embedding,
+            Some("[0.1,0.2,0.3]".to_string())
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn content_change_does_not_call_embedding_provider() {
+        let (db, path) = test_database();
+        let id = create_embedded_memory(&db);
+
+        db.update_memory(
+            &id,
+            &UpdateMemoryRequest {
+                content: Some("content B".to_string()),
+                category: None,
+                metadata: None,
+            },
+        )
+        .expect("content should update without a provider");
+
+        assert_eq!(db.get_memory(&id).unwrap().embedding, None);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn unchanged_content_is_not_listed_as_missing_embedding() {
+        let (db, path) = test_database();
+        let id = create_embedded_memory(&db);
+
+        db.update_memory(
+            &id,
+            &UpdateMemoryRequest {
+                content: Some("content A".to_string()),
+                category: None,
+                metadata: None,
+            },
+        )
+        .expect("same content should update");
+
+        assert!(db.list_memories_without_embedding(10).unwrap().is_empty());
+        assert_eq!(db.count_memories_without_embedding().unwrap(), 0);
+        std::fs::remove_file(path).ok();
     }
 }
