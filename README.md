@@ -140,6 +140,19 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 - Deterministic Verification Pipeline
 - Redacted Security Audit Chain
 
+## v0.3.2 Product Surface Completion
+
+状态：**Completed**
+
+v0.3.2 将已完成的 Memory、MCP Runtime 与 Subagent Runtime 能力接入桌面端产品表面：
+
+- Memory 页面提供记忆管理、词法/语义/混合检索模式、Embedding 状态与受控重建索引入口；内容变更会使旧 Embedding 失效。
+- MCP 页面提供 stdio Runtime 能力状态、工具发现/调用反馈与脱敏配置展示；不支持的 HTTP/SSE Transport 不会被宣传为可用。
+- Subagent 页面展示安全运行时元数据和允许工具白名单；私有 instructions、路径细节与敏感配置不会通过公共页面/API 回显。
+- Settings 与 MCP 配置响应对 API Key、Embedding Key 和环境变量执行脱敏；未配置外部 Provider 或 MCP 服务时显示可理解的状态，而不是伪造成功。
+
+本版本不新增 Workflow DAG、MCP HTTP Transport、嵌套 Subagent 或 OS 级 Sandbox。
+
 ## v0.3 Runtime Intelligence
 
 状态：**Completed**

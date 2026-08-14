@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.3.2 — Product Surface Completion
+
+- Completed the Memory embedding consistency surface: content edits invalidate stale embeddings and expose controlled reindexing.
+- Added the Memory Reindex Surface with provider-aware status and bounded reindex controls.
+- Added the Hybrid Retrieval Surface with lexical, semantic, hybrid, and lexical-fallback modes.
+- Added the MCP Runtime Surface with stdio capability status, tool discovery, invocation feedback, and redacted configuration display.
+- Added the Subagent Runtime Surface with safe discovery metadata, allowlisted tools, and private instructions.
+- Added Secret Redaction / Security Foundation coverage for settings and MCP configuration responses without plaintext secret echo.
+
+### Known Limitations
+
+- Workflow remains a Template / Prompt Template and is not an executable DAG Runtime.
+- MCP Runtime supports stdio only; Streamable HTTP and SSE Transport are not supported or advertised.
+- Subagent delegation is single-layer only; nested approval, `workdir` override, AGENT.md hot reload, and recursive delegation are not supported.
+- Sandbox enforcement is application-level path policy, not OS-level isolation.
+
 ## 0.3.1 — Runtime Stabilization
 
 - Synchronized the documented v0.3 Runtime Intelligence status with the implemented Memory, MCP stdio, and Subagent runtimes.
