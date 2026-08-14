@@ -22,7 +22,8 @@ export default function KnowledgePage() {
   const {
     memories, stats, isLoading,
     loadMemories, addMemory, editMemory, removeMemory,
-    loadStats, triggerExtraction,
+    loadStats, triggerExtraction, isReindexing, reindexResult,
+    reindexMemoriesAction,
   } = useMemoryStore();
 
   const [search, setSearch] = useState("");
@@ -75,6 +76,10 @@ export default function KnowledgePage() {
     await triggerExtraction();
   };
 
+  const handleReindex = async () => {
+    await reindexMemoriesAction();
+  };
+
   const formatTime = (ts: number) => {
     const d = new Date(ts);
     return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -92,6 +97,15 @@ export default function KnowledgePage() {
         description="管理 AI 长期记忆和知识上下文"
         actions={
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleReindex}
+              disabled={isReindexing}
+              title="为尚未建立向量索引的记忆生成 embedding"
+            >
+              {isReindexing ? "正在重建..." : "重建向量索引"}
+            </Button>
             <Button variant="secondary" size="sm" onClick={handleExtract} title="从最近对话中提取记忆">
               <Brain className="w-4 h-4" />
               提取记忆
@@ -122,6 +136,24 @@ export default function KnowledgePage() {
             </Panel>
           ))}
         </div>
+
+        {reindexResult && (
+          <Panel className="text-sm text-[var(--text-muted)]">
+            {!reindexResult.ok ? (
+              reindexResult.error?.toLowerCase().includes("embedding provider is not configured") ? (
+                <span className="text-[var(--warning)]">尚未配置 Embedding Provider</span>
+              ) : (
+                <span className="text-[var(--danger)]">
+                  重建向量索引失败：{reindexResult.error || "请求失败，请检查后端连接"}
+                </span>
+              )
+            ) : reindexResult.processed === 0 && reindexResult.remaining === 0 ? (
+              "所有记忆均已完成向量索引。"
+            ) : (
+              `本次处理 ${reindexResult.processed ?? 0} 条，成功 ${reindexResult.succeeded ?? 0} 条，失败 ${reindexResult.failed ?? 0} 条，剩余 ${reindexResult.remaining ?? 0} 条。`
+            )}
+          </Panel>
+        )}
 
         {/* Filters */}
         <div className="flex items-center gap-3">

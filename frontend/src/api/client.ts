@@ -97,7 +97,6 @@ export interface MemoryRecord {
   category: string;
   source: string;
   source_conversation_id?: string;
-  embedding?: string;
   metadata?: string;
   created_at: number;
   updated_at: number;
@@ -107,6 +106,16 @@ export interface MemoryStats {
   total: number;
   by_category: Array<[string, number]>;
   by_source: Array<[string, number]>;
+}
+
+export interface MemoryReindexResult {
+  ok: boolean;
+  requested?: number;
+  processed?: number;
+  succeeded?: number;
+  failed?: number;
+  remaining?: number;
+  error?: string;
 }
 
 export interface MemoryQuery {
@@ -179,7 +188,7 @@ export async function mergeMemories(ids: string[]) {
 }
 
 export async function reindexMemories() {
-  return request<any>("POST", "/api/memories/reindex", {});
+  return request<MemoryReindexResult>("POST", "/api/memories/reindex", { limit: 50 });
 }
 
 // ── Plugins / MCP ──
