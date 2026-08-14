@@ -268,8 +268,29 @@ export async function activateWorkflow(id: string) {
 
 // ── Health ──
 
-export async function healthCheck() {
-  return request<any>("GET", "/api/health");
+export interface RuntimeHealth {
+  status: "healthy" | "degraded";
+  service: string;
+  version: string;
+  database: "healthy" | "unavailable";
+  policy_version: string;
+}
+
+export async function healthCheck(): Promise<RuntimeHealth | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/health`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      console.error(`API GET /api/health: ${response.status}`);
+      return null;
+    }
+    return (await response.json()) as RuntimeHealth;
+  } catch (error) {
+    console.error("API GET /api/health failed:", error);
+    return null;
+  }
 }
 
 export async function isServerAvailable(): Promise<boolean> {
