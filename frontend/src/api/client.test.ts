@@ -5,7 +5,7 @@ import { API_BASE, healthCheck } from "./client";
 const healthyResponse = {
   status: "healthy",
   service: "yilian-backend",
-  version: "0.1.0",
+  version: "0.3.1",
   database: "healthy",
   policy_version: "security-rbac-v3",
 } as const;
