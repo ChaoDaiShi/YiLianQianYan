@@ -16,8 +16,52 @@ use crate::server::AppServer;
 #[derive(serde::Serialize)]
 pub struct PluginListResponse {
     pub builtin: Vec<BuiltinTool>,
-    pub mcp: Vec<McpServer>,
+    pub mcp: Vec<PublicMcpServer>,
     pub mcp_runtime_ready: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PublicMcpServer {
+    pub id: String,
+    pub name: String,
+    pub transport: String,
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub url: Option<String>,
+    /// Environment keys are retained for product diagnostics, values are not.
+    pub env: Option<serde_json::Value>,
+    pub enabled: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+fn redact_env(env: Option<serde_json::Value>) -> Option<serde_json::Value> {
+    match env {
+        Some(serde_json::Value::Object(values)) => Some(serde_json::Value::Object(
+            values
+                .into_iter()
+                .map(|(key, _)| (key, serde_json::Value::String("[REDACTED]".to_string())))
+                .collect(),
+        )),
+        _ => None,
+    }
+}
+
+impl From<McpServer> for PublicMcpServer {
+    fn from(server: McpServer) -> Self {
+        Self {
+            id: server.id,
+            name: server.name,
+            transport: server.transport,
+            command: server.command,
+            args: server.args,
+            url: server.url,
+            env: redact_env(server.env),
+            enabled: server.enabled,
+            created_at: server.created_at,
+            updated_at: server.updated_at,
+        }
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -71,7 +115,13 @@ pub async fn list_plugins(State(server): State<Arc<AppServer>>) -> Json<PluginLi
         })
         .collect();
 
-    let mcp = server.db.list_mcp_servers().unwrap_or_default();
+    let mcp = server
+        .db
+        .list_mcp_servers()
+        .unwrap_or_default()
+        .into_iter()
+        .map(PublicMcpServer::from)
+        .collect();
 
     Json(PluginListResponse {
         builtin,
@@ -87,7 +137,7 @@ pub async fn list_plugins(State(server): State<Arc<AppServer>>) -> Json<PluginLi
 pub async fn create_mcp(
     State(server): State<Arc<AppServer>>,
     Json(body): Json<CreateMcpRequest>,
-) -> Result<Json<McpServer>, String> {
+) -> Result<Json<PublicMcpServer>, String> {
     let now = chrono::Utc::now().timestamp_millis();
     let server_cfg = McpServer {
         id: uuid::Uuid::new_v4().to_string(),
@@ -107,7 +157,7 @@ pub async fn create_mcp(
         .create_mcp_server(&server_cfg)
         .map_err(|e| format!("创建失败: {}", e))?;
 
-    Ok(Json(server_cfg))
+    Ok(Json(PublicMcpServer::from(server_cfg)))
 }
 
 /// PUT /api/plugins/mcp/:id — update MCP server
@@ -115,7 +165,7 @@ pub async fn update_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
     Json(body): Json<UpdateMcpRequest>,
-) -> Result<Json<McpServer>, String> {
+) -> Result<Json<PublicMcpServer>, String> {
     let existing = server
         .db
         .get_mcp_server(&id)
@@ -141,7 +191,7 @@ pub async fn update_mcp(
         .update_mcp_server(&id, &updated)
         .map_err(|e| format!("更新失败: {}", e))?;
 
-    Ok(Json(updated))
+    Ok(Json(PublicMcpServer::from(updated)))
 }
 
 /// DELETE /api/plugins/mcp/:id — delete MCP server
@@ -160,12 +210,12 @@ pub async fn delete_mcp(
 pub async fn toggle_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-) -> Result<Json<McpServer>, String> {
+) -> Result<Json<PublicMcpServer>, String> {
     server
         .db
         .toggle_mcp_server(&id)
         .map_err(|e| format!("切换失败: {}", e))?
-        .map(Json)
+        .map(|server| Json(PublicMcpServer::from(server)))
         .ok_or("MCP 服务器不存在".to_string())
 }
 
@@ -247,5 +297,32 @@ pub async fn test_mcp(
             ok: false,
             message: format!("不支持的传输类型: {}", mcp.transport),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_mcp_metadata_redacts_environment_values() {
+        let server = McpServer {
+            id: "mcp-1".to_string(),
+            name: "test".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("test-server".to_string()),
+            args: Some(vec!["--stdio".to_string()]),
+            url: None,
+            env: Some(serde_json::json!({"API_KEY": "secret-value", "MODE": "safe"})),
+            enabled: true,
+            created_at: 1,
+            updated_at: 2,
+        };
+
+        let public = PublicMcpServer::from(server);
+        let json = serde_json::to_value(public).unwrap();
+        assert_eq!(json["env"]["API_KEY"], "[REDACTED]");
+        assert_eq!(json["env"]["MODE"], "[REDACTED]");
+        assert!(!json.to_string().contains("secret-value"));
     }
 }

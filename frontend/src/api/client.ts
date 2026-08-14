@@ -3,6 +3,7 @@
 // ============================================================
 
 import { controlSessionHeaders } from "./controlSession";
+import type { AppConfig } from "../types";
 
 export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ||
@@ -60,11 +61,11 @@ export async function deleteConversation(id: string) {
 // ── Settings ──
 
 export async function getSettings() {
-  return request<any>("GET", "/api/settings");
+  return request<AppConfig>("GET", "/api/settings");
 }
 
-export async function updateSettings(config: any) {
-  return request<any>("PUT", "/api/settings", config);
+export async function updateSettings(config: AppConfig) {
+  return request<{ status?: string; error?: string }>("PUT", "/api/settings", config);
 }
 
 // ── Tools ──

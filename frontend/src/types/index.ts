@@ -52,10 +52,16 @@ export interface ModelConfig {
   name: string;
   base_url: string;
   api_key: string;
+  api_key_configured?: boolean;
   api_key_env: string;
   temperature: number;
   max_tokens: number;
   invoke_timeout_ms: number;
+  embedding_model: string;
+  embedding_base_url: string;
+  embedding_api_key: string;
+  embedding_api_key_configured?: boolean;
+  embedding_api_key_env: string;
 }
 
 export interface PermissionsConfig {

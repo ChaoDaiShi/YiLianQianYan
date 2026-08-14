@@ -9,7 +9,20 @@ import { PageHeader, Button, Input, Badge } from "../components/ui";
 
 const defaultConfig: AppConfig = {
   agent: { name: "忆涟千言", system_prompt: "你是一个桌面AI助手...", workspace_root: "" },
-  model: { provider: "openai", name: "deepseek-v4-flash", base_url: "https://api.deepseek.com/v1", api_key: "", api_key_env: "OPENAI_API_KEY", temperature: 0, max_tokens: 16384, invoke_timeout_ms: 120000 },
+  model: {
+    provider: "openai",
+    name: "deepseek-v4-flash",
+    base_url: "https://api.deepseek.com/v1",
+    api_key: "",
+    api_key_env: "OPENAI_API_KEY",
+    temperature: 0,
+    max_tokens: 16384,
+    invoke_timeout_ms: 120000,
+    embedding_model: "",
+    embedding_base_url: "",
+    embedding_api_key: "",
+    embedding_api_key_env: "",
+  },
   permissions: { mode: "ask", interrupt_on: ["bash", "write_file", "edit_file", "http_request"] },
   sandbox: { profile: "workspace-write", writable_paths: [], denied_write_paths: [] },
   skills: { directories: [], progressive_loading: true },
@@ -37,13 +50,19 @@ export default function SettingsPage() {
   const theme = useTheme();
 
   useEffect(() => {
-    getSettings().then((c: any) => {
-      if (c) setConfig({ ...defaultConfig, ...c });
+    getSettings().then((c) => {
+      if (c) {
+        setConfig({
+          ...defaultConfig,
+          ...c,
+          model: { ...defaultConfig.model, ...c.model, api_key: c.model.api_key || "", embedding_api_key: c.model.embedding_api_key || "" },
+        });
+      }
     });
   }, []);
 
   const handleSave = async () => {
-    await updateSettings(config as any);
+    await updateSettings(config);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -105,8 +124,17 @@ export default function SettingsPage() {
             <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">模型配置</h3>
             <Input label="API 地址" value={config.model.base_url} onChange={(e) => updateField("model", "base_url", e.target.value)} />
             <Input label="模型名称" value={config.model.name} onChange={(e) => updateField("model", "name", e.target.value)} />
-            <Input label="API 密钥" type="password" value={config.model.api_key} onChange={(e) => updateField("model", "api_key", e.target.value)} placeholder="sk-..." />
+            <Input label="API 密钥" type="password" value={config.model.api_key} onChange={(e) => updateField("model", "api_key", e.target.value)} placeholder={config.model.api_key_configured ? "已配置；输入新 key 可替换" : "sk-..."} />
+            {config.model.api_key_configured && <p className="text-xs text-[var(--success)]">已配置；页面不会回显原始 key，留空保存会保留现有 key。</p>}
             <Input label="环境变量名" value={config.model.api_key_env} onChange={(e) => updateField("model", "api_key_env", e.target.value)} />
+            <div className="border-t border-[var(--border)] pt-4 space-y-4">
+              <h4 className="font-semibold text-sm text-[var(--text-muted)]">Embedding 配置</h4>
+              <Input label="Embedding API 地址" value={config.model.embedding_base_url} onChange={(e) => updateField("model", "embedding_base_url", e.target.value)} placeholder="https://api.openai.com/v1" />
+              <Input label="Embedding 模型名称" value={config.model.embedding_model} onChange={(e) => updateField("model", "embedding_model", e.target.value)} placeholder="text-embedding-3-small" />
+              <Input label="Embedding API 密钥" type="password" value={config.model.embedding_api_key} onChange={(e) => updateField("model", "embedding_api_key", e.target.value)} placeholder={config.model.embedding_api_key_configured ? "已配置；输入新 key 可替换" : "留空表示未配置"} />
+              {config.model.embedding_api_key_configured && <p className="text-xs text-[var(--success)]">已配置；页面不会回显原始 key，留空保存会保留现有 key。</p>}
+              <Input label="Embedding 环境变量名" value={config.model.embedding_api_key_env} onChange={(e) => updateField("model", "embedding_api_key_env", e.target.value)} />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <Input label="温度" type="number" value={String(config.model.temperature)} onChange={(e) => updateField("model", "temperature", parseFloat(e.target.value) || 0)} />
               <Input label="最大 Token" type="number" value={String(config.model.max_tokens)} onChange={(e) => updateField("model", "max_tokens", parseInt(e.target.value) || 0)} />
