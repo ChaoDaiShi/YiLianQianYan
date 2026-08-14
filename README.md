@@ -140,16 +140,48 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 - Deterministic Verification Pipeline
 - Redacted Security Audit Chain
 
-### 后续规划：v0.3 Memory & Extensions
+## v0.3 Runtime Intelligence
 
-计划包括：
+状态：**Completed**
 
-- Memory Extraction
-- Embedding Retrieval
-- MCP Runtime
-- Subagent Runtime
+### Memory Runtime
 
-以上项目仍属于后续规划，不表示当前版本已经提供完整的 MCP Tool Runtime 或 Multi-Agent Runtime。现有 Workflow 能力仍是 Workflow Template，不是完整 Workflow Engine。
+已完成：
+
+- 从对话中提取长期记忆，并按 `fact`、`preference`、`knowledge`、`note` 分类；
+- 写入前执行格式校验、去重与敏感信息过滤；
+- 提供词法检索，以及可配置的 Embedding Provider、向量持久化和混合检索；
+- Embedding 不可用时自动回退到词法检索，并支持历史记忆重新索引；
+- 将检索结果注入聊天上下文，同时不通过公共 API 暴露原始 Embedding。
+
+Memory Runtime 是面向 Agent 上下文的本地长期记忆层，不替代 SQLite 数据库，也不等同于完整知识库或 RAG 平台。
+
+### MCP Runtime
+
+已完成：
+
+- 通过 stdio 完成 `initialize` / `initialized`、带分页的 `tools/list` 与 `tools/call`；
+- 将发现的 MCP Tool 转换为带命名空间的运行时 Tool，并提供 MCP 专用安全描述符；
+- MCP 调用进入生产 Tool Registry 和统一审批恢复链；
+- `Owner`、`Standard` 默认需要审批，`Restricted` 默认拒绝，审批后仍由当前策略重新评估。
+
+当前 MCP Runtime 仅支持 stdio Transport；尚不支持 Streamable HTTP、SSE Transport、Resources、Prompts 或 Tasks。
+
+### Subagent Runtime
+
+已完成：
+
+- 严格解析本地 `AGENT.md`，并保持子智能体 instructions 私有；
+- 通过 `subagent_*` Tool Adapter 和 `agent.delegate` 安全描述符接入生产 Tool Registry；
+- `Owner`、`Standard` 默认需要审批，`Restricted` 默认拒绝；
+- `LocalSubagentExecutor` 为每次委派创建隔离的 Child `AgentState`、严格的 `allowed_tools` 白名单和独立安全 Gateway；
+- 支持 Parent → Child 单层委派，并把 Child 输出封装为有长度上限的 `ToolResult`。
+
+当前限制：仅支持单层委派；不支持嵌套审批、`workdir` 覆盖、热重载或递归委派。
+
+### Workflow 状态
+
+当前 Workflow 能力仍是 Workflow Template / Prompt Template，不是可执行 DAG 或完整 Workflow Engine。Workflow Engine 计划在 v0.4 继续演进。
 
 ## 安全机制
 
@@ -332,12 +364,12 @@ Tool 执行后统一进入现有 `Verifier`。对于支持确定性验证的操�
 
 ### 当前能力边界
 
-当前版本未完成：
+当前能力仍有以下边界：
 
-- MCP Tool Runtime；
-- 完整 Workflow Engine（当前为 Workflow Template）；
-- 完整 Multi-Agent Runtime（当前仅有 Subagent 基础设施）；
+- MCP Runtime 仅支持 stdio，不支持 Streamable HTTP、SSE Transport、Resources、Prompts 或 Tasks；
+- Workflow 仍是 Template / Prompt Template，不是可执行 DAG 或完整 Workflow Engine；
+- Subagent Runtime 仅支持单层 Parent → Child 委派，不支持嵌套审批、`workdir` 覆盖、热重载或递归委派；
 - OS 级 Sandbox 隔离；
 - 跨后端重启持久化的 PendingApproval。
 
-README 只描述已经接入当前运行时并通过回归测试的 Trusted Execution 能力，不把以上后续项目写成已完成。
+README 只把已经接入当前运行时并通过回归测试的能力标记为已完成；上述边界不作超出当前实现的承诺。
