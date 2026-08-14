@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import {
   Plus, Search, Trash2, Pencil, Brain, User, FileText, X, Check,
 } from "lucide-react";
+import {
+  MEMORY_RETRIEVAL_MODE_LABELS,
+  retrieveMemories,
+  type MemoryRetrieveResponse,
+} from "../api/client";
 import { useMemoryStore } from "../stores/memoryStore";
 import { Button, Badge, PageHeader, EmptyState, Spinner, Modal, Panel } from "../components/ui";
 
@@ -36,6 +41,9 @@ export default function KnowledgePage() {
   // New memory form
   const [newContent, setNewContent] = useState("");
   const [newCategory, setNewCategory] = useState("fact");
+  const [semanticQuery, setSemanticQuery] = useState("");
+  const [semanticResult, setSemanticResult] = useState<MemoryRetrieveResponse | null>(null);
+  const [isSemanticSearching, setIsSemanticSearching] = useState(false);
 
   useEffect(() => {
     loadMemories();
@@ -78,6 +86,17 @@ export default function KnowledgePage() {
 
   const handleReindex = async () => {
     await reindexMemoriesAction();
+  };
+
+  const handleSemanticSearch = async () => {
+    const query = semanticQuery.trim();
+    if (!query) return;
+    setIsSemanticSearching(true);
+    try {
+      setSemanticResult(await retrieveMemories(query, 10));
+    } finally {
+      setIsSemanticSearching(false);
+    }
   };
 
   const formatTime = (ts: number) => {
@@ -154,6 +173,69 @@ export default function KnowledgePage() {
             )}
           </Panel>
         )}
+
+        <Panel>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <h2 className="text-sm font-semibold">语义检索测试</h2>
+              <p className="text-xs text-[var(--text-faint)] mt-1">验证当前 Memory Retrieval 的实际模式和结果。</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={semanticQuery}
+              onChange={(e) => setSemanticQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSemanticSearch(); }}
+              placeholder="输入语义检索 query..."
+              className="flex-1 px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSemanticSearch}
+              disabled={isSemanticSearching || !semanticQuery.trim()}
+            >
+              {isSemanticSearching ? "检索中..." : "检索"}
+            </Button>
+          </div>
+          {semanticResult && (
+            <div className="mt-4 space-y-3">
+              {semanticResult.error ? (
+                <p className="text-sm text-[var(--danger)]">检索失败：{semanticResult.error}</p>
+              ) : (
+                <>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    当前模式：{MEMORY_RETRIEVAL_MODE_LABELS[semanticResult.mode]}
+                  </p>
+                  {semanticResult.mode === "lexical_fallback" && (
+                    <p className="text-xs text-[var(--warning)]">
+                      Embedding 当前不可用，本次已自动回退到词法检索。
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {semanticResult.memories.slice(0, 10).map((memory) => (
+                      <div key={memory.id} className="rounded-lg border border-[var(--border)] px-3 py-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-sm leading-relaxed">{memory.content}</p>
+                          <span className="text-xs font-mono text-[var(--text-muted)] whitespace-nowrap">
+                            总分 {memory.score.toFixed(3)}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-[var(--text-faint)]">
+                          {CATEGORY_LABELS[memory.category]?.label || memory.category}
+                        </span>
+                      </div>
+                    ))}
+                    {semanticResult.memories.length === 0 && (
+                      <p className="text-xs text-[var(--text-faint)]">没有匹配的记忆。</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </Panel>
 
         {/* Filters */}
         <div className="flex items-center gap-3">

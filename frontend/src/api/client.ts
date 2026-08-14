@@ -118,6 +118,29 @@ export interface MemoryReindexResult {
   error?: string;
 }
 
+export type MemoryRetrievalMode = "lexical" | "hybrid" | "lexical_fallback";
+
+export const MEMORY_RETRIEVAL_MODE_LABELS: Record<MemoryRetrievalMode, string> = {
+  lexical: "词法检索",
+  hybrid: "混合检索",
+  lexical_fallback: "Embedding 失败，已回退词法检索",
+};
+
+export interface ScoredMemory extends MemoryRecord {
+  score: number;
+  lexical_score: number;
+  vector_score: number;
+}
+
+export interface MemoryRetrieveResponse {
+  query: string;
+  count: number;
+  mode: MemoryRetrievalMode;
+  memories: ScoredMemory[];
+  ok?: boolean;
+  error?: string;
+}
+
 export interface MemoryQuery {
   category?: string;
   source?: string;
@@ -189,6 +212,12 @@ export async function mergeMemories(ids: string[]) {
 
 export async function reindexMemories() {
   return request<MemoryReindexResult>("POST", "/api/memories/reindex", { limit: 50 });
+}
+
+export async function retrieveMemories(q: string, topK = 10, category?: string) {
+  const params = new URLSearchParams({ q, top_k: String(topK) });
+  if (category) params.set("category", category);
+  return request<MemoryRetrieveResponse>("GET", `/api/memories/retrieve?${params.toString()}`);
 }
 
 // ── Plugins / MCP ──
