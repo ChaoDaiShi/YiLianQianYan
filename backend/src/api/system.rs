@@ -2,11 +2,68 @@
 // System monitoring API — CPU, memory, disk, GPU
 // ============================================================
 
-use axum::{extract::State, Json};
-use std::sync::Arc;
+use axum::{extract::State, http::StatusCode, Json};
+use serde::Serialize;
+use std::{panic::AssertUnwindSafe, sync::Arc};
 use sysinfo::{Disks, System};
 
 use crate::server::AppServer;
+
+#[derive(Debug, Serialize)]
+pub(super) struct HealthResponse {
+    status: &'static str,
+    service: &'static str,
+    version: &'static str,
+    database: &'static str,
+    policy_version: &'static str,
+}
+
+/// GET /api/health — public runtime readiness details.
+pub async fn health(State(server): State<Arc<AppServer>>) -> (StatusCode, Json<HealthResponse>) {
+    let database_healthy = database_is_healthy(&server);
+    let (status, response) = health_response(database_healthy);
+    (status, Json(response))
+}
+
+fn database_is_healthy(server: &AppServer) -> bool {
+    let check = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let conn = server.db.conn();
+        conn.query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| {
+            row.get::<_, i64>(0)
+        })
+    }));
+
+    match check {
+        Ok(Ok(_)) => true,
+        Ok(Err(error)) => {
+            tracing::warn!(error = %error, "runtime health database check failed");
+            false
+        }
+        Err(_) => {
+            tracing::error!("runtime health database check panicked");
+            false
+        }
+    }
+}
+
+fn health_response(database_healthy: bool) -> (StatusCode, HealthResponse) {
+    let (http_status, status, database) = if database_healthy {
+        (StatusCode::OK, "healthy", "healthy")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "degraded", "unavailable")
+    };
+
+    (
+        http_status,
+        HealthResponse {
+            status,
+            service: env!("CARGO_PKG_NAME"),
+            version: env!("CARGO_PKG_VERSION"),
+            database,
+            policy_version: crate::safety::POLICY_VERSION,
+        },
+    )
+}
 
 /// GET /api/system — full system snapshot
 pub async fn system_info(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
@@ -184,4 +241,19 @@ fn get_gpu_info() -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({"name": "GPU info unavailable", "vram_gb": "?", "driver": "", "resolution": ""}),
     ]
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_database_degrades_health() {
+        let (status, response) = health_response(false);
+
+        assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.status, "degraded");
+        assert_eq!(response.database, "unavailable");
+        assert_eq!(response.policy_version, crate::safety::POLICY_VERSION);
+    }
 }

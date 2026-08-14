@@ -57,6 +57,13 @@ async fn health_is_public_but_tools_require_the_exact_control_session() {
         .await
         .unwrap();
     assert_eq!(health.status(), StatusCode::OK);
+    let health_body: Value =
+        serde_json::from_slice(&to_bytes(health.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(health_body["status"], "healthy");
+    assert_eq!(health_body["service"], "yilian-backend");
+    assert_eq!(health_body["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(health_body["database"], "healthy");
+    assert_eq!(health_body["policy_version"], crate::safety::POLICY_VERSION);
 
     let missing = app
         .clone()

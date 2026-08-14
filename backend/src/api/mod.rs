@@ -115,7 +115,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         ));
 
     Router::new()
-        .route("/api/health", get(|| async { "OK" }))
+        .route("/api/health", get(system::health))
         .merge(protected)
         .layer(control_plane_cors())
         .with_state(server)
