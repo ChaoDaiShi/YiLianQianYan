@@ -300,3 +300,139 @@ async fn planner_reference_validation_rejects_missing_and_unready() {
     };
     assert!(validate_plan_references(&unready, &registry).is_err());
 }
+
+// ============================================================
+// Planner capability-aware discovery tests.
+// ============================================================
+
+use crate::capability::CapabilityRuntimeStatus as CStatus;
+use crate::task::planner::{
+    build_planner_capabilities, PlannerCapability, MAX_PLANNER_CAPABILITIES,
+};
+
+fn ready_descriptor(id: &str, kind: CapabilityKind, enabled: bool) -> CapabilityDescriptor {
+    let mut d = descriptor(id, kind);
+    d.status = CStatus::Ready;
+    d.enabled = enabled;
+    d
+}
+
+fn registry_with(descriptors: Vec<CapabilityDescriptor>) -> CapabilityRegistry {
+    let provider = StaticProvider::new(CapabilityProviderKind::AgentRuntime, descriptors);
+    let registry = CapabilityRegistry::new(vec![Arc::new(provider)]);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(registry.refresh());
+    registry
+}
+
+#[test]
+fn planner_capabilities_include_ready_and_exclude_unready_and_tools() {
+    let registry = registry_with(vec![
+        ready_descriptor("agent.researcher", CapabilityKind::Agent, true),
+        ready_descriptor("agent.disabled", CapabilityKind::Agent, false),
+        ready_descriptor("workflow.g1", CapabilityKind::Workflow, true),
+        ready_descriptor("subagent.writer", CapabilityKind::Subagent, true),
+        // Tool + MCP must never appear in the planner snapshot.
+        descriptor("builtin.tool.read_file", CapabilityKind::Tool),
+        descriptor("mcp.srv.tool", CapabilityKind::McpTool),
+        // Unready workflow must be excluded.
+        {
+            let mut d = descriptor("workflow.bad", CapabilityKind::Workflow);
+            d.status = CStatus::Misconfigured;
+            d.enabled = true;
+            d
+        },
+    ]);
+
+    let caps = build_planner_capabilities(&registry);
+    let ids: Vec<&str> = caps.iter().map(|c| c.capability_id.as_str()).collect();
+    assert!(ids.contains(&"agent.researcher"));
+    assert!(ids.contains(&"workflow.g1"));
+    assert!(ids.contains(&"subagent.writer"));
+    assert!(!ids.contains(&"agent.disabled"));
+    assert!(!ids.contains(&"workflow.bad"));
+    assert!(!ids
+        .iter()
+        .any(|id| id.starts_with("builtin.") || id.starts_with("mcp.")));
+}
+
+#[test]
+fn planner_capabilities_are_deterministic_and_carry_executor_ref() {
+    // Build twice with the same registry — the order must be identical.
+    let registry = registry_with(vec![
+        ready_descriptor("agent.b", CapabilityKind::Agent, true),
+        ready_descriptor("agent.a", CapabilityKind::Agent, true),
+        ready_descriptor("workflow.z", CapabilityKind::Workflow, true),
+    ]);
+    let first = build_planner_capabilities(&registry);
+    let second = build_planner_capabilities(&registry);
+    let ids = |caps: &[PlannerCapability]| {
+        caps.iter()
+            .map(|c| c.capability_id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&first), ids(&second));
+
+    let agent = first.iter().find(|c| c.capability_id == "agent.a").unwrap();
+    assert_eq!(agent.executor_type, "agent");
+    assert_eq!(agent.executor_ref, "a");
+}
+
+#[test]
+fn planner_capabilities_are_bounded() {
+    let descriptors: Vec<CapabilityDescriptor> = (0..(MAX_PLANNER_CAPABILITIES + 50))
+        .map(|i| ready_descriptor(&format!("agent.a{i}"), CapabilityKind::Agent, true))
+        .collect();
+    let registry = registry_with(descriptors);
+    let caps = build_planner_capabilities(&registry);
+    assert!(caps.len() <= MAX_PLANNER_CAPABILITIES);
+}
+
+#[test]
+fn planner_input_excludes_disabled_capability() {
+    let registry = registry_with(vec![
+        ready_descriptor("agent.on", CapabilityKind::Agent, true),
+        ready_descriptor("agent.off", CapabilityKind::Agent, false),
+    ]);
+    let caps = build_planner_capabilities(&registry);
+    assert!(caps.iter().any(|c| c.capability_id == "agent.on"));
+    assert!(!caps.iter().any(|c| c.capability_id == "agent.off"));
+}
+
+#[test]
+fn plan_reference_validation_still_rejects_stale_capability() {
+    use crate::task::model::{TaskPlan, TaskPlanExecutor, TaskPlanStep};
+    use crate::task::planner::validate_plan_references;
+
+    let registry = registry_with(vec![ready_descriptor(
+        "agent.1",
+        CapabilityKind::Agent,
+        true,
+    )]);
+    let plan = TaskPlan {
+        schema_version: 1,
+        summary: "s".to_string(),
+        steps: vec![TaskPlanStep {
+            id: "s1".to_string(),
+            title: "t".to_string(),
+            instruction: "i".to_string(),
+            executor: TaskPlanExecutor::Agent {
+                agent_id: crate::task::model::AgentId::new("1").unwrap(),
+            },
+        }],
+    };
+    // Initially valid.
+    assert!(validate_plan_references(&plan, &registry).is_ok());
+
+    // Now the capability becomes disabled (a fresh registry reflecting a
+    // disabled agent) — validation must reject.
+    let stale = registry_with(vec![ready_descriptor(
+        "agent.1",
+        CapabilityKind::Agent,
+        false,
+    )]);
+    assert!(validate_plan_references(&plan, &stale).is_err());
+}

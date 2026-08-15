@@ -194,11 +194,17 @@ impl TaskOrchestrator {
             .db
             .get_workspace(&task.workspace_id)?
             .ok_or_else(|| "workspace not found".to_string())?;
+        let available_capabilities =
+            super::planner::build_planner_capabilities(&self.capability_registry);
+        if available_capabilities.is_empty() {
+            return Err("no ready planning capabilities available".to_string());
+        }
         let input = super::planner::TaskPlanningInput {
             title: task.title.clone(),
             description: task.description.clone(),
             workspace_name: workspace.name,
             workspace_description: workspace.description,
+            available_capabilities,
         };
         let cancel = CancellationToken::new();
         let plan = self

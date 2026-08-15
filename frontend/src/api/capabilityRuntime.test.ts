@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { API_BASE, listCapabilities, refreshCapabilities } from "./client";
+import { listCapabilities, refreshCapabilities } from "./client";
 
 vi.mock("./controlSession", () => ({
   controlSessionHeaders: () => ({ "X-Control-Session": "test-session" }),
