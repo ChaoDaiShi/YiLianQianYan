@@ -7,12 +7,14 @@ mod mcp;
 mod memories;
 mod security_audit;
 mod settings;
+mod workflow_runtime;
 mod workflows;
 
 pub use conversations::*;
 pub use mcp::McpServer;
 pub use memories::*;
 pub use security_audit::*;
+pub use workflow_runtime::*;
 pub use workflows::Workflow;
 // settings::* not re-exported (used internally via Database impl)
 
@@ -214,6 +216,33 @@ impl Database {
                 ON security_audit_events(decision_status);
             CREATE INDEX IF NOT EXISTS idx_security_audit_risk
                 ON security_audit_events(risk_level);
+
+            CREATE TABLE IF NOT EXISTS workflow_graphs (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                schema_version INTEGER NOT NULL,
+                definition_json TEXT NOT NULL,
+                created_at INTEGER,
+                updated_at INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+                run_id TEXT PRIMARY KEY,
+                workflow_graph_id TEXT,
+                execution_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                parent_execution_id TEXT,
+                status TEXT NOT NULL,
+                definition_snapshot_json TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                created_at INTEGER,
+                updated_at INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_workflow_runs_graph
+                ON workflow_runs(workflow_graph_id);
             ",
         )?;
 
