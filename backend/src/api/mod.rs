@@ -16,6 +16,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use crate::safety::CONTROL_SESSION_HEADER;
 use crate::server::AppServer;
 
+mod agents;
 mod approvals;
 mod chat;
 mod conversations;
@@ -27,9 +28,11 @@ mod settings;
 mod skills_route;
 mod subagents;
 mod system;
+mod tasks;
 mod tools;
 mod workflow_runtime;
 mod workflows;
+mod workspaces;
 
 pub use chat::chat_handler;
 pub use chat::stop_handler;
@@ -134,6 +137,33 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             "/api/workflow-runs/:run_id/cancel",
             post(workflow_runtime::cancel_workflow_run),
         )
+        // Workspace API
+        .route("/api/workspaces", get(workspaces::list_workspaces))
+        .route("/api/workspaces", post(workspaces::create_workspace))
+        .route("/api/workspaces/:id", get(workspaces::get_workspace))
+        .route("/api/workspaces/:id", put(workspaces::update_workspace))
+        .route("/api/workspaces/:id", delete(workspaces::delete_workspace))
+        // Task API
+        .route("/api/tasks", get(tasks::list_tasks))
+        .route("/api/tasks", post(tasks::create_task))
+        .route("/api/tasks/:id", get(tasks::get_task))
+        .route("/api/tasks/:id", put(tasks::update_task))
+        .route("/api/tasks/:id", delete(tasks::delete_task))
+        .route("/api/tasks/:id/start", post(tasks::start_task))
+        .route("/api/tasks/:id/retry", post(tasks::retry_task))
+        .route("/api/tasks/:id/cancel", post(tasks::cancel_task))
+        .route("/api/tasks/:id/executions", get(tasks::list_executions))
+        .route("/api/tasks/:id/timeline", get(tasks::list_timeline))
+        .route("/api/tasks/:id/artifacts", get(tasks::list_artifacts))
+        .route("/api/artifacts", get(tasks::list_all_artifacts))
+        .route("/api/artifacts/:id", get(tasks::get_artifact))
+        // Agent / Team API
+        .route("/api/agents", get(agents::list_agents))
+        .route("/api/agents", post(agents::create_agent))
+        .route("/api/agents/:id", get(agents::get_agent))
+        .route("/api/agent-teams", get(agents::list_teams))
+        .route("/api/agent-teams", post(agents::create_team))
+        .route("/api/agent-teams/:id", get(agents::get_team))
         // Logs API
         .route("/api/logs", get(logs::get_logs))
         .route("/api/logs", post(logs::push_log))

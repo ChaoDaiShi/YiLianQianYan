@@ -7,13 +7,16 @@ mod mcp;
 mod memories;
 mod security_audit;
 mod settings;
+mod task;
 mod workflow_runtime;
 mod workflows;
+mod workspace;
 
 pub use conversations::*;
 pub use mcp::McpServer;
 pub use memories::*;
 pub use security_audit::*;
+pub use task::*;
 pub use workflow_runtime::*;
 pub use workflows::Workflow;
 // settings::* not re-exported (used internally via Database impl)
@@ -243,6 +246,152 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_workflow_runs_graph
                 ON workflow_runs(workflow_graph_id);
+
+            -- ── v0.6 Workspace / Task / Multi-Agent Runtime ──
+
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                root_path TEXT,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                workflow_graph_id TEXT,
+                agent_team_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at);
+
+            CREATE TABLE IF NOT EXISTS task_executions (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                execution_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                parent_execution_id TEXT,
+                workflow_run_id TEXT,
+                agent_id TEXT,
+                agent_team_id TEXT,
+                status TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 1,
+                started_at INTEGER,
+                finished_at INTEGER,
+                error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_executions_task ON task_executions(task_id);
+            CREATE INDEX IF NOT EXISTS idx_task_executions_exec ON task_executions(execution_id);
+            CREATE INDEX IF NOT EXISTS idx_task_executions_status ON task_executions(status);
+
+            CREATE TABLE IF NOT EXISTS task_plans (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                task_execution_id TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                plan_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                task_execution_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                path TEXT,
+                mime_type TEXT,
+                size INTEGER,
+                summary TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_execution ON artifacts(task_execution_id);
+
+            CREATE TABLE IF NOT EXISTS task_events (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                task_execution_id TEXT,
+                event_type TEXT NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_task_events_execution ON task_events(task_execution_id);
+
+            CREATE TABLE IF NOT EXISTS agent_definitions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                instructions TEXT NOT NULL DEFAULT '',
+                allowed_tools TEXT NOT NULL DEFAULT '[]',
+                model TEXT,
+                capabilities TEXT NOT NULL DEFAULT '[]',
+                max_iterations INTEGER NOT NULL DEFAULT 10,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_teams (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                coordinator_agent_id TEXT NOT NULL,
+                member_agent_ids TEXT NOT NULL DEFAULT '[]',
+                delegation_policy_json TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_executions (
+                id TEXT PRIMARY KEY,
+                task_execution_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                parent_agent_execution_id TEXT,
+                depth INTEGER NOT NULL DEFAULT 0,
+                instruction TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                result_summary TEXT,
+                agent_state_json TEXT,
+                started_at INTEGER,
+                finished_at INTEGER,
+                error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_executions_task_exec ON agent_executions(task_execution_id);
+
+            CREATE TABLE IF NOT EXISTS task_decisions (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                task_execution_id TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                options_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                resolved_at INTEGER
+            );
             ",
         )?;
 

@@ -101,6 +101,9 @@ pub struct AppServer {
     /// Active workflow runs (run_id → cancel token). Distinct from `active_tasks`
     /// because a workflow run is an independent execution lifecycle.
     pub active_workflow_runs: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    /// Active task executions (task_execution_id → cancel token). One task may
+    /// only have one active execution at a time.
+    pub active_task_executions: Arc<Mutex<HashMap<String, CancellationToken>>>,
     /// In-memory log ring buffer
     pub log_buffer: LogBuffer,
     /// Pending high-risk tool approvals awaiting user decision
@@ -124,6 +127,13 @@ impl AppServer {
         control_session: ControlSession,
     ) -> Result<Self, String> {
         let db = Database::new(db_path).map_err(|e| e.to_string())?;
+        // v0.6 recovery: any execution left "running" by a previous process must
+        // not pretend to keep running — mark interrupted and block its task.
+        if let Ok(report) = crate::task::recovery::recover_interrupted(&db) {
+            if report.interrupted_executions > 0 || report.interrupted_agent_executions > 0 {
+                tracing::warn!(?report, "recovered interrupted task executions on startup");
+            }
+        }
         let audit_recorder = AuditRecorder::new(db.clone_connection());
         let mut config = db.get_settings().unwrap_or_default();
 
@@ -168,6 +178,7 @@ impl AppServer {
             workspace_root: workspace_root.to_string(),
             active_tasks: Mutex::new(HashMap::new()),
             active_workflow_runs: Arc::new(Mutex::new(HashMap::new())),
+            active_task_executions: Arc::new(Mutex::new(HashMap::new())),
             log_buffer,
             approval_store: Arc::new(ApprovalStore::new()),
             audit_recorder,

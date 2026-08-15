@@ -146,26 +146,44 @@ async fn execute_approved_tool(
 }
 
 /// How to route an approval decision. Workflow-bound approvals resume a
-/// [`crate::workflow::WorkflowRun`]; everything else resumes a Chat Agent.
+/// [`crate::workflow::WorkflowRun`]; task-agent approvals execute the original
+/// call through the gateway and finalize the agent step; everything else
+/// resumes a Chat Agent.
 enum ApprovalTarget {
     Agent,
     Workflow,
-    InvalidWorkflowBinding,
+    TaskAgent,
+    InvalidBinding,
 }
 
 /// Classify an approval from its *trusted internal fields* (never client input).
 ///
-/// All three workflow fields `Some` → workflow; all `None` → agent; any partial
+/// A task-agent approval has all three task fields `Some`; a workflow approval
+/// has all three workflow fields `Some`; an agent approval has none. Any partial
 /// binding is treated as data corruption and fails closed rather than falling
-/// back to the agent path.
+/// back to a different runtime.
 fn classify_approval(approval: &PendingApproval) -> ApprovalTarget {
+    let has_task = approval.task_id.is_some()
+        || approval.task_execution_id.is_some()
+        || approval.agent_execution_id.is_some();
+    if has_task {
+        return match (
+            &approval.task_id,
+            &approval.task_execution_id,
+            &approval.agent_execution_id,
+        ) {
+            (Some(_), Some(_), Some(_)) => ApprovalTarget::TaskAgent,
+            _ => ApprovalTarget::InvalidBinding,
+        };
+    }
+
     let has_execution = approval.execution_id.is_some();
     let has_run = approval.workflow_run_id.is_some();
     let has_node = approval.workflow_node_id.is_some();
     match (has_execution, has_run, has_node) {
         (false, false, false) => ApprovalTarget::Agent,
         (true, true, true) => ApprovalTarget::Workflow,
-        _ => ApprovalTarget::InvalidWorkflowBinding,
+        _ => ApprovalTarget::InvalidBinding,
     }
 }
 
@@ -322,6 +340,124 @@ fn workflow_approval_error_event(
     )
 }
 
+/// Resolve a task-agent approval, then emit a truthful SSE: resolve FIRST, emit
+/// `approval_resolved` only on success, then `task_updated` with the real
+/// persisted task status. Failures emit only `task_approval_error` — never a
+/// fabricated `approved`/`rejected`.
+fn task_agent_approval_stream(
+    server: Arc<AppServer>,
+    approval: PendingApproval,
+    approve: bool,
+) -> ApprovalStream {
+    let approval_id = approval.approval_id.clone();
+    let task_id = approval.task_id.clone();
+    let task_execution_id = approval.task_execution_id.clone();
+
+    let stream = async_stream::stream! {
+        let gateway = build_workflow_gateway(&server).await;
+        let result = crate::task::resolve_task_agent_approval(
+            &gateway,
+            &server.approval_store,
+            &server.db,
+            &approval_id,
+            approve,
+        ).await;
+
+        match result {
+            Ok(()) => {
+                let Some(consumed) = server.approval_store.get(&approval_id) else {
+                    yield Ok(sse_event("task_approval_error", serde_json::json!({
+                        "type": "task_approval_error",
+                        "approval_id": approval_id,
+                        "task_id": task_id,
+                        "error": "任务审批恢复失败",
+                    })));
+                    return;
+                };
+                record_approval_resolved(&server, &consumed);
+                let decision = if approve { "approved" } else { "rejected" };
+                yield Ok(sse_event("approval_resolved", serde_json::json!({
+                    "type": "approval_resolved",
+                    "approval_id": approval_id,
+                    "status": decision,
+                })));
+
+                // Report the real persisted task status.
+                let status = task_id.as_ref()
+                    .and_then(|id| crate::task::TaskId::new(id.clone()).ok())
+                    .and_then(|id| server.db.get_task(&id).ok().flatten())
+                    .map(|t| t.status.to_string())
+                    .unwrap_or_else(|| "failed".to_string());
+                yield Ok(sse_event("task_updated", serde_json::json!({
+                    "type": "task_updated",
+                    "task_id": task_id,
+                    "task_execution_id": task_execution_id,
+                    "status": status,
+                })));
+            }
+            Err(_) => {
+                yield Ok(sse_event("task_approval_error", serde_json::json!({
+                    "type": "task_approval_error",
+                    "approval_id": approval_id,
+                    "task_id": task_id,
+                    "error": "任务审批恢复失败",
+                })));
+            }
+        }
+    };
+    box_stream(stream)
+}
+
+async fn cancel_task_agent_approval(
+    server: &AppServer,
+    approval_id: &str,
+    approval: &PendingApproval,
+) -> Result<(), String> {
+    let consumed = server
+        .approval_store
+        .cancel(approval_id, &approval.conversation_id)
+        .map_err(|error| error.to_string())?;
+
+    let task_id = consumed
+        .task_id
+        .as_ref()
+        .ok_or_else(|| "审批未绑定任务".to_string())?;
+    let execution_id = consumed
+        .task_execution_id
+        .as_ref()
+        .ok_or_else(|| "审批未绑定执行".to_string())?;
+    let agent_execution_id = consumed
+        .agent_execution_id
+        .as_ref()
+        .ok_or_else(|| "审批未绑定 Agent 执行".to_string())?;
+
+    let task_id = crate::task::TaskId::new(task_id.clone()).map_err(|e| e.to_string())?;
+    let execution_id =
+        crate::task::TaskExecutionId::new(execution_id.clone()).map_err(|e| e.to_string())?;
+    let agent_execution_id = crate::task::AgentExecutionId::new(agent_execution_id.clone())
+        .map_err(|e| e.to_string())?;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    if let Some(mut agent_execution) = server.db.get_agent_execution(&agent_execution_id)? {
+        agent_execution.status = crate::task::AgentExecutionStatus::Cancelled;
+        agent_execution.finished_at = Some(now);
+        agent_execution.updated_at = now;
+        server.db.update_agent_execution(&agent_execution)?;
+    }
+    if let Some(mut execution) = server.db.get_task_execution(&execution_id)? {
+        execution.status = crate::task::TaskExecutionStatus::Cancelled;
+        execution.finished_at = Some(now);
+        execution.updated_at = now;
+        server.db.update_task_execution(&execution)?;
+    }
+    if let Some(mut task) = server.db.get_task(&task_id)? {
+        task.status = crate::task::TaskStatus::Cancelled;
+        task.updated_at = now;
+        server.db.update_task(&task)?;
+    }
+    Ok(())
+}
+
 /// POST /api/approvals/:id/approve — SSE stream resuming the agent or a
 /// workflow run, depending on the approval's binding.
 pub async fn approve_handler(
@@ -351,9 +487,16 @@ pub async fn approve_handler(
             }
             Ok(Sse::new(workflow_approval_stream(server, lookup, true)))
         }
-        ApprovalTarget::InvalidWorkflowBinding => {
-            Err((StatusCode::CONFLICT, "审批工作流绑定不完整".to_string()))
+        ApprovalTarget::TaskAgent => {
+            if lookup.status != crate::safety::ApprovalStatus::Pending {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "审批已被处理，不能重复操作".to_string(),
+                ));
+            }
+            Ok(Sse::new(task_agent_approval_stream(server, lookup, true)))
         }
+        ApprovalTarget::InvalidBinding => Err((StatusCode::CONFLICT, "审批绑定不完整".to_string())),
     }
 }
 
@@ -387,9 +530,16 @@ pub async fn reject_handler(
             }
             Ok(Sse::new(workflow_approval_stream(server, lookup, false)))
         }
-        ApprovalTarget::InvalidWorkflowBinding => {
-            Err((StatusCode::CONFLICT, "审批工作流绑定不完整".to_string()))
+        ApprovalTarget::TaskAgent => {
+            if lookup.status != crate::safety::ApprovalStatus::Pending {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "审批已被处理，不能重复操作".to_string(),
+                ));
+            }
+            Ok(Sse::new(task_agent_approval_stream(server, lookup, false)))
         }
+        ApprovalTarget::InvalidBinding => Err((StatusCode::CONFLICT, "审批绑定不完整".to_string())),
     }
 }
 
@@ -423,8 +573,23 @@ pub async fn cancel_handler(
             }
             Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
         },
-        ApprovalTarget::InvalidWorkflowBinding => {
-            Json(serde_json::json!({"ok": false, "error": "审批工作流绑定不完整"}))
+        ApprovalTarget::InvalidBinding => {
+            Json(serde_json::json!({"ok": false, "error": "审批绑定不完整"}))
+        }
+        ApprovalTarget::TaskAgent => {
+            match cancel_task_agent_approval(&server, &approval_id, &lookup).await {
+                Ok(()) => {
+                    if let Some(consumed) = server.approval_store.get(&approval_id) {
+                        record_approval_resolved(&server, &consumed);
+                    }
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "approval_id": approval_id,
+                        "status": "cancelled"
+                    }))
+                }
+                Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
+            }
         }
         ApprovalTarget::Agent => {
             let conv_id = body
@@ -1332,6 +1497,9 @@ mod tests {
             execution_id: None,
             workflow_run_id: None,
             workflow_node_id: None,
+            task_id: None,
+            task_execution_id: None,
+            agent_execution_id: None,
         }
     }
 
@@ -1367,7 +1535,7 @@ mod tests {
         };
         assert!(matches!(
             classify_approval(&approval),
-            ApprovalTarget::InvalidWorkflowBinding
+            ApprovalTarget::InvalidBinding
         ));
     }
 

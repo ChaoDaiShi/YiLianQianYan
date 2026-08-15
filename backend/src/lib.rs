@@ -12,9 +12,11 @@ pub mod llm;
 pub mod mcp;
 pub mod safety;
 pub mod server;
+pub mod task;
 pub mod tools;
 pub mod utils;
 pub mod workflow;
+pub mod workspace;
 
 use std::path::PathBuf;
 use std::sync::Arc;

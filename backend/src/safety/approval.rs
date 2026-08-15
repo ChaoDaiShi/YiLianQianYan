@@ -57,6 +57,10 @@ pub struct PendingApproval {
     pub execution_id: Option<String>,
     pub workflow_run_id: Option<String>,
     pub workflow_node_id: Option<String>,
+    /// Optional task/agent binding (set when the approval pauses a task agent).
+    pub task_id: Option<String>,
+    pub task_execution_id: Option<String>,
+    pub agent_execution_id: Option<String>,
 }
 
 impl PendingApproval {
@@ -131,6 +135,48 @@ impl ApprovalStore {
             execution_id: None,
             workflow_run_id: None,
             workflow_node_id: None,
+            task_id: None,
+            task_execution_id: None,
+            agent_execution_id: None,
+        };
+        self.approvals
+            .write()
+            .insert(approval.approval_id.clone(), approval.clone());
+        approval
+    }
+
+    /// Create a pending approval bound to a task agent execution.
+    pub fn create_task_agent(
+        &self,
+        task_id: String,
+        task_execution_id: String,
+        agent_execution_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+        risk_level: RiskLevel,
+        reason: String,
+        subject_id: String,
+    ) -> PendingApproval {
+        let now = Utc::now();
+        let approval = PendingApproval {
+            approval_id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: task_execution_id.clone(),
+            tool_call_id,
+            tool_name,
+            arguments,
+            risk_level,
+            reason,
+            status: ApprovalStatus::Pending,
+            created_at: now,
+            expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
+            subject_id,
+            execution_id: None,
+            workflow_run_id: None,
+            workflow_node_id: None,
+            task_id: Some(task_id),
+            task_execution_id: Some(task_execution_id),
+            agent_execution_id: Some(agent_execution_id),
         };
         self.approvals
             .write()
@@ -170,6 +216,9 @@ impl ApprovalStore {
             execution_id: Some(execution_id),
             workflow_run_id: Some(workflow_run_id),
             workflow_node_id: Some(workflow_node_id),
+            task_id: None,
+            task_execution_id: None,
+            agent_execution_id: None,
         };
         self.approvals
             .write()
@@ -218,6 +267,9 @@ impl ApprovalStore {
             execution_id: None,
             workflow_run_id: None,
             workflow_node_id: None,
+            task_id: None,
+            task_execution_id: None,
+            agent_execution_id: None,
         };
         approvals.insert(approval.approval_id.clone(), approval.clone());
         (approval, true)
