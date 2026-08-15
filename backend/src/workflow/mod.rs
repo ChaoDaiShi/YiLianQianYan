@@ -15,6 +15,7 @@
 
 pub mod definition;
 pub mod executor;
+pub mod resume;
 pub mod run;
 pub mod runner;
 pub mod state_machine;
@@ -31,6 +32,7 @@ pub use definition::{
 pub use executor::{
     NodeExecutionOutcome, SecurityGatewayNodeExecutor, WorkflowExecutionError, WorkflowNodeExecutor,
 };
+pub use resume::{cancel_workflow_approval, resolve_workflow_approval};
 pub use run::{
     NodeRunState, NodeRunStatus, WorkflowRun, WorkflowRunError, WorkflowRunId, WorkflowRunStatus,
 };

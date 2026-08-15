@@ -61,7 +61,10 @@ impl<E: WorkflowNodeExecutor> WorkflowRunner<E> {
                 .iter()
                 .find(|n| n.id == node_id)
                 .expect("node id known to exist");
-            let outcome = self.executor.execute(&run.execution_context, node).await;
+            let outcome = self
+                .executor
+                .execute(&run.execution_context, &run.run_id, node)
+                .await;
 
             match outcome {
                 Ok(NodeExecutionOutcome::Completed) => {

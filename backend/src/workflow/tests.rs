@@ -608,6 +608,7 @@ impl WorkflowNodeExecutor for MockExecutor {
     async fn execute(
         &self,
         _context: &ExecutionContext,
+        _run_id: &WorkflowRunId,
         node: &WorkflowNodeDefinition,
     ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
         Ok(match node.id.as_str() {
@@ -629,6 +630,7 @@ impl WorkflowNodeExecutor for RecordingExecutor {
     async fn execute(
         &self,
         _context: &ExecutionContext,
+        _run_id: &WorkflowRunId,
         node: &WorkflowNodeDefinition,
     ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
         self.calls.lock().unwrap().push(node.id.to_string());
@@ -646,6 +648,7 @@ impl WorkflowNodeExecutor for CancellingExecutor {
     async fn execute(
         &self,
         _context: &ExecutionContext,
+        _run_id: &WorkflowRunId,
         node: &WorkflowNodeDefinition,
     ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
         if node.id.as_str() == self.trigger.as_str() {
@@ -956,7 +959,8 @@ fn run_with_subject(
 }
 
 async fn run_with_gateway(gateway: Arc<SecurityExecutionGateway>, run: &mut WorkflowRun) {
-    let runner = WorkflowRunner::new(SecurityGatewayNodeExecutor::new(gateway));
+    let approval_store = Arc::new(crate::safety::ApprovalStore::new());
+    let runner = WorkflowRunner::new(SecurityGatewayNodeExecutor::new(gateway, approval_store));
     runner
         .run(run, &CancellationToken::new(), noop_persist)
         .await
@@ -1123,5 +1127,237 @@ async fn production_subject_is_preserved() {
     // write must be denied rather than allowed.
     assert_eq!(r.status, WorkflowRunStatus::Failed);
     assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+// ============================================================
+// Approval pause / resume tests.
+// ============================================================
+
+type PausedWorkflow = (
+    Arc<SecurityExecutionGateway>,
+    Arc<crate::safety::ApprovalStore>,
+    Database,
+    String,           // run_id
+    String,           // approval_id
+    Arc<AtomicUsize>, // executions
+    std::path::PathBuf,
+);
+
+async fn run_paused_workflow() -> PausedWorkflow {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let db_path =
+        std::env::temp_dir().join(format!("yilian-wf-resume-{}.db", uuid::Uuid::new_v4()));
+    let db = Database::new(&db_path).unwrap();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(CountingTool {
+        name: "bash",
+        executions: executions.clone(),
+    }));
+    let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+        SandboxConfig::default(),
+        "workspace",
+        Arc::new(registry),
+    )
+    .with_db(Arc::new(db.clone_connection()));
+    let gateway = Arc::new(gateway);
+    let approval_store = Arc::new(crate::safety::ApprovalStore::new());
+
+    let mut run = run(
+        "bash",
+        vec![tool_node(
+            "bash",
+            "bash",
+            serde_json::json!({"command": "git push origin develop"}),
+        )],
+        vec![],
+    );
+    let run_id = run.run_id.to_string();
+    db.create_workflow_run("g1", &run).unwrap();
+
+    let runner = WorkflowRunner::new(SecurityGatewayNodeExecutor::new(
+        Arc::clone(&gateway),
+        Arc::clone(&approval_store),
+    ));
+    let db2 = db.clone_connection();
+    runner
+        .run(&mut run, &CancellationToken::new(), move |r| {
+            db2.update_workflow_run("g1", r)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(run.status, WorkflowRunStatus::WaitingApproval);
+    let pending = approval_store.list_pending();
+    assert_eq!(pending.len(), 1);
+    let approval_id = pending[0].approval_id.clone();
+
+    (
+        gateway,
+        approval_store,
+        db,
+        run_id,
+        approval_id,
+        executions,
+        db_path,
+    )
+}
+
+#[tokio::test]
+async fn workflow_approval_binds_run_and_node() {
+    let (_gateway, approval_store, _db, run_id, approval_id, _exec, db_path) =
+        run_paused_workflow().await;
+    let approval = approval_store.get(&approval_id).unwrap();
+    assert_eq!(approval.workflow_run_id.as_deref(), Some(run_id.as_str()));
+    assert_eq!(approval.workflow_node_id.as_deref(), Some("bash"));
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn workflow_approve_resumes_and_completes() {
+    let (gateway, approval_store, db, run_id, approval_id, executions, db_path) =
+        run_paused_workflow().await;
+    resolve_workflow_approval(
+        &gateway,
+        &approval_store,
+        &db,
+        &approval_id,
+        "local-user",
+        true,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    let stored = db
+        .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn workflow_reject_stops_run() {
+    let (gateway, approval_store, db, run_id, approval_id, executions, db_path) =
+        run_paused_workflow().await;
+    resolve_workflow_approval(
+        &gateway,
+        &approval_store,
+        &db,
+        &approval_id,
+        "local-user",
+        false,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    let stored = db
+        .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.run.status, WorkflowRunStatus::Failed);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn workflow_double_approve_cannot_execute_twice() {
+    let (gateway, approval_store, db, _run_id, approval_id, executions, db_path) =
+        run_paused_workflow().await;
+    resolve_workflow_approval(
+        &gateway,
+        &approval_store,
+        &db,
+        &approval_id,
+        "local-user",
+        true,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    // Second consume must fail (replay protection).
+    assert!(resolve_workflow_approval(
+        &gateway,
+        &approval_store,
+        &db,
+        &approval_id,
+        "local-user",
+        true,
+        &CancellationToken::new(),
+    )
+    .await
+    .is_err());
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn workflow_subject_mismatch_rejected() {
+    let (gateway, approval_store, db, _run_id, approval_id, executions, db_path) =
+        run_paused_workflow().await;
+    assert!(resolve_workflow_approval(
+        &gateway,
+        &approval_store,
+        &db,
+        &approval_id,
+        "attacker",
+        true,
+        &CancellationToken::new(),
+    )
+    .await
+    .is_err());
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn workflow_cancel_stops_run() {
+    let (_gateway, approval_store, db, run_id, approval_id, executions, db_path) =
+        run_paused_workflow().await;
+    cancel_workflow_approval(&approval_store, &db, &approval_id, "local-user")
+        .await
+        .unwrap();
+
+    let stored = db
+        .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.run.status, WorkflowRunStatus::Cancelled);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn workflow_wrong_run_rejected() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (gateway, db, db_path) = gateway_with_tool("bash", executions.clone());
+    let approval_store = Arc::new(crate::safety::ApprovalStore::new());
+    let approval = approval_store.create_workflow(
+        "exec-x".to_string(),
+        "non-existent-run".to_string(),
+        "bash".to_string(),
+        "call-1".to_string(),
+        "bash".to_string(),
+        serde_json::json!({"command": "x"}),
+        crate::tools::RiskLevel::High,
+        "reason".to_string(),
+        "local-user".to_string(),
+    );
+
+    let result = resolve_workflow_approval(
+        &gateway,
+        &approval_store,
+        &db,
+        &approval.approval_id,
+        "local-user",
+        true,
+        &CancellationToken::new(),
+    )
+    .await;
+    assert!(result.is_err());
     let _ = std::fs::remove_file(&db_path);
 }

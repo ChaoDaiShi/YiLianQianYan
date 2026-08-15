@@ -12,10 +12,12 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use super::definition::{WorkflowNodeConfig, WorkflowNodeDefinition};
-use super::run::WorkflowRunError;
+use super::run::{WorkflowRunError, WorkflowRunId};
 use crate::execution::ExecutionContext;
 use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGatewayError};
-use crate::safety::{SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject};
+use crate::safety::{
+    ApprovalStore, SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject,
+};
 use crate::tools::RiskLevel;
 
 /// The result of executing a single node.
@@ -43,6 +45,7 @@ pub trait WorkflowNodeExecutor: Send + Sync {
     async fn execute(
         &self,
         context: &ExecutionContext,
+        run_id: &WorkflowRunId,
         node: &WorkflowNodeDefinition,
     ) -> Result<NodeExecutionOutcome, WorkflowExecutionError>;
 }
@@ -54,18 +57,26 @@ pub trait WorkflowNodeExecutor: Send + Sync {
 /// [`SecurityExecutionRequest`] and let the gateway decide Allow / Approval /
 /// Deny. The security subject is always derived from the run's
 /// `execution_context.subject_id` — never defaulted to `local-user`.
+///
+/// When the gateway requires approval, a workflow-bound [`PendingApproval`] is
+/// created so a later resume can locate the exact run and node.
 pub struct SecurityGatewayNodeExecutor {
     gateway: Arc<SecurityExecutionGateway>,
+    approval_store: Arc<ApprovalStore>,
 }
 
 impl SecurityGatewayNodeExecutor {
-    pub fn new(gateway: Arc<SecurityExecutionGateway>) -> Self {
-        Self { gateway }
+    pub fn new(gateway: Arc<SecurityExecutionGateway>, approval_store: Arc<ApprovalStore>) -> Self {
+        Self {
+            gateway,
+            approval_store,
+        }
     }
 
     async fn execute_tool(
         &self,
         context: &ExecutionContext,
+        run_id: &WorkflowRunId,
         node: &WorkflowNodeDefinition,
         tool_name: &str,
         arguments: &serde_json::Value,
@@ -86,11 +97,20 @@ impl SecurityGatewayNodeExecutor {
                     Ok(NodeExecutionOutcome::Failed)
                 }
             }
-            Ok(SecurityExecutionOutcome::RequiresApproval { .. }) => {
-                // The real approval binding lands in Step 7F; for now the
-                // tool-call id (unique per run + node) is the placeholder.
+            Ok(SecurityExecutionOutcome::RequiresApproval { risk_level, reason }) => {
+                let approval = self.approval_store.create_workflow(
+                    context.execution_id.to_string(),
+                    run_id.to_string(),
+                    node.id.to_string(),
+                    request.tool_call_id.clone(),
+                    request.tool_name.clone(),
+                    request.arguments.clone(),
+                    risk_level,
+                    reason,
+                    context.subject_id.clone(),
+                );
                 Ok(NodeExecutionOutcome::WaitingApproval {
-                    approval_id: request.tool_call_id.clone(),
+                    approval_id: approval.approval_id,
                 })
             }
             Ok(SecurityExecutionOutcome::Denied { reason }) => {
@@ -109,13 +129,17 @@ impl WorkflowNodeExecutor for SecurityGatewayNodeExecutor {
     async fn execute(
         &self,
         context: &ExecutionContext,
+        run_id: &WorkflowRunId,
         node: &WorkflowNodeDefinition,
     ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
         match &node.config {
             WorkflowNodeConfig::Tool {
                 tool_name,
                 arguments,
-            } => self.execute_tool(context, node, tool_name, arguments).await,
+            } => {
+                self.execute_tool(context, run_id, node, tool_name, arguments)
+                    .await
+            }
             WorkflowNodeConfig::Subagent {
                 subagent_name,
                 task,
@@ -125,7 +149,7 @@ impl WorkflowNodeExecutor for SecurityGatewayNodeExecutor {
                         WorkflowExecutionError::Execution("invalid subagent name".to_string())
                     })?;
                 let arguments = serde_json::json!({ "task": task });
-                self.execute_tool(context, node, &tool_name, &arguments)
+                self.execute_tool(context, run_id, node, &tool_name, &arguments)
                     .await
             }
             // Conditions are deliberately trivial: the node only becomes Ready
