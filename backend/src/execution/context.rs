@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::ExecutionError;
+use crate::task::model::{AgentExecutionId, TaskExecutionId, TaskId};
 
 /// A validated execution identifier.
 ///
@@ -64,6 +65,13 @@ pub struct ExecutionContext {
     pub agent_name: String,
     pub parent_execution_id: Option<ExecutionId>,
     pub created_at: i64,
+    /// Optional task provenance (set when this execution is a task agent step).
+    #[serde(default)]
+    pub task_id: Option<TaskId>,
+    #[serde(default)]
+    pub task_execution_id: Option<TaskExecutionId>,
+    #[serde(default)]
+    pub agent_execution_id: Option<AgentExecutionId>,
 }
 
 impl ExecutionContext {
@@ -80,7 +88,23 @@ impl ExecutionContext {
             agent_name: agent_name.into(),
             parent_execution_id,
             created_at,
+            task_id: None,
+            task_execution_id: None,
+            agent_execution_id: None,
         }
+    }
+
+    /// Attach task provenance to this execution context.
+    pub fn with_task_binding(
+        mut self,
+        task_id: TaskId,
+        task_execution_id: TaskExecutionId,
+        agent_execution_id: AgentExecutionId,
+    ) -> Self {
+        self.task_id = Some(task_id);
+        self.task_execution_id = Some(task_execution_id);
+        self.agent_execution_id = Some(agent_execution_id);
+        self
     }
 }
 

@@ -608,8 +608,22 @@ impl TaskOrchestrator {
                                 "content": crate::workflow::safe_tool_result_summary(&tool_result.content),
                             }));
                         }
-                        Ok(SecurityExecutionOutcome::RequiresApproval { .. }) => {
-                            // Pause: persist a bounded state snapshot so resume can continue.
+                        Ok(SecurityExecutionOutcome::RequiresApproval { risk_level, reason }) => {
+                            // Create a task-bound approval so the HTTP approve/reject
+                            // handler can resume *this* task agent execution.
+                            let tool_call_id = format!("{}:{}", agent_execution.id, call_index);
+                            let approval = self.approval_store.create_task_agent(
+                                task.id.to_string(),
+                                execution.id.to_string(),
+                                agent_execution.id.to_string(),
+                                tool_call_id,
+                                call.function.name.clone(),
+                                args.clone(),
+                                risk_level,
+                                reason,
+                                execution.execution_context.subject_id.clone(),
+                            );
+                            // Persist a bounded state snapshot so resume can continue.
                             let snapshot = bounded_messages_snapshot(&messages);
                             agent_execution.agent_state_json = Some(snapshot);
                             agent_execution.status = AgentExecutionStatus::WaitingApproval;
@@ -621,7 +635,10 @@ impl TaskOrchestrator {
                                     Some(&execution.id),
                                     TaskEventType::ApprovalRequired,
                                     format!("{} 需要审批：{}", agent.name, call.function.name),
-                                    serde_json::json!({ "agent_execution_id": agent_execution.id.as_str() }),
+                                    serde_json::json!({
+                                        "agent_execution_id": agent_execution.id.as_str(),
+                                        "approval_id": approval.approval_id,
+                                    }),
                                 )
                                 .ok();
                             return AgentLoopOutcome::PausedApproval;

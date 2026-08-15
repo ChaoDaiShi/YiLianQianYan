@@ -220,10 +220,13 @@ impl TaskExecution {
     pub fn new(
         id: TaskExecutionId,
         task_id: TaskId,
-        execution_context: ExecutionContext,
+        mut execution_context: ExecutionContext,
         attempt: u32,
         now: i64,
     ) -> Self {
+        // Correlate the execution context back to its task provenance.
+        execution_context.task_id = Some(task_id.clone());
+        execution_context.task_execution_id = Some(id.clone());
         Self {
             id,
             task_id,

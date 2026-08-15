@@ -354,3 +354,201 @@ fn task_decision_models_options_and_status() {
         serde_json::json!("resolved")
     );
 }
+
+// ============================================================
+// Task-agent approval end-to-end binding tests.
+// ============================================================
+
+use crate::execution::ExecutionContext;
+use crate::safety::approval::ApprovalStore;
+use crate::safety::execution_gateway::SecurityExecutionGateway;
+use crate::safety::ApprovalStatus;
+use crate::tools::trait_def::RiskLevel;
+use std::sync::Arc;
+
+fn task_and_execution(db: &Database, ws: &Workspace) -> (Task, TaskExecution) {
+    let task = Task::new(
+        TaskId::generate(),
+        ws.id.clone(),
+        "审批任务".to_string(),
+        String::new(),
+        TaskPriority::Normal,
+        None,
+        None,
+        1,
+    )
+    .unwrap();
+    db.create_task(&task).unwrap();
+
+    let ctx = ExecutionContext::new(
+        crate::execution::ExecutionId::generate(),
+        "local-user",
+        "task-agent",
+        None,
+        1,
+    );
+    let execution = TaskExecution::new(TaskExecutionId::generate(), task.id.clone(), ctx, 1, 1);
+    db.create_task_execution(&execution).unwrap();
+    (task, execution)
+}
+
+fn agent_execution_for(db: &Database, execution: &TaskExecution) -> AgentExecution {
+    let agent_execution = AgentExecution {
+        id: AgentExecutionId::generate(),
+        task_execution_id: execution.id.clone(),
+        agent_id: AgentId::generate(),
+        parent_agent_execution_id: None,
+        depth: 0,
+        instruction: "test".to_string(),
+        status: AgentExecutionStatus::WaitingApproval,
+        result_summary: None,
+        agent_state_json: None,
+        started_at: Some(1),
+        finished_at: None,
+        error: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    db.create_agent_execution(&agent_execution).unwrap();
+    agent_execution
+}
+
+#[test]
+fn create_task_agent_binds_task_fields() {
+    let (path, db) = temp_db("task-agent-bind");
+    let ws = workspace(&db, "W");
+    let (task, execution) = task_and_execution(&db, &ws);
+    let agent_execution = agent_execution_for(&db, &execution);
+
+    let store = ApprovalStore::new();
+    let approval = store.create_task_agent(
+        task.id.to_string(),
+        execution.id.to_string(),
+        agent_execution.id.to_string(),
+        "call-1".to_string(),
+        "bash".to_string(),
+        serde_json::json!({"command": "echo hi"}),
+        RiskLevel::High,
+        "高风险".to_string(),
+        "local-user".to_string(),
+    );
+
+    assert_eq!(approval.task_id.as_deref(), Some(task.id.as_str()));
+    assert_eq!(
+        approval.task_execution_id.as_deref(),
+        Some(execution.id.as_str())
+    );
+    assert_eq!(
+        approval.agent_execution_id.as_deref(),
+        Some(agent_execution.id.as_str())
+    );
+    assert_eq!(approval.subject_id, "local-user");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn resolve_task_agent_reject_fails_task_and_consumes_once() {
+    let (path, db) = temp_db("task-agent-reject");
+    let ws = workspace(&db, "W");
+    let (task, execution) = task_and_execution(&db, &ws);
+    let agent_execution = agent_execution_for(&db, &execution);
+
+    let store = ApprovalStore::new();
+    let approval = store.create_task_agent(
+        task.id.to_string(),
+        execution.id.to_string(),
+        agent_execution.id.to_string(),
+        "call-1".to_string(),
+        "bash".to_string(),
+        serde_json::json!({"command": "echo hi"}),
+        RiskLevel::High,
+        "高风险".to_string(),
+        "local-user".to_string(),
+    );
+
+    // Reject: no gateway execution is needed (reject never executes the tool).
+    let gateway = SecurityExecutionGateway::new();
+    resolve_task_agent_approval(&gateway, &store, &db, &approval.approval_id, false)
+        .await
+        .unwrap();
+
+    let task = db.get_task(&task.id).unwrap().unwrap();
+    let execution = db.get_task_execution(&execution.id).unwrap().unwrap();
+    let agent_execution = db
+        .get_agent_execution(&agent_execution.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(task.status, TaskStatus::Failed);
+    assert_eq!(execution.status, TaskExecutionStatus::Failed);
+    assert_eq!(agent_execution.status, AgentExecutionStatus::Failed);
+    assert_eq!(
+        store.get(&approval.approval_id).unwrap().status,
+        ApprovalStatus::Rejected
+    );
+
+    // Consume-once: a second resolve is rejected.
+    let second =
+        resolve_task_agent_approval(&gateway, &store, &db, &approval.approval_id, false).await;
+    assert!(second.is_err());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn resolve_task_agent_approve_executes_and_completes() {
+    let (path, db) = temp_db("task-agent-approve");
+    let ws = workspace(&db, "W");
+    let (task, execution) = task_and_execution(&db, &ws);
+    let agent_execution = agent_execution_for(&db, &execution);
+
+    // A real low-risk tool (read_file) so approve re-evaluates and executes.
+    let file =
+        std::env::temp_dir().join(format!("yilian-task-approve-{}.txt", uuid::Uuid::new_v4()));
+    std::fs::write(&file, "hello").unwrap();
+    let workspace_root = std::env::temp_dir();
+    let registry = Arc::new(crate::tools::ToolRegistry::with_defaults(
+        workspace_root.to_string_lossy().as_ref(),
+    ));
+    let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+        crate::config::types::SandboxConfig::default(),
+        workspace_root.clone(),
+        registry,
+        Arc::new(crate::agent::verifier::DefaultVerifier::new(
+            workspace_root.to_string_lossy().as_ref(),
+        )),
+        Arc::new(crate::safety::AuditRecorder::new(db.clone_connection())),
+    )
+    .with_db(Arc::new(db.clone_connection()));
+
+    let store = ApprovalStore::new();
+    let approval = store.create_task_agent(
+        task.id.to_string(),
+        execution.id.to_string(),
+        agent_execution.id.to_string(),
+        "call-1".to_string(),
+        "read_file".to_string(),
+        serde_json::json!({"path": file.to_string_lossy()}),
+        RiskLevel::High,
+        "读取文件".to_string(),
+        "local-user".to_string(),
+    );
+
+    resolve_task_agent_approval(&gateway, &store, &db, &approval.approval_id, true)
+        .await
+        .unwrap();
+
+    let task = db.get_task(&task.id).unwrap().unwrap();
+    let execution = db.get_task_execution(&execution.id).unwrap().unwrap();
+    let agent_execution = db
+        .get_agent_execution(&agent_execution.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(task.status, TaskStatus::Completed);
+    assert_eq!(execution.status, TaskExecutionStatus::Completed);
+    assert_eq!(agent_execution.status, AgentExecutionStatus::Completed);
+    assert_eq!(
+        store.get(&approval.approval_id).unwrap().status,
+        ApprovalStatus::Approved
+    );
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_file(&path);
+}
