@@ -101,7 +101,7 @@ pub struct AppServer {
     /// In-memory log ring buffer
     pub log_buffer: LogBuffer,
     /// Pending high-risk tool approvals awaiting user decision
-    pub approval_store: ApprovalStore,
+    pub approval_store: Arc<ApprovalStore>,
     /// Persistent, redacted security event recorder.
     pub audit_recorder: AuditRecorder,
     /// In-memory credential for the local HTTP control plane.
@@ -165,7 +165,7 @@ impl AppServer {
             workspace_root: workspace_root.to_string(),
             active_tasks: Mutex::new(HashMap::new()),
             log_buffer,
-            approval_store: ApprovalStore::new(),
+            approval_store: Arc::new(ApprovalStore::new()),
             audit_recorder,
             control_session,
         })

@@ -28,6 +28,7 @@ mod skills_route;
 mod subagents;
 mod system;
 mod tools;
+mod workflow_runtime;
 mod workflows;
 
 pub use chat::chat_handler;
@@ -95,6 +96,39 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route(
             "/api/workflows/:id/activate",
             post(workflows::activate_workflow),
+        )
+        // Workflow runtime (executable graph + run) API
+        .route(
+            "/api/workflow-graphs",
+            get(workflow_runtime::list_workflow_graphs),
+        )
+        .route(
+            "/api/workflow-graphs",
+            post(workflow_runtime::create_workflow_graph),
+        )
+        .route(
+            "/api/workflow-graphs/:id",
+            get(workflow_runtime::get_workflow_graph),
+        )
+        .route(
+            "/api/workflow-graphs/:id",
+            put(workflow_runtime::update_workflow_graph),
+        )
+        .route(
+            "/api/workflow-graphs/:id",
+            delete(workflow_runtime::delete_workflow_graph),
+        )
+        .route(
+            "/api/workflow-graphs/:id/run",
+            post(workflow_runtime::run_workflow_graph),
+        )
+        .route(
+            "/api/workflow-runs/:run_id",
+            get(workflow_runtime::get_workflow_run),
+        )
+        .route(
+            "/api/workflow-runs/:run_id/cancel",
+            post(workflow_runtime::cancel_workflow_run),
         )
         // Logs API
         .route("/api/logs", get(logs::get_logs))
