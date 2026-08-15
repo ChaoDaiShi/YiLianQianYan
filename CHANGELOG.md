@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.1 — Workflow Runtime Completion
+
+### Added
+
+- Asynchronous workflow runs (start returns immediately; runner runs in background)
+- Run history listing with graph/status filters and bounded limits
+- Real cancellation via a CancellationToken-controlled active-run registry
+- Bounded, UI-safe node results (char-safe truncation; binary payloads replaced with labels)
+- Desktop workflow runtime UI: templates + runtime tabs, graph editor, run inspector, approval card, recent runs
+- LLM-only Agent Node (single text generation, no tool calls, no approval)
+- Output / Condition node results
+
+### Fixed
+
+- Workflow Approval HTTP bridge (approve/reject/cancel dispatch to the workflow runtime)
+- Truthful approval SSE (resolution events only after the decision truly happens)
+- Approval replay semantics (second approve fails fast with a conflict)
+
+### Security
+
+- Tool / MCP / Subagent nodes continue through the Security Execution Gateway
+- Agent Node has no tool-use and never touches the Tool Registry
+- Approval resume re-evaluates the current role binding
+- Security subject is always resolved server-side
+
+### Known Limitations
+
+- Scheduler is sequential; DAG branches execute deterministically in sequence (no parallel)
+- No Loop Node, no Workflow recursion, no Cron/background scheduling, no distributed worker
+- Condition only supports Always / PreviousSucceeded (no arbitrary DSL)
+- Agent Node is LLM-only — no ReAct loop, no nested Agent approval
+- MCP stdio only; OS-level sandbox not implemented
+
 ## 0.4.0 — Workflow Runtime
 
 - DAG definition and validation (typed graph model, cycle / reachability / endpoint checks)

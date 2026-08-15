@@ -142,19 +142,27 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 
 ## v0.4 Workflow Runtime
 
-状态：**Backend Completed / Desktop Surface Pending**
+状态：**Completed（v0.4.1 Workflow Runtime Completion）**
 
 v0.4 将旧 Workflow 从 Prompt Template 升级为可执行 DAG Runtime：
 
 - Typed DAG Definition + Validation（schema version、节点/边上限、唯一性、可达性、环检测）
 - Workflow Run State（确定性状态机与 ready 节点计算）
 - Persistence（graph 定义与 run 快照）
+- Async Run Lifecycle（启动立即返回 run_id，后台调度）
+- Run History（`GET /api/workflow-runs` 分页/过滤查询）
+- Real Cancellation（CancellationToken 控制活动 Runner）
 - Deterministic Sequential Scheduler
-- Secure Node Execution（Tool / MCP / Subagent 一律经过 SecurityExecutionGateway，不绕过 RBAC/Approval/Sandbox/Verifier/Audit）
-- Approval Pause / Resume（consume-once 防重放 + 重新评估）
-- Workflow Runtime API（后端 graph CRUD + run 生命周期）
+- Bounded Node Results（节点结果安全摘要，UTF-8 char-safe 截断）
+- Tool / MCP / Subagent Nodes（一律经过 SecurityExecutionGateway，不绕过 RBAC/Approval/Sandbox/Verifier/Audit）
+- Agent Node（LLM-only，不调用工具、不产生审批）
+- Limited Condition Node（Always / PreviousSucceeded）
+- Output Node
+- Approval Pause / Resume（consume-once 防重放 + 重新评估 + HTTP Bridge）
+- Desktop Runtime Surface（工作流中心：模板工作流 / 运行工作流两个 Tab，含图编辑器、Run Inspector、审批卡片、最近运行）
+- Legacy Prompt Template Compatibility（旧模板保持可用）
 
-**Known Limitations**：顺序调度（无并行）、无递归/循环节点、Condition 仅 Always/PreviousSucceeded、无 Cron/后台/分布式、MCP 仅 stdio、Subagent 单层、Agent 节点执行未接线（fail-closed）、OS 级 Sandbox 未实现、桌面端前端运行时界面尚未实现。
+**Known Limitations**：顺序调度（无并行）、无 Loop Node、无 Workflow 递归、无 Cron/后台调度、无分布式 worker、Condition 仅 Always/PreviousSucceeded、Agent Node 仅 LLM（无 ReAct/工具）、无嵌套 Agent 审批、MCP 仅 stdio、OS 级 Sandbox 未实现。
 
 ## v0.3.2 Product Surface Completion
 
