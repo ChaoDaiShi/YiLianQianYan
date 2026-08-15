@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0 — Workflow Runtime
+
+- DAG definition and validation (typed graph model, cycle / reachability / endpoint checks)
+- Workflow run state machine (deterministic transitions, ready-node calculation)
+- Run persistence (graph definitions + run snapshots)
+- Deterministic sequential scheduler
+- Secure Tool / MCP / Subagent execution through the Security Execution Gateway
+- Approval pause / resume with consume-once replay protection and re-evaluation
+- Workflow runtime API (backend graph CRUD + run lifecycle)
+
+### Known Limitations
+
+- Sequential scheduler only (no parallel node execution)
+- No workflow recursion or loop nodes
+- No arbitrary expression language for conditions (Always / PreviousSucceeded only)
+- No cron / background scheduling, no distributed workers
+- MCP stdio only; Subagent delegation single-layer only
+- OS-level sandbox still not implemented
+- Agent node execution not wired (fails closed)
+- Desktop runtime surface (frontend UI) not yet implemented
+
 ## Unreleased
 
 ## 0.3.2 — Product Surface Completion

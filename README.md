@@ -140,6 +140,22 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 - Deterministic Verification Pipeline
 - Redacted Security Audit Chain
 
+## v0.4 Workflow Runtime
+
+状态：**Backend Completed / Desktop Surface Pending**
+
+v0.4 将旧 Workflow 从 Prompt Template 升级为可执行 DAG Runtime：
+
+- Typed DAG Definition + Validation（schema version、节点/边上限、唯一性、可达性、环检测）
+- Workflow Run State（确定性状态机与 ready 节点计算）
+- Persistence（graph 定义与 run 快照）
+- Deterministic Sequential Scheduler
+- Secure Node Execution（Tool / MCP / Subagent 一律经过 SecurityExecutionGateway，不绕过 RBAC/Approval/Sandbox/Verifier/Audit）
+- Approval Pause / Resume（consume-once 防重放 + 重新评估）
+- Workflow Runtime API（后端 graph CRUD + run 生命周期）
+
+**Known Limitations**：顺序调度（无并行）、无递归/循环节点、Condition 仅 Always/PreviousSucceeded、无 Cron/后台/分布式、MCP 仅 stdio、Subagent 单层、Agent 节点执行未接线（fail-closed）、OS 级 Sandbox 未实现、桌面端前端运行时界面尚未实现。
+
 ## v0.3.2 Product Surface Completion
 
 状态：**Completed**
