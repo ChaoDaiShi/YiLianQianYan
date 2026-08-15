@@ -18,19 +18,6 @@ pub const DEFAULT_MIN_CONTENT_CHARS: usize = 3;
 /// Default minimum confidence to accept a candidate (0.0..=1.0).
 pub const DEFAULT_MIN_CONFIDENCE: f32 = 0.5;
 
-/// Conservative secret-like substrings rejected from memory content.
-const SECRET_MARKERS: &[&str] = &[
-    "api_key",
-    "api key",
-    "apikey",
-    "authorization",
-    "bearer ",
-    "token=",
-    "password",
-    "secret",
-    "sk-",
-];
-
 #[derive(Debug, Clone)]
 pub struct MemoryWritePolicy {
     pub max_content_chars: usize,
@@ -94,8 +81,8 @@ pub fn validate_candidate(
 }
 
 fn contains_secret(content: &str) -> bool {
-    let lower = content.to_lowercase();
-    SECRET_MARKERS.iter().any(|marker| lower.contains(marker))
+    // Shared source of truth with Chat Memory Extraction.
+    crate::safety::contains_sensitive_content(content)
 }
 
 /// A near-duplicate is an exact match (case/whitespace-insensitive) or a

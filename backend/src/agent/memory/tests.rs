@@ -288,3 +288,195 @@ async fn writer_skips_duplicate_across_runs() {
     assert_eq!(second.rejected, 1);
     let _ = std::fs::remove_file(&path);
 }
+
+// ============================================================
+// Phase 2 Closure — deterministic reflection + dedup + secret + retrieval.
+// ============================================================
+
+use crate::task::model::TaskStatus;
+use tokio_util::sync::CancellationToken;
+
+fn reflection_input(status: TaskStatus) -> ReflectionInput {
+    ReflectionInput {
+        task_id: TaskId::generate(),
+        task_title: "实现 MCP Runtime".to_string(),
+        task_description: "为 MCP 增加 stdio transport".to_string(),
+        task_status: status,
+        agent_name: "researcher".to_string(),
+        agent_result_summaries: vec!["完成了 stdio transport 设计".to_string()],
+        artifact_summaries: vec![],
+        error_summary: None,
+    }
+}
+
+async fn reflect(input: ReflectionInput) -> Vec<MemoryCandidate> {
+    let cancel = CancellationToken::new();
+    DeterministicMemoryReflector::new()
+        .reflect(input, &cancel)
+        .await
+        .unwrap()
+}
+
+#[test]
+fn deterministic_reflector_does_not_require_llm() {
+    // No ModelConfig / LlmClient is constructed anywhere in the deterministic
+    // reflector — it is a pure function of the input.
+    let input = reflection_input(TaskStatus::Completed);
+    let candidates = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(reflect(input));
+    assert!(!candidates.is_empty());
+    // All candidates map to knowledge (never preference).
+    assert!(candidates
+        .iter()
+        .all(|c| c.category == MemoryCategory::Knowledge));
+}
+
+#[tokio::test]
+async fn completed_task_generates_memory() {
+    let candidates = reflect(reflection_input(TaskStatus::Completed)).await;
+    assert!(!candidates.is_empty());
+    assert!(candidates[0].content.contains("实现 MCP Runtime"));
+}
+
+#[tokio::test]
+async fn failed_task_generates_failure_memory() {
+    let mut input = reflection_input(TaskStatus::Failed);
+    input.agent_result_summaries.clear();
+    input.error_summary = Some("连接 stdio server 失败".to_string());
+    let candidates = reflect(input).await;
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].category, MemoryCategory::Note);
+    assert!(candidates[0].content.contains("失败"));
+}
+
+#[tokio::test]
+async fn non_terminal_and_cancelled_generate_no_memory() {
+    for status in [
+        TaskStatus::Cancelled,
+        TaskStatus::Blocked,
+        TaskStatus::WaitingApproval,
+        TaskStatus::WaitingUser,
+        TaskStatus::Running,
+    ] {
+        let candidates = reflect(reflection_input(status)).await;
+        assert!(
+            candidates.is_empty(),
+            "status {status} should produce nothing"
+        );
+    }
+}
+
+#[tokio::test]
+async fn artifact_summary_generates_knowledge_and_empty_does_not() {
+    let mut input = reflection_input(TaskStatus::Completed);
+    input.agent_result_summaries.clear();
+    input.task_description.clear();
+    input.artifact_summaries = vec!["设计文档".to_string()];
+    let candidates = reflect(input).await;
+    assert!(!candidates.is_empty());
+    assert!(candidates.iter().all(|c| c.content.contains("产物")));
+
+    // Empty artifact summary produces nothing.
+    let mut empty = reflection_input(TaskStatus::Completed);
+    empty.agent_result_summaries.clear();
+    empty.task_description.clear();
+    empty.artifact_summaries = vec!["  ".to_string()];
+    assert!(reflect(empty).await.is_empty());
+}
+
+#[tokio::test]
+async fn candidate_count_is_bounded_to_five() {
+    let mut input = reflection_input(TaskStatus::Completed);
+    input.agent_result_summaries.clear();
+    input.artifact_summaries = (0..10).map(|i| format!("产物{i}")).collect();
+    let candidates = reflect(input).await;
+    assert!(candidates.len() <= MAX_MEMORY_CANDIDATES_PER_EXECUTION);
+}
+
+#[test]
+fn secret_filter_rejects_all_markers() {
+    for secret in [
+        "my api_key is abc",
+        "the api key is abc",
+        "token is deadbeef",
+        "Authorization: Bearer xxx",
+        "password: hunter2",
+        "secret value",
+        "cookie session=abc",
+        "sk-1234567890",
+    ] {
+        assert!(
+            crate::safety::contains_sensitive_content(secret),
+            "should reject: {secret}"
+        );
+    }
+    assert!(!crate::safety::contains_sensitive_content(
+        "用户偏好简洁回答"
+    ));
+}
+
+#[test]
+fn sanitize_failure_summary_bounds_and_rejects_secret() {
+    // Normal message is bounded and preserved.
+    let summary = sanitize_failure_summary("连接失败").unwrap();
+    assert!(summary.contains("连接失败"));
+
+    // Overlong message is bounded.
+    let long = "x".repeat(2000);
+    let bounded = sanitize_failure_summary(&long).unwrap();
+    assert!(bounded.chars().count() <= 1003); // 1000 + "..." marker
+
+    // Secret-bearing message is rejected entirely.
+    assert_eq!(sanitize_failure_summary("error: token=abc123"), None);
+}
+
+#[tokio::test]
+async fn same_batch_duplicate_is_stored_once() {
+    let (path, db) = temp_db("same-batch-dup");
+    let writer = MemoryWriter::new(
+        db.clone_connection(),
+        &ModelConfig::default(),
+        MemoryWritePolicy::default(),
+    );
+    let report = writer
+        .write(vec![
+            candidate("同批重复经验", MemoryCategory::Knowledge, 0.8),
+            candidate("同批重复经验", MemoryCategory::Knowledge, 0.8),
+        ])
+        .await;
+    assert_eq!(report.stored, 1);
+    assert_eq!(report.rejected, 1);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn learned_memory_is_retrievable_by_future_agent() {
+    let (path, db) = temp_db("closure");
+
+    // Execution #1: completed task → deterministic reflection → write.
+    let writer = MemoryWriter::new(
+        db.clone_connection(),
+        &ModelConfig::default(),
+        MemoryWritePolicy::default(),
+    );
+    let candidates = reflect(reflection_input(TaskStatus::Completed)).await;
+    let report = writer.write(candidates).await;
+    assert!(report.stored >= 1);
+
+    // Execution #2: a related future task retrieves the learned memory.
+    let builder = MemoryContextBuilder::new(db.clone_connection(), &ModelConfig::default());
+    let context = builder
+        .build("实现 MCP Runtime", "stdio transport", "设计")
+        .await
+        .unwrap();
+    // Lexical retrieval must hit the newly-learned memory content.
+    let hit = context
+        .memories
+        .iter()
+        .any(|m| m.memory.content.contains("实现 MCP Runtime"));
+    assert!(hit, "future retrieval must hit the learned memory");
+    let _ = std::fs::remove_file(&path);
+}

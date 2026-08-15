@@ -37,7 +37,9 @@ pub use permission::{PermissionDecision, PermissionManager};
 pub use policy::SafetyPolicy;
 pub use policy_engine::{DecisionContext, PolicyDecision, PolicyEngine, POLICY_VERSION};
 pub use rbac::{GrantMode, RolePolicy};
-pub use redaction::{redact_and_digest, redact_error, sha256_hex, RedactedJson};
+pub use redaction::{
+    contains_sensitive_content, redact_and_digest, redact_error, sha256_hex, RedactedJson,
+};
 pub use sandbox::{
     can_write, can_write_workspace, is_denied_write_path, is_within_root, is_writable_path,
     normalize_path, resolve_write_target, SandboxPathError,

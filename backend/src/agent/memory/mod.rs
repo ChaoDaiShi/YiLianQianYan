@@ -29,5 +29,8 @@ pub use context::{
 pub use policy::{
     validate_candidate, MemoryWritePolicy, ValidationError, DEFAULT_MAX_CONTENT_CHARS,
 };
-pub use reflection::{LlmMemoryReflector, MemoryReflector, ReflectionInput, ReflectorError};
-pub use writer::{MemoryWriter, WriteOutcome, WriteReport};
+pub use reflection::{
+    sanitize_failure_summary, DeterministicMemoryReflector, MemoryReflector, ReflectionInput,
+    ReflectorError, MAX_MEMORY_CANDIDATES_PER_EXECUTION,
+};
+pub use writer::{MemoryLearningReport, MemoryWriter, WriteOutcome, WriteReport};

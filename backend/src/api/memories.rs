@@ -179,30 +179,14 @@ const VALID_CATEGORIES: &[&str] = &["fact", "preference", "knowledge", "note"];
 const MAX_MEMORY_LENGTH: usize = 2000;
 const EXTRACTION_TOOL_NAME: &str = "extract_memories";
 
-/// Sensitive-keyword patterns — any extracted memory whose lowercased content
-/// contains one of these substrings is rejected.
-const SENSITIVE_PATTERNS: &[&str] = &[
-    "api_key",
-    "apikey",
-    "api key",
-    "token",
-    "password",
-    "secret",
-    "authorization",
-    "cookie",
-    "private_key",
-    "private key",
-];
-
 fn is_valid_category(category: &str) -> bool {
     VALID_CATEGORIES.contains(&category)
 }
 
+/// Delegates to the shared secret-detection helper so Chat Memory Extraction
+/// and Agent Memory Learning use the same source of truth.
 fn is_sensitive(content: &str) -> bool {
-    let lower = content.to_lowercase();
-    SENSITIVE_PATTERNS
-        .iter()
-        .any(|pattern| lower.contains(pattern))
+    crate::safety::contains_sensitive_content(content)
 }
 
 fn memory_exists(db: &crate::db::Database, category: &str, content: &str) -> bool {

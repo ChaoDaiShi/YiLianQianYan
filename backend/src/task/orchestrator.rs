@@ -16,7 +16,10 @@ use super::artifact::ArtifactService;
 use super::model::*;
 use super::planner::TaskPlanner;
 use super::timeline::TimelineService;
-use crate::agent::memory::{MemoryContextBuilder, MemoryReflector, MemoryWriter, ReflectionInput};
+use crate::agent::memory::{
+    sanitize_failure_summary, MemoryContextBuilder, MemoryLearningReport, MemoryReflector,
+    MemoryWriter, ReflectionInput,
+};
 use crate::agent::verifier::DefaultVerifier;
 use crate::config::types::AppConfig;
 use crate::db::Database;
@@ -802,51 +805,91 @@ impl TaskOrchestrator {
         // Learning loop: reflect on the completed task and persist reusable
         // memories. Non-fatal — a reflection failure must not un-complete the
         // task.
-        self.learn_from_task(&task, &execution).await;
+        self.learn_from_task(&task, &execution, TaskStatus::Completed, None)
+            .await;
 
         Ok(())
     }
 
-    /// Reflect on a completed task and write the resulting memory candidates.
-    async fn learn_from_task(&self, task: &Task, execution: &TaskExecution) {
+    /// Reflect on a terminal task and write the resulting memory candidates.
+    ///
+    /// Only `Completed` and `Failed` produce candidates; other terminal states
+    /// (cancelled/interrupted/waiting) produce none. This is non-fatal: a
+    /// reflection/write failure never changes the task's real outcome.
+    async fn learn_from_task(
+        &self,
+        task: &Task,
+        execution: &TaskExecution,
+        task_status: TaskStatus,
+        error_summary: Option<String>,
+    ) {
         let summaries: Vec<String> = self
             .db
             .list_agent_executions(&execution.id)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|agent_execution| agent_execution.result_summary)
-            .map(|summary| crate::utils::text::truncate_chars(&summary, 2000))
+            .map(|summary| crate::utils::text::truncate_chars(&summary, 300))
+            .collect();
+
+        // Artifact summaries only (name/type/summary), never file contents.
+        let artifact_summaries: Vec<String> = self
+            .db
+            .list_artifacts(&crate::db::ArtifactQuery {
+                task_execution_id: Some(execution.id.clone()),
+                ..Default::default()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|artifact| {
+                let summary = artifact.summary.trim().to_string();
+                if summary.is_empty() {
+                    None
+                } else {
+                    Some(crate::utils::text::truncate_chars(&summary, 300))
+                }
+            })
             .collect();
 
         let input = ReflectionInput {
             task_id: task.id.clone(),
             task_title: task.title.clone(),
             task_description: task.description.clone(),
+            task_status,
             agent_name: execution.execution_context.agent_name.clone(),
             agent_result_summaries: summaries,
+            artifact_summaries,
+            error_summary,
         };
 
         let cancel = CancellationToken::new();
-        match self.reflector.reflect(input, &cancel).await {
-            Ok(candidates) if !candidates.is_empty() => {
-                let report = self.writer.write(candidates).await;
-                tracing::info!(
-                    task_id = %task.id,
-                    stored = report.stored,
-                    rejected = report.rejected,
-                    failed = report.failed,
-                    "memory learning loop finished"
-                );
-            }
-            Ok(_) => {}
+        let candidates = match self.reflector.reflect(input, &cancel).await {
+            Ok(candidates) => candidates,
             Err(error) => {
                 tracing::warn!(
                     task_id = %task.id,
                     error = %error,
                     "memory reflection failed; skipping learning loop"
                 );
+                return;
             }
+        };
+        if candidates.is_empty() {
+            return;
         }
+        let generated = candidates.len();
+        let report = self.writer.write(candidates).await;
+        let learning = MemoryLearningReport::summarize(generated, &report);
+        // Log statistics only — never candidate content.
+        tracing::info!(
+            task_id = %task.id,
+            status = %task_status,
+            generated = learning.generated,
+            persisted = learning.persisted,
+            rejected = learning.rejected,
+            embedding_failed = learning.embedding_failed,
+            "memory learning loop finished"
+        );
     }
 
     async fn finish_failed(
@@ -881,6 +924,13 @@ impl TaskOrchestrator {
             format!("任务失败：{message}"),
             serde_json::json!({}),
         )?;
+
+        // Best-effort failure learning (non-fatal). The task remains Failed
+        // regardless of whether reflection/write succeeds.
+        let error_summary = sanitize_failure_summary(&message);
+        self.learn_from_task(&task, &execution, TaskStatus::Failed, error_summary)
+            .await;
+
         Ok(())
     }
 
@@ -1112,7 +1162,7 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
     let planner = Arc::new(super::planner::LlmTaskPlanner::new(&config.model));
     let agent_executor = Arc::new(LlmWorkflowAgentExecutor::new(&config.model));
     let memory = MemoryContextBuilder::new(server.db.clone_connection(), &config.model);
-    let reflector = Arc::new(crate::agent::memory::LlmMemoryReflector::new(&config.model));
+    let reflector = Arc::new(crate::agent::memory::DeterministicMemoryReflector::new());
     let writer = MemoryWriter::new(
         server.db.clone_connection(),
         &config.model,

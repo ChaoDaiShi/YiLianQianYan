@@ -18,6 +18,36 @@ const SENSITIVE_KEY_PARTS: [&str; 8] = [
     "private-key",
 ];
 
+/// Sensitive substrings used for *content-based* secret detection. This is the
+/// single source of truth shared by Chat Memory Extraction and Agent Memory
+/// Learning: any content whose lowercased form contains one of these is never
+/// persisted as a memory.
+const SENSITIVE_CONTENT_PATTERNS: &[&str] = &[
+    "api_key",
+    "apikey",
+    "api key",
+    "token",
+    "password",
+    "secret",
+    "authorization",
+    "cookie",
+    "private_key",
+    "private key",
+    "bearer",
+    "sk-",
+];
+
+/// Returns true when `text` (lowercased) contains a sensitive keyword.
+///
+/// Shared by Chat Memory Extraction and Agent Memory Learning so that a secret
+/// rejected by one path can never be accepted by the other.
+pub fn contains_sensitive_content(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    SENSITIVE_CONTENT_PATTERNS
+        .iter()
+        .any(|pattern| lower.contains(pattern))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RedactedJson {
     pub value: Value,
