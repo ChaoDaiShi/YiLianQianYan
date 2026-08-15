@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.0 — Workspace / Task / Multi-Agent Runtime
+
+### Added
+
+- Workspace domain (project containers, Active/Archived lifecycle, additive persistence)
+- Task runtime with TaskExecution lifecycle (start / retry / cancel / recovery)
+- Task planner producing a strict, validated TaskPlan (LLM, mock-testable)
+- Artifacts with path-containment validation (no `..`/symlink escape; metadata-only)
+- Task timeline events (separate from the security audit chain)
+- Agent definitions and agent teams (bounded delegation policy)
+- Sequential multi-agent orchestrator (workflow / agent / subagent plan steps)
+- Shared bounded task context for agents
+- Task-agent approval classification with TOCTOU-safe bounded resume
+- Task decisions (business decisions separate from security approvals)
+- Recovery-on-startup (running executions → interrupted; tasks → blocked)
+- Workflow integration (task binds a workflow; terminal state syncs; output → artifact)
+- Desktop Workspace surface (workspace list/detail, task timeline/executions/artifacts, agents/teams)
+
+### Security
+
+- Trusted Execution preserved: tool / MCP / subagent still flow through the Security Execution Gateway
+- Task agent subject inherited from the task execution context (never hard-coded local-user)
+- Agent `allowed_tools` is a ceiling, not a grant — RBAC still applies
+- Approval resume re-evaluates the current role; replay is consume-once
+- Task decisions never authorize tool execution
+- Planner never executes tools
+
 ## 0.4.1 — Workflow Runtime Completion
 
 ### Added

@@ -140,6 +140,30 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 - Deterministic Verification Pipeline
 - Redacted Security Audit Chain
 
+## v0.6 Workspace / Task / Multi-Agent Runtime
+
+状态：**Completed（v0.6.0 Workspace / Task / Multi-Agent Runtime）**
+
+v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「能长期管理项目、任务、多智能体协作、产物与执行历史的本地 Agent Runtime」：
+
+- Workspace Runtime（项目工作空间，Active/Archived 生命周期，不绕过 Sandbox）
+- Task Runtime（Draft → Running → WaitingApproval/WaitingUser → Completed/Failed/Cancelled/Blocked）
+- Task Execution（每次执行独立持久化，Retry 生成新 attempt，历史保留）
+- Task Planner（LLM 生成严格 TaskPlan，schema 校验 + executor 引用校验；Planner 不执行工具）
+- Artifacts（路径 containment 校验，防 `..`/symlink 逃逸；metadata-only，不授予文件权限）
+- Task Timeline（用户视角事件流，与安全审计分离，metadata 有界）
+- Agent Definition / Agent Team（Database 来源，兼容现有 AGENT.md Subagent）
+- Sequential Multi-Agent Runtime（TaskOrchestrator 顺序驱动 plan steps）
+- Bounded Delegation（深度/执行数/迭代数硬上限，无 A→B→A 递归）
+- Shared Task Context（有界拼接，char-safe 截断）
+- Task Agent Approval（consume-once + execute_approved 重新评估 + 有界 resume）
+- Task Decision（业务决策与安全审批分离）
+- Retry / Recovery（启动时 running → interrupted，task → blocked）
+- Workflow Integration（Task 绑定 Workflow，terminal 同步 Task 状态，Output → Text Artifact）
+- Desktop Workspace Surface（工作空间列表/详情、任务列表/时间线/执行/产物、Agents/Teams 页面）
+
+**Known Limitations**：多智能体顺序执行（无并行）、无 Agent swarm、delegation 深度有界、无分布式 worker、无 Cron/定时任务、无 cloud Workspace、Workflow 调度仍顺序、Agent Team 不绕过 Security Gateway、MCP 仍 stdio、OS 级 Sandbox 未实现。
+
 ## v0.4 Workflow Runtime
 
 状态：**Completed（v0.4.1 Workflow Runtime Completion）**
