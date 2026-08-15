@@ -5,6 +5,9 @@ import ChatPage from "./pages/ChatPage";
 import SkillsPage from "./pages/SkillsPage";
 import PluginsPage from "./pages/PluginsPage";
 import WorkflowsPage from "./pages/WorkflowsPage";
+import WorkspacesPage from "./pages/WorkspacesPage";
+import WorkspaceDetailPage from "./pages/WorkspaceDetailPage";
+import AgentsPage from "./pages/AgentsPage";
 import KnowledgePage from "./pages/KnowledgePage";
 import SettingsPage from "./pages/SettingsPage";
 import SystemPage from "./pages/SystemPage";
@@ -24,6 +27,9 @@ export default function App() {
             <Route path="skills" element={<SkillsPage />} />
             <Route path="plugins" element={<PluginsPage />} />
             <Route path="workflows" element={<WorkflowsPage />} />
+            <Route path="workspaces" element={<WorkspacesPage />} />
+            <Route path="workspaces/:id" element={<WorkspaceDetailPage />} />
+            <Route path="agents" element={<AgentsPage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/chat" replace />} />

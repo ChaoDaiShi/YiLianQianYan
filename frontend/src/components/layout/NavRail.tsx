@@ -3,6 +3,8 @@ import { NavLink, useNavigate } from "react-router-dom";
 import {
   Activity,
   BookOpen,
+  Bot,
+  FolderKanban,
   GitBranch,
   MessageSquare,
   Puzzle,
@@ -21,6 +23,8 @@ const NAV_ITEMS = [
   { to: "/skills", id: "skills", label: "技能", icon: Sparkles },
   { to: "/plugins", id: "plugins", label: "插件", icon: Puzzle },
   { to: "/workflows", id: "workflows", label: "工作流", icon: GitBranch },
+  { to: "/workspaces", id: "workspaces", label: "工作空间", icon: FolderKanban },
+  { to: "/agents", id: "agents", label: "智能体", icon: Bot },
   { to: "/knowledge", id: "knowledge", label: "知识库", icon: BookOpen },
   { to: "/settings", id: "settings", label: "设置", icon: Settings },
 ] as const;
