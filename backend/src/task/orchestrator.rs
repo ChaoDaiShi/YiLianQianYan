@@ -16,6 +16,7 @@ use super::artifact::ArtifactService;
 use super::model::*;
 use super::planner::TaskPlanner;
 use super::timeline::TimelineService;
+use crate::agent::memory::MemoryContextBuilder;
 use crate::agent::verifier::DefaultVerifier;
 use crate::config::types::AppConfig;
 use crate::db::Database;
@@ -51,6 +52,7 @@ pub struct TaskOrchestrator {
     approval_store: Arc<ApprovalStore>,
     config: Arc<parking_lot::RwLock<AppConfig>>,
     agent_executor: Arc<dyn WorkflowAgentExecutor>,
+    memory: MemoryContextBuilder,
 }
 
 impl TaskOrchestrator {
@@ -64,6 +66,7 @@ impl TaskOrchestrator {
         approval_store: Arc<ApprovalStore>,
         config: Arc<parking_lot::RwLock<AppConfig>>,
         agent_executor: Arc<dyn WorkflowAgentExecutor>,
+        memory: MemoryContextBuilder,
     ) -> Self {
         Self {
             db,
@@ -74,6 +77,7 @@ impl TaskOrchestrator {
             approval_store,
             config,
             agent_executor,
+            memory,
         }
     }
 
@@ -427,7 +431,22 @@ impl TaskOrchestrator {
         agent_execution.started_at = Some(now());
         self.db.update_agent_execution(&agent_execution)?;
 
-        let context = build_task_context(task, step, &self.db, &execution.id);
+        let mut context = build_task_context(task, step, &self.db, &execution.id);
+        // Inject relevant long-term memories (non-fatal: a retrieval failure
+        // degrades to "no memory context" rather than failing the task).
+        match self
+            .memory
+            .build(&task.title, &task.description, &step.instruction)
+            .await
+        {
+            Ok(memory) if !memory.injected_text.is_empty() => {
+                context = format!("相关记忆：\n{}\n\n{}", memory.injected_text, context);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(error = %error, "memory context injection failed; continuing");
+            }
+        }
         let outcome = self
             .agent_loop(
                 task,
@@ -1038,6 +1057,7 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
     );
     let planner = Arc::new(super::planner::LlmTaskPlanner::new(&config.model));
     let agent_executor = Arc::new(LlmWorkflowAgentExecutor::new(&config.model));
+    let memory = MemoryContextBuilder::new(server.db.clone_connection(), &config.model);
     TaskOrchestrator::new(
         server.db.clone_connection(),
         TimelineService::new(server.db.clone_connection()),
@@ -1047,5 +1067,6 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
         Arc::clone(&server.approval_store),
         Arc::clone(&server.config),
         agent_executor,
+        memory,
     )
 }
