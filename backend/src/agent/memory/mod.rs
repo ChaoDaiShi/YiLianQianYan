@@ -1,19 +1,33 @@
 // ============================================================
-// Agent Memory Runtime — integrate the existing Memory System into
-// the Agent Runtime.
+// Agent Memory Runtime — retrieval (Phase 1) + learning loop (Phase 2).
 //
-// A [`MemoryContextBuilder`] turns a task/step into a retrieval query, runs
-// hybrid retrieval (lexical + vector, with lexical fallback), ranks the results,
-// and produces a bounded, UI-safe context string that the Agent injects into its
-// LLM context. It never fetches or exposes the raw embedding vectors.
+//   context.rs     — memory retrieval + context injection (Phase 1)
+//   candidate.rs   — MemoryCandidate + MemoryCategory
+//   policy.rs      — conservative write validation
+//   reflection.rs  — turn a completed task into candidates
+//   writer.rs      — validate + persist + embed
+//
+// Reflection decides WHAT to remember; the writer (via policy + the existing
+// Memory store) decides whether it is safe and valuable enough to keep. No
+// raw embedding vectors are ever surfaced.
 // ============================================================
 
+pub mod candidate;
 pub mod context;
+pub mod policy;
+pub mod reflection;
+pub mod writer;
 
 #[cfg(test)]
 mod tests;
 
+pub use candidate::{MemoryCandidate, MemoryCategory};
 pub use context::{
     build_context_text, build_memory_query, MemoryContext, MemoryContextBuilder,
     MemoryRetrievalMode, MAX_MEMORY_CONTEXT_CHARS, MAX_MEMORY_QUERY_CHARS,
 };
+pub use policy::{
+    validate_candidate, MemoryWritePolicy, ValidationError, DEFAULT_MAX_CONTENT_CHARS,
+};
+pub use reflection::{LlmMemoryReflector, MemoryReflector, ReflectionInput, ReflectorError};
+pub use writer::{MemoryWriter, WriteOutcome, WriteReport};

@@ -16,7 +16,7 @@ use super::artifact::ArtifactService;
 use super::model::*;
 use super::planner::TaskPlanner;
 use super::timeline::TimelineService;
-use crate::agent::memory::MemoryContextBuilder;
+use crate::agent::memory::{MemoryContextBuilder, MemoryReflector, MemoryWriter, ReflectionInput};
 use crate::agent::verifier::DefaultVerifier;
 use crate::config::types::AppConfig;
 use crate::db::Database;
@@ -53,6 +53,8 @@ pub struct TaskOrchestrator {
     config: Arc<parking_lot::RwLock<AppConfig>>,
     agent_executor: Arc<dyn WorkflowAgentExecutor>,
     memory: MemoryContextBuilder,
+    reflector: Arc<dyn MemoryReflector>,
+    writer: MemoryWriter,
 }
 
 impl TaskOrchestrator {
@@ -67,6 +69,8 @@ impl TaskOrchestrator {
         config: Arc<parking_lot::RwLock<AppConfig>>,
         agent_executor: Arc<dyn WorkflowAgentExecutor>,
         memory: MemoryContextBuilder,
+        reflector: Arc<dyn MemoryReflector>,
+        writer: MemoryWriter,
     ) -> Self {
         Self {
             db,
@@ -78,6 +82,8 @@ impl TaskOrchestrator {
             config,
             agent_executor,
             memory,
+            reflector,
+            writer,
         }
     }
 
@@ -792,7 +798,55 @@ impl TaskOrchestrator {
                     serde_json::json!({ "artifact_id": artifact.id.as_str() }),
                 );
             });
+
+        // Learning loop: reflect on the completed task and persist reusable
+        // memories. Non-fatal — a reflection failure must not un-complete the
+        // task.
+        self.learn_from_task(&task, &execution).await;
+
         Ok(())
+    }
+
+    /// Reflect on a completed task and write the resulting memory candidates.
+    async fn learn_from_task(&self, task: &Task, execution: &TaskExecution) {
+        let summaries: Vec<String> = self
+            .db
+            .list_agent_executions(&execution.id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|agent_execution| agent_execution.result_summary)
+            .map(|summary| crate::utils::text::truncate_chars(&summary, 2000))
+            .collect();
+
+        let input = ReflectionInput {
+            task_id: task.id.clone(),
+            task_title: task.title.clone(),
+            task_description: task.description.clone(),
+            agent_name: execution.execution_context.agent_name.clone(),
+            agent_result_summaries: summaries,
+        };
+
+        let cancel = CancellationToken::new();
+        match self.reflector.reflect(input, &cancel).await {
+            Ok(candidates) if !candidates.is_empty() => {
+                let report = self.writer.write(candidates).await;
+                tracing::info!(
+                    task_id = %task.id,
+                    stored = report.stored,
+                    rejected = report.rejected,
+                    failed = report.failed,
+                    "memory learning loop finished"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    task_id = %task.id,
+                    error = %error,
+                    "memory reflection failed; skipping learning loop"
+                );
+            }
+        }
     }
 
     async fn finish_failed(
@@ -1058,6 +1112,12 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
     let planner = Arc::new(super::planner::LlmTaskPlanner::new(&config.model));
     let agent_executor = Arc::new(LlmWorkflowAgentExecutor::new(&config.model));
     let memory = MemoryContextBuilder::new(server.db.clone_connection(), &config.model);
+    let reflector = Arc::new(crate::agent::memory::LlmMemoryReflector::new(&config.model));
+    let writer = MemoryWriter::new(
+        server.db.clone_connection(),
+        &config.model,
+        crate::agent::memory::MemoryWritePolicy::default(),
+    );
     TaskOrchestrator::new(
         server.db.clone_connection(),
         TimelineService::new(server.db.clone_connection()),
@@ -1068,5 +1128,7 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
         Arc::clone(&server.config),
         agent_executor,
         memory,
+        reflector,
+        writer,
     )
 }

@@ -3,6 +3,7 @@
 // ============================================================
 
 use super::context::*;
+use super::*;
 use crate::config::types::ModelConfig;
 use crate::db::{CreateMemoryRequest, Database, Memory, ScoredMemory};
 
@@ -102,5 +103,188 @@ async fn build_returns_empty_context_when_no_memories() {
     let context = builder.build("任意任务", "", "").await.unwrap();
     assert!(context.memories.is_empty());
     assert_eq!(context.injected_text, "");
+    let _ = std::fs::remove_file(&path);
+}
+
+// ============================================================
+// Phase 2 — learning loop tests.
+// ============================================================
+
+use crate::task::model::TaskId;
+
+fn candidate(content: &str, category: MemoryCategory, confidence: f32) -> MemoryCandidate {
+    MemoryCandidate::new(
+        category,
+        content,
+        Some(TaskId::generate()),
+        "researcher",
+        confidence,
+    )
+}
+
+#[test]
+fn category_serde_and_parse_roundtrip() {
+    for (variant, text) in [
+        (MemoryCategory::Fact, "fact"),
+        (MemoryCategory::Preference, "preference"),
+        (MemoryCategory::Knowledge, "knowledge"),
+        (MemoryCategory::Note, "note"),
+    ] {
+        assert_eq!(variant.as_str(), text);
+        assert_eq!(text.parse::<MemoryCategory>().unwrap(), variant);
+        assert_eq!(
+            serde_json::to_value(variant).unwrap(),
+            serde_json::json!(text)
+        );
+    }
+    assert!("unknown".parse::<MemoryCategory>().is_err());
+}
+
+#[test]
+fn validate_candidate_rejects_invalid_content() {
+    let policy = MemoryWritePolicy::default();
+    let empty: Vec<Memory> = Vec::new();
+
+    // Empty.
+    assert_eq!(
+        validate_candidate(
+            &candidate("   ", MemoryCategory::Fact, 0.9),
+            &policy,
+            &empty
+        ),
+        Err(ValidationError::EmptyContent)
+    );
+    // Too short.
+    assert_eq!(
+        validate_candidate(&candidate("hi", MemoryCategory::Fact, 0.9), &policy, &empty),
+        Err(ValidationError::ContentTooShort)
+    );
+    // Too long.
+    let long = "x".repeat(DEFAULT_MAX_CONTENT_CHARS + 1);
+    assert_eq!(
+        validate_candidate(
+            &candidate(&long, MemoryCategory::Note, 0.9),
+            &policy,
+            &empty
+        ),
+        Err(ValidationError::ContentTooLong(DEFAULT_MAX_CONTENT_CHARS))
+    );
+    // Low confidence.
+    assert_eq!(
+        validate_candidate(
+            &candidate("valid content", MemoryCategory::Fact, 0.1),
+            &policy,
+            &empty
+        ),
+        Err(ValidationError::LowConfidence)
+    );
+    // Secret marker.
+    assert_eq!(
+        validate_candidate(
+            &candidate("my api_key is abc123", MemoryCategory::Note, 0.9),
+            &policy,
+            &empty
+        ),
+        Err(ValidationError::ContainsSecret)
+    );
+    // Valid.
+    assert_eq!(
+        validate_candidate(
+            &candidate("用户偏好简洁回答", MemoryCategory::Preference, 0.8),
+            &policy,
+            &empty
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn validate_candidate_rejects_duplicates() {
+    let policy = MemoryWritePolicy::default();
+    let existing = vec![Memory {
+        id: "m1".to_string(),
+        content: "用户偏好简洁回答".to_string(),
+        category: "preference".to_string(),
+        source: "manual".to_string(),
+        source_conversation_id: None,
+        embedding: None,
+        metadata: None,
+        created_at: 1,
+        updated_at: 1,
+    }];
+    assert_eq!(
+        validate_candidate(
+            &candidate("用户偏好简洁回答", MemoryCategory::Preference, 0.8),
+            &policy,
+            &existing
+        ),
+        Err(ValidationError::Duplicate)
+    );
+}
+
+#[tokio::test]
+async fn writer_stores_valid_candidates_and_rejects_invalid() {
+    let (path, db) = temp_db("writer");
+    let writer = MemoryWriter::new(
+        db.clone_connection(),
+        &ModelConfig::default(),
+        MemoryWritePolicy::default(),
+    );
+
+    let report = writer
+        .write(vec![
+            candidate("用户偏好简洁回答", MemoryCategory::Preference, 0.8),
+            candidate("my password is hunter2", MemoryCategory::Note, 0.9), // secret → rejected
+            candidate("hi", MemoryCategory::Fact, 0.9),                     // too short → rejected
+        ])
+        .await;
+
+    assert_eq!(report.stored, 1);
+    assert_eq!(report.rejected, 2);
+    assert_eq!(report.failed, 0);
+
+    // The stored memory is persisted with agent provenance metadata.
+    let stored = db
+        .list_memories(&crate::db::MemoryQuery {
+            category: None,
+            source: None,
+            q: None,
+            limit: Some(10),
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].category, "preference");
+    assert_eq!(stored[0].source, "auto");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn writer_skips_duplicate_across_runs() {
+    let (path, db) = temp_db("writer-dup");
+    let writer = MemoryWriter::new(
+        db.clone_connection(),
+        &ModelConfig::default(),
+        MemoryWritePolicy::default(),
+    );
+
+    let first = writer
+        .write(vec![candidate(
+            "复用经验 A",
+            MemoryCategory::Knowledge,
+            0.7,
+        )])
+        .await;
+    assert_eq!(first.stored, 1);
+
+    let second = writer
+        .write(vec![candidate(
+            "复用经验 A",
+            MemoryCategory::Knowledge,
+            0.7,
+        )])
+        .await;
+    assert_eq!(second.stored, 0);
+    assert_eq!(second.rejected, 1);
     let _ = std::fs::remove_file(&path);
 }
