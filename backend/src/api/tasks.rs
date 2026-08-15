@@ -454,3 +454,74 @@ pub async fn get_artifact(
         .ok_or_else(|| (StatusCode::NOT_FOUND, "产物不存在".to_string()))?;
     Ok(Json(artifact_view(&artifact)))
 }
+
+// ── Task decisions ──
+
+#[derive(Deserialize)]
+pub struct ResolveDecisionRequest {
+    pub option_id: String,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ListDecisionsQuery {
+    pub task_id: Option<String>,
+}
+
+pub async fn list_pending_decisions(
+    State(server): State<Arc<AppServer>>,
+    Query(query): Query<ListDecisionsQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let Some(task_id) = query.task_id else {
+        return Err((StatusCode::BAD_REQUEST, "缺少 task_id".to_string()));
+    };
+    let task_id =
+        TaskId::new(task_id).map_err(|_| (StatusCode::BAD_REQUEST, "无效 task_id".to_string()))?;
+    let decisions = server
+        .db
+        .list_pending_task_decisions(&task_id)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    let views = decisions
+        .iter()
+        .map(|decision| {
+            serde_json::json!({
+                "id": decision.id.as_str(),
+                "task_id": decision.task_id.as_str(),
+                "task_execution_id": decision.task_execution_id.as_str(),
+                "prompt": decision.prompt,
+                "options": decision.options,
+                "status": decision.status.to_string(),
+                "created_at": decision.created_at,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::json!({ "decisions": views })))
+}
+
+pub async fn resolve_decision(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Json(body): Json<ResolveDecisionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let decision_id = crate::task::TaskDecisionId::new(id)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "无效 decision id".to_string()))?;
+    let decision = server
+        .db
+        .get_task_decision(&decision_id)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "决策不存在".to_string()))?;
+    if decision.status == crate::task::TaskDecisionStatus::Resolved {
+        return Err((StatusCode::CONFLICT, "决策已被处理".to_string()));
+    }
+    if !decision.options.iter().any(|o| o.id == body.option_id) {
+        return Err((StatusCode::BAD_REQUEST, "无效选项".to_string()));
+    }
+    server
+        .db
+        .resolve_task_decision(&decision_id, chrono::Utc::now().timestamp_millis())
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(serde_json::json!({
+        "decision_id": decision.id.as_str(),
+        "option_id": body.option_id,
+        "status": "resolved"
+    })))
+}

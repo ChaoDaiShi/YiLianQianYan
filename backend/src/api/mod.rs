@@ -157,6 +157,11 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/tasks/:id/artifacts", get(tasks::list_artifacts))
         .route("/api/artifacts", get(tasks::list_all_artifacts))
         .route("/api/artifacts/:id", get(tasks::get_artifact))
+        .route("/api/task-decisions", get(tasks::list_pending_decisions))
+        .route(
+            "/api/task-decisions/:id/resolve",
+            post(tasks::resolve_decision),
+        )
         // Agent / Team API
         .route("/api/agents", get(agents::list_agents))
         .route("/api/agents", post(agents::create_agent))
