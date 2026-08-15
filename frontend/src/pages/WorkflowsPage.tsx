@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
 import {
-  Plus, Trash2, Pencil, CheckCircle2,
-  Loader2, AlertTriangle,
+  Plus, Trash2, Pencil, CheckCircle2, Loader2, AlertTriangle,
 } from "lucide-react";
 import {
-  listWorkflows, createWorkflow, updateWorkflow, deleteWorkflow,
-  activateWorkflow,
+  listWorkflows, createWorkflow, updateWorkflow, deleteWorkflow, activateWorkflow,
+  startWorkflowRun,
   type Workflow,
 } from "../api/client";
 import { PageHeader, Button, Badge, Modal, Input, EmptyState, Spinner, Panel } from "../components/ui";
+import RuntimeWorkflowList from "../components/workflow/RuntimeWorkflowList";
+import WorkflowGraphEditor from "../components/workflow/WorkflowGraphEditor";
+import WorkflowRunInspector from "../components/workflow/WorkflowRunInspector";
+import WorkflowRecentRuns from "../components/workflow/WorkflowRecentRuns";
+import type { WorkflowGraphRecord } from "../api/client";
 
 const BUILTIN_ICONS: Record<string, string> = {
   "react-default": "🔄",
@@ -19,13 +23,68 @@ const BUILTIN_ICONS: Record<string, string> = {
   "hitl-approval": "✋",
 };
 
+type Tab = "templates" | "runtime";
+
 export default function WorkflowsPage() {
+  const [tab, setTab] = useState<Tab>("templates");
+  const [editorGraph, setEditorGraph] = useState<WorkflowGraphRecord | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [runtimeRefresh, setRuntimeRefresh] = useState(0);
+
+  return (
+    <div className="flex flex-col h-full">
+      <PageHeader
+        title="工作流"
+        description="模板工作流用于对话；运行工作流是可执行的 DAG 运行时"
+        actions={
+          <div className="flex items-center gap-1 rounded-lg bg-[var(--panel-2)] p-1">
+            <button
+              onClick={() => setTab("templates")}
+              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
+                tab === "templates" ? "bg-[var(--accent)] text-[var(--accent-fg)]" : "text-[var(--text-muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              模板工作流
+            </button>
+            <button
+              onClick={() => setTab("runtime")}
+              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
+                tab === "runtime" ? "bg-[var(--accent)] text-[var(--accent-fg)]" : "text-[var(--text-muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              运行工作流
+            </button>
+          </div>
+        }
+      />
+
+      <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+        {tab === "templates" ? (
+          <TemplatesTab />
+        ) : (
+          <RuntimeTab
+            editorGraph={editorGraph}
+            setEditorGraph={setEditorGraph}
+            editorOpen={editorOpen}
+            setEditorOpen={setEditorOpen}
+            activeRunId={activeRunId}
+            setActiveRunId={setActiveRunId}
+            runtimeRefresh={runtimeRefresh}
+            setRuntimeRefresh={setRuntimeRefresh}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TemplatesTab() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Form state
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
@@ -72,12 +131,8 @@ export default function WorkflowsPage() {
   const handleSave = async () => {
     if (!formName.trim()) return;
     setSaving(true);
-    const nodes = formNodes.trim()
-      ? formNodes.split(",").map((n) => n.trim()).filter(Boolean)
-      : [];
-    const tags = formTags.trim()
-      ? formTags.split(",").map((t) => t.trim()).filter(Boolean)
-      : [];
+    const nodes = formNodes.trim() ? formNodes.split(",").map((n) => n.trim()).filter(Boolean) : [];
+    const tags = formTags.trim() ? formTags.split(",").map((t) => t.trim()).filter(Boolean) : [];
     const payload = {
       name: formName.trim(),
       description: formDesc.trim(),
@@ -127,129 +182,92 @@ export default function WorkflowsPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <PageHeader
-        title="工作流"
-        description="预定义的 AI 工作流模板，激活后在对话中自动生效"
-        actions={
-          <Button size="sm" onClick={openAdd}>
-            <Plus className="w-4 h-4" />
-            自定义工作流
-          </Button>
-        }
-      />
-
-      <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-        <div className="grid grid-cols-2 gap-4">
-          {workflows.map((wf) => {
-            const isActive = wf.id === activeId;
-            return (
-              <Panel
-                key={wf.id}
-                className={`group cursor-pointer transition-all ${
-                  isActive ? "ring-1 ring-[var(--accent)]/50" : ""
-                }`}
-              >
-                <div className="flex items-start gap-3 mb-3">
-                  <span className="text-2xl flex-shrink-0">
-                    {BUILTIN_ICONS[wf.id] || "⚡"}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-sm">{wf.name}</h3>
-                      {isActive && (
-                        <Badge tone="success">
-                          <CheckCircle2 className="w-3 h-3" />
-                          激活
-                        </Badge>
-                      )}
-                      {wf.is_builtin && (
-                        <Badge tone="default">内置</Badge>
-                      )}
-                    </div>
-                    <div className="flex gap-1 mt-1 flex-wrap">
-                      {wf.tags.map((t) => (
-                        <span
-                          key={t}
-                          className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--panel-2)] text-[var(--text-muted)]"
-                        >
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                    {!isActive && (
-                      <button
-                        onClick={() => handleActivate(wf.id)}
-                        className="p-1.5 rounded hover:bg-[var(--accent)]/20 text-[var(--text-muted)] hover:text-[var(--accent)]"
-                        title="激活此工作流"
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => openEdit(wf)}
-                      className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                      title="编辑"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    {!wf.is_builtin && (
-                      <button
-                        onClick={() => handleDelete(wf.id, wf.name)}
-                        className="p-1.5 rounded hover:bg-[var(--danger)]/20 text-[var(--text-muted)] hover:text-[var(--danger)]"
-                        title="删除"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <p className="text-sm text-[var(--text-muted)] mb-3">{wf.description}</p>
-
-                {/* Flow visualization */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {wf.nodes.map((n, i) => (
-                    <span key={n} className="inline-flex items-center gap-1">
-                      <code className="px-2 py-1 rounded text-xs bg-[var(--accent)]/10 text-[var(--accent)] font-mono">
-                        {n}
-                      </code>
-                      {i < wf.nodes.length - 1 && (
-                        <span className="text-[var(--text-faint)]">→</span>
-                      )}
-                    </span>
-                  ))}
-                  {wf.nodes.length === 0 && (
-                    <span className="text-xs text-[var(--text-faint)]">无预定义流程节点</span>
-                  )}
-                </div>
-
-                {wf.system_prompt_extra && (
-                  <p className="mt-2 text-xs text-[var(--text-faint)] italic line-clamp-2">
-                    "{wf.system_prompt_extra.slice(0, 120)}{wf.system_prompt_extra.length > 120 ? "…" : ""}"
-                  </p>
-                )}
-              </Panel>
-            );
-          })}
-
-          {/* Add custom workflow card */}
-          <button
-            onClick={openAdd}
-            className="border-2 border-dashed border-[var(--border)] rounded-xl p-5 flex flex-col items-center justify-center text-center min-h-[200px] hover:border-[var(--accent)]/40 transition-colors cursor-pointer group"
-          >
-            <Plus className="w-8 h-8 mb-2 text-[var(--text-faint)] group-hover:text-[var(--accent)] transition-colors" />
-            <p className="font-medium text-sm text-[var(--text-muted)] group-hover:text-[var(--text)]">自定义工作流</p>
-            <p className="text-xs text-[var(--text-faint)] mt-1">创建专属 AI 执行流程</p>
-          </button>
-        </div>
+    <div className="flex flex-col">
+      <div className="flex justify-end mb-4">
+        <Button size="sm" onClick={openAdd}>
+          <Plus className="w-4 h-4" />
+          自定义工作流
+        </Button>
       </div>
 
-      {/* Add/Edit Workflow Modal */}
+      <div className="grid grid-cols-2 gap-4">
+        {workflows.map((wf) => {
+          const isActive = wf.id === activeId;
+          return (
+            <Panel key={wf.id} className={`group cursor-pointer transition-all ${isActive ? "ring-1 ring-[var(--accent)]/50" : ""}`}>
+              <div className="flex items-start gap-3 mb-3">
+                <span className="text-2xl flex-shrink-0">{BUILTIN_ICONS[wf.id] || "⚡"}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-sm">{wf.name}</h3>
+                    {isActive && (
+                      <Badge tone="success">
+                        <CheckCircle2 className="w-3 h-3" />
+                        激活
+                      </Badge>
+                    )}
+                    {wf.is_builtin && <Badge tone="default">内置</Badge>}
+                  </div>
+                  <div className="flex gap-1 mt-1 flex-wrap">
+                    {wf.tags.map((t) => (
+                      <span key={t} className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--panel-2)] text-[var(--text-muted)]">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                  {!isActive && (
+                    <button
+                      onClick={() => handleActivate(wf.id)}
+                      className="p-1.5 rounded hover:bg-[var(--accent)]/20 text-[var(--text-muted)] hover:text-[var(--accent)]"
+                      title="激活此工作流"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => openEdit(wf)}
+                    className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
+                    title="编辑"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  {!wf.is_builtin && (
+                    <button
+                      onClick={() => handleDelete(wf.id, wf.name)}
+                      className="p-1.5 rounded hover:bg-[var(--danger)]/20 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                      title="删除"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-[var(--text-muted)] mb-3">{wf.description}</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {wf.nodes.map((n, i) => (
+                  <span key={n} className="inline-flex items-center gap-1">
+                    <code className="px-2 py-1 rounded text-xs bg-[var(--accent)]/10 text-[var(--accent)] font-mono">{n}</code>
+                    {i < wf.nodes.length - 1 && <span className="text-[var(--text-faint)]">→</span>}
+                  </span>
+                ))}
+                {wf.nodes.length === 0 && <span className="text-xs text-[var(--text-faint)]">无预定义流程节点</span>}
+              </div>
+            </Panel>
+          );
+        })}
+
+        <button
+          onClick={openAdd}
+          className="border-2 border-dashed border-[var(--border)] rounded-xl p-5 flex flex-col items-center justify-center text-center min-h-[200px] hover:border-[var(--accent)]/40 transition-colors cursor-pointer group"
+        >
+          <Plus className="w-8 h-8 mb-2 text-[var(--text-faint)] group-hover:text-[var(--accent)] transition-colors" />
+          <p className="font-medium text-sm text-[var(--text-muted)] group-hover:text-[var(--text)]">自定义工作流</p>
+          <p className="text-xs text-[var(--text-faint)] mt-1">创建专属 AI 执行流程</p>
+        </button>
+      </div>
+
       <Modal
         open={showModal}
         onClose={() => setShowModal(false)}
@@ -265,47 +283,95 @@ export default function WorkflowsPage() {
         }
       >
         <div className="space-y-4">
-          <Input
-            label="名称"
-            value={formName}
-            onChange={(e) => setFormName(e.target.value)}
-            placeholder="例如：代码审查流水线"
-          />
+          <Input label="名称" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="例如：代码审查流水线" />
           <div>
             <label className="block text-sm font-medium mb-1">描述</label>
-            <textarea
-              value={formDesc}
-              onChange={(e) => setFormDesc(e.target.value)}
-              rows={2}
-              placeholder="描述此工作流的用途..."
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none"
-            />
+            <textarea value={formDesc} onChange={(e) => setFormDesc(e.target.value)} rows={2} placeholder="描述此工作流的用途..." className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none" />
           </div>
-          <Input
-            label="流程节点 (逗号分隔)"
-            value={formNodes}
-            onChange={(e) => setFormNodes(e.target.value)}
-            placeholder="scan, analyze, report"
-            hint="节点将在对话中作为流程步骤展示"
-          />
-          <Input
-            label="标签 (逗号分隔)"
-            value={formTags}
-            onChange={(e) => setFormTags(e.target.value)}
-            placeholder="代码, 安全"
-          />
+          <Input label="流程节点 (逗号分隔)" value={formNodes} onChange={(e) => setFormNodes(e.target.value)} placeholder="scan, analyze, report" hint="节点将在对话中作为流程步骤展示" />
+          <Input label="标签 (逗号分隔)" value={formTags} onChange={(e) => setFormTags(e.target.value)} placeholder="代码, 安全" />
           <div>
             <label className="block text-sm font-medium mb-1">额外系统提示词</label>
-            <textarea
-              value={formPrompt}
-              onChange={(e) => setFormPrompt(e.target.value)}
-              rows={3}
-              placeholder="额外的 AI 行为指导，将在对话时注入系统提示词..."
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none font-mono"
-            />
+            <textarea value={formPrompt} onChange={(e) => setFormPrompt(e.target.value)} rows={3} placeholder="额外的 AI 行为指导，将在对话时注入系统提示词..." className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none font-mono" />
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+function RuntimeTab({
+  editorGraph,
+  setEditorGraph,
+  editorOpen,
+  setEditorOpen,
+  activeRunId,
+  setActiveRunId,
+  runtimeRefresh,
+  setRuntimeRefresh,
+}: {
+  editorGraph: WorkflowGraphRecord | null;
+  setEditorGraph: (g: WorkflowGraphRecord | null) => void;
+  editorOpen: boolean;
+  setEditorOpen: (open: boolean) => void;
+  activeRunId: string | null;
+  setActiveRunId: (id: string | null) => void;
+  runtimeRefresh: number;
+  setRuntimeRefresh: (n: number) => void;
+}) {
+  const [runError, setRunError] = useState("");
+
+  const handleRun = async (graph: WorkflowGraphRecord) => {
+    setRunError("");
+    const res = await startWorkflowRun(graph.id);
+    if (res.ok) {
+      setActiveRunId(res.data.run_id);
+      setRuntimeRefresh(runtimeRefresh + 1);
+    } else {
+      setRunError(res.error);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-end">
+        <Button size="sm" onClick={() => { setEditorGraph(null); setEditorOpen(true); }}>
+          <Plus className="w-4 h-4" />
+          新建运行工作流
+        </Button>
+      </div>
+
+      {runError && (
+        <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
+          {runError}
+        </div>
+      )}
+
+      <RuntimeWorkflowList
+        onRun={handleRun}
+        onEdit={(graph) => { setEditorGraph(graph); setEditorOpen(true); }}
+        refreshKey={runtimeRefresh}
+      />
+
+      {activeRunId && (
+        <WorkflowRunInspector runId={activeRunId} onClose={() => setActiveRunId(null)} />
+      )}
+
+      <WorkflowRecentRuns
+        onSelectRun={setActiveRunId}
+        refreshKey={runtimeRefresh}
+      />
+
+      {editorOpen && (
+        <WorkflowGraphEditor
+          graph={editorGraph}
+          onSaved={() => {
+            setEditorOpen(false);
+            setRuntimeRefresh(runtimeRefresh + 1);
+          }}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
     </div>
   );
 }

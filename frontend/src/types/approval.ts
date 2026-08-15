@@ -22,4 +22,7 @@ export interface PendingApproval {
   status: ApprovalStatus;
   created_at: string;
   expires_at: string;
+  execution_id?: string | null;
+  workflow_run_id?: string | null;
+  workflow_node_id?: string | null;
 }
