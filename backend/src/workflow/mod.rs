@@ -14,7 +14,9 @@
 // ============================================================
 
 pub mod definition;
+pub mod executor;
 pub mod run;
+pub mod runner;
 pub mod state_machine;
 pub mod validation;
 
@@ -25,8 +27,10 @@ pub use definition::{
     WorkflowEdgeDefinition, WorkflowGraphDefinition, WorkflowNodeDefinition, WorkflowNodeId,
     WorkflowNodeKind, MAX_WORKFLOW_EDGES, MAX_WORKFLOW_NODES, WORKFLOW_GRAPH_SCHEMA_VERSION,
 };
+pub use executor::{NodeExecutionOutcome, WorkflowExecutionError, WorkflowNodeExecutor};
 pub use run::{
     NodeRunState, NodeRunStatus, WorkflowRun, WorkflowRunError, WorkflowRunId, WorkflowRunStatus,
 };
+pub use runner::WorkflowRunner;
 pub use state_machine::{derive_run_status, is_allowed_transition, ready_nodes};
 pub use validation::{validate_graph, WorkflowValidationError};

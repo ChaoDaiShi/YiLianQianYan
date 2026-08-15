@@ -3,7 +3,11 @@
 // ============================================================
 
 use super::*;
+use crate::db::Database;
 use crate::execution::{ExecutionContext, ExecutionId};
+use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
+use tokio_util::sync::CancellationToken;
 
 fn node(id: &str) -> WorkflowNodeDefinition {
     WorkflowNodeDefinition {
@@ -539,4 +543,253 @@ fn run_id_generates_unique_values() {
     let b = WorkflowRunId::generate();
     assert!(!a.as_str().is_empty());
     assert_ne!(a, b);
+}
+
+// ============================================================
+// Deterministic runner tests (mock executors).
+// ============================================================
+
+fn noop_persist(_run: &WorkflowRun) -> Result<(), String> {
+    Ok(())
+}
+
+struct MockExecutor;
+
+#[async_trait]
+impl WorkflowNodeExecutor for MockExecutor {
+    async fn execute(
+        &self,
+        _context: &ExecutionContext,
+        node: &WorkflowNodeDefinition,
+    ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
+        Ok(match node.id.as_str() {
+            "fail" => NodeExecutionOutcome::Failed,
+            "approve" => NodeExecutionOutcome::WaitingApproval {
+                approval_id: "a1".to_string(),
+            },
+            _ => NodeExecutionOutcome::Completed,
+        })
+    }
+}
+
+struct RecordingExecutor {
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl WorkflowNodeExecutor for RecordingExecutor {
+    async fn execute(
+        &self,
+        _context: &ExecutionContext,
+        node: &WorkflowNodeDefinition,
+    ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
+        self.calls.lock().unwrap().push(node.id.to_string());
+        Ok(NodeExecutionOutcome::Completed)
+    }
+}
+
+struct CancellingExecutor {
+    cancel: CancellationToken,
+    trigger: String,
+}
+
+#[async_trait]
+impl WorkflowNodeExecutor for CancellingExecutor {
+    async fn execute(
+        &self,
+        _context: &ExecutionContext,
+        node: &WorkflowNodeDefinition,
+    ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
+        if node.id.as_str() == self.trigger.as_str() {
+            self.cancel.cancel();
+        }
+        Ok(NodeExecutionOutcome::Completed)
+    }
+}
+
+#[tokio::test]
+async fn runner_completes_linear_dag() {
+    let mut r = run(
+        "start",
+        vec![node("start"), node("a"), node("b"), node("output")],
+        vec![edge("start", "a"), edge("a", "b"), edge("b", "output")],
+    );
+    let runner = WorkflowRunner::new(MockExecutor);
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Completed);
+    for name in ["start", "a", "b", "output"] {
+        assert_eq!(r.node(&id(name)).unwrap().status, NodeRunStatus::Completed);
+    }
+}
+
+#[tokio::test]
+async fn runner_executes_branches_in_definition_order() {
+    let mut r = run(
+        "start",
+        vec![node("start"), node("a"), node("b"), node("output")],
+        vec![
+            edge("start", "a"),
+            edge("start", "b"),
+            edge("a", "output"),
+            edge("b", "output"),
+        ],
+    );
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let runner = WorkflowRunner::new(RecordingExecutor {
+        calls: calls.clone(),
+    });
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Completed);
+    assert_eq!(
+        calls.lock().unwrap().clone(),
+        vec!["start", "a", "b", "output"]
+    );
+}
+
+#[tokio::test]
+async fn runner_respects_join_dependency() {
+    let mut r = run(
+        "start",
+        vec![node("start"), node("a"), node("b"), node("join")],
+        vec![
+            edge("start", "a"),
+            edge("start", "b"),
+            edge("a", "join"),
+            edge("b", "join"),
+        ],
+    );
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let runner = WorkflowRunner::new(RecordingExecutor {
+        calls: calls.clone(),
+    });
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Completed);
+    assert_eq!(
+        calls.lock().unwrap().clone(),
+        vec!["start", "a", "b", "join"]
+    );
+}
+
+#[tokio::test]
+async fn runner_failure_stops_downstream() {
+    let mut r = run(
+        "start",
+        vec![node("start"), node("fail"), node("after")],
+        vec![edge("start", "fail"), edge("fail", "after")],
+    );
+    let runner = WorkflowRunner::new(MockExecutor);
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Failed);
+    assert_eq!(r.node(&id("fail")).unwrap().status, NodeRunStatus::Failed);
+    assert_eq!(r.node(&id("after")).unwrap().status, NodeRunStatus::Pending);
+}
+
+#[tokio::test]
+async fn runner_pauses_for_approval_and_does_not_run_downstream() {
+    let mut r = run(
+        "start",
+        vec![node("start"), node("approve"), node("after")],
+        vec![edge("start", "approve"), edge("approve", "after")],
+    );
+    let runner = WorkflowRunner::new(MockExecutor);
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::WaitingApproval);
+    assert_eq!(
+        r.node(&id("approve")).unwrap().status,
+        NodeRunStatus::WaitingApproval
+    );
+    assert_eq!(r.node(&id("after")).unwrap().status, NodeRunStatus::Pending);
+}
+
+#[tokio::test]
+async fn runner_cancellation_stops_remaining_nodes() {
+    let mut r = run(
+        "start",
+        vec![
+            node("start"),
+            node("a"),
+            node("b"),
+            node("c"),
+            node("output"),
+        ],
+        vec![
+            edge("start", "a"),
+            edge("a", "b"),
+            edge("b", "c"),
+            edge("c", "output"),
+        ],
+    );
+    let cancel = CancellationToken::new();
+    let runner = WorkflowRunner::new(CancellingExecutor {
+        cancel: cancel.clone(),
+        trigger: "b".to_string(),
+    });
+    runner.run(&mut r, &cancel, noop_persist).await.unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Cancelled);
+    assert_eq!(r.node(&id("a")).unwrap().status, NodeRunStatus::Completed);
+    assert_eq!(r.node(&id("b")).unwrap().status, NodeRunStatus::Completed);
+    assert_eq!(r.node(&id("c")).unwrap().status, NodeRunStatus::Cancelled);
+    assert_eq!(
+        r.node(&id("output")).unwrap().status,
+        NodeRunStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn runner_checkpoints_run_state() {
+    let temp_path = std::env::temp_dir().join(format!("yilian-runner-{}.db", uuid::Uuid::new_v4()));
+    let db = Database::new(&temp_path).unwrap();
+    let mut r = run(
+        "start",
+        vec![node("start"), node("a"), node("output")],
+        vec![edge("start", "a"), edge("a", "output")],
+    );
+    let run_id = r.run_id.clone();
+    db.create_workflow_run("g1", &r).unwrap();
+
+    let runner = WorkflowRunner::new(MockExecutor);
+    runner
+        .run(&mut r, &CancellationToken::new(), |run| {
+            db.update_workflow_run("g1", run)
+        })
+        .await
+        .unwrap();
+
+    let stored = db.get_workflow_run(&run_id).unwrap().unwrap();
+    assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+    assert_eq!(stored.run.node_states, r.node_states);
+
+    let _ = std::fs::remove_file(&temp_path);
+}
+
+#[tokio::test]
+async fn runner_paused_run_has_consistent_ready_state() {
+    let mut r = run(
+        "start",
+        vec![node("start"), node("approve"), node("after")],
+        vec![edge("start", "approve"), edge("approve", "after")],
+    );
+    let runner = WorkflowRunner::new(MockExecutor);
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::WaitingApproval);
+    assert!(r.ready_nodes().is_empty());
+    assert_eq!(r.node(&id("after")).unwrap().status, NodeRunStatus::Pending);
 }

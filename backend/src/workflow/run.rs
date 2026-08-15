@@ -240,7 +240,7 @@ impl WorkflowRun {
         self.node_states.iter().find(|s| &s.node_id == node_id)
     }
 
-    fn node_mut(&mut self, node_id: &WorkflowNodeId) -> Option<&mut NodeRunState> {
+    pub fn node_mut(&mut self, node_id: &WorkflowNodeId) -> Option<&mut NodeRunState> {
         self.node_states.iter_mut().find(|s| &s.node_id == node_id)
     }
 
