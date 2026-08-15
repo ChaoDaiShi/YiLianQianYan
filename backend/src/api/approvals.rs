@@ -16,6 +16,7 @@ use axum::{
 use futures::stream::Stream;
 use serde::Deserialize;
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
@@ -35,6 +36,7 @@ use crate::safety::{
 };
 use crate::server::{AppServer, LogBuffer};
 use crate::tools::registry::ToolRegistry;
+use crate::workflow::{cancel_workflow_approval, resolve_workflow_approval, WorkflowRunId};
 
 #[derive(Debug, Deserialize)]
 pub struct ApprovalDecisionRequest {
@@ -143,30 +145,173 @@ async fn execute_approved_tool(
         .await
 }
 
-/// POST /api/approvals/:id/approve — SSE stream resuming the agent.
+/// How to route an approval decision. Workflow-bound approvals resume a
+/// [`crate::workflow::WorkflowRun`]; everything else resumes a Chat Agent.
+enum ApprovalTarget {
+    Agent,
+    Workflow,
+    InvalidWorkflowBinding,
+}
+
+/// Classify an approval from its *trusted internal fields* (never client input).
+///
+/// All three workflow fields `Some` → workflow; all `None` → agent; any partial
+/// binding is treated as data corruption and fails closed rather than falling
+/// back to the agent path.
+fn classify_approval(approval: &PendingApproval) -> ApprovalTarget {
+    let has_execution = approval.execution_id.is_some();
+    let has_run = approval.workflow_run_id.is_some();
+    let has_node = approval.workflow_node_id.is_some();
+    match (has_execution, has_run, has_node) {
+        (false, false, false) => ApprovalTarget::Agent,
+        (true, true, true) => ApprovalTarget::Workflow,
+        _ => ApprovalTarget::InvalidWorkflowBinding,
+    }
+}
+
+type ApprovalStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
+
+fn box_stream<S>(stream: S) -> ApprovalStream
+where
+    S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
+{
+    Box::pin(stream)
+}
+
+fn sse_event(event: &str, data: serde_json::Value) -> Event {
+    Event::default().event(event).data(data.to_string())
+}
+
+/// Build the production security gateway for workflow resume — same components
+/// as the normal workflow runtime (MCP-aware registry, verifier, audit, DB).
+async fn build_workflow_gateway(server: &AppServer) -> Arc<SecurityExecutionGateway> {
+    let tool_registry = server.build_agent_tool_registry().await;
+    let config = server.config.read().clone();
+    Arc::new(
+        SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            config.sandbox.clone(),
+            server.workspace_root.clone(),
+            Arc::clone(&tool_registry),
+            Arc::new(DefaultVerifier::new(&server.workspace_root)),
+            Arc::new(server.audit_recorder.clone()),
+        )
+        .with_db(Arc::new(server.db.clone_connection())),
+    )
+}
+
+fn read_run_status(server: &AppServer, approval: &PendingApproval) -> String {
+    let Some(run_id) = &approval.workflow_run_id else {
+        return "failed".to_string();
+    };
+    let Ok(run_id) = WorkflowRunId::new(run_id.clone()) else {
+        return "failed".to_string();
+    };
+    server
+        .db
+        .get_workflow_run(&run_id)
+        .ok()
+        .flatten()
+        .map(|stored| stored.run.status.to_string())
+        .unwrap_or_else(|| "failed".to_string())
+}
+
+/// Build the workflow resume SSE stream: resolve the approval, resume the
+/// workflow run through the gateway, then emit a final run-state event.
+fn workflow_approval_stream(
+    server: Arc<AppServer>,
+    approval: PendingApproval,
+    approve: bool,
+) -> ApprovalStream {
+    let stream = async_stream::stream! {
+        let decision = if approve { "approved" } else { "rejected" };
+        yield Ok(sse_event("approval_resolved", serde_json::json!({
+            "type": "approval_resolved",
+            "approval_id": approval.approval_id,
+            "status": decision,
+        })));
+
+        let gateway = build_workflow_gateway(&server).await;
+        let result = resolve_workflow_approval(
+            &gateway,
+            &server.approval_store,
+            &server.db,
+            &approval.approval_id,
+            &approval.subject_id,
+            approve,
+            &CancellationToken::new(),
+        ).await;
+
+        // Record the resolution exactly once (the workflow helper does not).
+        if let Some(consumed) = server.approval_store.get(&approval.approval_id) {
+            record_approval_resolved(&server, &consumed);
+        }
+
+        let run_status = if result.is_ok() {
+            read_run_status(&server, &approval)
+        } else {
+            "failed".to_string()
+        };
+
+        yield Ok(sse_event("workflow_run_updated", serde_json::json!({
+            "type": "workflow_run_updated",
+            "workflow_run_id": approval.workflow_run_id,
+            "workflow_node_id": approval.workflow_node_id,
+            "status": run_status,
+        })));
+    };
+    box_stream(stream)
+}
+
+/// POST /api/approvals/:id/approve — SSE stream resuming the agent or a
+/// workflow run, depending on the approval's binding.
 pub async fn approve_handler(
     State(server): State<Arc<AppServer>>,
     Path(approval_id): Path<String>,
     Json(body): Json<ApprovalDecisionRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
-    let approval =
-        resolve_and_consume(&server, &approval_id, body.conversation_id.as_deref(), true)?;
-    Ok(resume_stream(server, approval, true))
+) -> Result<Sse<ApprovalStream>, (StatusCode, String)> {
+    let lookup = server
+        .approval_store
+        .get(&approval_id)
+        .ok_or((StatusCode::NOT_FOUND, "审批不存在".to_string()))?;
+    match classify_approval(&lookup) {
+        ApprovalTarget::Agent => {
+            let approval =
+                resolve_and_consume(&server, &approval_id, body.conversation_id.as_deref(), true)?;
+            Ok(Sse::new(resume_stream(server, approval, true)))
+        }
+        ApprovalTarget::Workflow => Ok(Sse::new(workflow_approval_stream(server, lookup, true))),
+        ApprovalTarget::InvalidWorkflowBinding => {
+            Err((StatusCode::CONFLICT, "审批工作流绑定不完整".to_string()))
+        }
+    }
 }
 
-/// POST /api/approvals/:id/reject — SSE stream resuming the agent.
+/// POST /api/approvals/:id/reject — SSE stream rejecting the agent or a
+/// workflow run.
 pub async fn reject_handler(
     State(server): State<Arc<AppServer>>,
     Path(approval_id): Path<String>,
     Json(body): Json<ApprovalDecisionRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
-    let approval = resolve_and_consume(
-        &server,
-        &approval_id,
-        body.conversation_id.as_deref(),
-        false,
-    )?;
-    Ok(resume_stream(server, approval, false))
+) -> Result<Sse<ApprovalStream>, (StatusCode, String)> {
+    let lookup = server
+        .approval_store
+        .get(&approval_id)
+        .ok_or((StatusCode::NOT_FOUND, "审批不存在".to_string()))?;
+    match classify_approval(&lookup) {
+        ApprovalTarget::Agent => {
+            let approval = resolve_and_consume(
+                &server,
+                &approval_id,
+                body.conversation_id.as_deref(),
+                false,
+            )?;
+            Ok(Sse::new(resume_stream(server, approval, false)))
+        }
+        ApprovalTarget::Workflow => Ok(Sse::new(workflow_approval_stream(server, lookup, false))),
+        ApprovalTarget::InvalidWorkflowBinding => {
+            Err((StatusCode::CONFLICT, "审批工作流绑定不完整".to_string()))
+        }
+    }
 }
 
 /// POST /api/approvals/:id/cancel — cancel a pending approval (no resume).
@@ -175,40 +320,64 @@ pub async fn cancel_handler(
     Path(approval_id): Path<String>,
     Json(body): Json<ApprovalDecisionRequest>,
 ) -> Json<serde_json::Value> {
-    let lookup = match server.approval_store.get(&approval_id) {
-        Some(a) => a,
-        None => {
-            return Json(serde_json::json!({"ok": false, "error": "审批不存在"}));
-        }
+    let Some(lookup) = server.approval_store.get(&approval_id) else {
+        return Json(serde_json::json!({"ok": false, "error": "审批不存在"}));
     };
-    let conv_id = body
-        .conversation_id
-        .clone()
-        .unwrap_or_else(|| lookup.conversation_id.clone());
-    match server.approval_store.cancel(&approval_id, &conv_id) {
-        Ok(a) => {
-            record_approval_resolved(&server, &a);
-            // Keep the conversation chain valid: record that the operation never ran.
-            let db = server.db.clone_connection();
-            let now = chrono::Utc::now().timestamp_millis();
-            let _ = db.add_message(&MessageRow {
-                id: uuid::Uuid::new_v4().to_string(),
-                conversation_id: a.conversation_id.clone(),
-                role: "tool".to_string(),
-                content: "任务已取消，操作未执行。".to_string(),
-                tool_calls: None,
-                tool_call_id: Some(a.tool_call_id.clone()),
-                tool_name: Some(a.tool_name.clone()),
-                tool_result: None,
-                created_at: now,
-            });
-            Json(serde_json::json!({
-                "ok": true,
-                "approval_id": a.approval_id,
-                "status": "cancelled"
-            }))
+    match classify_approval(&lookup) {
+        ApprovalTarget::Workflow => match cancel_workflow_approval(
+            &server.approval_store,
+            &server.db,
+            &approval_id,
+            &lookup.subject_id,
+        )
+        .await
+        {
+            Ok(()) => {
+                if let Some(consumed) = server.approval_store.get(&approval_id) {
+                    record_approval_resolved(&server, &consumed);
+                }
+                Json(serde_json::json!({
+                    "ok": true,
+                    "approval_id": approval_id,
+                    "status": "cancelled"
+                }))
+            }
+            Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
+        },
+        ApprovalTarget::InvalidWorkflowBinding => {
+            Json(serde_json::json!({"ok": false, "error": "审批工作流绑定不完整"}))
         }
-        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+        ApprovalTarget::Agent => {
+            let conv_id = body
+                .conversation_id
+                .clone()
+                .unwrap_or_else(|| lookup.conversation_id.clone());
+            match server.approval_store.cancel(&approval_id, &conv_id) {
+                Ok(a) => {
+                    record_approval_resolved(&server, &a);
+                    // Keep the conversation chain valid: record the op never ran.
+                    let db = server.db.clone_connection();
+                    let now = chrono::Utc::now().timestamp_millis();
+                    let _ = db.add_message(&MessageRow {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        conversation_id: a.conversation_id.clone(),
+                        role: "tool".to_string(),
+                        content: "任务已取消，操作未执行。".to_string(),
+                        tool_calls: None,
+                        tool_call_id: Some(a.tool_call_id.clone()),
+                        tool_name: Some(a.tool_name.clone()),
+                        tool_result: None,
+                        created_at: now,
+                    });
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "approval_id": a.approval_id,
+                        "status": "cancelled"
+                    }))
+                }
+                Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+            }
+        }
     }
 }
 
@@ -235,7 +404,7 @@ fn resume_stream(
     server: Arc<AppServer>,
     approval: PendingApproval,
     approve: bool,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> ApprovalStream {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
 
     tokio::spawn(async move {
@@ -494,7 +663,7 @@ fn resume_stream(
         }
     };
 
-    Sse::new(stream)
+    box_stream(stream)
 }
 
 /// Insert a tool message for the paused tool call into the conversation.
@@ -641,13 +810,15 @@ async fn resume_agent(
 #[cfg(test)]
 mod tests {
     use super::{
-        cancel_handler, execute_approved_tool, resolve_and_consume, ApprovalDecisionRequest,
+        approve_handler, cancel_handler, classify_approval, execute_approved_tool, reject_handler,
+        resolve_and_consume, workflow_approval_stream, ApprovalDecisionRequest, ApprovalTarget,
     };
     use async_trait::async_trait;
     use axum::{
         extract::{Path, State},
         Json,
     };
+    use futures::StreamExt;
     use parking_lot::Mutex;
     use std::{
         path::PathBuf,
@@ -659,10 +830,16 @@ mod tests {
 
     use crate::{
         db::{SecurityAuditEvent, SecurityAuditQuery},
+        execution::{ExecutionContext, ExecutionId},
         safety::execution_gateway::SecurityExecutionOutcome,
         safety::ControlSession,
         server::AppServer,
         tools::{trait_def::RiskLevel, Tool, ToolRegistry, ToolResult},
+        workflow::{
+            NodeRunStatus, WorkflowGraphDefinition, WorkflowNodeConfig, WorkflowNodeDefinition,
+            WorkflowNodeId, WorkflowNodeKind, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
+            WORKFLOW_GRAPH_SCHEMA_VERSION,
+        },
     };
 
     struct TempDatabase(PathBuf);
@@ -1054,5 +1231,246 @@ mod tests {
         // Old approval's tool_name cannot resolve in the new registry → Err.
         let outcome = execute_approved_tool(&server, &config, &consumed, &registry).await;
         assert!(outcome.is_err(), "stale approval must fail closed");
+    }
+
+    // ── Workflow approval HTTP bridge tests ──
+
+    fn plain_approval() -> crate::safety::PendingApproval {
+        crate::safety::PendingApproval {
+            approval_id: "a".to_string(),
+            conversation_id: "c".to_string(),
+            tool_call_id: "t".to_string(),
+            tool_name: "bash".to_string(),
+            arguments: serde_json::json!({}),
+            risk_level: RiskLevel::High,
+            reason: "r".to_string(),
+            status: crate::safety::ApprovalStatus::Pending,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now(),
+            subject_id: "local-user".to_string(),
+            execution_id: None,
+            workflow_run_id: None,
+            workflow_node_id: None,
+        }
+    }
+
+    #[test]
+    fn classify_plain_approval_as_agent() {
+        assert!(matches!(
+            classify_approval(&plain_approval()),
+            ApprovalTarget::Agent
+        ));
+    }
+
+    #[test]
+    fn classify_full_binding_as_workflow() {
+        let approval = crate::safety::PendingApproval {
+            execution_id: Some("e".into()),
+            workflow_run_id: Some("r".into()),
+            workflow_node_id: Some("n".into()),
+            ..plain_approval()
+        };
+        assert!(matches!(
+            classify_approval(&approval),
+            ApprovalTarget::Workflow
+        ));
+    }
+
+    #[test]
+    fn classify_partial_binding_as_invalid() {
+        let approval = crate::safety::PendingApproval {
+            execution_id: Some("e".into()),
+            workflow_run_id: Some("r".into()),
+            workflow_node_id: None,
+            ..plain_approval()
+        };
+        assert!(matches!(
+            classify_approval(&approval),
+            ApprovalTarget::InvalidWorkflowBinding
+        ));
+    }
+
+    fn bash_graph() -> WorkflowGraphDefinition {
+        WorkflowGraphDefinition {
+            schema_version: WORKFLOW_GRAPH_SCHEMA_VERSION,
+            entry_node_id: WorkflowNodeId::new("bash").unwrap(),
+            nodes: vec![WorkflowNodeDefinition {
+                id: WorkflowNodeId::new("bash").unwrap(),
+                kind: WorkflowNodeKind::Tool,
+                config: WorkflowNodeConfig::Tool {
+                    tool_name: "bash".to_string(),
+                    arguments: serde_json::json!({"command": "echo test"}),
+                },
+            }],
+            edges: vec![],
+        }
+    }
+
+    /// Create a persisted run paused in WaitingApproval, plus a workflow-bound
+    /// approval for it. Returns (run_id, approval_id).
+    fn paused_workflow(server: &AppServer) -> (String, String) {
+        let now = chrono::Utc::now().timestamp_millis();
+        let ctx = ExecutionContext::new(
+            ExecutionId::generate(),
+            "local-user",
+            "workflow-runner",
+            None,
+            now,
+        );
+        let mut run = WorkflowRun::new(WorkflowRunId::generate(), ctx, bash_graph(), now).unwrap();
+        let bash = WorkflowNodeId::new("bash").unwrap();
+        run.transition_node(&bash, NodeRunStatus::Running, now)
+            .unwrap();
+        run.transition_node(&bash, NodeRunStatus::WaitingApproval, now)
+            .unwrap();
+        let run_id = run.run_id.to_string();
+        server.db.create_workflow_run("g1", &run).unwrap();
+        server.db.update_workflow_run("g1", &run).unwrap();
+
+        let approval = server.approval_store.create_workflow(
+            run.execution_context.execution_id.to_string(),
+            run.run_id.to_string(),
+            "bash".to_string(),
+            "tool-call-1".to_string(),
+            "bash".to_string(),
+            serde_json::json!({"command": "echo test"}),
+            RiskLevel::High,
+            "high-risk".to_string(),
+            "local-user".to_string(),
+        );
+        (run_id, approval.approval_id)
+    }
+
+    async fn drain_stream(mut stream: super::ApprovalStream) {
+        while stream.next().await.is_some() {}
+    }
+
+    #[tokio::test]
+    async fn workflow_approve_handler_resumes_run() {
+        let (_temp, server) = test_server("wf-approve");
+        let (run_id, approval_id) = paused_workflow(&server);
+
+        // The real handler dispatches a workflow approval to the workflow path
+        // (returns an SSE, not a conflict / agent resume).
+        assert!(approve_handler(
+            State(server.clone()),
+            Path(approval_id.clone()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: None,
+            }),
+        )
+        .await
+        .is_ok());
+
+        // Drive the exact stream the handler wraps to completion.
+        let approval = server.approval_store.get(&approval_id).unwrap();
+        drain_stream(workflow_approval_stream(server.clone(), approval, true)).await;
+
+        let stored = server
+            .db
+            .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn workflow_reject_handler_fails_run() {
+        let (_temp, server) = test_server("wf-reject");
+        let (run_id, approval_id) = paused_workflow(&server);
+
+        assert!(reject_handler(
+            State(server.clone()),
+            Path(approval_id.clone()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: None,
+            }),
+        )
+        .await
+        .is_ok());
+
+        let approval = server.approval_store.get(&approval_id).unwrap();
+        drain_stream(workflow_approval_stream(server.clone(), approval, false)).await;
+
+        let stored = server
+            .db
+            .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.run.status, WorkflowRunStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn workflow_cancel_handler_cancels_run() {
+        let (_temp, server) = test_server("wf-cancel");
+        let (run_id, approval_id) = paused_workflow(&server);
+
+        let Json(response) = cancel_handler(
+            State(server.clone()),
+            Path(approval_id.clone()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: None,
+            }),
+        )
+        .await;
+        assert_eq!(response["ok"], true);
+
+        let stored = server
+            .db
+            .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.run.status, WorkflowRunStatus::Cancelled);
+        assert_eq!(
+            server
+                .approval_store
+                .get(&approval_id)
+                .unwrap()
+                .status
+                .to_string(),
+            "cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_approval_replay_is_rejected() {
+        let (_temp, server) = test_server("wf-replay");
+        let (run_id, approval_id) = paused_workflow(&server);
+
+        let approval = server.approval_store.get(&approval_id).unwrap();
+        drain_stream(workflow_approval_stream(server.clone(), approval, true)).await;
+
+        // Second resume: consume is already done → the stream fails closed and
+        // the run stays completed (no re-execution).
+        let approval = server.approval_store.get(&approval_id).unwrap();
+        drain_stream(workflow_approval_stream(server.clone(), approval, true)).await;
+
+        let stored = server
+            .db
+            .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn workflow_partial_binding_fails_closed() {
+        let (_temp, server) = test_server("wf-partial");
+        let mut approval = plain_approval();
+        approval.approval_id = "partial-1".to_string();
+        approval.execution_id = Some("e".to_string());
+        approval.workflow_run_id = Some("r".to_string());
+        approval.workflow_node_id = None;
+        server.approval_store.insert_for_test(approval);
+
+        let result = approve_handler(
+            State(server.clone()),
+            Path("partial-1".to_string()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: None,
+            }),
+        )
+        .await;
+        assert!(result.is_err());
     }
 }
