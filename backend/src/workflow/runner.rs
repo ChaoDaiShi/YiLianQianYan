@@ -67,7 +67,10 @@ impl<E: WorkflowNodeExecutor> WorkflowRunner<E> {
                 .await;
 
             match outcome {
-                Ok(NodeExecutionOutcome::Completed) => {
+                Ok(NodeExecutionOutcome::Completed { result }) => {
+                    if let Some(state) = run.node_mut(&node_id) {
+                        state.result = result;
+                    }
                     run.transition_node(&node_id, NodeRunStatus::Completed, now_ms())?;
                     persist(run).map_err(WorkflowExecutionError::Persistence)?;
                 }
@@ -76,7 +79,10 @@ impl<E: WorkflowNodeExecutor> WorkflowRunner<E> {
                     persist(run).map_err(WorkflowExecutionError::Persistence)?;
                     break;
                 }
-                Ok(NodeExecutionOutcome::Failed) => {
+                Ok(NodeExecutionOutcome::Failed { error }) => {
+                    if let Some(state) = run.node_mut(&node_id) {
+                        state.error = error;
+                    }
                     run.transition_node(&node_id, NodeRunStatus::Failed, now_ms())?;
                     persist(run).map_err(WorkflowExecutionError::Persistence)?;
                     break;

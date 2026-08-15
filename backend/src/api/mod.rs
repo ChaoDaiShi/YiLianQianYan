@@ -123,6 +123,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             post(workflow_runtime::run_workflow_graph),
         )
         .route(
+            "/api/workflow-runs",
+            get(workflow_runtime::list_workflow_runs),
+        )
+        .route(
             "/api/workflow-runs/:run_id",
             get(workflow_runtime::get_workflow_run),
         )

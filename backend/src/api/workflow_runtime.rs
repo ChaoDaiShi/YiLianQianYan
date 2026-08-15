@@ -8,20 +8,21 @@
 // ============================================================
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
+use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::agent::verifier::DefaultVerifier;
-use crate::db::WorkflowGraphRecord;
+use crate::db::{WorkflowGraphRecord, WorkflowRunQuery};
 use crate::execution::{ExecutionContext, ExecutionId};
 use crate::safety::{SecurityExecutionGateway, SecuritySubject};
 use crate::server::AppServer;
 use crate::workflow::{
-    SecurityGatewayNodeExecutor, WorkflowGraphDefinition, WorkflowRun, WorkflowRunId,
-    WorkflowRunner,
+    LlmWorkflowAgentExecutor, SecurityGatewayNodeExecutor, WorkflowAgentExecutor,
+    WorkflowGraphDefinition, WorkflowRun, WorkflowRunId, WorkflowRunner,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -39,9 +40,10 @@ pub struct UpdateWorkflowGraphRequest {
     pub definition: Option<WorkflowGraphDefinition>,
 }
 
-fn run_view(run: &WorkflowRun) -> serde_json::Value {
+fn run_view(graph_id: &str, run: &WorkflowRun) -> serde_json::Value {
     serde_json::json!({
         "run_id": run.run_id.as_str(),
+        "workflow_graph_id": graph_id,
         "status": run.status.to_string(),
         "created_at": run.created_at,
         "updated_at": run.updated_at,
@@ -53,6 +55,7 @@ fn run_view(run: &WorkflowRun) -> serde_json::Value {
             "started_at": s.started_at,
             "finished_at": s.finished_at,
             "error": s.error,
+            "result": s.result.as_ref().map(|r| serde_json::json!({ "summary": r.summary })),
         })).collect::<Vec<_>>(),
     })
 }
@@ -152,8 +155,20 @@ pub async fn delete_workflow_graph(
     Ok(Json(serde_json::json!({"status": "deleted"})))
 }
 
-/// POST /api/workflow-graphs/:id/run — create a run and execute it to
-/// completion / pause / failure, returning the final run state.
+/// Query params for `GET /api/workflow-runs`.
+#[derive(Debug, Deserialize, Default)]
+pub struct ListWorkflowRunsParams {
+    pub workflow_graph_id: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+/// POST /api/workflow-graphs/:id/run — create a run, persist it, register it as
+/// active, spawn the runner, and return immediately with the run id.
+///
+/// The HTTP request never waits for the workflow to finish; the frontend polls
+/// `GET /api/workflow-runs/:run_id` for progress.
 pub async fn run_workflow_graph(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
@@ -173,32 +188,59 @@ pub async fn run_workflow_graph(
         None,
         now,
     );
-    let mut run = WorkflowRun::new(
+    let run = WorkflowRun::new(
         WorkflowRunId::generate(),
         ctx,
         graph.definition.clone(),
         now,
     )
     .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let run_id = run.run_id.clone();
+    let execution_id = run.execution_context.execution_id.clone();
+    let initial_status = run.status.to_string();
+    let run_id_str = run_id.to_string();
+
+    // Persist immediately so the run is visible even before the runner starts.
     server
         .db
         .create_workflow_run(&id, &run)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
+    // Register an active-run cancel token.
+    let token = CancellationToken::new();
+    server
+        .active_workflow_runs
+        .lock()
+        .insert(run_id_str.clone(), token.clone());
+
+    // Build runtime components before spawning.
     let gateway = build_gateway(&server).await;
+    let agent_executor = build_agent_executor(&server);
     let executor =
-        SecurityGatewayNodeExecutor::new(Arc::clone(&gateway), Arc::clone(&server.approval_store));
+        SecurityGatewayNodeExecutor::new(Arc::clone(&gateway), Arc::clone(&server.approval_store))
+            .with_agent_executor(agent_executor);
     let runner = WorkflowRunner::new(executor);
+
     let db = server.db.clone_connection();
     let graph_id = id.clone();
-    runner
-        .run(&mut run, &CancellationToken::new(), move |r| {
-            db.update_workflow_run(&graph_id, r)
-        })
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let active_runs = server.active_workflow_runs.clone();
+    let mut run = run;
+    tokio::spawn(async move {
+        let result = runner
+            .run(&mut run, &token, |r| db.update_workflow_run(&graph_id, r))
+            .await;
+        // Terminal cleanup: always remove the active-run entry.
+        active_runs.lock().remove(&run_id_str);
+        if let Err(error) = result {
+            tracing::error!(run_id = %run_id_str, error = %error, "workflow run ended with an execution error");
+        }
+    });
 
-    Ok(Json(run_view(&run)))
+    Ok(Json(serde_json::json!({
+        "run_id": run_id.as_str(),
+        "execution_id": execution_id.as_str(),
+        "status": initial_status,
+    })))
 }
 
 pub async fn get_workflow_run(
@@ -212,7 +254,31 @@ pub async fn get_workflow_run(
         .get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "工作流运行不存在".to_string()))?;
-    Ok(Json(run_view(&stored.run)))
+    let graph_id = stored.workflow_graph_id.clone();
+    Ok(Json(run_view(&graph_id, &stored.run)))
+}
+
+/// GET /api/workflow-runs — list persisted runs (recent history), newest first.
+pub async fn list_workflow_runs(
+    State(server): State<Arc<AppServer>>,
+    Query(params): Query<ListWorkflowRunsParams>,
+) -> Json<serde_json::Value> {
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let query = WorkflowRunQuery {
+        workflow_graph_id: params.workflow_graph_id,
+        status: params.status,
+        limit: Some(limit),
+        offset: params.offset,
+    };
+    match server.db.list_workflow_runs(&query) {
+        Ok(stored) => Json(serde_json::json!({
+            "runs": stored.iter().map(|s| run_view(&s.workflow_graph_id, &s.run)).collect::<Vec<_>>(),
+        })),
+        Err(error) => {
+            tracing::error!(error = %error, "failed to list workflow runs");
+            Json(serde_json::json!({ "runs": [] }))
+        }
+    }
 }
 
 pub async fn cancel_workflow_run(
@@ -226,7 +292,24 @@ pub async fn cancel_workflow_run(
         .get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "工作流运行不存在".to_string()))?;
-    let (graph_id, mut run) = (stored.workflow_graph_id, stored.run);
+    let (graph_id, mut run) = (stored.workflow_graph_id.clone(), stored.run);
+
+    // Terminal runs: cancel is a stable no-op that returns the current state.
+    if matches!(
+        run.status,
+        crate::workflow::WorkflowRunStatus::Completed
+            | crate::workflow::WorkflowRunStatus::Failed
+            | crate::workflow::WorkflowRunStatus::Cancelled
+    ) {
+        return Ok(Json(run_view(&graph_id, &run)));
+    }
+
+    // Signal the active runner (if any) to stop scheduling further nodes.
+    if let Some(token) = server.active_workflow_runs.lock().get(run_id.as_str()) {
+        token.cancel();
+    }
+    // Remove from the active registry so a later re-run isn't blocked.
+    server.active_workflow_runs.lock().remove(run_id.as_str());
 
     // Cancel any pending approval bound to this run.
     for approval in server.approval_store.list_pending() {
@@ -237,12 +320,14 @@ pub async fn cancel_workflow_run(
         }
     }
 
+    // Persist the terminal Cancelled state (the spawned runner's persist closure
+    // will also see the cancelled token and persist — idempotent overwrite).
     run.cancel(chrono::Utc::now().timestamp_millis());
     server
         .db
         .update_workflow_run(&graph_id, &run)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    Ok(Json(run_view(&run)))
+    Ok(Json(run_view(&graph_id, &run)))
 }
 
 async fn build_gateway(server: &AppServer) -> Arc<SecurityExecutionGateway> {
@@ -260,15 +345,25 @@ async fn build_gateway(server: &AppServer) -> Arc<SecurityExecutionGateway> {
     )
 }
 
+/// Build the LLM-only agent executor from the configured model. Node config can
+/// never supply secrets — model/provider/base_url all come from app config.
+fn build_agent_executor(server: &AppServer) -> Arc<dyn WorkflowAgentExecutor> {
+    let config = server.config.read().clone();
+    Arc::new(LlmWorkflowAgentExecutor::new(&config.model))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::{ExecutionContext, ExecutionId};
     use crate::safety::ControlSession;
     use crate::server::AppServer;
     use crate::workflow::{
-        WorkflowEdgeDefinition, WorkflowNodeConfig, WorkflowNodeDefinition, WorkflowNodeId,
-        WorkflowNodeKind, WORKFLOW_GRAPH_SCHEMA_VERSION,
+        NodeRunStatus, WorkflowEdgeDefinition, WorkflowGraphDefinition, WorkflowNodeConfig,
+        WorkflowNodeDefinition, WorkflowNodeId, WorkflowNodeKind, WorkflowRun, WorkflowRunId,
+        WorkflowRunStatus, WORKFLOW_GRAPH_SCHEMA_VERSION,
     };
+    use tokio_util::sync::CancellationToken;
 
     fn test_server() -> (std::path::PathBuf, Arc<AppServer>) {
         let path = std::env::temp_dir().join(format!("yilian-wf-api-{}.db", uuid::Uuid::new_v4()));
@@ -318,6 +413,282 @@ mod tests {
         };
         let result = create_workflow_graph(State(server), Json(body)).await;
         assert!(result.is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Async run lifecycle ──
+
+    async fn create_graph_id(server: &Arc<AppServer>) -> String {
+        let body = CreateWorkflowGraphRequest {
+            name: Some("g".to_string()),
+            description: None,
+            definition: output_graph(),
+        };
+        let result = create_workflow_graph(State(server.clone()), Json(body))
+            .await
+            .unwrap();
+        result.0["id"].as_str().unwrap().to_string()
+    }
+
+    async fn wait_until_terminal(server: &Arc<AppServer>, run_id: &str) {
+        let run_id = WorkflowRunId::new(run_id.to_string()).unwrap();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(stored) = server.db.get_workflow_run(&run_id).unwrap() {
+                if stored.run.status.is_terminal() {
+                    return;
+                }
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "run did not reach a terminal state in time"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn run_start_returns_immediately_and_completes() {
+        let (path, server) = test_server();
+        let graph_id = create_graph_id(&server).await;
+
+        let result = run_workflow_graph(State(server.clone()), Path(graph_id.clone()))
+            .await
+            .unwrap();
+        let run_id = result.0["run_id"].as_str().unwrap().to_string();
+        assert_eq!(
+            result.0["status"], "created",
+            "start must return the created status"
+        );
+
+        // The run must be persisted immediately (visible before terminal).
+        let run_id_typed = WorkflowRunId::new(run_id.clone()).unwrap();
+        assert!(server.db.get_workflow_run(&run_id_typed).unwrap().is_some());
+
+        wait_until_terminal(&server, &run_id).await;
+
+        let stored = server.db.get_workflow_run(&run_id_typed).unwrap().unwrap();
+        assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+
+        // The active-run registry must be cleaned up after the terminal state.
+        assert!(
+            server.active_workflow_runs.lock().is_empty(),
+            "active workflow run registry must be empty after terminal"
+        );
+
+        // The run view exposes the Output node result.
+        let view = get_workflow_run(State(server.clone()), Path(run_id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(view.0["status"], "completed");
+        assert_eq!(view.0["workflow_graph_id"], graph_id);
+        assert_eq!(view.0["nodes"][0]["result"]["summary"], "工作流执行完成");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn paused_run_in_db(server: &Arc<AppServer>, graph_id: &str) -> (String, String) {
+        let now = chrono::Utc::now().timestamp_millis();
+        let ctx = ExecutionContext::new(
+            ExecutionId::generate(),
+            "local-user",
+            "workflow-runner",
+            None,
+            now,
+        );
+        let mut run =
+            WorkflowRun::new(WorkflowRunId::generate(), ctx, output_graph(), now).unwrap();
+        let node_id = WorkflowNodeId::new("done").unwrap();
+        run.transition_node(&node_id, NodeRunStatus::Running, now)
+            .unwrap();
+        run.transition_node(&node_id, NodeRunStatus::WaitingApproval, now)
+            .unwrap();
+        let run_id = run.run_id.to_string();
+        server.db.create_workflow_run(graph_id, &run).unwrap();
+        server.db.update_workflow_run(graph_id, &run).unwrap();
+
+        let approval = server.approval_store.create_workflow(
+            run.execution_context.execution_id.to_string(),
+            run.run_id.to_string(),
+            "done".to_string(),
+            "tool-call-1".to_string(),
+            "bash".to_string(),
+            serde_json::json!({"command": "echo x"}),
+            crate::tools::RiskLevel::High,
+            "high-risk".to_string(),
+            "local-user".to_string(),
+        );
+        (run_id, approval.approval_id)
+    }
+
+    #[tokio::test]
+    async fn cancel_workflow_run_cancels_active_token_and_persists() {
+        let (path, server) = test_server();
+        let graph_id = create_graph_id(&server).await;
+        let (run_id, approval_id) = paused_run_in_db(&server, &graph_id);
+
+        // Simulate an active runner registered in the registry.
+        let token = CancellationToken::new();
+        server
+            .active_workflow_runs
+            .lock()
+            .insert(run_id.clone(), token.clone());
+
+        let result = cancel_workflow_run(State(server.clone()), Path(run_id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(result.0["status"], "cancelled");
+        assert!(
+            token.is_cancelled(),
+            "active runner token must be cancelled"
+        );
+        assert!(
+            server.active_workflow_runs.lock().is_empty(),
+            "cancelled run must be removed from the active registry"
+        );
+
+        let stored = server
+            .db
+            .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.run.status, WorkflowRunStatus::Cancelled);
+
+        // The bound pending approval is also cancelled.
+        assert_eq!(
+            server
+                .approval_store
+                .get(&approval_id)
+                .unwrap()
+                .status
+                .to_string(),
+            "cancelled"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn cancel_terminal_run_is_stable() {
+        let (path, server) = test_server();
+        let graph_id = create_graph_id(&server).await;
+
+        let start = run_workflow_graph(State(server.clone()), Path(graph_id.clone()))
+            .await
+            .unwrap();
+        let run_id = start.0["run_id"].as_str().unwrap().to_string();
+        wait_until_terminal(&server, &run_id).await;
+
+        // Cancelling a completed run is a stable no-op returning the same state.
+        let result = cancel_workflow_run(State(server.clone()), Path(run_id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(result.0["status"], "completed");
+        let stored = server
+            .db
+            .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Run history ──
+
+    fn persist_run(
+        server: &Arc<AppServer>,
+        graph_id: &str,
+        status: WorkflowRunStatus,
+        ts: i64,
+    ) -> String {
+        let ctx = ExecutionContext::new(
+            ExecutionId::generate(),
+            "local-user",
+            "workflow-runner",
+            None,
+            ts,
+        );
+        let mut run = WorkflowRun::new(WorkflowRunId::generate(), ctx, output_graph(), ts).unwrap();
+        let node_id = WorkflowNodeId::new("done").unwrap();
+        // Force the run status directly so history filters can target it.
+        run.node_mut(&node_id).unwrap().status = match status {
+            WorkflowRunStatus::Completed => NodeRunStatus::Completed,
+            WorkflowRunStatus::Failed => NodeRunStatus::Failed,
+            WorkflowRunStatus::WaitingApproval => NodeRunStatus::WaitingApproval,
+            WorkflowRunStatus::Cancelled => NodeRunStatus::Cancelled,
+            _ => NodeRunStatus::Running,
+        };
+        run.status = status;
+        run.updated_at = ts;
+        let run_id = run.run_id.to_string();
+        server.db.create_workflow_run(graph_id, &run).unwrap();
+        run_id
+    }
+
+    #[tokio::test]
+    async fn list_workflow_runs_orders_newest_first_and_filters() {
+        let (path, server) = test_server();
+        let graph_a = create_graph_id(&server).await;
+        let graph_b = create_graph_id(&server).await;
+
+        let r1 = persist_run(&server, &graph_a, WorkflowRunStatus::Completed, 100);
+        let r2 = persist_run(&server, &graph_a, WorkflowRunStatus::Failed, 200);
+        let r3 = persist_run(&server, &graph_b, WorkflowRunStatus::Completed, 300);
+
+        // All runs, newest first.
+        let all = list_workflow_runs(
+            State(server.clone()),
+            Query(ListWorkflowRunsParams::default()),
+        )
+        .await;
+        let runs = all.0["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0]["run_id"], r3);
+        assert_eq!(runs[1]["run_id"], r2);
+        assert_eq!(runs[2]["run_id"], r1);
+
+        // Filter by graph id.
+        let filtered = list_workflow_runs(
+            State(server.clone()),
+            Query(ListWorkflowRunsParams {
+                workflow_graph_id: Some(graph_a.clone()),
+                status: None,
+                limit: None,
+                offset: None,
+            }),
+        )
+        .await;
+        let runs = filtered.0["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 2);
+        assert!(runs.iter().all(|r| r["workflow_graph_id"] == graph_a));
+
+        // Filter by status.
+        let failed = list_workflow_runs(
+            State(server.clone()),
+            Query(ListWorkflowRunsParams {
+                workflow_graph_id: None,
+                status: Some("failed".to_string()),
+                limit: None,
+                offset: None,
+            }),
+        )
+        .await;
+        let runs = failed.0["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0]["run_id"], r2);
+
+        // Limit is applied and clamped.
+        let limited = list_workflow_runs(
+            State(server.clone()),
+            Query(ListWorkflowRunsParams {
+                workflow_graph_id: None,
+                status: None,
+                limit: Some(2),
+                offset: None,
+            }),
+        )
+        .await;
+        let runs = limited.0["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 2);
+
         let _ = std::fs::remove_file(&path);
     }
 }

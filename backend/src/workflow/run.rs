@@ -81,6 +81,13 @@ impl std::fmt::Display for WorkflowRunStatus {
     }
 }
 
+impl WorkflowRunStatus {
+    /// Terminal states cannot transition to any other state.
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+}
+
 /// The lifecycle status of a single workflow node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -120,10 +127,63 @@ impl std::fmt::Display for NodeRunStatus {
     }
 }
 
+/// Maximum length (in chars) of a persisted node result summary. Truncation is
+/// char-safe — it never splits a UTF-8 code point.
+pub const MAX_WORKFLOW_NODE_RESULT_CHARS: usize = 8000;
+
+/// A bounded, UI-safe textual result produced by a workflow node.
+///
+/// Only a truncated textual summary is ever stored — never raw tool arguments,
+/// base64 payloads, API keys, secrets, or internal Debug output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeRunResult {
+    pub summary: String,
+}
+
+impl NodeRunResult {
+    /// Build a result, truncating the summary to a char-safe bounded length.
+    pub fn new(summary: impl Into<String>) -> Self {
+        Self {
+            summary: truncate_result_summary(&summary.into()),
+        }
+    }
+}
+
+fn truncate_result_summary(text: &str) -> String {
+    let mut chars = text.chars();
+    let mut prefix: String = chars
+        .by_ref()
+        .take(MAX_WORKFLOW_NODE_RESULT_CHARS)
+        .collect();
+    if chars.next().is_some() {
+        // Reserve room for the "..." suffix so the final length stays in budget.
+        while prefix.chars().count() + 3 > MAX_WORKFLOW_NODE_RESULT_CHARS {
+            prefix.pop();
+        }
+        format!("{prefix}...")
+    } else {
+        prefix
+    }
+}
+
+/// Build a bounded, UI-safe summary from a raw tool result, replacing
+/// binary-ish payloads (e.g. `data:image/...`) with a friendly label.
+pub fn safe_tool_result_summary(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("data:image")
+        || trimmed.starts_with("data:audio")
+        || trimmed.starts_with("data:video")
+        || trimmed.starts_with("data:application/octet-stream")
+    {
+        return "二进制结果已生成".to_string();
+    }
+    NodeRunResult::new(raw).summary
+}
+
 /// The runtime state of a single node.
 ///
-/// Deliberately free of secrets and full tool arguments. It carries no output
-/// in this step.
+/// Deliberately free of secrets and full tool arguments. It carries a bounded
+/// textual result for UI display.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRunState {
     pub node_id: WorkflowNodeId,
@@ -131,6 +191,7 @@ pub struct NodeRunState {
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub error: Option<String>,
+    pub result: Option<NodeRunResult>,
 }
 
 impl NodeRunState {
@@ -141,6 +202,7 @@ impl NodeRunState {
             started_at: None,
             finished_at: None,
             error: None,
+            result: None,
         }
     }
 

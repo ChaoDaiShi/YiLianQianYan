@@ -94,6 +94,47 @@ fn reconstruct_run(
     })
 }
 
+/// Map a `workflow_runs` row (11 columns) into a [`StoredWorkflowRun`].
+fn run_row_to_stored(
+    run_id: String,
+    workflow_graph_id: Option<String>,
+    execution_id: String,
+    subject_id: String,
+    agent_name: String,
+    parent_execution_id: Option<String>,
+    status: String,
+    definition_json: String,
+    state_json: String,
+    created_at: i64,
+    updated_at: i64,
+) -> Result<StoredWorkflowRun, String> {
+    let run = reconstruct_run(
+        run_id,
+        execution_id,
+        subject_id,
+        agent_name,
+        parent_execution_id,
+        status,
+        definition_json,
+        state_json,
+        created_at,
+        updated_at,
+    )?;
+    Ok(StoredWorkflowRun {
+        workflow_graph_id: workflow_graph_id.unwrap_or_default(),
+        run,
+    })
+}
+
+/// Filter for listing persisted workflow runs.
+#[derive(Debug, Clone, Default)]
+pub struct WorkflowRunQuery {
+    pub workflow_graph_id: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
 impl Database {
     // ---- workflow_graphs -------------------------------------------------
 
@@ -322,8 +363,9 @@ impl Database {
                     created_at,
                     updated_at,
                 ) = row.map_err(|error| error.to_string())?;
-                let run = reconstruct_run(
+                Ok(Some(run_row_to_stored(
                     run_id,
+                    workflow_graph_id,
                     execution_id,
                     subject_id,
                     agent_name,
@@ -333,14 +375,99 @@ impl Database {
                     state_json,
                     created_at,
                     updated_at,
-                )?;
-                Ok(Some(StoredWorkflowRun {
-                    workflow_graph_id: workflow_graph_id.unwrap_or_default(),
-                    run,
-                }))
+                )?))
             }
             None => Ok(None),
         }
+    }
+
+    /// List persisted workflow runs, newest-updated first, deterministically.
+    pub fn list_workflow_runs(
+        &self,
+        query: &WorkflowRunQuery,
+    ) -> Result<Vec<StoredWorkflowRun>, String> {
+        let conn = self.conn();
+        let mut sql = String::from(
+            "SELECT run_id, workflow_graph_id, execution_id, subject_id, agent_name,
+                    parent_execution_id, status, definition_snapshot_json, state_json,
+                    created_at, updated_at
+             FROM workflow_runs WHERE 1 = 1",
+        );
+        let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(graph_id) = &query.workflow_graph_id {
+            sql.push_str(&format!(" AND workflow_graph_id = ?{}", values.len() + 1));
+            values.push(Box::new(graph_id.clone()));
+        }
+        if let Some(status) = &query.status {
+            // Status is already stored as a canonical snake_case string; reject
+            // unknown values rather than silently matching nothing.
+            run_status_from_str(status).map_err(|error| error.to_string())?;
+            sql.push_str(&format!(" AND status = ?{}", values.len() + 1));
+            values.push(Box::new(status.clone()));
+        }
+
+        sql.push_str(" ORDER BY updated_at DESC, run_id DESC");
+
+        let limit = query.limit.unwrap_or(20).clamp(1, 100) as i64;
+        sql.push_str(&format!(" LIMIT ?{}", values.len() + 1));
+        values.push(Box::new(limit));
+        let offset = query.offset.unwrap_or(0) as i64;
+        sql.push_str(&format!(" OFFSET ?{}", values.len() + 1));
+        values.push(Box::new(offset));
+
+        let parameter_refs = values
+            .iter()
+            .map(|value| value.as_ref())
+            .collect::<Vec<_>>();
+        let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map(parameter_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, i64>(10)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?;
+
+        rows.map(|row| {
+            let (
+                run_id,
+                workflow_graph_id,
+                execution_id,
+                subject_id,
+                agent_name,
+                parent_execution_id,
+                status,
+                definition_json,
+                state_json,
+                created_at,
+                updated_at,
+            ) = row.map_err(|error| error.to_string())?;
+            run_row_to_stored(
+                run_id,
+                workflow_graph_id,
+                execution_id,
+                subject_id,
+                agent_name,
+                parent_execution_id,
+                status,
+                definition_json,
+                state_json,
+                created_at,
+                updated_at,
+            )
+        })
+        .collect()
     }
 
     pub fn update_workflow_run(

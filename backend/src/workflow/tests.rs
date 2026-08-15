@@ -612,11 +612,11 @@ impl WorkflowNodeExecutor for MockExecutor {
         node: &WorkflowNodeDefinition,
     ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
         Ok(match node.id.as_str() {
-            "fail" => NodeExecutionOutcome::Failed,
+            "fail" => NodeExecutionOutcome::Failed { error: None },
             "approve" => NodeExecutionOutcome::WaitingApproval {
                 approval_id: "a1".to_string(),
             },
-            _ => NodeExecutionOutcome::Completed,
+            _ => NodeExecutionOutcome::Completed { result: None },
         })
     }
 }
@@ -634,7 +634,7 @@ impl WorkflowNodeExecutor for RecordingExecutor {
         node: &WorkflowNodeDefinition,
     ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
         self.calls.lock().unwrap().push(node.id.to_string());
-        Ok(NodeExecutionOutcome::Completed)
+        Ok(NodeExecutionOutcome::Completed { result: None })
     }
 }
 
@@ -654,7 +654,7 @@ impl WorkflowNodeExecutor for CancellingExecutor {
         if node.id.as_str() == self.trigger.as_str() {
             self.cancel.cancel();
         }
-        Ok(NodeExecutionOutcome::Completed)
+        Ok(NodeExecutionOutcome::Completed { result: None })
     }
 }
 
@@ -1360,4 +1360,373 @@ async fn workflow_wrong_run_rejected() {
     .await;
     assert!(result.is_err());
     let _ = std::fs::remove_file(&db_path);
+}
+
+// ============================================================
+// Node results + LLM-only Agent node tests.
+// ============================================================
+
+#[test]
+fn node_result_truncates_to_bounded_chars() {
+    let long = "x".repeat(MAX_WORKFLOW_NODE_RESULT_CHARS * 2);
+    let result = NodeRunResult::new(long);
+    assert!(result.summary.chars().count() <= MAX_WORKFLOW_NODE_RESULT_CHARS);
+}
+
+#[test]
+fn node_result_truncation_is_utf8_safe() {
+    let long = "这是一个很长的中文结果。".repeat(4000);
+    let result = NodeRunResult::new(long);
+    assert!(result.summary.chars().count() <= MAX_WORKFLOW_NODE_RESULT_CHARS);
+    assert!(result.summary.is_char_boundary(result.summary.len()));
+}
+
+#[test]
+fn safe_tool_summary_replaces_binary_payload() {
+    assert_eq!(
+        safe_tool_result_summary("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA..."),
+        "二进制结果已生成"
+    );
+    assert_eq!(
+        safe_tool_result_summary("data:audio/wav;base64,UklGR..."),
+        "二进制结果已生成"
+    );
+    assert_eq!(safe_tool_result_summary("普通文本结果"), "普通文本结果");
+}
+
+struct ResultExecutor {
+    summary: String,
+}
+
+#[async_trait]
+impl WorkflowNodeExecutor for ResultExecutor {
+    async fn execute(
+        &self,
+        _context: &ExecutionContext,
+        _run_id: &WorkflowRunId,
+        _node: &WorkflowNodeDefinition,
+    ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
+        Ok(NodeExecutionOutcome::Completed {
+            result: Some(NodeRunResult::new(self.summary.clone())),
+        })
+    }
+}
+
+#[tokio::test]
+async fn runner_persists_node_result() {
+    let mut r = run(
+        "start",
+        vec![node("start"), node("a")],
+        vec![edge("start", "a")],
+    );
+    let runner = WorkflowRunner::new(ResultExecutor {
+        summary: "研究完成".to_string(),
+    });
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Completed);
+    assert_eq!(
+        r.node(&id("a")).unwrap().result.as_ref().unwrap().summary,
+        "研究完成"
+    );
+}
+
+struct FailExecutor {
+    message: String,
+    fail_on: &'static str,
+}
+
+#[async_trait]
+impl WorkflowNodeExecutor for FailExecutor {
+    async fn execute(
+        &self,
+        _context: &ExecutionContext,
+        _run_id: &WorkflowRunId,
+        node: &WorkflowNodeDefinition,
+    ) -> Result<NodeExecutionOutcome, WorkflowExecutionError> {
+        if node.id.as_str() == self.fail_on {
+            Ok(NodeExecutionOutcome::Failed {
+                error: Some(self.message.clone()),
+            })
+        } else {
+            Ok(NodeExecutionOutcome::Completed { result: None })
+        }
+    }
+}
+
+#[tokio::test]
+async fn runner_persists_failed_error_summary() {
+    let mut r = run(
+        "start",
+        vec![node("start"), node("a")],
+        vec![edge("start", "a")],
+    );
+    let runner = WorkflowRunner::new(FailExecutor {
+        message: "工具执行失败".to_string(),
+        fail_on: "a",
+    });
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Failed);
+    assert_eq!(
+        r.node(&id("a")).unwrap().error.as_deref(),
+        Some("工具执行失败")
+    );
+}
+
+fn agent_node(id: &str, prompt: &str) -> WorkflowNodeDefinition {
+    WorkflowNodeDefinition {
+        id: WorkflowNodeId::new(id).unwrap(),
+        kind: WorkflowNodeKind::Agent,
+        config: WorkflowNodeConfig::Agent {
+            prompt: prompt.to_string(),
+        },
+    }
+}
+
+struct FakeAgentExecutor {
+    text: String,
+    fail: bool,
+    cancel_on_generate: Option<CancellationToken>,
+}
+
+#[async_trait]
+impl WorkflowAgentExecutor for FakeAgentExecutor {
+    async fn generate(&self, _prompt: &str) -> Result<String, WorkflowExecutionError> {
+        if let Some(token) = &self.cancel_on_generate {
+            token.cancel();
+        }
+        if self.fail {
+            Err(WorkflowExecutionError::Execution("llm failed".to_string()))
+        } else {
+            Ok(self.text.clone())
+        }
+    }
+}
+
+fn empty_gateway_and_store() -> (
+    Arc<SecurityExecutionGateway>,
+    Arc<crate::safety::ApprovalStore>,
+) {
+    (
+        Arc::new(SecurityExecutionGateway::new()),
+        Arc::new(crate::safety::ApprovalStore::new()),
+    )
+}
+
+#[tokio::test]
+async fn agent_node_completes_with_text_result_and_no_approval() {
+    let (gateway, store) = empty_gateway_and_store();
+    let fake = FakeAgentExecutor {
+        text: "研究结论".to_string(),
+        fail: false,
+        cancel_on_generate: None,
+    };
+    let executor = SecurityGatewayNodeExecutor::new(gateway, store.clone())
+        .with_agent_executor(Arc::new(fake));
+    let runner = WorkflowRunner::new(executor);
+    let mut r = WorkflowRun::new(
+        WorkflowRunId::generate(),
+        ctx(),
+        graph("think", vec![agent_node("think", "研究这个仓库")], vec![]),
+        1_000,
+    )
+    .unwrap();
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Completed);
+    assert_eq!(
+        r.node(&id("think"))
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .summary,
+        "研究结论"
+    );
+    assert!(
+        store.list_pending().is_empty(),
+        "agent node must not create approvals"
+    );
+}
+
+#[tokio::test]
+async fn agent_node_llm_error_fails_node() {
+    let (gateway, store) = empty_gateway_and_store();
+    let fake = FakeAgentExecutor {
+        text: String::new(),
+        fail: true,
+        cancel_on_generate: None,
+    };
+    let executor =
+        SecurityGatewayNodeExecutor::new(gateway, store).with_agent_executor(Arc::new(fake));
+    let runner = WorkflowRunner::new(executor);
+    let mut r = WorkflowRun::new(
+        WorkflowRunId::generate(),
+        ctx(),
+        graph("think", vec![agent_node("think", "研究")], vec![]),
+        1_000,
+    )
+    .unwrap();
+    runner
+        .run(&mut r, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Failed);
+    assert_eq!(r.node(&id("think")).unwrap().status, NodeRunStatus::Failed);
+}
+
+#[tokio::test]
+async fn agent_node_cancellation_stops_downstream() {
+    let cancel = CancellationToken::new();
+    let (gateway, store) = empty_gateway_and_store();
+    let fake = FakeAgentExecutor {
+        text: "done".to_string(),
+        fail: false,
+        cancel_on_generate: Some(cancel.clone()),
+    };
+    let executor =
+        SecurityGatewayNodeExecutor::new(gateway, store).with_agent_executor(Arc::new(fake));
+    let runner = WorkflowRunner::new(executor);
+    let mut r = WorkflowRun::new(
+        WorkflowRunId::generate(),
+        ctx(),
+        graph(
+            "think",
+            vec![agent_node("think", "x"), node("a"), node("b")],
+            vec![edge("think", "a"), edge("a", "b")],
+        ),
+        1_000,
+    )
+    .unwrap();
+    runner.run(&mut r, &cancel, noop_persist).await.unwrap();
+    assert_eq!(r.status, WorkflowRunStatus::Cancelled);
+    assert_eq!(r.node(&id("a")).unwrap().status, NodeRunStatus::Cancelled);
+    assert_eq!(r.node(&id("b")).unwrap().status, NodeRunStatus::Cancelled);
+}
+
+// ── Production LLM-only agent executor vs a local mock HTTP LLM server ──
+
+use crate::config::types::ModelConfig;
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+
+#[derive(Clone)]
+struct MockChatState {
+    responses: Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+async fn mock_chat_handler(
+    State(state): State<MockChatState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let mut responses = state.responses.lock().unwrap();
+    if responses.is_empty() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "no more responses" })),
+        );
+    }
+    (StatusCode::OK, Json(responses.remove(0)))
+}
+
+async fn start_mock_chat_server(
+    responses: Vec<serde_json::Value>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let state = MockChatState {
+        responses: Arc::new(Mutex::new(responses)),
+    };
+    let app = Router::new()
+        .route("/chat/completions", post(mock_chat_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = format!("http://{}", listener.local_addr().unwrap());
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (addr, handle)
+}
+
+fn mock_agent_config(base_url: &str) -> ModelConfig {
+    ModelConfig {
+        name: "mock-model".to_string(),
+        base_url: base_url.to_string(),
+        api_key: "mock-key".to_string(),
+        invoke_timeout_ms: 5_000,
+        ..Default::default()
+    }
+}
+
+fn chat_response(content: Option<&str>, tool_calls: bool) -> serde_json::Value {
+    let message = if tool_calls {
+        serde_json::json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call-1",
+                "type": "function",
+                "function": { "name": "bash", "arguments": "{}" }
+            }]
+        })
+    } else {
+        serde_json::json!({
+            "role": "assistant",
+            "content": content,
+        })
+    };
+    serde_json::json!({
+        "id": "mock-1",
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": if tool_calls { "tool_calls" } else { "stop" }
+        }]
+    })
+}
+
+#[tokio::test]
+async fn llm_agent_executor_returns_text_from_mock_server() {
+    let (addr, _handle) =
+        start_mock_chat_server(vec![chat_response(Some("研究完成"), false)]).await;
+    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr));
+    let text = agent.generate("研究").await.unwrap();
+    assert_eq!(text, "研究完成");
+}
+
+#[tokio::test]
+async fn llm_agent_executor_fails_closed_on_tool_calls() {
+    let (addr, _handle) = start_mock_chat_server(vec![chat_response(None, true)]).await;
+    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr));
+    let error = agent.generate("研究").await.unwrap_err();
+    assert!(
+        error.to_string().contains("unsupported tool calls"),
+        "got: {error}"
+    );
+}
+
+#[tokio::test]
+async fn llm_agent_executor_fails_closed_on_llm_error() {
+    // Server returns 500 → LlmClient returns an Api error → node fails closed.
+    let state = MockChatState {
+        responses: Arc::new(Mutex::new(vec![])),
+    };
+    let app = Router::new()
+        .route("/chat/completions", post(mock_chat_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = format!("http://{}", listener.local_addr().unwrap());
+    let _handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr));
+    let error = agent.generate("研究").await.unwrap_err();
+    assert!(
+        matches!(error, WorkflowExecutionError::Execution(_)),
+        "expected an execution error, got {error:?}"
+    );
 }
