@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod api;
+pub mod capability;
 pub mod config;
 pub mod db;
 pub mod execution;

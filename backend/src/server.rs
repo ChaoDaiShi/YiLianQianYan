@@ -7,6 +7,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+use crate::capability::{
+    AgentProvider, BuiltinToolProvider, CapabilityRegistry, McpToolProvider, SkillProvider,
+    SubagentProvider, WorkflowProvider,
+};
 use crate::config::types::AppConfig;
 use crate::db::Database;
 use crate::safety::{approval::ApprovalStore, AuditRecorder, ControlSession};
@@ -112,6 +116,8 @@ pub struct AppServer {
     pub audit_recorder: AuditRecorder,
     /// In-memory credential for the local HTTP control plane.
     pub control_session: ControlSession,
+    /// Lazily-built unified capability registry (discovery-only).
+    pub capability_registry: Arc<RwLock<Option<Arc<CapabilityRegistry>>>>,
 }
 
 impl AppServer {
@@ -183,6 +189,7 @@ impl AppServer {
             approval_store: Arc::new(ApprovalStore::new()),
             audit_recorder,
             control_session,
+            capability_registry: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -340,6 +347,39 @@ impl AppServer {
         tracing::info!(registered, "Subagent tools registered for runtime registry");
 
         Arc::new(parent_registry)
+    }
+
+    /// Lazily build (and cache) the unified capability registry.
+    pub async fn capability_registry(&self) -> Arc<CapabilityRegistry> {
+        if let Some(registry) = self.capability_registry.read().as_ref() {
+            return Arc::clone(registry);
+        }
+        let registry = self.build_capability_registry().await;
+        *self.capability_registry.write() = Some(Arc::clone(&registry));
+        registry
+    }
+
+    /// Build a fresh capability registry from the current runtime sources.
+    pub async fn build_capability_registry(&self) -> Arc<CapabilityRegistry> {
+        let tool_registry = self.build_agent_tool_registry().await;
+        let skills = self
+            .skill_discovery
+            .read()
+            .all()
+            .iter()
+            .map(|s| (*s).clone())
+            .collect();
+        let providers: Vec<Arc<dyn crate::capability::CapabilityProvider>> = vec![
+            Arc::new(BuiltinToolProvider::new(Arc::clone(&tool_registry))),
+            Arc::new(McpToolProvider::new(Arc::clone(&tool_registry))),
+            Arc::new(SubagentProvider::new(self.subagents.clone())),
+            Arc::new(AgentProvider::new(self.db.clone_connection())),
+            Arc::new(WorkflowProvider::new(self.db.clone_connection())),
+            Arc::new(SkillProvider::new(skills)),
+        ];
+        let registry = Arc::new(CapabilityRegistry::new(providers));
+        let _report = registry.refresh().await;
+        registry
     }
 
     fn discover_subagents(root: &str, dirs: &[String]) -> Vec<DiscoveredSubagent> {

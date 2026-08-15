@@ -18,6 +18,7 @@ use crate::server::AppServer;
 
 mod agents;
 mod approvals;
+mod capabilities;
 mod chat;
 mod conversations;
 mod logs;
@@ -169,6 +170,13 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/agent-teams", get(agents::list_teams))
         .route("/api/agent-teams", post(agents::create_team))
         .route("/api/agent-teams/:id", get(agents::get_team))
+        // Capability API (discovery-only)
+        .route("/api/capabilities", get(capabilities::list_capabilities))
+        .route(
+            "/api/capabilities/refresh",
+            post(capabilities::refresh_capabilities),
+        )
+        .route("/api/capabilities/:id", get(capabilities::get_capability))
         // Logs API
         .route("/api/logs", get(logs::get_logs))
         .route("/api/logs", post(logs::push_log))

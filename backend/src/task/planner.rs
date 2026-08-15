@@ -89,6 +89,34 @@ pub fn validate_plan_structure(plan: &TaskPlan) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate that every plan-step executor references a *ready* capability in
+/// the unified registry. Rejects missing / disabled / unavailable references
+/// up front rather than deferring the failure to execution time.
+pub fn validate_plan_references(
+    plan: &TaskPlan,
+    registry: &crate::capability::CapabilityRegistry,
+) -> Result<(), String> {
+    use crate::capability::{CapabilityId, CapabilityRuntimeStatus};
+
+    for step in &plan.steps {
+        let id = match &step.executor {
+            TaskPlanExecutor::Agent { agent_id } => format!("agent.{agent_id}"),
+            TaskPlanExecutor::Workflow { workflow_graph_id } => {
+                format!("workflow.{workflow_graph_id}")
+            }
+            TaskPlanExecutor::Subagent { name } => format!("subagent.{name}"),
+        };
+        let id = CapabilityId::new(id).map_err(|e| e.to_string())?;
+        match registry.get(&id) {
+            Some(descriptor)
+                if descriptor.status == CapabilityRuntimeStatus::Ready && descriptor.enabled => {}
+            Some(_) => return Err(format!("capability is not ready: {id}")),
+            None => return Err(format!("capability not found: {id}")),
+        }
+    }
+    Ok(())
+}
+
 const PLANNER_SYSTEM_PROMPT: &str = r#"你是任务规划器。根据任务描述，输出一个严格 JSON 的计划。
 
 JSON schema:

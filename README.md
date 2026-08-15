@@ -164,6 +164,16 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 
 **Known Limitations**：多智能体顺序执行（无并行）、无 Agent swarm、delegation 深度有界、无分布式 worker、无 Cron/定时任务、无 cloud Workspace、Workflow 调度仍顺序、Agent Team 不绕过 Security Gateway、MCP 仍 stdio、OS 级 Sandbox 未实现。
 
+## v0.8 Development — Agent Memory + Unified Capability Registry
+
+状态：**In Development（未标记 Completed）**
+
+- Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
+- Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。
+- Phase 3 Unified Capability Registry：`capability/` 模块统一 Builtin/MCP/Subagent/Agent/Workflow/Skill 的能力发现（`CapabilityDescriptor` + providers + 原子 refresh + 重复检测 + runtime readiness）。**Registry 只做发现，绝不执行能力**；真实授权仍在 Security Execution Gateway。`GET/POST /api/capabilities` API + Planner 引用校验（missing/disabled/unavailable → reject）+ 桌面「能力」页面。
+
+**Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中。
+
 ## v0.4 Workflow Runtime
 
 状态：**Completed（v0.4.1 Workflow Runtime Completion）**

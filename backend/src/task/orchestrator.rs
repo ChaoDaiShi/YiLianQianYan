@@ -21,6 +21,7 @@ use crate::agent::memory::{
     MemoryWriter, ReflectionInput,
 };
 use crate::agent::verifier::DefaultVerifier;
+use crate::capability::CapabilityRegistry;
 use crate::config::types::AppConfig;
 use crate::db::Database;
 use crate::execution::ExecutionContext;
@@ -58,6 +59,7 @@ pub struct TaskOrchestrator {
     memory: MemoryContextBuilder,
     reflector: Arc<dyn MemoryReflector>,
     writer: MemoryWriter,
+    capability_registry: Arc<CapabilityRegistry>,
 }
 
 impl TaskOrchestrator {
@@ -74,6 +76,7 @@ impl TaskOrchestrator {
         memory: MemoryContextBuilder,
         reflector: Arc<dyn MemoryReflector>,
         writer: MemoryWriter,
+        capability_registry: Arc<CapabilityRegistry>,
     ) -> Self {
         Self {
             db,
@@ -87,6 +90,7 @@ impl TaskOrchestrator {
             memory,
             reflector,
             writer,
+            capability_registry,
         }
     }
 
@@ -203,6 +207,8 @@ impl TaskOrchestrator {
             .await
             .map_err(|error| error.to_string())?;
         super::planner::validate_plan_structure(&plan)
+            .map_err(|error| format!("invalid plan: {error}"))?;
+        super::planner::validate_plan_references(&plan, &self.capability_registry)
             .map_err(|error| format!("invalid plan: {error}"))?;
         self.db.create_task_plan(
             &uuid::Uuid::new_v4().to_string(),
@@ -1168,6 +1174,7 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
         &config.model,
         crate::agent::memory::MemoryWritePolicy::default(),
     );
+    let capability_registry = server.capability_registry().await;
     TaskOrchestrator::new(
         server.db.clone_connection(),
         TimelineService::new(server.db.clone_connection()),
@@ -1180,5 +1187,6 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
         memory,
         reflector,
         writer,
+        capability_registry,
     )
 }

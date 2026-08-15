@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — v0.8 Development
+
+### Added
+
+- Agent Memory Retrieval (`MemoryContextBuilder`): hybrid retrieval + bounded context injection
+- Agent Memory Learning Loop: deterministic reflection + conservative write policy + embedding fallback
+- Unified Capability Registry: Builtin/MCP/Subagent/Agent/Workflow/Skill discovery
+- Runtime readiness status + atomic refresh + duplicate detection
+- Planner capability reference validation (missing/disabled/unavailable → reject)
+- `GET/POST /api/capabilities` API + desktop capability surface
+
+### Security
+
+- Discovery separated from authorization/execution
+- No provider may execute capabilities during discovery
+- Registry metadata cannot grant permission; real authorization remains the Security Execution Gateway
+- Shared secret-detection source of truth between Chat Memory Extraction and Agent Memory Learning
+
 ## 0.6.0 — Workspace / Task / Multi-Agent Runtime
 
 ### Added

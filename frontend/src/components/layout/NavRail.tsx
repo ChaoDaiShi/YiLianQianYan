@@ -4,6 +4,7 @@ import {
   Activity,
   BookOpen,
   Bot,
+  Boxes,
   FolderKanban,
   GitBranch,
   MessageSquare,
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { to: "/workflows", id: "workflows", label: "工作流", icon: GitBranch },
   { to: "/workspaces", id: "workspaces", label: "工作空间", icon: FolderKanban },
   { to: "/agents", id: "agents", label: "智能体", icon: Bot },
+  { to: "/capabilities", id: "capabilities", label: "能力", icon: Boxes },
   { to: "/knowledge", id: "knowledge", label: "知识库", icon: BookOpen },
   { to: "/settings", id: "settings", label: "设置", icon: Settings },
 ] as const;

@@ -24,7 +24,8 @@ pub use artifact::{ArtifactError, ArtifactService};
 pub use model::*;
 pub use orchestrator::{build_task_orchestrator, TaskOrchestrator};
 pub use planner::{
-    validate_plan_structure, LlmTaskPlanner, TaskPlanner, TaskPlannerError, TaskPlanningInput,
+    validate_plan_references, validate_plan_structure, LlmTaskPlanner, TaskPlanner,
+    TaskPlannerError, TaskPlanningInput,
 };
 pub use recovery::{recover_interrupted, RecoveryReport};
 pub use service::{OrchestratorBuilder, TaskRunner};

@@ -1113,3 +1113,100 @@ export async function createTeam(data: {
 }) {
   return requestResult<AgentTeam>("POST", "/api/agent-teams", data);
 }
+
+// ============================================================
+// Unified Capability Registry (v0.8 Phase 3)
+// ============================================================
+
+export type CapabilityKind =
+  | "tool"
+  | "mcp_tool"
+  | "subagent"
+  | "agent"
+  | "workflow"
+  | "skill";
+
+export type CapabilityProviderKind =
+  | "builtin"
+  | "mcp"
+  | "subagent"
+  | "agent_runtime"
+  | "workflow_runtime"
+  | "skill_runtime";
+
+export type CapabilityRuntimeStatus =
+  | "ready"
+  | "unavailable"
+  | "disabled"
+  | "misconfigured"
+  | "degraded"
+  | "unknown";
+
+export type CapabilityRisk = "low" | "medium" | "high" | "dynamic";
+
+export interface CapabilityPermission {
+  permission: string;
+  required: boolean;
+}
+
+export interface CapabilityMetadata {
+  source_id?: string | null;
+  source_name?: string | null;
+  version?: string | null;
+  tags: string[];
+  runtime_ready: boolean;
+  extra: Record<string, unknown>;
+}
+
+export interface CapabilityDescriptor {
+  id: string;
+  kind: CapabilityKind;
+  provider: CapabilityProviderKind;
+  name: string;
+  description: string;
+  input_schema?: Record<string, unknown> | null;
+  risk: CapabilityRisk;
+  permissions: CapabilityPermission[];
+  status: CapabilityRuntimeStatus;
+  enabled: boolean;
+  metadata: CapabilityMetadata;
+}
+
+export interface CapabilityRefreshReport {
+  discovered: number;
+  ready: number;
+  unavailable: number;
+  duplicates: number;
+  provider_failures: number;
+}
+
+export async function listCapabilities(query: {
+  kind?: CapabilityKind;
+  provider?: CapabilityProviderKind;
+  status?: CapabilityRuntimeStatus;
+  q?: string;
+  limit?: number;
+  offset?: number;
+} = {}) {
+  const params = new URLSearchParams();
+  if (query.kind) params.set("kind", query.kind);
+  if (query.provider) params.set("provider", query.provider);
+  if (query.status) params.set("status", query.status);
+  if (query.q) params.set("q", query.q);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  if (query.offset !== undefined) params.set("offset", String(query.offset));
+  const qs = params.toString();
+  const res = await requestResult<{ capabilities: CapabilityDescriptor[]; total: number }>(
+    "GET",
+    `/api/capabilities${qs ? `?${qs}` : ""}`
+  );
+  return res.ok ? ({ ok: true, data: res.data } as const) : res;
+}
+
+export async function getCapability(id: string) {
+  return requestResult<CapabilityDescriptor>("GET", `/api/capabilities/${id}`);
+}
+
+export async function refreshCapabilities() {
+  return requestResult<CapabilityRefreshReport>("POST", "/api/capabilities/refresh");
+}
