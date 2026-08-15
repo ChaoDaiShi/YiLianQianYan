@@ -378,8 +378,8 @@ mod tests {
     use super::WorkflowGraphRecord;
     use crate::execution::{ExecutionContext, ExecutionId};
     use crate::workflow::{
-        NodeRunStatus, WorkflowEdgeDefinition, WorkflowGraphDefinition, WorkflowNodeDefinition,
-        WorkflowNodeId, WorkflowNodeKind, WorkflowRun, WorkflowRunId,
+        NodeRunStatus, WorkflowEdgeDefinition, WorkflowGraphDefinition, WorkflowNodeConfig,
+        WorkflowNodeDefinition, WorkflowNodeId, WorkflowNodeKind, WorkflowRun, WorkflowRunId,
         WORKFLOW_GRAPH_SCHEMA_VERSION,
     };
 
@@ -401,6 +401,9 @@ mod tests {
         WorkflowNodeDefinition {
             id: WorkflowNodeId::new(id).unwrap(),
             kind: WorkflowNodeKind::Agent,
+            config: WorkflowNodeConfig::Agent {
+                prompt: String::new(),
+            },
         }
     }
 

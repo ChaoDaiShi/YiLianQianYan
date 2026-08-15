@@ -24,10 +24,13 @@ pub mod validation;
 mod tests;
 
 pub use definition::{
-    WorkflowEdgeDefinition, WorkflowGraphDefinition, WorkflowNodeDefinition, WorkflowNodeId,
-    WorkflowNodeKind, MAX_WORKFLOW_EDGES, MAX_WORKFLOW_NODES, WORKFLOW_GRAPH_SCHEMA_VERSION,
+    WorkflowCondition, WorkflowEdgeDefinition, WorkflowGraphDefinition, WorkflowNodeConfig,
+    WorkflowNodeDefinition, WorkflowNodeId, WorkflowNodeKind, MAX_WORKFLOW_EDGES,
+    MAX_WORKFLOW_NODES, WORKFLOW_GRAPH_SCHEMA_VERSION,
 };
-pub use executor::{NodeExecutionOutcome, WorkflowExecutionError, WorkflowNodeExecutor};
+pub use executor::{
+    NodeExecutionOutcome, SecurityGatewayNodeExecutor, WorkflowExecutionError, WorkflowNodeExecutor,
+};
 pub use run::{
     NodeRunState, NodeRunStatus, WorkflowRun, WorkflowRunError, WorkflowRunId, WorkflowRunStatus,
 };

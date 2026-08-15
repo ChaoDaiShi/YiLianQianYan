@@ -51,4 +51,17 @@ impl SecuritySubject {
             external_ref: None,
         }
     }
+
+    /// Build a subject carrying only a subject id, as reconstructed from an
+    /// [`crate::execution::ExecutionContext`]. The subject id is the source of
+    /// truth for role resolution; type/provider are neutral placeholders and
+    /// are never used to authorize anything.
+    pub fn from_subject_id(subject_id: impl Into<String>) -> Self {
+        Self {
+            subject_id: subject_id.into(),
+            subject_type: SubjectType::LocalUser,
+            provider: "workflow".to_string(),
+            external_ref: None,
+        }
+    }
 }

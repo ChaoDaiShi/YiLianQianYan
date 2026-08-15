@@ -70,14 +70,64 @@ pub enum WorkflowNodeKind {
     Output,
 }
 
+/// A limited, typed condition for a [`WorkflowNodeKind::Condition`] node.
+///
+/// No arbitrary expression language is supported in this first version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowCondition {
+    Always,
+    PreviousSucceeded,
+}
+
+/// Typed, kind-specific configuration for a workflow node.
+///
+/// The variant must match the node's [`WorkflowNodeKind`]. Tool arguments are a
+/// JSON object, but they remain subject to the tool's own schema and the
+/// Security Execution Gateway at execution time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkflowNodeConfig {
+    Agent {
+        prompt: String,
+    },
+    Tool {
+        tool_name: String,
+        arguments: serde_json::Value,
+    },
+    Subagent {
+        subagent_name: String,
+        task: String,
+    },
+    Condition {
+        when: WorkflowCondition,
+    },
+    Output {
+        template: Option<String>,
+    },
+}
+
+impl WorkflowNodeConfig {
+    /// The node kind this configuration corresponds to.
+    pub fn kind(&self) -> WorkflowNodeKind {
+        match self {
+            Self::Agent { .. } => WorkflowNodeKind::Agent,
+            Self::Tool { .. } => WorkflowNodeKind::Tool,
+            Self::Subagent { .. } => WorkflowNodeKind::Subagent,
+            Self::Condition { .. } => WorkflowNodeKind::Condition,
+            Self::Output { .. } => WorkflowNodeKind::Output,
+        }
+    }
+}
+
 /// A single node in a workflow graph.
 ///
-/// In this first step it only carries an id and a kind — no arbitrary
-/// per-node configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `PartialEq` (not `Eq`) because tool arguments are a `serde_json::Value`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowNodeDefinition {
     pub id: WorkflowNodeId,
     pub kind: WorkflowNodeKind,
+    pub config: WorkflowNodeConfig,
 }
 
 /// A directed edge between two workflow nodes.
@@ -88,7 +138,7 @@ pub struct WorkflowEdgeDefinition {
 }
 
 /// The static, typed definition of an executable workflow as a DAG.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowGraphDefinition {
     pub schema_version: u32,
     pub entry_node_id: WorkflowNodeId,

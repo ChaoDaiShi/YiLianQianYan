@@ -3,16 +3,41 @@
 // ============================================================
 
 use super::*;
+use crate::config::types::SandboxConfig;
 use crate::db::Database;
 use crate::execution::{ExecutionContext, ExecutionId};
+use crate::safety::SecurityExecutionGateway;
+use crate::tools::{Tool, ToolRegistry, ToolResult};
 use async_trait::async_trait;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
+
+fn default_config(kind: WorkflowNodeKind) -> WorkflowNodeConfig {
+    match kind {
+        WorkflowNodeKind::Agent => WorkflowNodeConfig::Agent {
+            prompt: String::new(),
+        },
+        WorkflowNodeKind::Tool => WorkflowNodeConfig::Tool {
+            tool_name: String::new(),
+            arguments: serde_json::json!({}),
+        },
+        WorkflowNodeKind::Subagent => WorkflowNodeConfig::Subagent {
+            subagent_name: String::new(),
+            task: String::new(),
+        },
+        WorkflowNodeKind::Condition => WorkflowNodeConfig::Condition {
+            when: WorkflowCondition::Always,
+        },
+        WorkflowNodeKind::Output => WorkflowNodeConfig::Output { template: None },
+    }
+}
 
 fn node(id: &str) -> WorkflowNodeDefinition {
     WorkflowNodeDefinition {
         id: WorkflowNodeId::new(id).unwrap(),
         kind: WorkflowNodeKind::Agent,
+        config: default_config(WorkflowNodeKind::Agent),
     }
 }
 
@@ -20,6 +45,29 @@ fn node_of_kind(id: &str, kind: WorkflowNodeKind) -> WorkflowNodeDefinition {
     WorkflowNodeDefinition {
         id: WorkflowNodeId::new(id).unwrap(),
         kind,
+        config: default_config(kind),
+    }
+}
+
+fn tool_node(id: &str, tool_name: &str, arguments: serde_json::Value) -> WorkflowNodeDefinition {
+    WorkflowNodeDefinition {
+        id: WorkflowNodeId::new(id).unwrap(),
+        kind: WorkflowNodeKind::Tool,
+        config: WorkflowNodeConfig::Tool {
+            tool_name: tool_name.to_string(),
+            arguments,
+        },
+    }
+}
+
+fn subagent_node(id: &str, subagent_name: &str, task: &str) -> WorkflowNodeDefinition {
+    WorkflowNodeDefinition {
+        id: WorkflowNodeId::new(id).unwrap(),
+        kind: WorkflowNodeKind::Subagent,
+        config: WorkflowNodeConfig::Subagent {
+            subagent_name: subagent_name.to_string(),
+            task: task.to_string(),
+        },
     }
 }
 
@@ -792,4 +840,288 @@ async fn runner_paused_run_has_consistent_ready_state() {
     assert_eq!(r.status, WorkflowRunStatus::WaitingApproval);
     assert!(r.ready_nodes().is_empty());
     assert_eq!(r.node(&id("after")).unwrap().status, NodeRunStatus::Pending);
+}
+
+// ============================================================
+// Production executor tests (SecurityExecutionGateway routing).
+// ============================================================
+
+struct CountingTool {
+    name: &'static str,
+    executions: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for CountingTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn description(&self) -> &str {
+        "counts executions for workflow executor tests"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object" })
+    }
+
+    async fn execute(&self, _args: serde_json::Value) -> ToolResult {
+        self.executions.fetch_add(1, Ordering::SeqCst);
+        ToolResult::success("executed")
+    }
+}
+
+fn gateway_with_tool(
+    name: &'static str,
+    executions: Arc<AtomicUsize>,
+) -> (Arc<SecurityExecutionGateway>, Database, std::path::PathBuf) {
+    let db_path =
+        std::env::temp_dir().join(format!("yilian-wf-gw-{name}-{}.db", uuid::Uuid::new_v4()));
+    let db = Database::new(&db_path).unwrap();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(CountingTool { name, executions }));
+    let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+        SandboxConfig::default(),
+        "workspace",
+        Arc::new(registry),
+    )
+    .with_db(Arc::new(db.clone_connection()));
+    (Arc::new(gateway), db, db_path)
+}
+
+fn subagent_gateway() -> (Arc<SecurityExecutionGateway>, std::path::PathBuf) {
+    let db_path =
+        std::env::temp_dir().join(format!("yilian-wf-subagent-{}.db", uuid::Uuid::new_v4()));
+    let db = Database::new(&db_path).unwrap();
+    let definition = crate::server::DiscoveredSubagent {
+        name: "researcher".to_string(),
+        description: "research".to_string(),
+        path: ".agents/agents/researcher/AGENT.md".to_string(),
+        allowed_tools: vec!["read_file".to_string()],
+        model: Some("deepseek-v4-flash".to_string()),
+        workdir: None,
+        instructions: "body".to_string(),
+    };
+    let adapter = crate::tools::SubagentToolAdapter::new(&definition).unwrap();
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(adapter));
+    let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+        SandboxConfig::default(),
+        "workspace",
+        Arc::new(registry),
+    )
+    .with_db(Arc::new(db.clone_connection()));
+    (Arc::new(gateway), db_path)
+}
+
+fn seed_restricted_subject(db: &Database, subject_id: &str) {
+    let conn = db.conn();
+    conn.execute(
+        "INSERT OR IGNORE INTO security_subjects
+            (subject_id, subject_type, provider, external_ref, display_name,
+             status, created_at, updated_at)
+         VALUES (?1, 'local_user', 'built_in', NULL, 'Restricted', 'active', 0, 0)",
+        [subject_id],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT OR IGNORE INTO security_role_bindings
+            (binding_id, subject_id, role_key, source, effective_at, expires_at, revoked_at)
+         VALUES (?1, ?2, 'restricted', 'built_in', 0, NULL, NULL)",
+        rusqlite::params![format!("{subject_id}-restricted"), subject_id],
+    )
+    .unwrap();
+}
+
+fn run_with_subject(
+    entry: &str,
+    nodes: Vec<WorkflowNodeDefinition>,
+    edges: Vec<WorkflowEdgeDefinition>,
+    subject_id: &str,
+) -> WorkflowRun {
+    let ctx = ExecutionContext::new(
+        ExecutionId::new("exec-1").unwrap(),
+        subject_id,
+        "researcher",
+        None,
+        1_000,
+    );
+    WorkflowRun::new(
+        WorkflowRunId::generate(),
+        ctx,
+        graph(entry, nodes, edges),
+        1_000,
+    )
+    .unwrap()
+}
+
+async fn run_with_gateway(gateway: Arc<SecurityExecutionGateway>, run: &mut WorkflowRun) {
+    let runner = WorkflowRunner::new(SecurityGatewayNodeExecutor::new(gateway));
+    runner
+        .run(run, &CancellationToken::new(), noop_persist)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn production_tool_allow_executes_through_gateway() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (gateway, _db, db_path) = gateway_with_tool("read_file", executions.clone());
+    let mut r = run(
+        "read",
+        vec![tool_node(
+            "read",
+            "read_file",
+            serde_json::json!({"path": "README.md"}),
+        )],
+        vec![],
+    );
+    run_with_gateway(gateway, &mut r).await;
+    assert_eq!(r.status, WorkflowRunStatus::Completed);
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn production_high_risk_tool_pauses_for_approval() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (gateway, _db, db_path) = gateway_with_tool("bash", executions.clone());
+    let mut r = run(
+        "bash",
+        vec![tool_node(
+            "bash",
+            "bash",
+            serde_json::json!({"command": "git push origin develop"}),
+        )],
+        vec![],
+    );
+    run_with_gateway(gateway, &mut r).await;
+    assert_eq!(r.status, WorkflowRunStatus::WaitingApproval);
+    assert_eq!(
+        r.node(&id("bash")).unwrap().status,
+        NodeRunStatus::WaitingApproval
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn production_restricted_tool_denies() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (gateway, db, db_path) = gateway_with_tool("write_file", executions.clone());
+    db.conn()
+        .execute(
+            "UPDATE security_role_bindings SET role_key='restricted'
+             WHERE subject_id='local-user' AND revoked_at IS NULL",
+            [],
+        )
+        .unwrap();
+    let mut r = run(
+        "write",
+        vec![tool_node(
+            "write",
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "x"}),
+        )],
+        vec![],
+    );
+    run_with_gateway(gateway, &mut r).await;
+    assert_eq!(r.status, WorkflowRunStatus::Failed);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn production_subagent_requires_approval() {
+    let (gateway, db_path) = subagent_gateway();
+    let mut r = run(
+        "sub",
+        vec![subagent_node("sub", "researcher", "研究当前仓库")],
+        vec![],
+    );
+    run_with_gateway(gateway, &mut r).await;
+    assert_eq!(r.status, WorkflowRunStatus::WaitingApproval);
+    assert_eq!(
+        r.node(&id("sub")).unwrap().status,
+        NodeRunStatus::WaitingApproval
+    );
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn production_unknown_tool_fails_closed() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (gateway, _db, db_path) = gateway_with_tool("read_file", executions.clone());
+    let mut r = run(
+        "nope",
+        vec![tool_node("nope", "does_not_exist", serde_json::json!({}))],
+        vec![],
+    );
+    run_with_gateway(gateway, &mut r).await;
+    assert_eq!(r.status, WorkflowRunStatus::Failed);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn production_nonexistent_subagent_fails_closed() {
+    let (gateway, db_path) = subagent_gateway();
+    let mut r = run(
+        "sub",
+        vec![subagent_node("sub", "ghost", "do something")],
+        vec![],
+    );
+    run_with_gateway(gateway, &mut r).await;
+    assert_eq!(r.status, WorkflowRunStatus::Failed);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn production_no_next_node_after_approval() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (gateway, _db, db_path) = gateway_with_tool("bash", executions.clone());
+    let mut r = run(
+        "bash",
+        vec![
+            tool_node(
+                "bash",
+                "bash",
+                serde_json::json!({"command": "git push origin develop"}),
+            ),
+            tool_node(
+                "after",
+                "read_file",
+                serde_json::json!({"path": "README.md"}),
+            ),
+        ],
+        vec![edge("bash", "after")],
+    );
+    run_with_gateway(gateway, &mut r).await;
+    assert_eq!(r.status, WorkflowRunStatus::WaitingApproval);
+    assert_eq!(r.node(&id("after")).unwrap().status, NodeRunStatus::Pending);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn production_subject_is_preserved() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (gateway, db, db_path) = gateway_with_tool("write_file", executions.clone());
+    seed_restricted_subject(&db, "restricted-user");
+    let mut r = run_with_subject(
+        "write",
+        vec![tool_node(
+            "write",
+            "write_file",
+            serde_json::json!({"path": "notes.txt", "content": "x"}),
+        )],
+        vec![],
+        "restricted-user",
+    );
+    run_with_gateway(gateway, &mut r).await;
+    // The run's subject is "restricted-user", not "local-user" (owner) — so the
+    // write must be denied rather than allowed.
+    assert_eq!(r.status, WorkflowRunStatus::Failed);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&db_path);
 }

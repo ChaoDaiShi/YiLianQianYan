@@ -271,6 +271,13 @@ fn sanitize_subagent_name(name: &str) -> Option<String> {
     }
 }
 
+/// Build the registry tool name for a subagent name (e.g. `subagent_researcher`).
+/// Returns `None` when the name cannot be sanitized to a safe identifier.
+pub fn subagent_tool_name(subagent_name: &str) -> Option<String> {
+    let sanitized = sanitize_subagent_name(subagent_name)?;
+    build_exposed_name(&sanitized).ok()
+}
+
 /// Build `subagent_<name>`, truncating only the name part.
 fn build_exposed_name(name_ns: &str) -> Result<String, SubagentToolAdapterError> {
     let prefix = "subagent_";
