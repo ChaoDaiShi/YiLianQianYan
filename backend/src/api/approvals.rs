@@ -217,49 +217,109 @@ fn read_run_status(server: &AppServer, approval: &PendingApproval) -> String {
 
 /// Build the workflow resume SSE stream: resolve the approval, resume the
 /// workflow run through the gateway, then emit a final run-state event.
+///
+/// Event ordering is truthful: `approval_resolved` is only emitted AFTER the
+/// approval has been genuinely consumed and the resolution audit recorded. A
+/// failed resolution emits a safe `workflow_approval_error` event and never a
+/// fake `approval_resolved` nor a duplicate audit entry.
 fn workflow_approval_stream(
     server: Arc<AppServer>,
     approval: PendingApproval,
     approve: bool,
 ) -> ApprovalStream {
-    let stream = async_stream::stream! {
-        let decision = if approve { "approved" } else { "rejected" };
-        yield Ok(sse_event("approval_resolved", serde_json::json!({
-            "type": "approval_resolved",
-            "approval_id": approval.approval_id,
-            "status": decision,
-        })));
+    let approval_id = approval.approval_id.clone();
+    let workflow_run_id = approval.workflow_run_id.clone();
+    let workflow_node_id = approval.workflow_node_id.clone();
+    let subject_id = approval.subject_id.clone();
 
+    let stream = async_stream::stream! {
+        // Resolve FIRST. No event is emitted until the decision truly happened.
         let gateway = build_workflow_gateway(&server).await;
         let result = resolve_workflow_approval(
             &gateway,
             &server.approval_store,
             &server.db,
-            &approval.approval_id,
-            &approval.subject_id,
+            &approval_id,
+            &subject_id,
             approve,
             &CancellationToken::new(),
         ).await;
 
-        // Record the resolution exactly once (the workflow helper does not).
-        if let Some(consumed) = server.approval_store.get(&approval.approval_id) {
-            record_approval_resolved(&server, &consumed);
+        match result {
+            Ok(()) => {
+                // The approval is now consumed. Verify its status matches the
+                // requested decision before recording anything — this prevents
+                // re-recording a stale status on a malformed consumption.
+                let Some(consumed) = server.approval_store.get(&approval_id) else {
+                    yield Ok(workflow_approval_error_event(&approval_id, &workflow_run_id, &workflow_node_id));
+                    return;
+                };
+                let expected = if approve {
+                    crate::safety::ApprovalStatus::Approved
+                } else {
+                    crate::safety::ApprovalStatus::Rejected
+                };
+                if consumed.status != expected {
+                    tracing::warn!(
+                        approval_id = %approval_id,
+                        approve = approve,
+                        actual = %consumed.status,
+                        "workflow approval consumed to an unexpected status"
+                    );
+                    yield Ok(workflow_approval_error_event(&approval_id, &workflow_run_id, &workflow_node_id));
+                    return;
+                }
+
+                // Record the resolution exactly once.
+                record_approval_resolved(&server, &consumed);
+
+                let decision = if approve { "approved" } else { "rejected" };
+                yield Ok(sse_event("approval_resolved", serde_json::json!({
+                    "type": "approval_resolved",
+                    "approval_id": approval_id,
+                    "status": decision,
+                })));
+
+                // Read the real persisted run status (never fabricated).
+                let run_status = read_run_status(&server, &approval);
+                yield Ok(sse_event("workflow_run_updated", serde_json::json!({
+                    "type": "workflow_run_updated",
+                    "workflow_run_id": workflow_run_id,
+                    "workflow_node_id": workflow_node_id,
+                    "status": run_status,
+                })));
+            }
+            Err(error) => {
+                // Failure: no approval_resolved, no new audit. Log internally
+                // and emit a safe, non-leaking failure event.
+                tracing::warn!(
+                    approval_id = %approval_id,
+                    approve = approve,
+                    error = %error,
+                    "workflow approval resolution failed"
+                );
+                yield Ok(workflow_approval_error_event(&approval_id, &workflow_run_id, &workflow_node_id));
+            }
         }
-
-        let run_status = if result.is_ok() {
-            read_run_status(&server, &approval)
-        } else {
-            "failed".to_string()
-        };
-
-        yield Ok(sse_event("workflow_run_updated", serde_json::json!({
-            "type": "workflow_run_updated",
-            "workflow_run_id": approval.workflow_run_id,
-            "workflow_node_id": approval.workflow_node_id,
-            "status": run_status,
-        })));
     };
     box_stream(stream)
+}
+
+fn workflow_approval_error_event(
+    approval_id: &str,
+    workflow_run_id: &Option<String>,
+    workflow_node_id: &Option<String>,
+) -> Event {
+    sse_event(
+        "workflow_approval_error",
+        serde_json::json!({
+            "type": "workflow_approval_error",
+            "approval_id": approval_id,
+            "workflow_run_id": workflow_run_id,
+            "workflow_node_id": workflow_node_id,
+            "error": "工作流审批恢复失败",
+        }),
+    )
 }
 
 /// POST /api/approvals/:id/approve — SSE stream resuming the agent or a
@@ -279,7 +339,18 @@ pub async fn approve_handler(
                 resolve_and_consume(&server, &approval_id, body.conversation_id.as_deref(), true)?;
             Ok(Sse::new(resume_stream(server, approval, true)))
         }
-        ApprovalTarget::Workflow => Ok(Sse::new(workflow_approval_stream(server, lookup, true))),
+        ApprovalTarget::Workflow => {
+            // Fail fast on a consumed approval: a surface-normal SSE that only
+            // fails inside the stream would mislead the client. Concurrency is
+            // still ultimately bounded by the atomic consume-once.
+            if lookup.status != crate::safety::ApprovalStatus::Pending {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "审批已被处理，不能重复操作".to_string(),
+                ));
+            }
+            Ok(Sse::new(workflow_approval_stream(server, lookup, true)))
+        }
         ApprovalTarget::InvalidWorkflowBinding => {
             Err((StatusCode::CONFLICT, "审批工作流绑定不完整".to_string()))
         }
@@ -307,7 +378,15 @@ pub async fn reject_handler(
             )?;
             Ok(Sse::new(resume_stream(server, approval, false)))
         }
-        ApprovalTarget::Workflow => Ok(Sse::new(workflow_approval_stream(server, lookup, false))),
+        ApprovalTarget::Workflow => {
+            if lookup.status != crate::safety::ApprovalStatus::Pending {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "审批已被处理，不能重复操作".to_string(),
+                ));
+            }
+            Ok(Sse::new(workflow_approval_stream(server, lookup, false)))
+        }
         ApprovalTarget::InvalidWorkflowBinding => {
             Err((StatusCode::CONFLICT, "审批工作流绑定不完整".to_string()))
         }
@@ -815,10 +894,12 @@ mod tests {
     };
     use async_trait::async_trait;
     use axum::{
+        body::to_bytes,
         extract::{Path, State},
+        http::StatusCode,
+        response::IntoResponse,
         Json,
     };
-    use futures::StreamExt;
     use parking_lot::Mutex;
     use std::{
         path::PathBuf,
@@ -1341,8 +1422,14 @@ mod tests {
         (run_id, approval.approval_id)
     }
 
-    async fn drain_stream(mut stream: super::ApprovalStream) {
-        while stream.next().await.is_some() {}
+    /// Consume a real handler `Sse` response to completion and return its body
+    /// text. This drives the exact stream the handler returns.
+    async fn consume_sse(sse: axum::response::Sse<super::ApprovalStream>) -> String {
+        let response = sse.into_response();
+        let body = to_bytes(response.into_body(), 10 * 1024 * 1024)
+            .await
+            .unwrap();
+        String::from_utf8(body.to_vec()).unwrap()
     }
 
     #[tokio::test]
@@ -1350,9 +1437,8 @@ mod tests {
         let (_temp, server) = test_server("wf-approve");
         let (run_id, approval_id) = paused_workflow(&server);
 
-        // The real handler dispatches a workflow approval to the workflow path
-        // (returns an SSE, not a conflict / agent resume).
-        assert!(approve_handler(
+        // Consume the REAL SSE response the handler returns.
+        let sse = approve_handler(
             State(server.clone()),
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
@@ -1360,11 +1446,8 @@ mod tests {
             }),
         )
         .await
-        .is_ok());
-
-        // Drive the exact stream the handler wraps to completion.
-        let approval = server.approval_store.get(&approval_id).unwrap();
-        drain_stream(workflow_approval_stream(server.clone(), approval, true)).await;
+        .unwrap();
+        let text = consume_sse(sse).await;
 
         let stored = server
             .db
@@ -1372,6 +1455,17 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+        assert_eq!(
+            server
+                .approval_store
+                .get(&approval_id)
+                .unwrap()
+                .status
+                .to_string(),
+            "approved"
+        );
+        assert!(text.contains("approval_resolved"));
+        assert!(text.contains("workflow_run_updated"));
     }
 
     #[tokio::test]
@@ -1379,7 +1473,7 @@ mod tests {
         let (_temp, server) = test_server("wf-reject");
         let (run_id, approval_id) = paused_workflow(&server);
 
-        assert!(reject_handler(
+        let sse = reject_handler(
             State(server.clone()),
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
@@ -1387,10 +1481,8 @@ mod tests {
             }),
         )
         .await
-        .is_ok());
-
-        let approval = server.approval_store.get(&approval_id).unwrap();
-        drain_stream(workflow_approval_stream(server.clone(), approval, false)).await;
+        .unwrap();
+        let text = consume_sse(sse).await;
 
         let stored = server
             .db
@@ -1398,6 +1490,16 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.run.status, WorkflowRunStatus::Failed);
+        assert_eq!(
+            server
+                .approval_store
+                .get(&approval_id)
+                .unwrap()
+                .status
+                .to_string(),
+            "rejected"
+        );
+        assert!(text.contains("workflow_run_updated"));
     }
 
     #[tokio::test]
@@ -1437,13 +1539,30 @@ mod tests {
         let (_temp, server) = test_server("wf-replay");
         let (run_id, approval_id) = paused_workflow(&server);
 
-        let approval = server.approval_store.get(&approval_id).unwrap();
-        drain_stream(workflow_approval_stream(server.clone(), approval, true)).await;
+        // First real approve succeeds.
+        let sse = approve_handler(
+            State(server.clone()),
+            Path(approval_id.clone()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+        consume_sse(sse).await;
 
-        // Second resume: consume is already done → the stream fails closed and
-        // the run stays completed (no re-execution).
-        let approval = server.approval_store.get(&approval_id).unwrap();
-        drain_stream(workflow_approval_stream(server.clone(), approval, true)).await;
+        // Second real approve fails fast at the handler with CONFLICT — never a
+        // surface-normal SSE. No re-execution; the run stays completed.
+        let replay = approve_handler(
+            State(server.clone()),
+            Path(approval_id.clone()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: None,
+            }),
+        )
+        .await;
+        assert!(replay.is_err());
+        assert_eq!(replay.unwrap_err().0, StatusCode::CONFLICT);
 
         let stored = server
             .db
@@ -1451,6 +1570,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+        assert_eq!(
+            server
+                .approval_store
+                .get(&approval_id)
+                .unwrap()
+                .status
+                .to_string(),
+            "approved"
+        );
     }
 
     #[tokio::test]
@@ -1472,5 +1600,77 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn workflow_approval_resolved_event_only_after_success() {
+        let (_temp, server) = test_server("wf-order");
+        let (_run_id, approval_id) = paused_workflow(&server);
+
+        let sse = approve_handler(
+            State(server.clone()),
+            Path(approval_id.clone()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let text = consume_sse(sse).await;
+
+        let resolved_at = text
+            .find("approval_resolved")
+            .expect("approval_resolved emitted");
+        let updated_at = text
+            .find("workflow_run_updated")
+            .expect("workflow_run_updated emitted");
+        assert!(
+            resolved_at < updated_at,
+            "approval_resolved must precede workflow_run_updated"
+        );
+        assert_eq!(
+            server
+                .approval_store
+                .get(&approval_id)
+                .unwrap()
+                .status
+                .to_string(),
+            "approved"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_failed_resolution_does_not_emit_resolved_or_duplicate_audit() {
+        let (_temp, server) = test_server("wf-failres");
+        let (_run_id, approval_id) = paused_workflow(&server);
+
+        // Complete one real approve: exactly one ApprovalResolved audit.
+        let sse = approve_handler(
+            State(server.clone()),
+            Path(approval_id.clone()),
+            Json(ApprovalDecisionRequest {
+                conversation_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+        consume_sse(sse).await;
+        assert_eq!(resolution_events(&server).len(), 1);
+
+        // Drive the stream again on the already-consumed approval → resolve
+        // fails (AlreadyProcessed). No approval_resolved event, no new audit.
+        let approval = server.approval_store.get(&approval_id).unwrap();
+        let stream = workflow_approval_stream(server.clone(), approval, true);
+        let text = consume_sse(axum::response::Sse::new(stream)).await;
+
+        assert!(
+            !text.contains("approval_resolved"),
+            "failed resolution must not emit approval_resolved"
+        );
+        assert_eq!(
+            resolution_events(&server).len(),
+            1,
+            "failed resolution must not add a duplicate approval_resolved audit"
+        );
     }
 }
