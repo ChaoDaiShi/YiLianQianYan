@@ -31,6 +31,7 @@ use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGateway
 use crate::safety::{
     ApprovalStore, SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject,
 };
+use crate::secret::SecretResolver;
 use crate::server::AppServer;
 use crate::workflow::{
     LlmWorkflowAgentExecutor, SecurityGatewayNodeExecutor, WorkflowAgentExecutor, WorkflowRun,
@@ -60,6 +61,7 @@ pub struct TaskOrchestrator {
     reflector: Arc<dyn MemoryReflector>,
     writer: MemoryWriter,
     capability_registry: Arc<CapabilityRegistry>,
+    resolver: Arc<SecretResolver>,
 }
 
 impl TaskOrchestrator {
@@ -77,6 +79,7 @@ impl TaskOrchestrator {
         reflector: Arc<dyn MemoryReflector>,
         writer: MemoryWriter,
         capability_registry: Arc<CapabilityRegistry>,
+        resolver: Arc<SecretResolver>,
     ) -> Self {
         Self {
             db,
@@ -91,6 +94,7 @@ impl TaskOrchestrator {
             reflector,
             writer,
             capability_registry,
+            resolver,
         }
     }
 
@@ -1064,7 +1068,7 @@ impl TaskOrchestrator {
         if let Some(agent_model) = &agent.model {
             model.name = agent_model.clone();
         }
-        LlmClient::new(&model)
+        LlmClient::new(&model, Arc::clone(&self.resolver))
     }
 
     fn tool_definitions(&self, allowed_tools: &[String]) -> Vec<serde_json::Value> {
@@ -1171,14 +1175,26 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
         )
         .with_db(Arc::new(server.db.clone_connection())),
     );
-    let planner = Arc::new(super::planner::LlmTaskPlanner::new(&config.model));
-    let agent_executor = Arc::new(LlmWorkflowAgentExecutor::new(&config.model));
-    let memory = MemoryContextBuilder::new(server.db.clone_connection(), &config.model);
+    let resolver = Arc::clone(&server.secret_resolver);
+    let planner = Arc::new(super::planner::LlmTaskPlanner::new(
+        &config.model,
+        Arc::clone(&resolver),
+    ));
+    let agent_executor = Arc::new(LlmWorkflowAgentExecutor::new(
+        &config.model,
+        Arc::clone(&resolver),
+    ));
+    let memory = MemoryContextBuilder::new(
+        server.db.clone_connection(),
+        &config.model,
+        Arc::clone(&resolver),
+    );
     let reflector = Arc::new(crate::agent::memory::DeterministicMemoryReflector::new());
     let writer = MemoryWriter::new(
         server.db.clone_connection(),
         &config.model,
         crate::agent::memory::MemoryWritePolicy::default(),
+        Arc::clone(&resolver),
     );
     let capability_registry = server.capability_registry().await;
     TaskOrchestrator::new(
@@ -1194,5 +1210,6 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
         reflector,
         writer,
         capability_registry,
+        resolver,
     )
 }

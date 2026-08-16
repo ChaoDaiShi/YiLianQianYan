@@ -6,9 +6,11 @@
 
 use std::collections::BTreeMap;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use secrecy::ExposeSecret;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio_util::sync::CancellationToken;
@@ -20,6 +22,7 @@ use super::model::{
 };
 use super::protocol::attach_request_metadata;
 use super::transport::McpTransport;
+use crate::secret::{SecretRef, SecretResolver};
 
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 
@@ -27,6 +30,8 @@ pub struct StdioTransport {
     command: String,
     args: Vec<String>,
     env: BTreeMap<String, String>,
+    env_secret_refs: BTreeMap<String, SecretRef>,
+    resolver: Arc<SecretResolver>,
     inner: tokio::sync::Mutex<StdioInner>,
     version: parking_lot::RwLock<McpProtocolVersion>,
     capabilities: parking_lot::RwLock<McpServerCapabilities>,
@@ -41,11 +46,19 @@ struct StdioInner {
 }
 
 impl StdioTransport {
-    pub fn new(command: String, args: Vec<String>, env: BTreeMap<String, String>) -> Self {
+    pub fn new(
+        command: String,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+        env_secret_refs: BTreeMap<String, SecretRef>,
+        resolver: Arc<SecretResolver>,
+    ) -> Self {
         Self {
             command,
             args,
             env,
+            env_secret_refs,
+            resolver,
             inner: tokio::sync::Mutex::new(StdioInner {
                 child: None,
                 stdin: None,
@@ -65,6 +78,20 @@ impl StdioTransport {
         cmd.args(&self.args);
         for (k, v) in &self.env {
             cmd.env(k, v);
+        }
+        // Resolve secret env values from the SecretStore at spawn time. A
+        // missing/unresolvable secret omits the env var (fail-closed) — the
+        // SecretString is exposed only into the Command builder and dropped
+        // once the child has been spawned.
+        for (name, secret_ref) in &self.env_secret_refs {
+            if let Some(secret) = self
+                .resolver
+                .resolve_env_ref(secret_ref)
+                .await
+                .unwrap_or(None)
+            {
+                cmd.env(name, secret.expose_secret());
+            }
         }
         let mut child = cmd
             .stdin(Stdio::piped())

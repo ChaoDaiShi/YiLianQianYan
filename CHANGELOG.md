@@ -17,6 +17,11 @@
 - SecurityExecutionGateway → Managed MCP real E2E (approved = 1 remote call, denied / pre-approval = 0)
 - Protected runtime APIs: `GET /api/mcp/servers` + tools/resources/prompts/read (no direct tool execution)
 - Frontend MCP surface: per-server runtime status / protocol / counts, Tools metadata, Resources/read preview, Prompts preview with external-content warning (no auto-submit, no tool execute button)
+- OS-backed SecretStore (`keyring`): Windows Credential Manager / Keychain / Secret Service; `secrecy::SecretString` zeroize-on-drop; `InMemorySecretStore` for tests
+- `SecretRef` persistence for Chat / Embedding API keys + stdio MCP env; `SecretResolver` on-demand resolution (SecretRef → env → legacy literal)
+- Legacy secret migration (write → verify → clear plaintext; idempotent; failure preserves plaintext)
+- Settings write-only Secret UX (configured/source status, clear/rotate) + `GET /api/secrets/status` (value-free)
+- MCP stdio env → SecretStore + delete cleanup; Streamable HTTP header env-var references unchanged
 
 ### Security
 
@@ -30,6 +35,9 @@
 - Frontend can never execute an MCP tool; prompt preview never auto-triggers chat/task/agent/system-prompt/memory
 - Gateway E2E: unauthorized remote call = 0, approval-before-execution remote call = 0, approved = 1
 - Production discovery/execution never use legacy `probe_stdio_server` / `call_stdio_tool`
+- New secret writes never fall back to plaintext: `save_settings` / `create` / `update_mcp_server` reject plaintext API keys / stdio MCP env
+- Secret value never appears in API / logs / audit / Debug; only exposed at the Authorization header / Command.env boundary
+- SecretStore only stores/resolves secrets — it never grants permission or bypasses the Security Execution Gateway
 
 ## 0.6.0 — Workspace / Task / Multi-Agent Runtime
 

@@ -21,6 +21,7 @@ use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGateway
 use crate::safety::{
     ApprovalStore, SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject,
 };
+use crate::secret::SecretResolver;
 use crate::tools::RiskLevel;
 
 /// The result of executing a single node.
@@ -81,9 +82,9 @@ pub struct LlmWorkflowAgentExecutor {
 }
 
 impl LlmWorkflowAgentExecutor {
-    pub fn new(config: &ModelConfig) -> Self {
+    pub fn new(config: &ModelConfig, resolver: Arc<SecretResolver>) -> Self {
         Self {
-            llm: LlmClient::new(config),
+            llm: LlmClient::new(config, resolver),
         }
     }
 }

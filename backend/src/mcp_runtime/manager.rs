@@ -90,6 +90,7 @@ pub struct McpRuntimeManager {
     servers: RwLock<HashMap<String, Arc<McpServerRuntime>>>,
     next_id: AtomicI64,
     cache: super::cache::McpCache,
+    resolver: Arc<crate::secret::SecretResolver>,
 }
 
 impl Default for McpRuntimeManager {
@@ -100,10 +101,18 @@ impl Default for McpRuntimeManager {
 
 impl McpRuntimeManager {
     pub fn new() -> Self {
+        Self::with_resolver(Arc::new(crate::secret::SecretResolver::new(Arc::new(
+            crate::secret::InMemorySecretStore::new(),
+        ))))
+    }
+
+    /// Construct a manager backed by an explicit SecretResolver (production).
+    pub fn with_resolver(resolver: Arc<crate::secret::SecretResolver>) -> Self {
         Self {
             servers: RwLock::new(HashMap::new()),
             next_id: AtomicI64::new(1),
             cache: super::cache::McpCache::new(),
+            resolver,
         }
     }
 
@@ -140,13 +149,21 @@ impl McpRuntimeManager {
     }
 
     fn build_transport(
+        &self,
         config: &McpTransportConfig,
     ) -> Result<Arc<dyn McpTransport>, McpRuntimeError> {
         match config {
-            McpTransportConfig::Stdio { command, args, env } => Ok(Arc::new(StdioTransport::new(
+            McpTransportConfig::Stdio {
+                command,
+                args,
+                env,
+                env_secret_refs,
+            } => Ok(Arc::new(StdioTransport::new(
                 command.clone(),
                 args.clone(),
                 env.clone(),
+                env_secret_refs.clone(),
+                Arc::clone(&self.resolver),
             ))),
             McpTransportConfig::StreamableHttp {
                 url,
@@ -186,7 +203,7 @@ impl McpRuntimeManager {
         let Some(runtime) = self.get_server(server_id) else {
             return Err(McpRuntimeError::ServerNotFound);
         };
-        let transport = Self::build_transport(&runtime.config)?;
+        let transport = self.build_transport(&runtime.config)?;
         let cancel = CancellationToken::new();
         let negotiation = transport.connect(&cancel).await?;
 

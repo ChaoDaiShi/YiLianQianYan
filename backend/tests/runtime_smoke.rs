@@ -63,6 +63,7 @@ fn disabled_stdio_server() -> McpServer {
         args: Some(Vec::new()),
         url: None,
         env: None,
+        env_secret_refs: Default::default(),
         enabled: false,
         created_at: 1,
         updated_at: 1,

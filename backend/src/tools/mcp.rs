@@ -402,6 +402,7 @@ mod tests {
             args: None,
             url: None,
             env: None,
+            env_secret_refs: Default::default(),
             enabled: true,
             created_at: 0,
             updated_at: 0,

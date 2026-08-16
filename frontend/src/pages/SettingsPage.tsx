@@ -43,6 +43,20 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: "appearance", label: "外观" },
 ];
 
+function secretSourceLabel(source?: string): string {
+  switch (source) {
+    case "secret_store":
+      return "已安全保存到系统凭据库";
+    case "environment":
+      return "由环境变量提供";
+    case "legacy_pending":
+      return "检测到旧版明文密钥，待迁移";
+    case "none":
+    default:
+      return "未配置";
+  }
+}
+
 export default function SettingsPage() {
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [saved, setSaved] = useState(false);
@@ -63,6 +77,25 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     await updateSettings(config);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const clearSecret = async (field: "api_key" | "embedding_api_key") => {
+    const clearField = field === "api_key" ? "clear_api_key" : "clear_embedding_api_key";
+    const next = {
+      ...config,
+      model: { ...config.model, [clearField]: true, [field]: "" },
+    };
+    await updateSettings(next);
+    const fresh = await getSettings();
+    if (fresh) {
+      setConfig({
+        ...defaultConfig,
+        ...fresh,
+        model: { ...defaultConfig.model, ...fresh.model, api_key: "", embedding_api_key: "" },
+      });
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -122,17 +155,37 @@ export default function SettingsPage() {
         return (
           <div className="space-y-4">
             <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">模型配置</h3>
+            {config.migration_pending ? (
+              <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2">
+                <p className="text-xs text-[var(--warning)]">检测到旧版明文密钥，系统安全凭据库当前不可用；未删除旧配置。恢复凭据库后将自动迁移。</p>
+              </div>
+            ) : null}
+            {config.secret_store_status === "unavailable" ? (
+              <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2">
+                <p className="text-xs text-[var(--danger)]">系统安全凭据库不可用，无法新增直接密钥；环境变量方式仍可使用。</p>
+              </div>
+            ) : null}
             <Input label="API 地址" value={config.model.base_url} onChange={(e) => updateField("model", "base_url", e.target.value)} />
             <Input label="模型名称" value={config.model.name} onChange={(e) => updateField("model", "name", e.target.value)} />
-            <Input label="API 密钥" type="password" value={config.model.api_key} onChange={(e) => updateField("model", "api_key", e.target.value)} placeholder={config.model.api_key_configured ? "已配置；输入新 key 可替换" : "sk-..."} />
-            {config.model.api_key_configured && <p className="text-xs text-[var(--success)]">已配置；页面不会回显原始 key，留空保存会保留现有 key。</p>}
+            <Input label="API 密钥" type="password" value={config.model.api_key} onChange={(e) => updateField("model", "api_key", e.target.value)} placeholder={config.model.api_key_configured ? "输入新 key 可替换" : "sk-..."} />
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-[var(--text-muted)]">{secretSourceLabel(config.model.api_key_source)}</p>
+              {config.model.api_key_configured && (
+                <Button variant="secondary" size="sm" onClick={() => clearSecret("api_key")}>清除密钥</Button>
+              )}
+            </div>
             <Input label="环境变量名" value={config.model.api_key_env} onChange={(e) => updateField("model", "api_key_env", e.target.value)} />
             <div className="border-t border-[var(--border)] pt-4 space-y-4">
               <h4 className="font-semibold text-sm text-[var(--text-muted)]">Embedding 配置</h4>
               <Input label="Embedding API 地址" value={config.model.embedding_base_url} onChange={(e) => updateField("model", "embedding_base_url", e.target.value)} placeholder="https://api.openai.com/v1" />
               <Input label="Embedding 模型名称" value={config.model.embedding_model} onChange={(e) => updateField("model", "embedding_model", e.target.value)} placeholder="text-embedding-3-small" />
-              <Input label="Embedding API 密钥" type="password" value={config.model.embedding_api_key} onChange={(e) => updateField("model", "embedding_api_key", e.target.value)} placeholder={config.model.embedding_api_key_configured ? "已配置；输入新 key 可替换" : "留空表示未配置"} />
-              {config.model.embedding_api_key_configured && <p className="text-xs text-[var(--success)]">已配置；页面不会回显原始 key，留空保存会保留现有 key。</p>}
+              <Input label="Embedding API 密钥" type="password" value={config.model.embedding_api_key} onChange={(e) => updateField("model", "embedding_api_key", e.target.value)} placeholder={config.model.embedding_api_key_configured ? "输入新 key 可替换" : "留空表示未配置"} />
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-[var(--text-muted)]">{secretSourceLabel(config.model.embedding_api_key_source)}</p>
+                {config.model.embedding_api_key_configured && (
+                  <Button variant="secondary" size="sm" onClick={() => clearSecret("embedding_api_key")}>清除密钥</Button>
+                )}
+              </div>
               <Input label="Embedding 环境变量名" value={config.model.embedding_api_key_env} onChange={(e) => updateField("model", "embedding_api_key_env", e.target.value)} />
             </div>
             <div className="grid grid-cols-2 gap-3">

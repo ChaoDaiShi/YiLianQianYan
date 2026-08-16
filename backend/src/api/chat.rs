@@ -98,7 +98,7 @@ pub async fn chat_handler(
     let mut memory_mode = "lexical";
     let mut query_embedding: Option<Vec<f32>> = None;
     if config.model.has_embedding() {
-        let llm = LlmClient::new(&config.model);
+        let llm = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
         match llm.embed(&req.message).await {
             Ok(vec) => {
                 query_embedding = Some(vec);
@@ -208,7 +208,7 @@ pub async fn chat_handler(
         .push("chat", "api", &format!("收到消息: {}", msg_preview));
 
     // Spawn agent loop
-    let llm_client = LlmClient::new(&config.model);
+    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
     let conv_clone = conv_id.clone();
     let config_clone = config.clone();
     let log_buffer = server.log_buffer.clone();

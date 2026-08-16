@@ -166,7 +166,7 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 
 ## v0.8 Development — Agent Memory + Unified Capability Registry
 
-状态：**Phase 1–4 Completed（Phase 5 SecretStore 未开始）**
+状态：**Phase 1–5 Completed（Phase 6 OS-assisted Isolation 未开始）**
 
 - Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
 - Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。
@@ -177,8 +177,15 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
   - **Production chain**：`DB MCP Config → McpRuntimeManager → Runtime Catalog → McpToolAdapter → ToolRegistry → SecurityExecutionGateway → Remote MCP`（approved/authorized remote call = 1，denied / pre-approval = 0）。
   - **Product surface**：Tools 元数据、Resources/read 只读预览（二进制不展开）、Prompts 预览（外部内容警告，不自动进对话/任务/System Prompt）、Plugin/MCP 生命周期（CRUD ↔ Runtime 同步 + shutdown_all + bounded startup refresh）。
   - 无 direct MCP Tool REST API，前端无 Tool 执行按钮；`call_tool` 保持 `pub(crate)`；Resource/Prompt 不自动注入 Agent 上下文。
+- Phase 5 ✅ COMPLETED — SecretStore + Legacy Secret Migration：
+  - OS-backed SecretStore（Windows Credential Manager / Keychain / Secret Service，`keyring` + `secrecy::SecretString` zeroize-on-drop）；测试用 `InMemorySecretStore`（绝不 plaintext fallback）。
+  - `SecretRef`（version + key）持久化；`ModelConfig`/`McpServer` 只存 ref，`api_key`/`embedding_api_key`/stdio MCP env 值不再进 SQLite。
+  - Legacy migration：Chat / Embedding / stdio MCP env → SecretStore（write → verify → clear plaintext）；失败保留明文并标 pending；幂等。
+  - Runtime：`SecretResolver` 按需解析（SecretRef → env → legacy literal）；LLM/Embedding/MCP stdio 在 Authorization header / Command.env 边界才 `expose_secret`，不长缓存。
+  - API/UX：Settings write-only 密钥 + 清除/轮换 + configured/source 状态；`GET /api/secrets/status`（无 value 导出）；`save_settings`/`create/update_mcp_server` 守卫拒绝明文。
+  - **No plaintext new writes**：持久化 Chat/Embedding literal key = NO，stdio MCP env value = NO，API/log/audit/Debug 泄漏 = NO。
 
-**Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。
+**Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。SecretStore 只负责存取，绝不授予权限或绕过 Gateway。
 
 ## v0.4 Workflow Runtime
 

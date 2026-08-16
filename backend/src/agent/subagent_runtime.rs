@@ -33,6 +33,7 @@ use crate::llm::client::LlmClient;
 use crate::safety::approval::ApprovalStore;
 use crate::safety::AuditRecorder;
 use crate::safety::SecurityExecutionGateway;
+use crate::secret::SecretResolver;
 use crate::server::LogBuffer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::subagent::{SubagentExecutionSpec, SubagentExecutor};
@@ -50,6 +51,7 @@ pub(crate) struct LocalSubagentExecutor {
     db: Database,
     audit_recorder: AuditRecorder,
     log_buffer: LogBuffer,
+    resolver: Arc<SecretResolver>,
 }
 
 impl LocalSubagentExecutor {
@@ -60,6 +62,7 @@ impl LocalSubagentExecutor {
         db: Database,
         audit_recorder: AuditRecorder,
         log_buffer: LogBuffer,
+        resolver: Arc<SecretResolver>,
     ) -> Self {
         Self {
             config,
@@ -68,6 +71,7 @@ impl LocalSubagentExecutor {
             db,
             audit_recorder,
             log_buffer,
+            resolver,
         }
     }
 }
@@ -89,7 +93,7 @@ impl SubagentExecutor for LocalSubagentExecutor {
 
         let conversation_id = format!("subagent:{}:{}", spec.name, uuid::Uuid::new_v4());
 
-        let client = LlmClient::new(&child_config.model);
+        let client = LlmClient::new(&child_config.model, Arc::clone(&self.resolver));
         let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
             child_config.sandbox.clone(),
             self.workspace_root.clone(),

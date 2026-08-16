@@ -108,10 +108,18 @@ pub struct ModelConfig {
     pub name: String,
     #[serde(default = "default_base_url")]
     pub base_url: String,
-    #[serde(default)]
+    /// Direct API key. Write-only input (LEGACY MIGRATION ONLY); never persisted.
+    #[serde(default, skip_serializing)]
     pub api_key: String,
     #[serde(default = "default_api_key_env")]
     pub api_key_env: String,
+    /// Stable SecretRef for the chat API key (persisted; value lives in the
+    /// OS-backed SecretStore).
+    #[serde(default)]
+    pub api_key_ref: Option<crate::secret::SecretRef>,
+    /// Write-only request signal to clear the stored chat API key.
+    #[serde(default, skip_serializing)]
+    pub clear_api_key: bool,
     #[serde(default)]
     pub temperature: f64,
     #[serde(default = "default_max_tokens")]
@@ -125,12 +133,18 @@ pub struct ModelConfig {
     /// Base URL for the embeddings endpoint.
     #[serde(default)]
     pub embedding_base_url: String,
-    /// Direct embedding API key.
-    #[serde(default)]
+    /// Direct embedding API key. Write-only input (LEGACY MIGRATION ONLY).
+    #[serde(default, skip_serializing)]
     pub embedding_api_key: String,
     /// Environment variable that holds the embedding API key.
     #[serde(default)]
     pub embedding_api_key_env: String,
+    /// Stable SecretRef for the embedding API key (persisted).
+    #[serde(default)]
+    pub embedding_api_key_ref: Option<crate::secret::SecretRef>,
+    /// Write-only request signal to clear the stored embedding API key.
+    #[serde(default, skip_serializing)]
+    pub clear_embedding_api_key: bool,
 }
 
 impl Default for ModelConfig {
@@ -141,6 +155,8 @@ impl Default for ModelConfig {
             base_url: default_base_url(),
             api_key: String::new(),
             api_key_env: default_api_key_env(),
+            api_key_ref: None,
+            clear_api_key: false,
             temperature: 0.0,
             max_tokens: default_max_tokens(),
             invoke_timeout_ms: default_timeout_ms(),
@@ -148,6 +164,8 @@ impl Default for ModelConfig {
             embedding_base_url: String::new(),
             embedding_api_key: String::new(),
             embedding_api_key_env: String::new(),
+            embedding_api_key_ref: None,
+            clear_embedding_api_key: false,
         }
     }
 }

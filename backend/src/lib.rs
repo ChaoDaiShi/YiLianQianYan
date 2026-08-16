@@ -14,6 +14,7 @@ pub mod mcp;
 pub mod mcp_runtime;
 pub mod plugin;
 pub mod safety;
+pub mod secret;
 pub mod server;
 pub mod task;
 pub mod tools;
@@ -70,6 +71,9 @@ async fn create_server_with_control_session(
         }
         None => AppServer::new(&db_path, &workspace_root)?,
     });
+    // Migrate legacy plaintext secrets BEFORE registering MCP servers, so the
+    // runtime manager sees the post-migration `env_secret_refs`.
+    server.migrate_secrets().await;
     // Register enabled MCP servers and refresh them (bounded) so the managed
     // catalog is Ready before the first Agent request. A dead server never
     // blocks startup — it just becomes Unavailable.

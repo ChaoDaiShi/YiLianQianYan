@@ -349,7 +349,10 @@ async fn build_gateway(server: &AppServer) -> Arc<SecurityExecutionGateway> {
 /// never supply secrets — model/provider/base_url all come from app config.
 fn build_agent_executor(server: &AppServer) -> Arc<dyn WorkflowAgentExecutor> {
     let config = server.config.read().clone();
-    Arc::new(LlmWorkflowAgentExecutor::new(&config.model))
+    Arc::new(LlmWorkflowAgentExecutor::new(
+        &config.model,
+        Arc::clone(&server.secret_resolver),
+    ))
 }
 
 #[cfg(test)]

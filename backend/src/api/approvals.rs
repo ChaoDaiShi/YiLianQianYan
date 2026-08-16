@@ -966,7 +966,7 @@ async fn resume_agent(
         .lock()
         .insert(approval.conversation_id.clone(), cancel_token.clone());
 
-    let llm_client = LlmClient::new(&config.model);
+    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
     let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
         config.sandbox.clone(),
         server.workspace_root.clone(),
@@ -1372,6 +1372,7 @@ mod tests {
             args: None,
             url: None,
             env: None,
+            env_secret_refs: Default::default(),
             enabled: true,
             created_at: 1,
             updated_at: 1,

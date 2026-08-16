@@ -53,7 +53,9 @@ export interface ModelConfig {
   base_url: string;
   api_key: string;
   api_key_configured?: boolean;
+  api_key_source?: string;
   api_key_env: string;
+  clear_api_key?: boolean;
   temperature: number;
   max_tokens: number;
   invoke_timeout_ms: number;
@@ -61,7 +63,9 @@ export interface ModelConfig {
   embedding_base_url: string;
   embedding_api_key: string;
   embedding_api_key_configured?: boolean;
+  embedding_api_key_source?: string;
   embedding_api_key_env: string;
+  clear_embedding_api_key?: boolean;
 }
 
 export interface PermissionsConfig {
@@ -99,4 +103,6 @@ export interface AppConfig {
   skills: SkillsConfig;
   subagents: SubagentsConfig;
   compaction: CompactionConfig;
+  secret_store_status?: string;
+  migration_pending?: number;
 }

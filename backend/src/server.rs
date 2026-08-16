@@ -34,12 +34,14 @@ pub(crate) fn mcp_transport_config(server: &crate::db::McpServer) -> McpTranspor
             command: server.command.clone().unwrap_or_default(),
             args: server.args.clone().unwrap_or_default(),
             env: env_map,
+            env_secret_refs: server.env_secret_refs.clone(),
         },
     }
 }
 use crate::config::types::AppConfig;
 use crate::db::Database;
 use crate::safety::{approval::ApprovalStore, AuditRecorder, ControlSession};
+use crate::secret::{migrate_legacy_secrets, OsSecretStore, SecretResolver, SecretStore};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
 
@@ -146,6 +148,10 @@ pub struct AppServer {
     pub capability_registry: Arc<RwLock<Option<Arc<CapabilityRegistry>>>>,
     /// Application-lifetime MCP runtime manager (managed production path).
     pub mcp_runtime_manager: Arc<McpRuntimeManager>,
+    /// Application-lifetime OS-backed secret store (single instance).
+    pub secret_store: Arc<dyn SecretStore>,
+    /// Application-lifetime secret resolver (single instance).
+    pub secret_resolver: Arc<SecretResolver>,
 }
 
 impl AppServer {
@@ -160,6 +166,22 @@ impl AppServer {
         workspace_root: &str,
         control_session: ControlSession,
     ) -> Result<Self, String> {
+        Self::new_with_control_session_and_store(
+            db_path,
+            workspace_root,
+            control_session,
+            Arc::new(OsSecretStore::new()),
+        )
+    }
+
+    /// Full construction with an injectable SecretStore (production uses
+    /// [`OsSecretStore`]; tests inject [`InMemorySecretStore`]).
+    pub fn new_with_control_session_and_store(
+        db_path: &std::path::Path,
+        workspace_root: &str,
+        control_session: ControlSession,
+        secret_store: Arc<dyn SecretStore>,
+    ) -> Result<Self, String> {
         let db = Database::new(db_path).map_err(|e| e.to_string())?;
         // v0.6 recovery: any execution left "running" by a previous process must
         // not pretend to keep running — mark interrupted and block its task.
@@ -169,9 +191,12 @@ impl AppServer {
             }
         }
         let audit_recorder = AuditRecorder::new(db.clone_connection());
-        let mut config = db.get_settings().unwrap_or_default();
+        let secret_resolver = Arc::new(SecretResolver::new(Arc::clone(&secret_store)));
+        let config = db.get_settings().unwrap_or_default();
 
-        // Auto-migrate old system prompts to the new one
+        // Auto-migrate old system prompts to the new one. (Secret migration is a
+        // separate async step — see [`Self::migrate_secrets`].)
+        let mut config = config;
         let needs_migration = config.agent.system_prompt.is_empty()
             || config.agent.system_prompt.contains("Flow 工作流编排 Agent")
             || config.agent.system_prompt.contains("LangGraph")
@@ -218,8 +243,42 @@ impl AppServer {
             audit_recorder,
             control_session,
             capability_registry: Arc::new(RwLock::new(None)),
-            mcp_runtime_manager: Arc::new(McpRuntimeManager::new()),
+            mcp_runtime_manager: Arc::new(McpRuntimeManager::with_resolver(Arc::clone(
+                &secret_resolver,
+            ))),
+            secret_store,
+            secret_resolver,
         })
+    }
+
+    /// Migrate legacy plaintext secrets into the SecretStore (write → verify →
+    /// clear → persist refs). Must run BEFORE `register_mcp_servers_from_db`.
+    pub async fn migrate_secrets(&self) -> crate::secret::SecretMigrationReport {
+        let mut config = self.config.write();
+        let mut mcp_servers = self.db.list_mcp_servers().unwrap_or_default();
+        let report =
+            migrate_legacy_secrets(self.secret_store.as_ref(), &mut config, &mut mcp_servers).await;
+        if report.migrated_chat_key || report.migrated_embedding_key {
+            if let Err(e) = self.db.save_settings(&config) {
+                tracing::warn!(error = %e, "failed to persist migrated model secret refs");
+            }
+        }
+        if report.migrated_mcp_values > 0 {
+            for server in &mcp_servers {
+                if server.transport == "stdio" {
+                    if let Err(e) = self.db.update_mcp_server(&server.id, server) {
+                        tracing::warn!(server_id = %server.id, error = %e, "failed to persist migrated MCP secret refs");
+                    }
+                }
+            }
+        }
+        if report.pending > 0 || report.failed > 0 {
+            tracing::warn!(
+                ?report,
+                "legacy secret migration incomplete (store unavailable)"
+            );
+        }
+        report
     }
 
     /// Build the base system prompt with skills + subagents sections.
@@ -370,6 +429,7 @@ impl AppServer {
                 self.db.clone_connection(),
                 self.audit_recorder.clone(),
                 self.log_buffer.clone(),
+                Arc::clone(&self.secret_resolver),
             ));
 
         let registered = crate::tools::subagent::register_discovered_subagent_tools(

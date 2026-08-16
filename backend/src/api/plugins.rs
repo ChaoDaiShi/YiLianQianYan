@@ -6,10 +6,46 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use secrecy::SecretString;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::db::McpServer;
+use crate::secret::{mcp_env_ref, SecretRef, SecretStore, MAX_SECRET_VALUE_BYTES};
 use crate::server::AppServer;
+
+/// Write stdio env values into the SecretStore, reusing stable refs on rotation.
+/// Returns the persisted env name → SecretRef map.
+async fn write_stdio_env_secrets(
+    store: &dyn SecretStore,
+    server_id: &str,
+    env: Option<&serde_json::Value>,
+    existing: &BTreeMap<String, SecretRef>,
+) -> Result<BTreeMap<String, SecretRef>, String> {
+    let mut refs = BTreeMap::new();
+    let Some(env) = env else {
+        return Ok(refs);
+    };
+    let obj = env.as_object().ok_or("stdio env must be a JSON object")?;
+    for (name, value) in obj {
+        let value_str = value
+            .as_str()
+            .ok_or_else(|| format!("stdio env value for '{name}' must be a string"))?;
+        if value_str.len() > MAX_SECRET_VALUE_BYTES {
+            return Err(format!("stdio env value for '{name}' exceeds size limit"));
+        }
+        let secret_ref = existing
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| mcp_env_ref(server_id, name));
+        store
+            .put(&secret_ref, SecretString::from(value_str.to_string()))
+            .await
+            .map_err(|e| format!("failed to store env secret '{name}': {e}"))?;
+        refs.insert(name.clone(), secret_ref);
+    }
+    Ok(refs)
+}
 
 // ── Response types ──
 
@@ -197,14 +233,36 @@ pub async fn create_mcp(
     Json(body): Json<CreateMcpRequest>,
 ) -> Result<Json<PublicMcpServer>, String> {
     let now = chrono::Utc::now().timestamp_millis();
+    let id = uuid::Uuid::new_v4().to_string();
+    let transport = body
+        .transport
+        .clone()
+        .unwrap_or_else(|| "stdio".to_string());
+
+    // stdio env values are secrets → SecretStore; streamable_http env values are
+    // header → env-var-name references and stay in `env` (never secret values).
+    let (env, env_secret_refs) = if transport == "stdio" {
+        let refs = write_stdio_env_secrets(
+            server.secret_store.as_ref(),
+            &id,
+            body.env.as_ref(),
+            &BTreeMap::new(),
+        )
+        .await?;
+        (None, refs)
+    } else {
+        (body.env, BTreeMap::new())
+    };
+
     let server_cfg = McpServer {
-        id: uuid::Uuid::new_v4().to_string(),
+        id,
         name: body.name.unwrap_or_else(|| "未命名 MCP".to_string()),
-        transport: body.transport.unwrap_or_else(|| "stdio".to_string()),
+        transport,
         command: body.command,
         args: body.args,
         url: body.url,
-        env: body.env,
+        env,
+        env_secret_refs,
         enabled: true,
         created_at: now,
         updated_at: now,
@@ -244,15 +302,45 @@ pub async fn update_mcp(
         .map_err(|e| format!("查询失败: {}", e))?
         .ok_or("MCP 服务器不存在")?;
 
+    let transport = body.transport.clone().unwrap_or(existing.transport.clone());
     let now = chrono::Utc::now().timestamp_millis();
+
+    // Resolve the new env + env_secret_refs based on transport.
+    let (env, env_secret_refs) = if transport == "stdio" {
+        match &body.env {
+            // Empty/absent env on edit = preserve existing secrets.
+            None => (None, existing.env_secret_refs.clone()),
+            Some(new_env) => {
+                let refs = write_stdio_env_secrets(
+                    server.secret_store.as_ref(),
+                    &existing.id,
+                    Some(new_env),
+                    &existing.env_secret_refs,
+                )
+                .await?;
+                // Delete removed keys' secrets (avoid orphan secrets).
+                for (name, secret_ref) in &existing.env_secret_refs {
+                    if !refs.contains_key(name) {
+                        let _ = server.secret_store.delete(secret_ref).await;
+                    }
+                }
+                (None, refs)
+            }
+        }
+    } else {
+        // streamable_http: env holds header → env-var-name references.
+        (body.env.or(existing.env), BTreeMap::new())
+    };
+
     let updated = McpServer {
         id: existing.id.clone(),
         name: body.name.unwrap_or(existing.name),
-        transport: body.transport.unwrap_or(existing.transport),
+        transport,
         command: body.command.or(existing.command),
         args: body.args.or(existing.args),
         url: body.url.or(existing.url),
-        env: body.env.or(existing.env),
+        env,
+        env_secret_refs,
         enabled: body.enabled.unwrap_or(existing.enabled),
         created_at: existing.created_at,
         updated_at: now,
@@ -283,12 +371,26 @@ pub async fn delete_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, String> {
+    // Collect secret refs first so they can be cleaned up after the DB row is gone.
+    let existing = server.db.get_mcp_server(&id).ok().flatten();
+    let secret_refs = existing
+        .map(|s| s.env_secret_refs.clone())
+        .unwrap_or_default();
+
     server.mcp_runtime_manager.remove_server(&id).await;
     server.invalidate_capability_registry();
     server
         .db
         .delete_mcp_server(&id)
         .map_err(|e| format!("删除失败: {}", e))?;
+
+    // Best-effort secret cleanup (orphan secret is safer than restoring config).
+    for (name, secret_ref) in &secret_refs {
+        if let Err(e) = server.secret_store.delete(secret_ref).await {
+            tracing::warn!(name = %name, error = %e, "failed to delete MCP env secret (orphan)");
+        }
+    }
+
     Ok(Json(serde_json::json!({"status": "deleted"})))
 }
 
@@ -380,6 +482,7 @@ mod tests {
             args: Some(vec!["--stdio".to_string()]),
             url: None,
             env: Some(serde_json::json!({"API_KEY": "secret-value", "MODE": "safe"})),
+            env_secret_refs: BTreeMap::new(),
             enabled: true,
             created_at: 1,
             updated_at: 2,

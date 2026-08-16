@@ -114,6 +114,7 @@ impl Database {
                 args TEXT,
                 url TEXT,
                 env TEXT,
+                env_secret_refs TEXT,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at INTEGER,
                 updated_at INTEGER
@@ -395,6 +396,11 @@ impl Database {
             ",
         )?;
 
+        // Additive migration: older databases lack `env_secret_refs`.
+        if !column_exists(&conn, "mcp_servers", "env_secret_refs")? {
+            conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN env_secret_refs TEXT")?;
+        }
+
         let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT OR IGNORE INTO security_subjects (
@@ -450,4 +456,15 @@ impl Database {
     pub(crate) fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for name in names {
+        if name? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

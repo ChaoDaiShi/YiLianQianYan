@@ -25,6 +25,13 @@ impl Database {
     }
 
     pub fn save_settings(&self, config: &AppConfig) -> Result<(), String> {
+        // Defense-in-depth: refuse to persist plaintext API keys. Values must
+        // live in the SecretStore behind a SecretRef.
+        if !config.model.api_key.is_empty() || !config.model.embedding_api_key.is_empty() {
+            return Err(
+                "SecretPersistenceViolation: API keys must be stored via SecretRef".to_string(),
+            );
+        }
         let conn = self.conn();
         let json = serde_json::to_string(config)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;

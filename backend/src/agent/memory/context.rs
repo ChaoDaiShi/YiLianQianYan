@@ -14,7 +14,9 @@ use serde::Serialize;
 use crate::config::types::ModelConfig;
 use crate::db::{Database, RetrieveQuery, ScoredMemory};
 use crate::llm::client::LlmClient;
+use crate::secret::SecretResolver;
 use crate::utils::text::truncate_chars;
+use std::sync::Arc;
 
 /// Maximum characters of a generated memory retrieval query.
 pub const MAX_MEMORY_QUERY_CHARS: usize = 500;
@@ -95,11 +97,11 @@ pub struct MemoryContextBuilder {
 }
 
 impl MemoryContextBuilder {
-    pub fn new(db: Database, config: &ModelConfig) -> Self {
+    pub fn new(db: Database, config: &ModelConfig, resolver: Arc<SecretResolver>) -> Self {
         let has_embedding = config.has_embedding();
         Self {
             db,
-            llm: LlmClient::new(config),
+            llm: LlmClient::new(config, resolver),
             has_embedding,
         }
     }

@@ -585,6 +585,7 @@ export default function PluginsPage() {
 
           <div>
             <label className="block text-sm font-medium mb-1">环境变量 (JSON 对象；留空则保留现有值)</label>
+            <p className="text-xs text-[var(--text-muted)] mb-1">环境变量值将保存到系统安全凭据库，不会写入项目数据库或回显。</p>
             {editingId && formEnvKeyCount > 0 && (
               <p className="text-xs text-[var(--text-muted)] mb-1">已配置 {formEnvKeyCount} 个环境变量键；为保护 Secret，不回显值。</p>
             )}

@@ -16,6 +16,8 @@ use super::policy::{validate_candidate, MemoryWritePolicy};
 use crate::config::types::ModelConfig;
 use crate::db::{CreateMemoryRequest, Database, Memory, MemoryQuery};
 use crate::llm::client::LlmClient;
+use crate::secret::SecretResolver;
+use std::sync::Arc;
 
 /// Outcome of attempting to persist a single candidate.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -68,11 +70,16 @@ pub struct MemoryWriter {
 }
 
 impl MemoryWriter {
-    pub fn new(db: Database, config: &ModelConfig, policy: MemoryWritePolicy) -> Self {
+    pub fn new(
+        db: Database,
+        config: &ModelConfig,
+        policy: MemoryWritePolicy,
+        resolver: Arc<SecretResolver>,
+    ) -> Self {
         let has_embedding = config.has_embedding();
         Self {
             db,
-            llm: LlmClient::new(config),
+            llm: LlmClient::new(config, resolver),
             policy,
             has_embedding,
         }

@@ -46,6 +46,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
 
+# Secret storage
+keyring = "4"
+secrecy = "0.10"
+
 # Input simulation (mouse + keyboard)
 enigo = { version = "0.3", features = ["serde"] }
 

@@ -24,6 +24,11 @@ pub enum AuditEventType {
     RoleChanged,
     AuditExported,
     SecurityDegraded,
+    SecretCreated,
+    SecretRotated,
+    SecretDeleted,
+    LegacySecretMigrated,
+    SecretStoreUnavailable,
 }
 
 impl AuditEventType {
@@ -39,6 +44,11 @@ impl AuditEventType {
             Self::RoleChanged => "role_changed",
             Self::AuditExported => "audit_exported",
             Self::SecurityDegraded => "security_degraded",
+            Self::SecretCreated => "secret_created",
+            Self::SecretRotated => "secret_rotated",
+            Self::SecretDeleted => "secret_deleted",
+            Self::LegacySecretMigrated => "legacy_secret_migrated",
+            Self::SecretStoreUnavailable => "secret_store_unavailable",
         }
     }
 }

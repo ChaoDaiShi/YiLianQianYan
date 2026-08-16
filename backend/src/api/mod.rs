@@ -25,6 +25,7 @@ mod logs;
 mod mcp_runtime;
 mod memories;
 mod plugins;
+mod secrets;
 mod security;
 mod settings;
 mod skills_route;
@@ -206,6 +207,8 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             "/api/mcp/servers/:id/prompts/get",
             post(mcp_runtime::get_prompt),
         )
+        // Secrets status (value-free; no secret-read endpoint)
+        .route("/api/secrets/status", get(secrets::status_handler))
         // Logs API
         .route("/api/logs", get(logs::get_logs))
         .route("/api/logs", post(logs::push_log))

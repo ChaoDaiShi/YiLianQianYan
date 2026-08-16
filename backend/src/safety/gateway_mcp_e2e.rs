@@ -158,6 +158,7 @@ async fn gateway_stack(db: Arc<Database>) -> (SecurityExecutionGateway, Arc<Atom
         args: None,
         url: Some(format!("{addr}/mcp")),
         env: None,
+        env_secret_refs: Default::default(),
         enabled: true,
         created_at: 0,
         updated_at: 0,

@@ -6,6 +6,12 @@ use super::context::*;
 use super::*;
 use crate::config::types::ModelConfig;
 use crate::db::{CreateMemoryRequest, Database, Memory, ScoredMemory};
+use crate::secret::{InMemorySecretStore, SecretResolver};
+use std::sync::Arc;
+
+fn test_resolver() -> Arc<SecretResolver> {
+    Arc::new(SecretResolver::new(Arc::new(InMemorySecretStore::new())))
+}
 
 fn temp_db(label: &str) -> (std::path::PathBuf, Database) {
     let path = std::env::temp_dir().join(format!(
@@ -84,7 +90,7 @@ async fn build_retrieves_lexical_without_embedding() {
     .unwrap();
 
     // No embedding configured → lexical mode, no network.
-    let builder = MemoryContextBuilder::new(db, &ModelConfig::default());
+    let builder = MemoryContextBuilder::new(db, &ModelConfig::default(), test_resolver());
     let context = builder
         .build("代码审查", "关注安全漏洞", "审查")
         .await
@@ -99,7 +105,7 @@ async fn build_retrieves_lexical_without_embedding() {
 #[tokio::test]
 async fn build_returns_empty_context_when_no_memories() {
     let (path, db) = temp_db("empty");
-    let builder = MemoryContextBuilder::new(db, &ModelConfig::default());
+    let builder = MemoryContextBuilder::new(db, &ModelConfig::default(), test_resolver());
     let context = builder.build("任意任务", "", "").await.unwrap();
     assert!(context.memories.is_empty());
     assert_eq!(context.injected_text, "");
@@ -229,6 +235,7 @@ async fn writer_stores_valid_candidates_and_rejects_invalid() {
         db.clone_connection(),
         &ModelConfig::default(),
         MemoryWritePolicy::default(),
+        test_resolver(),
     );
 
     let report = writer
@@ -266,6 +273,7 @@ async fn writer_skips_duplicate_across_runs() {
         db.clone_connection(),
         &ModelConfig::default(),
         MemoryWritePolicy::default(),
+        test_resolver(),
     );
 
     let first = writer
@@ -440,6 +448,7 @@ async fn same_batch_duplicate_is_stored_once() {
         db.clone_connection(),
         &ModelConfig::default(),
         MemoryWritePolicy::default(),
+        test_resolver(),
     );
     let report = writer
         .write(vec![
@@ -461,13 +470,18 @@ async fn learned_memory_is_retrievable_by_future_agent() {
         db.clone_connection(),
         &ModelConfig::default(),
         MemoryWritePolicy::default(),
+        test_resolver(),
     );
     let candidates = reflect(reflection_input(TaskStatus::Completed)).await;
     let report = writer.write(candidates).await;
     assert!(report.stored >= 1);
 
     // Execution #2: a related future task retrieves the learned memory.
-    let builder = MemoryContextBuilder::new(db.clone_connection(), &ModelConfig::default());
+    let builder = MemoryContextBuilder::new(
+        db.clone_connection(),
+        &ModelConfig::default(),
+        test_resolver(),
+    );
     let context = builder
         .build("实现 MCP Runtime", "stdio transport", "设计")
         .await

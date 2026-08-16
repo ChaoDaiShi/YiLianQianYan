@@ -7,11 +7,16 @@ use crate::config::types::SandboxConfig;
 use crate::db::Database;
 use crate::execution::{ExecutionContext, ExecutionId};
 use crate::safety::SecurityExecutionGateway;
+use crate::secret::{InMemorySecretStore, SecretResolver};
 use crate::tools::{Tool, ToolRegistry, ToolResult};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
+
+fn test_resolver() -> Arc<SecretResolver> {
+    Arc::new(SecretResolver::new(Arc::new(InMemorySecretStore::new())))
+}
 
 fn default_config(kind: WorkflowNodeKind) -> WorkflowNodeConfig {
     match kind {
@@ -1692,7 +1697,7 @@ fn chat_response(content: Option<&str>, tool_calls: bool) -> serde_json::Value {
 async fn llm_agent_executor_returns_text_from_mock_server() {
     let (addr, _handle) =
         start_mock_chat_server(vec![chat_response(Some("研究完成"), false)]).await;
-    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr));
+    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr), test_resolver());
     let text = agent.generate("研究").await.unwrap();
     assert_eq!(text, "研究完成");
 }
@@ -1700,7 +1705,7 @@ async fn llm_agent_executor_returns_text_from_mock_server() {
 #[tokio::test]
 async fn llm_agent_executor_fails_closed_on_tool_calls() {
     let (addr, _handle) = start_mock_chat_server(vec![chat_response(None, true)]).await;
-    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr));
+    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr), test_resolver());
     let error = agent.generate("研究").await.unwrap_err();
     assert!(
         error.to_string().contains("unsupported tool calls"),
@@ -1723,7 +1728,7 @@ async fn llm_agent_executor_fails_closed_on_llm_error() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr));
+    let agent = LlmWorkflowAgentExecutor::new(&mock_agent_config(&addr), test_resolver());
     let error = agent.generate("研究").await.unwrap_err();
     assert!(
         matches!(error, WorkflowExecutionError::Execution(_)),

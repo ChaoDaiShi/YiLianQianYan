@@ -54,7 +54,7 @@ pub async fn create_handler(
             // Auto-embed: best-effort, never fails the create
             let model_cfg = server.config.read().model.clone();
             if model_cfg.has_embedding() {
-                let llm = LlmClient::new(&model_cfg);
+                let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
                 match llm.embed(&req.content).await {
                     Ok(vec) => {
                         if let Err(e) = server.db.update_memory_embedding(&mem.id, &vec) {
@@ -125,7 +125,7 @@ pub async fn retrieve_handler(
     let mut query_embedding: Option<Vec<f32>> = None;
 
     if model_cfg.has_embedding() {
-        let llm = LlmClient::new(&model_cfg);
+        let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
         match llm.embed(&q).await {
             Ok(vec) => {
                 query_embedding = Some(vec);
@@ -344,7 +344,7 @@ pub async fn extract_handler(
 
     // 2. Call LLM
     let config = server.config.read().clone();
-    let llm_client = LlmClient::new(&config.model);
+    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
     let prompt = build_extraction_prompt(&conversation_text);
     let tools = vec![extraction_tool_definition()];
 
@@ -477,7 +477,7 @@ async fn process_extracted_memories(
 
         // Auto-embed: best-effort, never fails memory creation
         if has_embedding {
-            let llm = LlmClient::new(&model_cfg);
+            let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
             match llm.embed(&content).await {
                 Ok(vec) => {
                     if let Err(e) = server.db.update_memory_embedding(&memory.id, &vec) {
@@ -593,7 +593,7 @@ pub async fn reindex_handler(
     let mut succeeded = 0usize;
     let mut failed = 0usize;
 
-    let llm_client = LlmClient::new(&config.model);
+    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
 
     for memory in &missing {
         match llm_client.embed(&memory.content).await {

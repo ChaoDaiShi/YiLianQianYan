@@ -59,8 +59,13 @@ pub enum McpTransportConfig {
         command: String,
         #[serde(default)]
         args: Vec<String>,
+        /// Non-secret environment (legacy / non-secret only). Secret values are
+        /// referenced via `env_secret_refs` and resolved at spawn time.
         #[serde(default)]
         env: BTreeMap<String, String>,
+        /// env name → SecretRef (resolved through the SecretResolver at spawn).
+        #[serde(default)]
+        env_secret_refs: BTreeMap<String, crate::secret::SecretRef>,
     },
     StreamableHttp {
         url: String,

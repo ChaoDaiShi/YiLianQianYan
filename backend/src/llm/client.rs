@@ -3,6 +3,7 @@
 // ============================================================
 
 use reqwest::Client as HttpClient;
+use secrecy::{ExposeSecret, SecretString};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -10,6 +11,7 @@ use tracing;
 
 use super::types::*;
 use crate::config::types::ModelConfig;
+use crate::secret::SecretResolver;
 
 /// Errors that can occur during LLM calls
 #[derive(Debug, thiserror::Error)]
@@ -26,6 +28,8 @@ pub enum LlmError {
     Timeout,
     #[error("No API key configured")]
     NoApiKey,
+    #[error("secret store unavailable")]
+    SecretUnavailable,
     #[error("embedding model is not configured")]
     EmbeddingNotConfigured,
     #[error("invalid embedding response: {0}")]
@@ -38,13 +42,14 @@ pub enum LlmError {
 pub struct LlmClient {
     http: HttpClient,
     config: ModelConfig,
+    resolver: Arc<SecretResolver>,
     /// Concurrency limiter (max 3 concurrent LLM calls)
     limiter: Arc<Mutex<()>>,
 }
 
 impl LlmClient {
-    /// Create a new LLM client from configuration
-    pub fn new(config: &ModelConfig) -> Self {
+    /// Create a new LLM client from configuration + a secret resolver.
+    pub fn new(config: &ModelConfig, resolver: Arc<SecretResolver>) -> Self {
         let http = HttpClient::builder()
             .timeout(Duration::from_millis(config.invoke_timeout_ms))
             .build()
@@ -53,6 +58,7 @@ impl LlmClient {
         Self {
             http,
             config: config.clone(),
+            resolver,
             limiter: Arc::new(Mutex::new(())),
         }
     }
@@ -65,9 +71,22 @@ impl LlmClient {
         )
     }
 
-    /// Get the resolved API key
-    fn api_key(&self) -> Result<String, LlmError> {
-        self.config.resolve_api_key().ok_or(LlmError::NoApiKey)
+    /// Resolve the chat API key through the SecretResolver (never a String).
+    async fn api_key(&self) -> Result<SecretString, LlmError> {
+        self.resolver
+            .resolve_api_key(&self.config)
+            .await
+            .map_err(|_| LlmError::SecretUnavailable)?
+            .ok_or(LlmError::NoApiKey)
+    }
+
+    /// Resolve the embedding API key through the SecretResolver.
+    async fn embedding_api_key(&self) -> Result<SecretString, LlmError> {
+        self.resolver
+            .resolve_embedding_api_key(&self.config)
+            .await
+            .map_err(|_| LlmError::SecretUnavailable)?
+            .ok_or(LlmError::EmbeddingNoApiKey)
     }
 
     // ============================================================
@@ -96,7 +115,7 @@ impl LlmClient {
             stream: false,
         };
 
-        let api_key = self.api_key()?;
+        let api_key = self.api_key().await?;
 
         tracing::debug!(
             "LLM invoke: {} messages, {} tools",
@@ -107,7 +126,10 @@ impl LlmClient {
         let response = self
             .http
             .post(&self.api_url())
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header(
+                "Authorization",
+                format!("Bearer {}", api_key.expose_secret()),
+            )
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
@@ -137,10 +159,7 @@ impl LlmClient {
             return Err(LlmError::EmbeddingNotConfigured);
         }
 
-        let api_key = self
-            .config
-            .resolve_embedding_api_key()
-            .ok_or(LlmError::EmbeddingNoApiKey)?;
+        let api_key = self.embedding_api_key().await?;
 
         let url = format!(
             "{}/embeddings",
@@ -161,7 +180,10 @@ impl LlmClient {
         let response = self
             .http
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header(
+                "Authorization",
+                format!("Bearer {}", api_key.expose_secret()),
+            )
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
@@ -244,7 +266,7 @@ impl LlmClient {
             stream: true,
         };
 
-        let api_key = self.api_key()?;
+        let api_key = self.api_key().await?;
 
         tracing::debug!(
             "LLM stream: {} messages, {} tools",
@@ -255,7 +277,10 @@ impl LlmClient {
         let response = self
             .http
             .post(&self.api_url())
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header(
+                "Authorization",
+                format!("Bearer {}", api_key.expose_secret()),
+            )
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
             .json(&request)
@@ -381,6 +406,7 @@ impl LlmClient {
 mod tests {
     use super::*;
     use crate::config::types::ModelConfig;
+    use crate::secret::SecretStore;
 
     fn config_for_mock(base_url: &str) -> ModelConfig {
         ModelConfig {
@@ -400,11 +426,17 @@ mod tests {
         }
     }
 
+    fn test_resolver() -> Arc<crate::secret::SecretResolver> {
+        Arc::new(crate::secret::SecretResolver::new(Arc::new(
+            crate::secret::InMemorySecretStore::new(),
+        )))
+    }
+
     // ── Unit tests (no HTTP) ──
 
     #[test]
     fn embed_errors_when_not_configured() {
-        let client = LlmClient::new(&unconfigured_config());
+        let client = LlmClient::new(&unconfigured_config(), test_resolver());
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -473,7 +505,7 @@ mod tests {
         })])
         .await;
 
-        let client = LlmClient::new(&config_for_mock(&addr));
+        let client = LlmClient::new(&config_for_mock(&addr), test_resolver());
         let result = client.embed("test input").await.unwrap();
         assert_eq!(result, vec![0.1, 0.2, 0.3]);
     }
@@ -485,7 +517,7 @@ mod tests {
         })])
         .await;
 
-        let client = LlmClient::new(&config_for_mock(&addr));
+        let client = LlmClient::new(&config_for_mock(&addr), test_resolver());
         let result = client.embed("test").await;
         assert!(matches!(result, Err(LlmError::InvalidEmbeddingResponse(_))));
     }
@@ -497,7 +529,7 @@ mod tests {
         })])
         .await;
 
-        let client = LlmClient::new(&config_for_mock(&addr));
+        let client = LlmClient::new(&config_for_mock(&addr), test_resolver());
         let result = client.embed("test").await;
         assert!(matches!(result, Err(LlmError::InvalidEmbeddingResponse(_))));
     }
@@ -509,7 +541,7 @@ mod tests {
         })])
         .await;
 
-        let client = LlmClient::new(&config_for_mock(&addr));
+        let client = LlmClient::new(&config_for_mock(&addr), test_resolver());
         let result = client.embed("test").await;
         assert!(matches!(result, Err(LlmError::InvalidEmbeddingResponse(_))));
     }
@@ -521,7 +553,7 @@ mod tests {
         })])
         .await;
 
-        let client = LlmClient::new(&config_for_mock(&addr));
+        let client = LlmClient::new(&config_for_mock(&addr), test_resolver());
         let result = client.embed("用户偏好最小范围代码修改").await.unwrap();
         assert_eq!(result, vec![0.5]);
     }
@@ -563,11 +595,144 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let client = LlmClient::new(&config_for_mock(&addr));
+        let client = LlmClient::new(&config_for_mock(&addr), test_resolver());
         client.embed("hello world").await.unwrap();
 
         let body = last_body.lock().unwrap().take().unwrap();
         assert_eq!(body["model"], "test-embed-model");
         assert_eq!(body["input"], "hello world");
+    }
+
+    #[tokio::test]
+    async fn embed_resolves_secret_ref_from_store() {
+        use std::sync::Mutex as StdMutex;
+        let store = Arc::new(crate::secret::InMemorySecretStore::new());
+        store
+            .put(
+                &crate::secret::SecretRef::new(crate::secret::EMBEDDING_KEY_REF),
+                secrecy::SecretString::from("SECRET_EMBED".to_string()),
+            )
+            .await
+            .unwrap();
+        let resolver = Arc::new(crate::secret::SecretResolver::new(store));
+
+        let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
+        #[derive(Clone)]
+        struct CapState {
+            auth: Arc<StdMutex<Option<String>>>,
+        }
+        let state = CapState {
+            auth: Arc::clone(&captured),
+        };
+        let app = Router::new()
+            .route("/embeddings", post(capture_embed_auth))
+            .with_state(state);
+
+        async fn capture_embed_auth(
+            State(state): State<CapState>,
+            headers: axum::http::HeaderMap,
+            Json(_body): Json<serde_json::Value>,
+        ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+            *state.auth.lock().unwrap() = headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            (
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({"data": [{"embedding": [0.1]}]})),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = ModelConfig::default();
+        config.embedding_model = "test-embed".to_string();
+        config.embedding_base_url = addr;
+        config.embedding_api_key_ref = Some(crate::secret::SecretRef::new(
+            crate::secret::EMBEDDING_KEY_REF,
+        ));
+        let client = LlmClient::new(&config, resolver);
+        client.embed("hello").await.unwrap();
+
+        assert_eq!(
+            captured.lock().unwrap().as_deref(),
+            Some("Bearer SECRET_EMBED")
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_resolves_secret_ref_from_store() {
+        use std::sync::Mutex as StdMutex;
+        let store = Arc::new(crate::secret::InMemorySecretStore::new());
+        store
+            .put(
+                &crate::secret::SecretRef::new(crate::secret::CHAT_KEY_REF),
+                secrecy::SecretString::from("SECRET_CHAT".to_string()),
+            )
+            .await
+            .unwrap();
+        let resolver = Arc::new(crate::secret::SecretResolver::new(store));
+
+        let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
+        #[derive(Clone)]
+        struct CapState {
+            auth: Arc<StdMutex<Option<String>>>,
+        }
+        let state = CapState {
+            auth: Arc::clone(&captured),
+        };
+        let app = Router::new()
+            .route("/chat/completions", post(capture_chat_auth))
+            .with_state(state);
+
+        async fn capture_chat_auth(
+            State(state): State<CapState>,
+            headers: axum::http::HeaderMap,
+            Json(_body): Json<serde_json::Value>,
+        ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+            *state.auth.lock().unwrap() = headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            (
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({
+                    "id": "chatcmpl-1",
+                    "choices": [{
+                        "index": 0,
+                        "message": { "role": "assistant", "content": "ok" },
+                        "finish_reason": "stop"
+                    }]
+                })),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = ModelConfig::default();
+        config.base_url = addr;
+        config.api_key_ref = Some(crate::secret::SecretRef::new(crate::secret::CHAT_KEY_REF));
+        let client = LlmClient::new(&config, resolver);
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: Some("hi".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        };
+        client.invoke(&[msg], &[]).await.unwrap();
+
+        assert_eq!(
+            captured.lock().unwrap().as_deref(),
+            Some("Bearer SECRET_CHAT")
+        );
     }
 }

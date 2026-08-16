@@ -20,7 +20,9 @@ use super::model::{
 use crate::capability::{CapabilityKind, CapabilityRegistry};
 use crate::llm::client::LlmClient;
 use crate::llm::types::ChatMessage;
+use crate::secret::SecretResolver;
 use crate::utils::text::truncate_chars;
+use std::sync::Arc;
 
 /// Hard cap on the number of capabilities exposed to the planner.
 pub const MAX_PLANNER_CAPABILITIES: usize = 100;
@@ -224,9 +226,9 @@ pub struct LlmTaskPlanner {
 }
 
 impl LlmTaskPlanner {
-    pub fn new(config: &crate::config::types::ModelConfig) -> Self {
+    pub fn new(config: &crate::config::types::ModelConfig, resolver: Arc<SecretResolver>) -> Self {
         Self {
-            llm: LlmClient::new(config),
+            llm: LlmClient::new(config, resolver),
         }
     }
 }
