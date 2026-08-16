@@ -157,6 +157,20 @@ pub async fn create_mcp(
         .create_mcp_server(&server_cfg)
         .map_err(|e| format!("创建失败: {}", e))?;
 
+    // Sync into the runtime manager (best-effort refresh).
+    server.mcp_runtime_manager.register_server(
+        server_cfg.id.clone(),
+        server_cfg.name.clone(),
+        crate::server::mcp_transport_config(&server_cfg),
+    );
+    if server_cfg.enabled {
+        let _ = server
+            .mcp_runtime_manager
+            .refresh_server(&server_cfg.id)
+            .await;
+    }
+    server.invalidate_capability_registry();
+
     Ok(Json(PublicMcpServer::from(server_cfg)))
 }
 
@@ -191,6 +205,18 @@ pub async fn update_mcp(
         .update_mcp_server(&id, &updated)
         .map_err(|e| format!("更新失败: {}", e))?;
 
+    // Replace the runtime: shutdown/remove old, register new, refresh.
+    server.mcp_runtime_manager.remove_server(&id).await;
+    if updated.enabled {
+        server.mcp_runtime_manager.register_server(
+            updated.id.clone(),
+            updated.name.clone(),
+            crate::server::mcp_transport_config(&updated),
+        );
+        let _ = server.mcp_runtime_manager.refresh_server(&id).await;
+    }
+    server.invalidate_capability_registry();
+
     Ok(Json(PublicMcpServer::from(updated)))
 }
 
@@ -199,6 +225,8 @@ pub async fn delete_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, String> {
+    server.mcp_runtime_manager.remove_server(&id).await;
+    server.invalidate_capability_registry();
     server
         .db
         .delete_mcp_server(&id)
@@ -211,12 +239,24 @@ pub async fn toggle_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<PublicMcpServer>, String> {
-    server
+    let toggled = server
         .db
         .toggle_mcp_server(&id)
         .map_err(|e| format!("切换失败: {}", e))?
-        .map(|server| Json(PublicMcpServer::from(server)))
-        .ok_or("MCP 服务器不存在".to_string())
+        .ok_or("MCP 服务器不存在".to_string())?;
+    // Sync runtime state with the DB toggle result.
+    if toggled.enabled {
+        server.mcp_runtime_manager.register_server(
+            toggled.id.clone(),
+            toggled.name.clone(),
+            crate::server::mcp_transport_config(&toggled),
+        );
+        let _ = server.mcp_runtime_manager.refresh_server(&id).await;
+    } else {
+        server.mcp_runtime_manager.remove_server(&id).await;
+    }
+    server.invalidate_capability_registry();
+    Ok(Json(PublicMcpServer::from(toggled)))
 }
 
 /// POST /api/plugins/mcp/:id/test — test MCP connection
@@ -241,61 +281,29 @@ pub async fn test_mcp(
         });
     }
 
-    match mcp.transport.as_str() {
-        "stdio" => {
-            // Real MCP handshake probe: initialize → initialized → tools/list.
-            match crate::mcp::probe_stdio_server(&mcp).await {
-                Ok(result) => {
-                    let server_desc = match (&result.server_name, &result.server_version) {
-                        (Some(name), Some(version)) => format!("{name} {version}"),
-                        (Some(name), None) => name.clone(),
-                        (None, Some(version)) => version.clone(),
-                        (None, None) => "unknown".to_string(),
-                    };
-                    Json(TestResult {
-                        ok: true,
-                        message: format!(
-                            "MCP 连接成功：server={}，发现 {} 个 tools",
-                            server_desc,
-                            result.tools.len()
-                        ),
-                    })
-                }
-                Err(e) => Json(TestResult {
-                    ok: false,
-                    message: format!("MCP 连接失败: {e}"),
-                }),
-            }
+    // Use the managed runtime (supports stdio + streamable_http). Register the
+    // current config if needed, then refresh.
+    server.mcp_runtime_manager.register_server(
+        mcp.id.clone(),
+        mcp.name.clone(),
+        crate::server::mcp_transport_config(&mcp),
+    );
+    match server.mcp_runtime_manager.refresh_server(&id).await {
+        Ok(()) => {
+            let runtime = server.mcp_runtime_manager.get_server(&id);
+            let (tools, resources, prompts) = runtime
+                .map(|r| (r.tools.len(), r.resources.len(), r.prompts.len()))
+                .unwrap_or((0, 0, 0));
+            Json(TestResult {
+                ok: true,
+                message: format!(
+                    "MCP 连接成功：tools={tools}，resources={resources}，prompts={prompts}"
+                ),
+            })
         }
-        "sse" => {
-            match &mcp.url {
-                Some(url) => {
-                    // Simple connectivity check via HTTP HEAD
-                    match reqwest::Client::new()
-                        .head(url)
-                        .timeout(std::time::Duration::from_secs(5))
-                        .send()
-                        .await
-                    {
-                        Ok(resp) => Json(TestResult {
-                            ok: resp.status().is_success() || resp.status().is_redirection(),
-                            message: format!("HTTP {}", resp.status()),
-                        }),
-                        Err(e) => Json(TestResult {
-                            ok: false,
-                            message: format!("连接失败: {}", e),
-                        }),
-                    }
-                }
-                None => Json(TestResult {
-                    ok: false,
-                    message: "未配置 URL".to_string(),
-                }),
-            }
-        }
-        _ => Json(TestResult {
+        Err(e) => Json(TestResult {
             ok: false,
-            message: format!("不支持的传输类型: {}", mcp.transport),
+            message: format!("MCP 连接失败: {e}"),
         }),
     }
 }

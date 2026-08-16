@@ -70,15 +70,11 @@ async fn create_server_with_control_session(
         }
         None => AppServer::new(&db_path, &workspace_root)?,
     });
-    // Register enabled MCP servers and refresh them best-effort in the
-    // background (a dead MCP server must never block startup).
+    // Register enabled MCP servers and refresh them (bounded) so the managed
+    // catalog is Ready before the first Agent request. A dead server never
+    // blocks startup — it just becomes Unavailable.
     server.register_mcp_servers_from_db();
-    {
-        let server = Arc::clone(&server);
-        tokio::spawn(async move {
-            server.refresh_mcp_runtime().await;
-        });
-    }
+    server.refresh_mcp_runtime().await;
     let router = api::build_router(server.clone());
 
     Ok((server, router))
@@ -86,14 +82,22 @@ async fn create_server_with_control_session(
 
 /// Start the HTTP server (blocking). For standalone mode.
 pub async fn serve(addr: &str) {
-    let (_server, router) = create_server().await.expect("Failed to create server");
+    let (server, router) = create_server().await.expect("Failed to create server");
 
     tracing::info!("Server listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind address");
 
-    axum::serve(listener, router).await.expect("Server error");
+    let server_for_shutdown = Arc::clone(&server);
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            tracing::info!("shutdown signal received; closing MCP runtime");
+            server_for_shutdown.mcp_runtime_manager.shutdown_all().await;
+        })
+        .await
+        .expect("Server error");
 }
 
 /// Start the HTTP server on a background task (for Tauri embedding).

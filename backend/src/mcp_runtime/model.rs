@@ -247,6 +247,8 @@ pub enum McpRuntimeError {
     ServerNotFound,
     #[error("MCP server is disabled")]
     Disabled,
+    #[error("MCP tool not found: {0}")]
+    ToolNotFound(String),
     #[error("MCP server is misconfigured")]
     Misconfigured,
     #[error("MCP server failed to spawn: {0}")]

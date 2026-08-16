@@ -67,16 +67,23 @@ impl McpServerRuntime {
     }
 }
 
-/// Parse a remote cache `ttlMs` from a response (in `_meta` or top-level).
-/// Returns 0 (do not cache) when absent — the modern protocol's conservative
-/// default.
-fn parse_cache_ttl(result: &serde_json::Value) -> u64 {
-    result
-        .get("_meta")
+/// Parse a remote cache hint (`ttlMs` + `cacheScope`) from a response. Returns
+/// `(0, Private)` when absent — the modern protocol's conservative default.
+fn parse_cache_hint(result: &serde_json::Value) -> (u64, super::cache::CacheScope) {
+    let meta = result.get("_meta");
+    let ttl_ms = meta
         .and_then(|m| m.get("ttlMs"))
         .or_else(|| result.get("ttlMs"))
         .and_then(|v| v.as_u64())
-        .unwrap_or(0)
+        .unwrap_or(0);
+    let scope = match meta
+        .and_then(|m| m.get("cacheScope"))
+        .and_then(|v| v.as_str())
+    {
+        Some("public") => super::cache::CacheScope::Public,
+        _ => super::cache::CacheScope::Private,
+    };
+    (ttl_ms, scope)
 }
 
 pub struct McpRuntimeManager {
@@ -374,6 +381,9 @@ impl McpRuntimeManager {
         let runtime = self
             .get_server(server_id)
             .ok_or(McpRuntimeError::ServerNotFound)?;
+        if !runtime.capabilities.tools {
+            return Err(McpRuntimeError::CapabilityUnsupported("tools".to_string()));
+        }
         // Reuse cached catalog if already connected.
         if runtime.transport.is_some() {
             return Ok(runtime.tools.clone());
@@ -397,10 +407,17 @@ impl McpRuntimeManager {
         let runtime = self
             .get_server(server_id)
             .ok_or(McpRuntimeError::ServerNotFound)?;
+        if !runtime.capabilities.tools {
+            return Err(McpRuntimeError::CapabilityUnsupported("tools".to_string()));
+        }
         let transport = runtime
             .transport
             .as_ref()
             .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
+        // Unknown tool fails closed (agents may only call discovered catalog tools).
+        if !runtime.tools.iter().any(|t| t.name == tool_name) {
+            return Err(McpRuntimeError::ToolNotFound(tool_name.to_string()));
+        }
         // x-mcp-header: derive Mcp-Param-* headers from the tool's bindings.
         let extra_headers = runtime
             .tools
@@ -526,13 +543,13 @@ impl McpRuntimeManager {
             })),
             _ => {
                 let contents = parse_resource_contents(&result)?;
-                let ttl_ms = parse_cache_ttl(&result);
+                let (ttl_ms, scope) = parse_cache_hint(&result);
                 if ttl_ms > 0 {
                     self.cache.put(
                         &cache_key,
                         super::cache::McpCacheValue::ResourceRead(contents.clone()),
                         ttl_ms,
-                        super::cache::CacheScope::Private,
+                        scope,
                         Self::now_ms(),
                     );
                 }
@@ -586,6 +603,22 @@ impl McpRuntimeManager {
             )
             .await?;
         Ok(parse_prompt_get(&result))
+    }
+
+    /// Shut down one server's transport + invalidate its cache.
+    pub async fn shutdown_server(&self, server_id: &str) {
+        if let Some(runtime) = self.get_server(server_id) {
+            if let Some(transport) = &runtime.transport {
+                transport.shutdown().await;
+            }
+        }
+        self.invalidate_server_cache(server_id);
+    }
+
+    /// Shut down and remove a server from the manager.
+    pub async fn remove_server(&self, server_id: &str) {
+        self.shutdown_server(server_id).await;
+        self.servers.write().remove(server_id);
     }
 
     pub async fn shutdown_all(&self) {

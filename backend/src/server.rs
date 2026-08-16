@@ -14,7 +14,7 @@ use crate::capability::{
 use crate::mcp_runtime::{McpRuntimeManager, McpTransportConfig};
 
 /// Convert a legacy DB MCP server row into a runtime transport config.
-fn mcp_transport_config(server: &crate::db::McpServer) -> McpTransportConfig {
+pub(crate) fn mcp_transport_config(server: &crate::db::McpServer) -> McpTransportConfig {
     let env_map: std::collections::BTreeMap<String, String> = server
         .env
         .as_ref()
@@ -381,6 +381,11 @@ impl AppServer {
         tracing::info!(registered, "Subagent tools registered for runtime registry");
 
         Arc::new(parent_registry)
+    }
+
+    /// Invalidate the lazily-cached capability registry snapshot.
+    pub fn invalidate_capability_registry(&self) {
+        *self.capability_registry.write() = None;
     }
 
     /// Lazily build (and cache) the unified capability registry.
