@@ -254,15 +254,22 @@ impl HttpTransport {
 impl McpTransport for HttpTransport {
     async fn connect(
         &self,
-        _cancel: &CancellationToken,
+        cancel: &CancellationToken,
     ) -> Result<super::model::McpNegotiationResult, McpRuntimeError> {
-        // Modern Streamable HTTP is always 2026-07-28 (no legacy HTTP session).
-        Ok(super::model::McpNegotiationResult {
-            protocol_version: super::model::McpProtocolVersion::V2026_07_28,
-            capabilities: super::model::McpServerCapabilities {
+        // Modern Streamable HTTP is always 2026-07-28. Discover capabilities.
+        let mut params = serde_json::json!({});
+        super::protocol::attach_request_metadata(&mut params, "0.8.0");
+        let discover = JsonRpcRequest::new(0, "server/discover", Some(params));
+        let capabilities = match self.send_inner(&discover, cancel).await {
+            Ok(JsonRpcMessage::Success(s)) => super::model::parse_capabilities(&s.result),
+            _ => super::model::McpServerCapabilities {
                 tools: true,
                 ..Default::default()
             },
+        };
+        Ok(super::model::McpNegotiationResult {
+            protocol_version: super::model::McpProtocolVersion::V2026_07_28,
+            capabilities,
         })
     }
 

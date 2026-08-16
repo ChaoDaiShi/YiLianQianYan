@@ -28,7 +28,7 @@ mod stdio_tests;
 mod tests;
 
 pub use cache::{CacheScope, McpCache, McpCacheValue};
-pub use header_schema::scan_tool_header_bindings;
+pub use header_schema::{extract_header_values, scan_tool_header_bindings};
 pub use http::HttpTransport;
 pub use jsonrpc::{
     parse_message, JsonRpcError, JsonRpcErrorBody, JsonRpcMessage, JsonRpcNotification,

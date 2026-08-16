@@ -14,6 +14,7 @@ fn tools_value() -> McpCacheValue {
         input_schema: serde_json::json!({"type": "object"}),
         output_schema: None,
         annotations: None,
+        header_bindings: Vec::new(),
     }])
 }
 

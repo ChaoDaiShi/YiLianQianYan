@@ -192,7 +192,7 @@ impl StdioTransport {
         stdin: &mut ChildStdin,
         reader: &mut BufReader<tokio::process::ChildStdout>,
         next_id: &mut i64,
-    ) -> Result<McpProtocolVersion, McpRuntimeError> {
+    ) -> Result<(McpProtocolVersion, McpServerCapabilities), McpRuntimeError> {
         // Try modern server/discover first.
         let mut params = serde_json::json!({});
         attach_request_metadata(&mut params, "0.8.0");
@@ -201,7 +201,10 @@ impl StdioTransport {
         self.write_request(stdin, &discover).await?;
         let cancel = CancellationToken::new();
         match self.read_response(reader, discover.id, &cancel).await {
-            Ok(JsonRpcMessage::Success(_)) => Ok(McpProtocolVersion::V2026_07_28),
+            Ok(JsonRpcMessage::Success(s)) => Ok((
+                McpProtocolVersion::V2026_07_28,
+                super::model::parse_capabilities(&s.result),
+            )),
             Ok(JsonRpcMessage::Error(e)) if e.error.code == -32601 => {
                 // "Method not found" is the clear legacy-compatible signal.
                 let init = JsonRpcRequest::new(
@@ -215,7 +218,10 @@ impl StdioTransport {
                 );
                 *next_id += 1;
                 self.write_request(stdin, &init).await?;
-                self.read_response(reader, init.id, &cancel).await?;
+                let caps = match self.read_response(reader, init.id, &cancel).await? {
+                    JsonRpcMessage::Success(s) => super::model::parse_capabilities(&s.result),
+                    _ => McpServerCapabilities::default(),
+                };
                 // Send initialized notification (no id).
                 let initialized = serde_json::json!({
                     "jsonrpc": "2.0",
@@ -236,7 +242,7 @@ impl StdioTransport {
                     .flush()
                     .await
                     .map_err(|e| McpRuntimeError::Transport(e.to_string()))?;
-                Ok(McpProtocolVersion::V2025_11_25)
+                Ok((McpProtocolVersion::V2025_11_25, caps))
             }
             // A recognized modern error that is NOT "method not found" (e.g. an
             // explicit UnsupportedProtocolVersion) must NOT be blindly treated
@@ -252,18 +258,13 @@ impl StdioTransport {
             return Ok(());
         }
         let (mut child, mut stdin, mut reader) = self.spawn().await?;
-        let version = self
+        let negotiated = self
             .negotiate(&mut stdin, &mut reader, &mut inner.next_id)
             .await;
-        match version {
-            Ok(v) => {
+        match negotiated {
+            Ok((v, caps)) => {
                 *self.version.write() = v;
-                // Capabilities are negotiated during catalog discovery; keep a
-                // conservative default here (tools assumed).
-                *self.capabilities.write() = McpServerCapabilities {
-                    tools: true,
-                    ..Default::default()
-                };
+                *self.capabilities.write() = caps;
                 inner.child = Some(child);
                 inner.stdin = Some(stdin);
                 inner.reader = Some(reader);

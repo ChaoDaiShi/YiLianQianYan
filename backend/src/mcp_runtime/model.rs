@@ -53,6 +53,25 @@ pub struct McpNegotiationResult {
     pub capabilities: McpServerCapabilities,
 }
 
+/// Parse the `capabilities` object from a discover/initialize result. A
+/// capability is "supported" when its key is present (the value is an object or
+/// `true`).
+pub fn parse_capabilities(value: &serde_json::Value) -> McpServerCapabilities {
+    let caps = value.get("capabilities");
+    let has = |name: &str| caps.and_then(|c| c.get(name)).is_some_and(|v| !v.is_null());
+    McpServerCapabilities {
+        tools: has("tools"),
+        resources: has("resources"),
+        prompts: has("prompts"),
+        list_changed: caps
+            .and_then(|c| c.get("tools"))
+            .and_then(|t| t.get("listChanged"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        extensions: serde_json::Value::Null,
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerCapabilities {
@@ -83,6 +102,9 @@ pub struct McpTool {
     pub output_schema: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<serde_json::Value>,
+    /// Computed `x-mcp-header` bindings (not part of the wire schema).
+    #[serde(skip, default)]
+    pub header_bindings: Vec<McpHeaderBinding>,
 }
 
 /// The primitive types allowed for an `x-mcp-header` annotated argument.

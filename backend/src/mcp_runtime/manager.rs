@@ -13,6 +13,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use super::header_schema::scan_tool_header_bindings;
 use super::http::HttpTransport;
 use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
 use super::model::{
@@ -204,7 +205,17 @@ impl McpRuntimeManager {
                 .send(transport, "tools/list", params, protocol_version, &cancel)
                 .await?;
             let (tools, next_cursor) = parse_tool_list(&result)?;
-            all.extend(tools);
+            for mut tool in tools {
+                match scan_tool_header_bindings(&tool.input_schema) {
+                    Ok(bindings) => {
+                        tool.header_bindings = bindings;
+                        all.push(tool);
+                    }
+                    Err(_) => {
+                        tracing::warn!(tool = %tool.name, "excluding tool with invalid x-mcp-header");
+                    }
+                }
+            }
             if all.len() > MAX_MCP_TOOLS_PER_SERVER {
                 return Err(McpRuntimeError::ResponseTooLarge);
             }
@@ -282,6 +293,11 @@ impl McpRuntimeManager {
         let runtime = self
             .get_server(server_id)
             .ok_or(McpRuntimeError::ServerNotFound)?;
+        if !runtime.capabilities.resources {
+            return Err(McpRuntimeError::CapabilityUnsupported(
+                "resources".to_string(),
+            ));
+        }
         let transport = runtime
             .transport
             .as_ref()
@@ -324,6 +340,11 @@ impl McpRuntimeManager {
         let runtime = self
             .get_server(server_id)
             .ok_or(McpRuntimeError::ServerNotFound)?;
+        if !runtime.capabilities.resources {
+            return Err(McpRuntimeError::CapabilityUnsupported(
+                "resources".to_string(),
+            ));
+        }
         let transport = runtime
             .transport
             .as_ref()
@@ -352,6 +373,11 @@ impl McpRuntimeManager {
         let runtime = self
             .get_server(server_id)
             .ok_or(McpRuntimeError::ServerNotFound)?;
+        if !runtime.capabilities.resources {
+            return Err(McpRuntimeError::CapabilityUnsupported(
+                "resources".to_string(),
+            ));
+        }
         let transport = runtime
             .transport
             .as_ref()
@@ -402,6 +428,11 @@ impl McpRuntimeManager {
         let runtime = self
             .get_server(server_id)
             .ok_or(McpRuntimeError::ServerNotFound)?;
+        if !runtime.capabilities.prompts {
+            return Err(McpRuntimeError::CapabilityUnsupported(
+                "prompts".to_string(),
+            ));
+        }
         let transport = runtime
             .transport
             .as_ref()
@@ -444,6 +475,11 @@ impl McpRuntimeManager {
         let runtime = self
             .get_server(server_id)
             .ok_or(McpRuntimeError::ServerNotFound)?;
+        if !runtime.capabilities.prompts {
+            return Err(McpRuntimeError::CapabilityUnsupported(
+                "prompts".to_string(),
+            ));
+        }
         let transport = runtime
             .transport
             .as_ref()

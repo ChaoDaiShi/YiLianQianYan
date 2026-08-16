@@ -6,7 +6,7 @@
 // `items`, `oneOf`, `anyOf`, `allOf`, `not`, `if`/`then`/`else`, or `$ref`.
 // ============================================================
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use super::model::{McpHeaderBinding, McpHeaderValueType, MAX_MCP_SCHEMA_DEPTH};
 use super::protocol::is_valid_header_token;
@@ -197,4 +197,71 @@ mod tests {
         }))
         .is_err());
     }
+
+    #[test]
+    fn extract_header_values_handles_primitives_and_nesting() {
+        let bindings = scan(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "tenant": { "type": "string", "x-mcp-header": "X-Tenant" },
+                "auth": {
+                    "type": "object",
+                    "properties": {
+                        "count": { "type": "integer", "x-mcp-header": "X-Count" }
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        let values = extract_header_values(
+            &serde_json::json!({ "tenant": "acme", "auth": { "count": 7 } }),
+            &bindings,
+        )
+        .unwrap();
+        assert_eq!(values.get("X-Tenant").unwrap(), "acme");
+        assert_eq!(values.get("X-Count").unwrap(), "7");
+
+        // Wrong type → error.
+        assert!(extract_header_values(&serde_json::json!({ "tenant": 42 }), &bindings).is_err());
+    }
+}
+
+/// Extract `x-mcp-header` argument values (string/integer/boolean) from call
+/// arguments, keyed by header name. Missing values are skipped; an argument of
+/// the wrong primitive type is an error.
+pub fn extract_header_values(
+    arguments: &serde_json::Value,
+    bindings: &[McpHeaderBinding],
+) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    for binding in bindings {
+        let mut current = arguments;
+        let mut found = true;
+        for key in &binding.argument_path {
+            match current.get(key) {
+                Some(v) => current = v,
+                None => {
+                    found = false;
+                    break;
+                }
+            }
+        }
+        if !found {
+            continue;
+        }
+        let value_str = match binding.value_type {
+            McpHeaderValueType::String => current.as_str().map(str::to_string),
+            McpHeaderValueType::Integer => current.as_i64().map(|i| i.to_string()),
+            McpHeaderValueType::Boolean => current.as_bool().map(|b| b.to_string()),
+        };
+        let Some(value_str) = value_str else {
+            return Err(format!(
+                "header argument {} has an invalid type",
+                binding.argument_path.join(".")
+            ));
+        };
+        out.insert(binding.header_name.clone(), value_str);
+    }
+    Ok(out)
 }
