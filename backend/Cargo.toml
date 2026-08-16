@@ -50,6 +50,18 @@ dirs = "5"
 keyring = "4"
 secrecy = "0.10"
 
+# Windows OS-assisted process isolation (privilege-reduced token + Job Object)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }
+
 # Input simulation (mouse + keyboard)
 enigo = { version = "0.3", features = ["serde"] }
 

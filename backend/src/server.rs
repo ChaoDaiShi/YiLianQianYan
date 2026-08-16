@@ -306,7 +306,7 @@ impl AppServer {
             .collect();
         let now = chrono::Utc::now().timestamp_millis();
 
-        let mut ensure =
+        let ensure =
             |id: &str, permission: PermissionId, effect: GrantEffect, resource: GrantResource| {
                 if existing.contains(id) {
                     return;

@@ -17,9 +17,14 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tokio::process::Command;
+#[cfg(not(windows))]
 use tokio::time::{timeout, Duration};
 
+#[cfg(not(windows))]
 use crate::utils::text::truncate_chars;
+
+#[cfg(windows)]
+pub mod windows;
 
 /// Environment variables passed to child processes by default. Secrets and
 /// model/MCP credentials are NEVER inherited — they are stripped by building
@@ -60,26 +65,47 @@ pub struct ProcessRunResult {
 pub struct IsolationStatus {
     pub backend: &'static str,
     pub process_containment: bool,
+    /// Privilege-reduced token active. This is NOT IsTokenRestricted == TRUE
+    /// (no restricting-SID list is used); it means the child token's privilege
+    /// surface is verified strictly smaller than the parent's.
     pub restricted_token: bool,
+    pub privilege_reduction: bool,
+    /// Restricting-SID ACL sandbox — deliberately NOT used (false).
+    pub restricting_sids: bool,
+    pub job_object: bool,
     pub kill_tree: bool,
     pub filesystem_os_enforced: bool,
     pub network_os_enforced: bool,
 }
 
 pub fn isolation_status() -> IsolationStatus {
-    IsolationStatus {
-        backend: if cfg!(windows) {
-            "process_tree"
-        } else {
-            "process_group"
-        },
-        // Application-layer process containment (secret stripping + tree kill)
-        // is active; OS-enforced filesystem/network namespaces are NOT.
-        process_containment: true,
-        restricted_token: false,
-        kill_tree: true,
-        filesystem_os_enforced: false,
-        network_os_enforced: false,
+    #[cfg(windows)]
+    {
+        IsolationStatus {
+            backend: "windows_restricted_privilege_job",
+            process_containment: true,
+            restricted_token: true,
+            privilege_reduction: true,
+            restricting_sids: false,
+            job_object: true,
+            kill_tree: true,
+            filesystem_os_enforced: false,
+            network_os_enforced: false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        IsolationStatus {
+            backend: "process_group",
+            process_containment: true,
+            restricted_token: false,
+            privilege_reduction: false,
+            restricting_sids: false,
+            job_object: false,
+            kill_tree: true,
+            filesystem_os_enforced: false,
+            network_os_enforced: false,
+        }
     }
 }
 
@@ -121,6 +147,20 @@ pub async fn kill_process_tree(pid: u32) {
 
 /// Run a child process with a sanitized env, a real async timeout, and whole
 /// process-tree termination on timeout.
+#[cfg(windows)]
+pub async fn run_managed_process(
+    program: &str,
+    args: &[&str],
+    current_dir: &str,
+    explicit_env: &BTreeMap<String, String>,
+    timeout_ms: u64,
+) -> ProcessRunResult {
+    windows::run_windows_managed_process(program, args, current_dir, explicit_env, timeout_ms).await
+}
+
+/// Run a child process with a sanitized env, a real async timeout, and whole
+/// process-tree termination on timeout (portable non-Windows backend).
+#[cfg(not(windows))]
 pub async fn run_managed_process(
     program: &str,
     args: &[&str],

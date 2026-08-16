@@ -270,7 +270,8 @@ impl Tool for GlobTool {
 
         // Canonical containment root: every returned candidate must resolve to
         // a real path within this root (symlink/junction escape → skip).
-        let canonical_root = std::fs::canonicalize(&search_root).unwrap_or_else(|_| search_root.clone());
+        let canonical_root =
+            std::fs::canonicalize(&search_root).unwrap_or_else(|_| search_root.clone());
 
         let glob_iter = match glob::glob(&full_pattern) {
             Ok(paths) => paths,

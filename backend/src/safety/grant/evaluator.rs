@@ -34,7 +34,10 @@ impl GrantEvaluator {
         Self::new(Vec::new(), workspace_root)
     }
 
-    pub fn with_registry(mut self, registry: Arc<crate::isolation::ManagedProcessRegistry>) -> Self {
+    pub fn with_registry(
+        mut self,
+        registry: Arc<crate::isolation::ManagedProcessRegistry>,
+    ) -> Self {
         self.registry = Some(registry);
         self
     }
