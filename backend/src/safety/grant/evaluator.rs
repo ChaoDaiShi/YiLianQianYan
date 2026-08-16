@@ -6,6 +6,7 @@
 // ============================================================
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::safety::{PermissionId, ResourceDescriptor};
 
@@ -14,6 +15,10 @@ use super::model::{GrantDecision, GrantResource, NetworkZone, ProcessGrantScope,
 pub struct GrantEvaluator {
     grants: Vec<SecurityGrant>,
     workspace_root: PathBuf,
+    /// Managed-process registry. Required for `ManagedChildren` to match at all:
+    /// without it (or without a live pid record) a ManagedChildren grant does
+    /// NOT authorize anything — it is never "any PID".
+    registry: Option<Arc<crate::isolation::ManagedProcessRegistry>>,
 }
 
 impl GrantEvaluator {
@@ -21,11 +26,17 @@ impl GrantEvaluator {
         Self {
             grants,
             workspace_root: workspace_root.into(),
+            registry: None,
         }
     }
 
     pub fn empty(workspace_root: impl Into<PathBuf>) -> Self {
         Self::new(Vec::new(), workspace_root)
+    }
+
+    pub fn with_registry(mut self, registry: Arc<crate::isolation::ManagedProcessRegistry>) -> Self {
+        self.registry = Some(registry);
+        self
     }
 
     /// Evaluate a resolved resource. `now_ms` is the current epoch ms.
@@ -48,7 +59,12 @@ impl GrantEvaluator {
             if grant.is_expired(now_ms) {
                 continue;
             }
-            if !resource_matches(&grant.resource, resource, &self.workspace_root) {
+            if !resource_matches(
+                &grant.resource,
+                resource,
+                &self.workspace_root,
+                self.registry.as_ref(),
+            ) {
                 continue;
             }
             match grant.effect {
@@ -81,7 +97,12 @@ fn is_grant_enforced(permission: PermissionId) -> bool {
     )
 }
 
-fn resource_matches(resource: &GrantResource, desc: &ResourceDescriptor, root: &Path) -> bool {
+fn resource_matches(
+    resource: &GrantResource,
+    desc: &ResourceDescriptor,
+    root: &Path,
+    registry: Option<&Arc<crate::isolation::ManagedProcessRegistry>>,
+) -> bool {
     match (resource, desc) {
         (
             GrantResource::Filesystem {
@@ -135,7 +156,13 @@ fn resource_matches(resource: &GrantResource, desc: &ResourceDescriptor, root: &
         }
         (GrantResource::Process { scope }, ResourceDescriptor::Process { pid, .. }) => {
             match scope {
-                ProcessGrantScope::ManagedChildren => true,
+                // ManagedChildren is NOT "any pid": it only matches a pid that
+                // is currently tracked as a managed child. Without a registry
+                // (or without a live record) it fails closed.
+                ProcessGrantScope::ManagedChildren => match (registry, pid) {
+                    (Some(registry), Some(pid)) => registry.contains_pid(*pid),
+                    _ => false,
+                },
                 ProcessGrantScope::ExplicitPid { pid: granted } => Some(*granted) == *pid,
                 ProcessGrantScope::AllHostProcesses => true,
             }

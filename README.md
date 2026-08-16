@@ -166,7 +166,7 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 
 ## v0.8 Development — Agent Memory + Unified Capability Registry
 
-状态：**Phase 1–6 Completed（下一阶段：v0.8 Release Gate / Security Closure）**
+状态：**Phase 1–5 Completed，Phase 6 In Progress（下一阶段：v0.8 Release Gate / Security Closure）**
 
 - Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
 - Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。

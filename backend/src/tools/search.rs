@@ -138,9 +138,18 @@ impl GrepTool {
 
         for entry in entries.flatten() {
             let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+            // Never follow symlinks / junctions / reparse points: a symlink can
+            // point outside the (gateway-authorized) search root.
+            if file_type.is_symlink() {
+                continue;
+            }
             let name = path.file_name().unwrap_or_default().to_string_lossy();
 
-            if path.is_dir() {
+            if file_type.is_dir() {
                 if Self::should_skip_dir(&name) {
                     continue;
                 }
@@ -153,7 +162,7 @@ impl GrepTool {
                     match_count,
                     depth + 1,
                 )?;
-            } else if path.is_file() {
+            } else if file_type.is_file() {
                 // Apply glob filter if specified
                 if let Some(glob) = glob_filter {
                     let path_str = path.to_string_lossy();
@@ -259,6 +268,10 @@ impl Tool for GlobTool {
             Err(e) => return ToolResult::error(format!("无效的glob模式: {}", e)),
         };
 
+        // Canonical containment root: every returned candidate must resolve to
+        // a real path within this root (symlink/junction escape → skip).
+        let canonical_root = std::fs::canonicalize(&search_root).unwrap_or_else(|_| search_root.clone());
+
         let glob_iter = match glob::glob(&full_pattern) {
             Ok(paths) => paths,
             Err(_) => return ToolResult::success("未找到匹配项"),
@@ -273,6 +286,13 @@ impl Tool for GlobTool {
                     || path_str.contains("/dist/")
                 {
                     continue;
+                }
+                // Containment: resolve the real path and require it to be within
+                // the canonical search root.
+                if let Ok(real) = std::fs::canonicalize(&path) {
+                    if !crate::safety::is_within_root(&canonical_root, &real) {
+                        continue;
+                    }
                 }
                 results.push(path_str);
                 count += 1;

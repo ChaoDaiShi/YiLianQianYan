@@ -10,6 +10,29 @@ use crate::utils::text::truncate_chars;
 
 pub struct HttpRequestTool;
 
+/// Allowlist of safe response headers to surface. Set-Cookie / WWW-Authenticate
+/// / Authorization / Proxy-* are never returned.
+const SAFE_RESPONSE_HEADERS: &[&str] = &[
+    "content-type",
+    "content-length",
+    "etag",
+    "last-modified",
+    "location",
+    "cache-control",
+];
+
+fn safe_response_headers(headers: &reqwest::header::HeaderMap) -> String {
+    let mut out = String::new();
+    for name in SAFE_RESPONSE_HEADERS {
+        if let Some(value) = headers.get(*name) {
+            if let Ok(value) = value.to_str() {
+                out.push_str(&format!("{}: {}\n", name, truncate_chars(value, 200)));
+            }
+        }
+    }
+    out
+}
+
 /// Reject SSRF-prone targets: resolve the host and fail closed if ANY resolved
 /// address is loopback / private / link-local / unspecified / multicast.
 async fn reject_private_target(url: &str) -> Result<(), String> {
@@ -58,11 +81,11 @@ async fn reject_private_target(url: &str) -> Result<(), String> {
         return Err("已阻止请求内网/回环地址（SSRF 防护）".to_string());
     }
 
-    // DNS resolution: reject if ANY candidate is a non-public address.
-    let addrs = match tokio::net::lookup_host((host, 80)).await {
-        Ok(addrs) => addrs,
-        Err(_) => return Ok(()), // DNS failure is handled by the request itself
-    };
+    // DNS resolution: fail closed — a host that cannot be resolved must NOT be
+    // passed to reqwest for a second, unvalidated lookup.
+    let addrs = tokio::net::lookup_host((host, 80))
+        .await
+        .map_err(|_| "DNS 解析失败（SSRF 防护：无法验证目标地址）".to_string())?;
     for addr in addrs {
         let ip = addr.ip();
         let bad = match ip {
@@ -194,7 +217,7 @@ impl Tool for HttpRequestTool {
         match request.send().await {
             Ok(response) => {
                 let status = response.status();
-                let headers = format!("{:?}", response.headers());
+                let headers = safe_response_headers(response.headers());
                 let body = response.text().await.unwrap_or_default();
 
                 // Truncate response body if too large

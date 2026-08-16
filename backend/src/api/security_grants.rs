@@ -62,6 +62,20 @@ pub async fn create_grant(
         .db
         .create_grant(&grant)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    server.audit_recorder.record(crate::safety::AuditEventInput {
+        event_type: crate::safety::AuditEventType::GrantCreated,
+        correlation_id: grant.id.clone(),
+        request_id: grant.id.clone(),
+        subject_id: LOCAL_SUBJECT.to_string(),
+        role_key: "owner".to_string(),
+        details: serde_json::json!({
+            "grant_id": grant.id,
+            "permission": grant.permission.as_str(),
+            "effect": serde_json::to_value(grant.effect).ok(),
+        }),
+        ..Default::default()
+    })
+    .ok();
     Ok(Json(serde_json::json!(grant)))
 }
 
@@ -73,6 +87,16 @@ pub async fn delete_grant(
         .db
         .delete_grant(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    server.audit_recorder.record(crate::safety::AuditEventInput {
+        event_type: crate::safety::AuditEventType::GrantDeleted,
+        correlation_id: id.clone(),
+        request_id: id.clone(),
+        subject_id: LOCAL_SUBJECT.to_string(),
+        role_key: "owner".to_string(),
+        details: serde_json::json!({ "grant_id": id }),
+        ..Default::default()
+    })
+    .ok();
     Ok(Json(serde_json::json!({ "status": "deleted" })))
 }
 

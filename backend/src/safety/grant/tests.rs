@@ -3,6 +3,7 @@
 // ============================================================
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::model::{
     validate_grant, GrantEffect, GrantResource, NetworkZone, ProcessGrantScope, SecurityGrant,
@@ -315,6 +316,8 @@ fn loopback_zone_allows_loopback() {
 
 #[test]
 fn process_kill_managed_children_allow() {
+    let registry = Arc::new(crate::isolation::ManagedProcessRegistry::new());
+    registry.record(123, None, "test-child".to_string());
     let evaluator = GrantEvaluator::new(
         vec![grant(
             PermissionId::ProcessControl,
@@ -324,7 +327,8 @@ fn process_kill_managed_children_allow() {
             },
         )],
         PathBuf::from("."),
-    );
+    )
+    .with_registry(registry);
     let desc = ResourceDescriptor::Process {
         action: "kill".into(),
         pid: Some(123),
@@ -332,6 +336,31 @@ fn process_kill_managed_children_allow() {
     assert!(matches!(
         evaluator.evaluate(PermissionId::ProcessControl, &desc, 0),
         crate::safety::grant::GrantDecision::Allow
+    ));
+}
+
+#[test]
+fn process_kill_managed_children_rejects_unknown_pid() {
+    let registry = Arc::new(crate::isolation::ManagedProcessRegistry::new());
+    // pid 999 is NOT tracked → ManagedChildren must fail closed.
+    let evaluator = GrantEvaluator::new(
+        vec![grant(
+            PermissionId::ProcessControl,
+            GrantEffect::Allow,
+            GrantResource::Process {
+                scope: ProcessGrantScope::ManagedChildren,
+            },
+        )],
+        PathBuf::from("."),
+    )
+    .with_registry(registry);
+    let desc = ResourceDescriptor::Process {
+        action: "kill".into(),
+        pid: Some(999),
+    };
+    assert!(matches!(
+        evaluator.evaluate(PermissionId::ProcessControl, &desc, 0),
+        crate::safety::grant::GrantDecision::RequireApproval { .. }
     ));
 }
 

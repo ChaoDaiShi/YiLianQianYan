@@ -29,6 +29,8 @@ pub enum AuditEventType {
     SecretDeleted,
     LegacySecretMigrated,
     SecretStoreUnavailable,
+    GrantCreated,
+    GrantDeleted,
 }
 
 impl AuditEventType {
@@ -49,6 +51,8 @@ impl AuditEventType {
             Self::SecretDeleted => "secret_deleted",
             Self::LegacySecretMigrated => "legacy_secret_migrated",
             Self::SecretStoreUnavailable => "secret_store_unavailable",
+            Self::GrantCreated => "grant_created",
+            Self::GrantDeleted => "grant_deleted",
         }
     }
 }
