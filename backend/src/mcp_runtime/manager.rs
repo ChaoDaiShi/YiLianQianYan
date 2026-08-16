@@ -16,10 +16,16 @@ use tokio_util::sync::CancellationToken;
 use super::http::HttpTransport;
 use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
 use super::model::{
-    McpProtocolVersion, McpRuntimeError, McpRuntimeStatus, McpServerCapabilities, McpTool,
-    MAX_MCP_LIST_PAGES, MAX_MCP_TOOLS_PER_SERVER,
+    McpInputRequired, McpOperationOutcome, McpPromptDescriptor, McpPromptResult,
+    McpProtocolVersion, McpResourceContent, McpResourceDescriptor, McpResourceTemplate,
+    McpRuntimeError, McpRuntimeStatus, McpServerCapabilities, McpTool, MAX_MCP_LIST_PAGES,
+    MAX_MCP_RESOURCES_PER_SERVER, MAX_MCP_TOOLS_PER_SERVER,
 };
+use super::prompts::{parse_prompt_get, parse_prompt_list};
 use super::protocol::attach_request_metadata;
+use super::resources::{
+    parse_resource_contents, parse_resource_list, parse_resource_template_list,
+};
 use super::stdio::StdioTransport;
 use super::tools::{call_result_text, parse_call_result, parse_tool_list};
 use super::transport::{McpTransport, McpTransportConfig};
@@ -118,10 +124,14 @@ impl McpRuntimeManager {
         transport: &dyn McpTransport,
         method: &str,
         params: serde_json::Value,
+        protocol_version: McpProtocolVersion,
         cancel: &CancellationToken,
     ) -> Result<serde_json::Value, McpRuntimeError> {
         let mut params = params;
-        attach_request_metadata(&mut params, "0.8.0");
+        // Modern-only `_meta` must never leak into legacy requests.
+        if protocol_version == McpProtocolVersion::V2026_07_28 {
+            attach_request_metadata(&mut params, "0.8.0");
+        }
         let request = JsonRpcRequest::new(self.next_id(), method, Some(params));
         match transport.send(&request, cancel).await? {
             JsonRpcMessage::Success(s) => Ok(s.result),
@@ -136,18 +146,19 @@ impl McpRuntimeManager {
             return Err(McpRuntimeError::ServerNotFound);
         };
         let transport = Self::build_transport(&runtime.config)?;
-        let tools = self.tools_list_wire(&*transport).await?;
-        // Rebuild the runtime entry with the connected transport + catalog.
+        let cancel = CancellationToken::new();
+        let negotiation = transport.connect(&cancel).await?;
+        let tools = self
+            .tools_list_wire(&*transport, negotiation.protocol_version)
+            .await?;
+        // Rebuild the runtime entry with the real negotiated version + catalog.
         let refreshed = Arc::new(McpServerRuntime {
             server_id: runtime.server_id.clone(),
             name: runtime.name.clone(),
             config: runtime.config.clone(),
-            protocol_version: McpProtocolVersion::V2026_07_28,
+            protocol_version: negotiation.protocol_version,
             status: McpRuntimeStatus::Ready,
-            capabilities: McpServerCapabilities {
-                tools: true,
-                ..Default::default()
-            },
+            capabilities: negotiation.capabilities,
             tools,
             last_error: None,
             last_refresh: Some(chrono::Utc::now().timestamp_millis()),
@@ -162,6 +173,7 @@ impl McpRuntimeManager {
     async fn tools_list_wire(
         &self,
         transport: &dyn McpTransport,
+        protocol_version: McpProtocolVersion,
     ) -> Result<Vec<McpTool>, McpRuntimeError> {
         let cancel = CancellationToken::new();
         let mut all: Vec<McpTool> = Vec::new();
@@ -171,7 +183,9 @@ impl McpRuntimeManager {
             if let Some(c) = &cursor {
                 params["cursor"] = serde_json::json!(c);
             }
-            let result = self.send(transport, "tools/list", params, &cancel).await?;
+            let result = self
+                .send(transport, "tools/list", params, protocol_version, &cancel)
+                .await?;
             let (tools, next_cursor) = parse_tool_list(&result)?;
             all.extend(tools);
             if all.len() > MAX_MCP_TOOLS_PER_SERVER {
@@ -219,7 +233,13 @@ impl McpRuntimeManager {
             .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
         let params = serde_json::json!({ "name": tool_name, "arguments": arguments });
         let result = self
-            .send(transport.as_ref(), "tools/call", params, cancel)
+            .send(
+                transport.as_ref(),
+                "tools/call",
+                params,
+                runtime.protocol_version,
+                cancel,
+            )
             .await?;
         match parse_call_result(&result) {
             super::model::McpOperationOutcome::Complete(value) => {
@@ -236,6 +256,178 @@ impl McpRuntimeManager {
                 Err(McpRuntimeError::InputRequired)
             }
         }
+    }
+
+    pub async fn list_resources(
+        &self,
+        server_id: &str,
+    ) -> Result<Vec<McpResourceDescriptor>, McpRuntimeError> {
+        let runtime = self
+            .get_server(server_id)
+            .ok_or(McpRuntimeError::ServerNotFound)?;
+        let transport = runtime
+            .transport
+            .as_ref()
+            .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
+        let cancel = CancellationToken::new();
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_MCP_LIST_PAGES {
+            let mut params = serde_json::json!({});
+            if let Some(c) = &cursor {
+                params["cursor"] = serde_json::json!(c);
+            }
+            let result = self
+                .send(
+                    transport.as_ref(),
+                    "resources/list",
+                    params,
+                    runtime.protocol_version,
+                    &cancel,
+                )
+                .await?;
+            let (resources, next) = parse_resource_list(&result)?;
+            all.extend(resources);
+            if all.len() > MAX_MCP_RESOURCES_PER_SERVER {
+                return Err(McpRuntimeError::ResponseTooLarge);
+            }
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(all)
+    }
+
+    pub async fn list_resource_templates(
+        &self,
+        server_id: &str,
+    ) -> Result<Vec<McpResourceTemplate>, McpRuntimeError> {
+        let runtime = self
+            .get_server(server_id)
+            .ok_or(McpRuntimeError::ServerNotFound)?;
+        let transport = runtime
+            .transport
+            .as_ref()
+            .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
+        let cancel = CancellationToken::new();
+        let params = serde_json::json!({});
+        let result = self
+            .send(
+                transport.as_ref(),
+                "resources/templates/list",
+                params,
+                runtime.protocol_version,
+                &cancel,
+            )
+            .await?;
+        let (templates, _) = parse_resource_template_list(&result)?;
+        Ok(templates)
+    }
+
+    pub async fn read_resource(
+        &self,
+        server_id: &str,
+        uri: &str,
+        cancel: &CancellationToken,
+    ) -> Result<McpOperationOutcome<Vec<McpResourceContent>>, McpRuntimeError> {
+        let runtime = self
+            .get_server(server_id)
+            .ok_or(McpRuntimeError::ServerNotFound)?;
+        let transport = runtime
+            .transport
+            .as_ref()
+            .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
+        let params = serde_json::json!({ "uri": uri });
+        let result = self
+            .send(
+                transport.as_ref(),
+                "resources/read",
+                params,
+                runtime.protocol_version,
+                cancel,
+            )
+            .await?;
+        match result.get("resultType").and_then(|t| t.as_str()) {
+            Some("input_required") => Ok(McpOperationOutcome::InputRequired(McpInputRequired {
+                prompt: result
+                    .get("prompt")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                input_schema: result.get("inputSchema").cloned(),
+            })),
+            _ => Ok(McpOperationOutcome::Complete(parse_resource_contents(
+                &result,
+            )?)),
+        }
+    }
+
+    pub async fn list_prompts(
+        &self,
+        server_id: &str,
+    ) -> Result<Vec<McpPromptDescriptor>, McpRuntimeError> {
+        let runtime = self
+            .get_server(server_id)
+            .ok_or(McpRuntimeError::ServerNotFound)?;
+        let transport = runtime
+            .transport
+            .as_ref()
+            .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
+        let cancel = CancellationToken::new();
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_MCP_LIST_PAGES {
+            let mut params = serde_json::json!({});
+            if let Some(c) = &cursor {
+                params["cursor"] = serde_json::json!(c);
+            }
+            let result = self
+                .send(
+                    transport.as_ref(),
+                    "prompts/list",
+                    params,
+                    runtime.protocol_version,
+                    &cancel,
+                )
+                .await?;
+            let (prompts, next) = parse_prompt_list(&result)?;
+            all.extend(prompts);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(all)
+    }
+
+    pub async fn get_prompt(
+        &self,
+        server_id: &str,
+        name: &str,
+        arguments: serde_json::Value,
+        cancel: &CancellationToken,
+    ) -> Result<McpOperationOutcome<McpPromptResult>, McpRuntimeError> {
+        let runtime = self
+            .get_server(server_id)
+            .ok_or(McpRuntimeError::ServerNotFound)?;
+        let transport = runtime
+            .transport
+            .as_ref()
+            .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
+        let params = serde_json::json!({ "name": name, "arguments": arguments });
+        let result = self
+            .send(
+                transport.as_ref(),
+                "prompts/get",
+                params,
+                runtime.protocol_version,
+                cancel,
+            )
+            .await?;
+        Ok(parse_prompt_get(&result))
     }
 
     pub async fn shutdown_all(&self) {

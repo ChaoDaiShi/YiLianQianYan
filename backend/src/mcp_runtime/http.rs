@@ -230,6 +230,20 @@ impl HttpTransport {
 
 #[async_trait]
 impl McpTransport for HttpTransport {
+    async fn connect(
+        &self,
+        _cancel: &CancellationToken,
+    ) -> Result<super::model::McpNegotiationResult, McpRuntimeError> {
+        // Modern Streamable HTTP is always 2026-07-28 (no legacy HTTP session).
+        Ok(super::model::McpNegotiationResult {
+            protocol_version: super::model::McpProtocolVersion::V2026_07_28,
+            capabilities: super::model::McpServerCapabilities {
+                tools: true,
+                ..Default::default()
+            },
+        })
+    }
+
     async fn send(
         &self,
         request: &JsonRpcRequest,
@@ -240,5 +254,9 @@ impl McpTransport for HttpTransport {
 
     async fn shutdown(&self) {
         // No persistent connection to close for request-scoped HTTP.
+    }
+
+    fn protocol_version(&self) -> super::model::McpProtocolVersion {
+        super::model::McpProtocolVersion::V2026_07_28
     }
 }

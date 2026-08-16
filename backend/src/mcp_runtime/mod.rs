@@ -13,7 +13,9 @@ pub mod http;
 pub mod jsonrpc;
 pub mod manager;
 pub mod model;
+pub mod prompts;
 pub mod protocol;
+pub mod resources;
 pub mod stdio;
 pub mod tools;
 pub mod transport;
@@ -25,7 +27,7 @@ mod stdio_tests;
 #[cfg(test)]
 mod tests;
 
-pub use cache::{CacheScope, McpCache};
+pub use cache::{CacheScope, McpCache, McpCacheValue};
 pub use header_schema::scan_tool_header_bindings;
 pub use http::HttpTransport;
 pub use jsonrpc::{
@@ -42,10 +44,12 @@ pub use model::{
     MAX_MCP_RESPONSE_BYTES, MAX_MCP_TOOLS_PER_SERVER, MAX_RESOURCE_BLOB_BASE64_CHARS,
     MAX_RESOURCE_CONTENT_ITEMS, MAX_RESOURCE_TEXT_CHARS,
 };
+pub use prompts::{parse_prompt_get, parse_prompt_list};
 pub use protocol::{
     attach_request_metadata, build_request_metadata, encode_header_value, is_valid_header_token,
     param_header, reject_crlf, McpProtocolEra, LEGACY_MCP_VERSION, MODERN_MCP_VERSION,
 };
+pub use resources::{parse_resource_contents, parse_resource_list, parse_resource_template_list};
 pub use stdio::StdioTransport;
 pub use tools::{call_result_text, parse_call_result, parse_tool_list};
 pub use transport::{validate_mcp_url, McpTransportConfig};

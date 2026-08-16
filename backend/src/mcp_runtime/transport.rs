@@ -13,18 +13,26 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
-use super::model::McpRuntimeError;
+use super::model::{McpNegotiationResult, McpProtocolVersion, McpRuntimeError};
 
 /// A concrete MCP transport (stdio or Streamable HTTP). Implementations own
 /// their connection lifecycle and serialize requests as needed.
 #[async_trait]
 pub trait McpTransport: Send + Sync {
+    /// Connect (spawn + negotiate for stdio) and return the negotiated protocol
+    /// version + advertised capabilities. Idempotent.
+    async fn connect(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<McpNegotiationResult, McpRuntimeError>;
     async fn send(
         &self,
         request: &JsonRpcRequest,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError>;
     async fn shutdown(&self);
+    /// The negotiated protocol version (available after `connect`).
+    fn protocol_version(&self) -> McpProtocolVersion;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

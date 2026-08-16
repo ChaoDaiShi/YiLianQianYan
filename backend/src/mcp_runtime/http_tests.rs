@@ -43,6 +43,23 @@ async fn handler(Json(body): Json<Value>) -> axum::response::Response {
             "isError": false,
             "resultType": "complete"
         }),
+        "resources/list" => json!({
+            "resources": [
+                { "uri": "file:///notes", "name": "notes", "mimeType": "text/plain" }
+            ]
+        }),
+        "resources/read" => json!({
+            "contents": [ { "uri": "file:///notes", "mimeType": "text/plain", "text": "hello resource" } ]
+        }),
+        "prompts/list" => json!({
+            "prompts": [
+                { "name": "greet", "description": "a greeting", "arguments": [{ "name": "name", "required": true }] }
+            ]
+        }),
+        "prompts/get" => json!({
+            "description": "greeting",
+            "messages": [ { "role": "user", "content": { "type": "text", "text": "hi there" } } ]
+        }),
         _ => json!({ "error": { "code": -32601, "message": "method not found" } }),
     };
     let is_error = result.get("error").is_some();
@@ -98,5 +115,55 @@ async fn http_transport_json_response_direct() {
             assert!(s.result.get("tools").is_some());
         }
         other => panic!("expected success, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn http_resources_and_prompts_real_wire() {
+    let addr = start_mock_http().await;
+    let manager = McpRuntimeManager::new();
+    manager.register_server(
+        "http2".to_string(),
+        "Mock HTTP 2".to_string(),
+        http_config(&addr),
+    );
+    manager.refresh_server("http2").await.unwrap();
+
+    // Version propagation: HTTP is always modern 2026.
+    let runtime = manager.get_server("http2").unwrap();
+    assert_eq!(runtime.protocol_version, McpProtocolVersion::V2026_07_28);
+
+    let resources = manager.list_resources("http2").await.unwrap();
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0].name, "notes");
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    match manager
+        .read_resource("http2", "file:///notes", &cancel)
+        .await
+        .unwrap()
+    {
+        McpOperationOutcome::Complete(contents) => {
+            assert_eq!(contents.len(), 1);
+            match &contents[0] {
+                McpResourceContent::Text { text, .. } => assert!(text.contains("hello resource")),
+                _ => panic!("expected text"),
+            }
+        }
+        McpOperationOutcome::InputRequired(_) => panic!("unexpected input required"),
+    }
+
+    let prompts = manager.list_prompts("http2").await.unwrap();
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(prompts[0].name, "greet");
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    match manager
+        .get_prompt("http2", "greet", json!({}), &cancel)
+        .await
+        .unwrap()
+    {
+        McpOperationOutcome::Complete(result) => assert_eq!(result.messages.len(), 1),
+        McpOperationOutcome::InputRequired(_) => panic!("unexpected input required"),
     }
 }

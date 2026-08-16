@@ -6,50 +6,68 @@ use super::*;
 
 // ── Cache ──
 
+fn tools_value() -> McpCacheValue {
+    McpCacheValue::Tools(vec![McpTool {
+        name: "echo".to_string(),
+        title: None,
+        description: None,
+        input_schema: serde_json::json!({"type": "object"}),
+        output_schema: None,
+        annotations: None,
+    }])
+}
+
 #[test]
 fn cache_hit_before_ttl_and_expired_after() {
     let cache = McpCache::new();
-    let key = McpCache::key("srv1", "tools/list", "{}");
-    cache.put(&key, 10_000, CacheScope::Private, 1_000);
+    let key = McpCache::key("srv1", "tools/list", &serde_json::json!({}));
+    cache.put(&key, tools_value(), 10_000, CacheScope::Private, 1_000);
     // Within TTL.
-    assert_eq!(cache.get(&key, 5_000), Some(CacheScope::Private));
+    assert!(cache.get(&key, 5_000).is_some());
     // Expired.
-    assert_eq!(cache.get(&key, 20_000), None);
+    assert!(cache.get(&key, 20_000).is_none());
 }
 
 #[test]
 fn cache_ttl_zero_does_not_store() {
     let cache = McpCache::new();
-    let key = McpCache::key("srv1", "tools/list", "{}");
-    cache.put(&key, 0, CacheScope::Private, 1_000);
-    assert_eq!(cache.get(&key, 1_500), None);
+    let key = McpCache::key("srv1", "tools/list", &serde_json::json!({}));
+    cache.put(&key, tools_value(), 0, CacheScope::Private, 1_000);
+    assert!(cache.get(&key, 1_500).is_none());
 }
 
 #[test]
 fn cache_max_ttl_clamped() {
     let cache = McpCache::new();
-    let key = McpCache::key("srv1", "tools/list", "{}");
+    let key = McpCache::key("srv1", "tools/list", &serde_json::json!({}));
     // Remote claims a huge TTL — must be clamped to the local max.
-    cache.put(&key, u64::MAX / 2, CacheScope::Public, 1_000);
-    // Within the local max window it is still cached.
-    assert_eq!(
-        cache.get(&key, 1_000 + MAX_MCP_CACHE_TTL_MS - 1),
-        Some(CacheScope::Public)
-    );
-    // Beyond the local max it must have expired.
-    assert_eq!(cache.get(&key, 1_000 + MAX_MCP_CACHE_TTL_MS + 1), None);
+    cache.put(&key, tools_value(), u64::MAX / 2, CacheScope::Public, 1_000);
+    assert!(cache.get(&key, 1_000 + MAX_MCP_CACHE_TTL_MS - 1).is_some());
+    assert!(cache.get(&key, 1_000 + MAX_MCP_CACHE_TTL_MS + 1).is_none());
 }
 
 #[test]
 fn cache_invalidation_removes_server_entries() {
     let cache = McpCache::new();
-    let k1 = McpCache::key("srv1", "tools/list", "{}");
-    let k2 = McpCache::key("srv2", "tools/list", "{}");
-    cache.put(&k1, 60_000, CacheScope::Private, 1_000);
-    cache.put(&k2, 60_000, CacheScope::Private, 1_000);
+    let k1 = McpCache::key("srv1", "tools/list", &serde_json::json!({}));
+    let k2 = McpCache::key("srv2", "tools/list", &serde_json::json!({}));
+    cache.put(&k1, tools_value(), 60_000, CacheScope::Private, 1_000);
+    cache.put(&k2, tools_value(), 60_000, CacheScope::Private, 1_000);
     cache.invalidate_server("srv1");
-    assert_eq!(cache.get(&k1, 2_000), None);
-    assert_eq!(cache.get(&k2, 2_000), Some(CacheScope::Private));
+    assert!(cache.get(&k1, 2_000).is_none());
+    assert!(cache.get(&k2, 2_000).is_some());
+}
+
+#[test]
+fn cache_key_hashes_params_and_avoids_raw_secret() {
+    let k = McpCache::key(
+        "srv1",
+        "resources/read",
+        &serde_json::json!({"uri": "https://x/y?token=SUPER_SECRET"}),
+    );
+    // The key contains no raw secret query, only the digest.
+    assert!(!k.contains("SUPER_SECRET"));
+    assert!(k.starts_with("srv1|resources/read|"));
 }
 
 // ── MRTR outcome ──

@@ -84,6 +84,11 @@ async fn stdio_legacy_fallback_tools_list_and_call() {
         .refresh_server("stdio1")
         .await
         .expect("connect + tools/list");
+    // Version propagation: legacy server (server/discover → method not found)
+    // must report 2025-11-25, not 2026-07-28.
+    let runtime = manager.get_server("stdio1").unwrap();
+    assert_eq!(runtime.protocol_version, McpProtocolVersion::V2025_11_25);
+
     let tools = manager.list_tools("stdio1").await.unwrap();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name, "echo");

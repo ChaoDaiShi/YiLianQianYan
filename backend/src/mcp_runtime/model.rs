@@ -45,6 +45,14 @@ pub enum McpRuntimeStatus {
     Misconfigured,
 }
 
+/// The result of a transport `connect()`: the negotiated protocol version and
+/// the server's advertised capabilities.
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpNegotiationResult {
+    pub protocol_version: McpProtocolVersion,
+    pub capabilities: McpServerCapabilities,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerCapabilities {
@@ -98,6 +106,7 @@ pub struct McpHeaderBinding {
 // ── Resource model ──
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpResourceDescriptor {
     pub uri: String,
     pub name: String,
@@ -114,6 +123,7 @@ pub struct McpResourceDescriptor {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpResourceTemplate {
     pub uri_template: String,
     pub name: String,
@@ -192,6 +202,7 @@ pub struct McpPromptResult {
 // ── MRTR outcome ──
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpInputRequired {
     pub prompt: String,
     #[serde(default)]

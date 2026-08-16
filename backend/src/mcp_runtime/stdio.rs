@@ -14,7 +14,10 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio_util::sync::CancellationToken;
 
 use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
-use super::model::{McpProtocolVersion, McpRuntimeError, MAX_MCP_STDIO_LINE_BYTES};
+use super::model::{
+    McpNegotiationResult, McpProtocolVersion, McpRuntimeError, McpServerCapabilities,
+    MAX_MCP_STDIO_LINE_BYTES,
+};
 use super::protocol::attach_request_metadata;
 use super::transport::McpTransport;
 
@@ -25,6 +28,8 @@ pub struct StdioTransport {
     args: Vec<String>,
     env: BTreeMap<String, String>,
     inner: tokio::sync::Mutex<StdioInner>,
+    version: parking_lot::RwLock<McpProtocolVersion>,
+    capabilities: parking_lot::RwLock<McpServerCapabilities>,
 }
 
 struct StdioInner {
@@ -32,7 +37,6 @@ struct StdioInner {
     stdin: Option<ChildStdin>,
     reader: Option<BufReader<tokio::process::ChildStdout>>,
     next_id: i64,
-    protocol_version: McpProtocolVersion,
     reconnect_attempted: bool,
 }
 
@@ -47,9 +51,10 @@ impl StdioTransport {
                 stdin: None,
                 reader: None,
                 next_id: 1,
-                protocol_version: McpProtocolVersion::V2025_11_25,
                 reconnect_attempted: false,
             }),
+            version: parking_lot::RwLock::new(McpProtocolVersion::V2025_11_25),
+            capabilities: parking_lot::RwLock::new(McpServerCapabilities::default()),
         }
     }
 
@@ -78,12 +83,20 @@ impl StdioTransport {
             .ok_or(McpRuntimeError::SpawnFailed("no stdout".to_string()))?;
 
         // Drain stderr in the background so the child never blocks on a full pipe.
+        // stderr is untrusted external data: never log secrets, and bound it.
         if let Some(stderr) = child.stderr.take() {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
                 while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
-                    tracing::debug!(stderr = %line.trim_end(), "mcp stdio stderr");
+                    if crate::safety::contains_sensitive_content(&line) {
+                        tracing::warn!(
+                            "mcp server emitted sensitive-looking stderr; content suppressed"
+                        );
+                    } else {
+                        let bounded = crate::utils::text::truncate_chars(line.trim_end(), 500);
+                        tracing::debug!(stderr = %bounded, "mcp stdio stderr");
+                    }
                     line.clear();
                 }
             });
@@ -189,8 +202,8 @@ impl StdioTransport {
         let cancel = CancellationToken::new();
         match self.read_response(reader, discover.id, &cancel).await {
             Ok(JsonRpcMessage::Success(_)) => Ok(McpProtocolVersion::V2026_07_28),
-            _ => {
-                // Fall back to legacy initialize.
+            Ok(JsonRpcMessage::Error(e)) if e.error.code == -32601 => {
+                // "Method not found" is the clear legacy-compatible signal.
                 let init = JsonRpcRequest::new(
                     *next_id,
                     "initialize",
@@ -225,6 +238,12 @@ impl StdioTransport {
                     .map_err(|e| McpRuntimeError::Transport(e.to_string()))?;
                 Ok(McpProtocolVersion::V2025_11_25)
             }
+            // A recognized modern error that is NOT "method not found" (e.g. an
+            // explicit UnsupportedProtocolVersion) must NOT be blindly treated
+            // as a legacy server.
+            Ok(JsonRpcMessage::Error(_)) => Err(McpRuntimeError::UnsupportedProtocol),
+            Ok(JsonRpcMessage::Notification(_)) => Err(McpRuntimeError::InvalidResponse),
+            Err(e) => Err(e),
         }
     }
 
@@ -238,7 +257,13 @@ impl StdioTransport {
             .await;
         match version {
             Ok(v) => {
-                inner.protocol_version = v;
+                *self.version.write() = v;
+                // Capabilities are negotiated during catalog discovery; keep a
+                // conservative default here (tools assumed).
+                *self.capabilities.write() = McpServerCapabilities {
+                    tools: true,
+                    ..Default::default()
+                };
                 inner.child = Some(child);
                 inner.stdin = Some(stdin);
                 inner.reader = Some(reader);
@@ -296,6 +321,18 @@ impl StdioTransport {
 
 #[async_trait]
 impl McpTransport for StdioTransport {
+    async fn connect(
+        &self,
+        _cancel: &CancellationToken,
+    ) -> Result<McpNegotiationResult, McpRuntimeError> {
+        let mut inner = self.inner.lock().await;
+        self.ensure_connected(&mut inner).await?;
+        Ok(McpNegotiationResult {
+            protocol_version: *self.version.read(),
+            capabilities: self.capabilities.read().clone(),
+        })
+    }
+
     async fn send(
         &self,
         request: &JsonRpcRequest,
@@ -313,5 +350,9 @@ impl McpTransport for StdioTransport {
             let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
             let _ = child.kill().await;
         }
+    }
+
+    fn protocol_version(&self) -> McpProtocolVersion {
+        *self.version.read()
     }
 }
