@@ -14,6 +14,7 @@ pub mod capability;
 pub mod control_session;
 pub mod descriptor;
 pub mod execution_gateway;
+pub mod grant;
 pub mod permission;
 pub mod policy;
 pub mod policy_engine;

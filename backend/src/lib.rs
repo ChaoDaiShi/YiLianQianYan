@@ -9,6 +9,7 @@ pub mod capability;
 pub mod config;
 pub mod db;
 pub mod execution;
+pub mod isolation;
 pub mod llm;
 pub mod mcp;
 pub mod mcp_runtime;
@@ -74,6 +75,9 @@ async fn create_server_with_control_session(
     // Migrate legacy plaintext secrets BEFORE registering MCP servers, so the
     // runtime manager sees the post-migration `env_secret_refs`.
     server.migrate_secrets().await;
+    // Seed base resource grants (workspace read/write + denied paths) so the
+    // grant-enforced gateway has a sane starting point.
+    server.seed_default_grants();
     // Register enabled MCP servers and refresh them (bounded) so the managed
     // catalog is Ready before the first Agent request. A dead server never
     // blocks startup — it just becomes Unavailable.

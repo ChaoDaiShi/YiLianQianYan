@@ -14,10 +14,10 @@ use crate::{
 };
 
 use super::{
-    describe_builtin_tool, AuditError, AuditEventInput, AuditEventType, AuditRecorder, BuiltInRole,
-    DecisionContext, DescriptorError, PermissionId, PolicyDecision, PolicyEngine,
-    ResourceDescriptor, ResourceScope, SafetyPolicy, SecuritySubject, ToolSecurityDescriptor,
-    POLICY_VERSION,
+    describe_builtin_tool, grant::GrantDecision, grant::GrantEvaluator, AuditError,
+    AuditEventInput, AuditEventType, AuditRecorder, BuiltInRole, DecisionContext, DescriptorError,
+    PermissionId, PolicyDecision, PolicyEngine, ResourceDescriptor, ResourceScope, SafetyPolicy,
+    SecuritySubject, ToolSecurityDescriptor, POLICY_VERSION,
 };
 
 #[derive(Debug)]
@@ -70,6 +70,10 @@ pub struct SecurityExecutionGateway {
     verifier: Arc<dyn Verifier>,
     audit_recorder: Option<Arc<AuditRecorder>>,
     db: Option<Arc<Database>>,
+    /// Whether resource-grant enforcement is active. When enabled, grants are
+    /// loaded live from the DB per evaluation (so approval revalidation sees
+    /// current grants). Off by default for legacy construction paths + tests.
+    grants_enabled: bool,
 }
 
 impl SecurityExecutionGateway {
@@ -161,6 +165,7 @@ impl SecurityExecutionGateway {
             verifier,
             audit_recorder,
             db: None,
+            grants_enabled: false,
         }
     }
 
@@ -168,6 +173,13 @@ impl SecurityExecutionGateway {
     /// from the `security_role_bindings` table at execution time.
     pub fn with_db(mut self, db: Arc<Database>) -> Self {
         self.db = Some(db);
+        self
+    }
+
+    /// Enable resource-grant enforcement (production). Grants are loaded live
+    /// from the DB per evaluation.
+    pub fn with_grant_enforcement(mut self) -> Self {
+        self.grants_enabled = true;
         self
     }
 
@@ -846,12 +858,53 @@ impl SecurityExecutionGateway {
         // PolicyEngine currently exposes a static evaluation API; retain it as
         // the gateway's explicit policy dependency while forwarding to that API.
         let _policy_engine = &self.policy_engine;
-        Ok(PolicyEngine::evaluate(
+        let rbac = PolicyEngine::evaluate(
             context.role,
             &request.tool_name,
             &descriptor,
             context.risk_level,
-        ))
+        );
+
+        // ── Grant gate (production) — explicit Deny always wins; a missing
+        //    persistent allow escalates an RBAC Allow to RequireApproval.
+        //    Grants are loaded live from the DB so approval revalidation sees
+        //    current grants. ──
+        if self.grants_enabled {
+            if let Some(db) = &self.db {
+                let grants = db
+                    .list_grants(&request.subject.subject_id)
+                    .unwrap_or_default();
+                let grant_evaluator = GrantEvaluator::new(grants, &self.workspace_root);
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let mut missing = false;
+                for requested in &descriptor.requested_permissions {
+                    for resource in &descriptor.resources {
+                        match grant_evaluator.evaluate(requested.permission, resource, now_ms) {
+                            GrantDecision::Deny { reason } => {
+                                context.reason = format!(
+                                    "resource grant denied {}: {reason}",
+                                    request.tool_name
+                                );
+                                return Ok(PolicyDecision::Deny(context));
+                            }
+                            GrantDecision::RequireApproval { reason: _ } => {
+                                missing = true;
+                            }
+                            GrantDecision::Allow => {}
+                        }
+                    }
+                }
+                if missing && matches!(rbac, PolicyDecision::Allow(_)) {
+                    context.reason = format!(
+                        "tool {} requires a resource grant (missing)",
+                        request.tool_name
+                    );
+                    return Ok(PolicyDecision::RequireApproval(context));
+                }
+            }
+        }
+
+        Ok(rbac)
     }
 
     /// Evaluate the security policy for a request using the subject's

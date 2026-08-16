@@ -22,6 +22,10 @@
 - Legacy secret migration (write → verify → clear plaintext; idempotent; failure preserves plaintext)
 - Settings write-only Secret UX (configured/source status, clear/rotate) + `GET /api/secrets/status` (value-free)
 - MCP stdio env → SecretStore + delete cleanup; Streamable HTTP header env-var references unchanged
+- Typed `SecurityGrant` resource grants (Filesystem/Network/Process/Shell) + `security_grants` table + GrantEvaluator (explicit Deny wins, missing → approval)
+- SecurityExecutionGateway grant enforcement (RBAC → Grants → Sandbox → Risk); approval = one-shot, revalidates live grants
+- Filesystem read/write grant + canonical-path/symlink containment; Network target grants + SSRF/DNS-rebinding hardening (redirect=none + private/loopback reject)
+- Managed process runner for Bash: sanitized env (no secret inheritance) + real async timeout + whole-tree kill
 
 ### Security
 

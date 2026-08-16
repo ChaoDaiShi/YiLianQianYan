@@ -166,7 +166,7 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 
 ## v0.8 Development — Agent Memory + Unified Capability Registry
 
-状态：**Phase 1–5 Completed（Phase 6 OS-assisted Isolation 未开始）**
+状态：**Phase 1–6 Completed（下一阶段：v0.8 Release Gate / Security Closure）**
 
 - Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
 - Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。
@@ -184,8 +184,14 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
   - Runtime：`SecretResolver` 按需解析（SecretRef → env → legacy literal）；LLM/Embedding/MCP stdio 在 Authorization header / Command.env 边界才 `expose_secret`，不长缓存。
   - API/UX：Settings write-only 密钥 + 清除/轮换 + configured/source 状态；`GET /api/secrets/status`（无 value 导出）；`save_settings`/`create/update_mcp_server` 守卫拒绝明文。
   - **No plaintext new writes**：持久化 Chat/Embedding literal key = NO，stdio MCP env value = NO，API/log/audit/Debug 泄漏 = NO。
+- Phase 6 ✅ COMPLETED — OS-assisted Isolation + Resource Grants + Permission Surface：
+  - Typed `SecurityGrant`（Allow/Deny + `GrantResource`：Filesystem/Network/Process/Shell；`NetworkZone`；`ProcessGrantScope`）+ `security_grants` 表 + GrantStore + GrantEvaluator（Explicit Deny 优先、过期忽略、Missing → RequireApproval）。
+  - SecurityExecutionGateway 接入 GrantEvaluator（决策顺序 RBAC → Grants → Sandbox → Risk）；Approval = 一次性资源授权，`execute_approved` 仍 re-evaluate 当前 live grants（Explicit Deny 不可被 approval 绕过）。
+  - Filesystem Read/Write grant 强制 + canonical path + symlink/junction containment；Network target grant（scheme/host/port/method + zone）；http_request SSRF/DNS rebinding 硬化（redirect=none + private/loopback 拒绝）。
+  - 进程隔离：Bash 走 ManagedProcessRunner（sanitized env，secret 剥离 + 真实 async timeout + 超时 kill 整个 process tree）；ManagedProcessRegistry 区分 managed child 与宿主 PID。
+  - Grant CRUD API（protected）+ `/api/security/isolation/status`（诚实：process containment Active；OS filesystem/network namespace **未实现**，非容器级隔离）。
 
-**Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。SecretStore 只负责存取，绝不授予权限或绕过 Gateway。
+**Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。SecretStore 只负责存取，绝不授予权限或绕过 Gateway；Grant 是 authority，不是 execution。
 
 ## v0.4 Workflow Runtime
 

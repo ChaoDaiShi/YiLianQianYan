@@ -101,7 +101,8 @@ impl SubagentExecutor for LocalSubagentExecutor {
             Arc::new(DefaultVerifier::new(&self.workspace_root)),
             Arc::new(self.audit_recorder.clone()),
         )
-        .with_db(Arc::new(self.db.clone_connection()));
+        .with_db(Arc::new(self.db.clone_connection()))
+        .with_grant_enforcement();
 
         // Independent approval store: a child pause must never leak into the
         // parent approval chain.

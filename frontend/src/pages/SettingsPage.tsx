@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Check, Monitor, Upload, Download, RotateCcw } from "lucide-react";
-import { getSettings, updateSettings } from "../api/client";
+import { getSettings, updateSettings, getIsolationStatus, type IsolationStatus } from "../api/client";
 import { useTheme } from "../theme";
 import { PRESET_META } from "../theme/presets";
 import type { AppConfig } from "../types";
@@ -61,6 +61,7 @@ export default function SettingsPage() {
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [saved, setSaved] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("model");
+  const [isolation, setIsolation] = useState<IsolationStatus | null>(null);
   const theme = useTheme();
 
   useEffect(() => {
@@ -73,6 +74,7 @@ export default function SettingsPage() {
         });
       }
     });
+    getIsolationStatus().then((s) => { if (s) setIsolation(s); });
   }, []);
 
   const handleSave = async () => {
@@ -218,6 +220,17 @@ export default function SettingsPage() {
         return (
           <div className="space-y-4">
             <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">权限配置</h3>
+            {isolation && (
+              <div className="rounded-lg border border-[var(--border)] px-3 py-3 space-y-1">
+                <h4 className="text-sm font-medium">OS 进程隔离</h4>
+                <p className="text-xs text-[var(--text-muted)]">Process containment: {isolation.process_containment ? "Active" : "Inactive"}</p>
+                <p className="text-xs text-[var(--text-muted)]">Kill process tree: {isolation.kill_tree ? "Active" : "Inactive"}</p>
+                <p className="text-xs text-[var(--text-muted)]">Restricted Token: {isolation.restricted_token ? "Active" : "Not enabled"}</p>
+                <p className="text-xs text-[var(--text-faint)]">OS filesystem isolation: {isolation.filesystem_os_enforced ? "Enabled" : "Not enabled"}</p>
+                <p className="text-xs text-[var(--text-faint)]">OS network isolation: {isolation.network_os_enforced ? "Enabled" : "Not enabled"}</p>
+                <p className="text-[11px] text-[var(--text-faint)] mt-1">资源授权（Filesystem/Network/Process/Shell）由安全网关强制执行；Shell 默认每次询问。当前为应用层进程隔离，非容器级隔离。</p>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium mb-1">模式</label>
               <select

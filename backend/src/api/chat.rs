@@ -224,7 +224,8 @@ pub async fn chat_handler(
             Arc::new(DefaultVerifier::new(&server.workspace_root)),
             Arc::new(server.audit_recorder.clone()),
         )
-        .with_db(Arc::new(db_clone.clone()));
+        .with_db(Arc::new(db_clone.clone()))
+        .with_grant_enforcement();
 
         let result = engine::run_react_loop_with_channel(
             &mut agent_state,

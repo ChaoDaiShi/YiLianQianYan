@@ -40,7 +40,10 @@ pub(crate) fn mcp_transport_config(server: &crate::db::McpServer) -> McpTranspor
 }
 use crate::config::types::AppConfig;
 use crate::db::Database;
-use crate::safety::{approval::ApprovalStore, AuditRecorder, ControlSession};
+use crate::safety::{
+    approval::ApprovalStore, grant::GrantEffect, grant::GrantResource, grant::GrantSource,
+    AuditRecorder, ControlSession, PermissionId,
+};
 use crate::secret::{migrate_legacy_secrets, OsSecretStore, SecretResolver, SecretStore};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
@@ -228,7 +231,7 @@ impl AppServer {
 
         let log_buffer = LogBuffer::new(2000);
 
-        Ok(Self {
+        let server = Self {
             db,
             config: Arc::new(RwLock::new(config)),
             tool_registry,
@@ -248,7 +251,9 @@ impl AppServer {
             ))),
             secret_store,
             secret_resolver,
-        })
+        };
+        server.seed_default_grants();
+        Ok(server)
     }
 
     /// Migrate legacy plaintext secrets into the SecretStore (write → verify →
@@ -279,6 +284,82 @@ impl AppServer {
             );
         }
         report
+    }
+
+    /// Seed base resource grants for `local-user` from the current sandbox
+    /// profile (idempotent). Workspace read is always granted; workspace write
+    /// is granted unless the profile is ReadOnly; denied_write_paths become
+    /// explicit Deny grants.
+    pub fn seed_default_grants(&self) {
+        let subject_id = "local-user";
+        let config = self.config.read();
+        let profile = config.sandbox.profile.clone();
+        let denied_paths = config.sandbox.denied_write_paths.clone();
+        drop(config);
+
+        let existing: std::collections::HashSet<String> = self
+            .db
+            .list_grants(subject_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|g| g.id)
+            .collect();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let mut ensure =
+            |id: &str, permission: PermissionId, effect: GrantEffect, resource: GrantResource| {
+                if existing.contains(id) {
+                    return;
+                }
+                let grant = crate::safety::grant::SecurityGrant {
+                    id: id.to_string(),
+                    subject_id: subject_id.to_string(),
+                    effect,
+                    permission,
+                    resource,
+                    source: GrantSource::Migration,
+                    created_at: now,
+                    expires_at: None,
+                };
+                if let Err(e) = self.db.create_grant(&grant) {
+                    tracing::warn!(grant_id = %id, error = %e, "failed to seed default grant");
+                }
+            };
+
+        ensure(
+            "migration-fs-read-workspace",
+            PermissionId::FilesystemRead,
+            GrantEffect::Allow,
+            GrantResource::Filesystem {
+                root: self.workspace_root.clone(),
+                recursive: true,
+            },
+        );
+        if profile != crate::config::types::SandboxProfile::ReadOnly {
+            ensure(
+                "migration-fs-write-workspace",
+                PermissionId::FilesystemWrite,
+                GrantEffect::Allow,
+                GrantResource::Filesystem {
+                    root: self.workspace_root.clone(),
+                    recursive: true,
+                },
+            );
+        }
+        for denied in &denied_paths {
+            ensure(
+                &format!(
+                    "migration-fs-deny-{}",
+                    crate::safety::sha256_hex(denied.as_bytes())[..12].to_string()
+                ),
+                PermissionId::FilesystemWrite,
+                GrantEffect::Deny,
+                GrantResource::Filesystem {
+                    root: denied.clone(),
+                    recursive: true,
+                },
+            );
+        }
     }
 
     /// Build the base system prompt with skills + subagents sections.

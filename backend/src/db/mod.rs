@@ -221,6 +221,24 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_security_audit_risk
                 ON security_audit_events(risk_level);
 
+            CREATE TABLE IF NOT EXISTS security_grants (
+                grant_id TEXT PRIMARY KEY,
+                subject_id TEXT NOT NULL,
+                effect TEXT NOT NULL,
+                permission_id TEXT NOT NULL,
+                resource_json TEXT NOT NULL,
+                source TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_security_grants_subject
+                ON security_grants(subject_id);
+            CREATE INDEX IF NOT EXISTS idx_security_grants_permission
+                ON security_grants(permission_id);
+            CREATE INDEX IF NOT EXISTS idx_security_grants_expires
+                ON security_grants(expires_at);
+
             CREATE TABLE IF NOT EXISTS workflow_graphs (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL DEFAULT '',

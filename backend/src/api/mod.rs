@@ -27,6 +27,7 @@ mod memories;
 mod plugins;
 mod secrets;
 mod security;
+mod security_grants;
 mod settings;
 mod skills_route;
 mod subagents;
@@ -209,6 +210,17 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         // Secrets status (value-free; no secret-read endpoint)
         .route("/api/secrets/status", get(secrets::status_handler))
+        // Security grants (protected CRUD) + isolation status
+        .route("/api/security/grants", get(security_grants::list_grants))
+        .route("/api/security/grants", post(security_grants::create_grant))
+        .route(
+            "/api/security/grants/:id",
+            delete(security_grants::delete_grant),
+        )
+        .route(
+            "/api/security/isolation/status",
+            get(security_grants::isolation_status),
+        )
         // Logs API
         .route("/api/logs", get(logs::get_logs))
         .route("/api/logs", post(logs::push_log))

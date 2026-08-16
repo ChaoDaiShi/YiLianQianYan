@@ -1173,7 +1173,8 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
             Arc::new(DefaultVerifier::new(&server.workspace_root)),
             Arc::new(server.audit_recorder.clone()),
         )
-        .with_db(Arc::new(server.db.clone_connection())),
+        .with_db(Arc::new(server.db.clone_connection()))
+        .with_grant_enforcement(),
     );
     let resolver = Arc::clone(&server.secret_resolver);
     let planner = Arc::new(super::planner::LlmTaskPlanner::new(

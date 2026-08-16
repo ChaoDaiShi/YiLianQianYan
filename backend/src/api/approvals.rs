@@ -131,7 +131,8 @@ async fn execute_approved_tool(
         Arc::new(DefaultVerifier::new(&server.workspace_root)),
         Arc::new(server.audit_recorder.clone()),
     )
-    .with_db(Arc::new(server.db.clone_connection()));
+    .with_db(Arc::new(server.db.clone_connection()))
+    .with_grant_enforcement();
     let request = SecurityExecutionRequest {
         conversation_id: approval.conversation_id.clone(),
         tool_call_id: approval.tool_call_id.clone(),
@@ -213,7 +214,8 @@ async fn build_workflow_gateway(server: &AppServer) -> Arc<SecurityExecutionGate
             Arc::new(DefaultVerifier::new(&server.workspace_root)),
             Arc::new(server.audit_recorder.clone()),
         )
-        .with_db(Arc::new(server.db.clone_connection())),
+        .with_db(Arc::new(server.db.clone_connection()))
+        .with_grant_enforcement(),
     )
 }
 
@@ -974,7 +976,8 @@ async fn resume_agent(
         Arc::new(DefaultVerifier::new(&server.workspace_root)),
         Arc::new(server.audit_recorder.clone()),
     )
-    .with_db(Arc::new(server.db.clone_connection()));
+    .with_db(Arc::new(server.db.clone_connection()))
+    .with_grant_enforcement();
 
     let result = engine::run_react_loop_with_channel(
         &mut agent_state,

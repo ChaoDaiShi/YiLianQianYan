@@ -287,6 +287,50 @@ export async function listSubagents() {
   return request<SubagentMetadata[]>("GET", "/api/subagents");
 }
 
+// ── Security grants / isolation ──
+
+export interface SecurityGrant {
+  id: string;
+  subject_id: string;
+  effect: string;
+  permission: string;
+  resource: Record<string, unknown>;
+  source: string;
+  created_at: number;
+  expires_at?: number | null;
+}
+
+export interface IsolationStatus {
+  backend: string;
+  process_containment: boolean;
+  restricted_token: boolean;
+  kill_tree: boolean;
+  filesystem_os_enforced: boolean;
+  network_os_enforced: boolean;
+  experimental_appcontainer_available: boolean;
+}
+
+export async function listSecurityGrants() {
+  const res = await request<{ grants: SecurityGrant[] }>("GET", "/api/security/grants");
+  return res?.grants ?? null;
+}
+
+export async function createSecurityGrant(data: {
+  permission_id: string;
+  effect: string;
+  resource: Record<string, unknown>;
+}) {
+  return request<SecurityGrant>("POST", "/api/security/grants", data);
+}
+
+export async function deleteSecurityGrant(id: string) {
+  return request<{ status: string }>("DELETE", `/api/security/grants/${id}`);
+}
+
+export async function getIsolationStatus() {
+  return request<IsolationStatus>("GET", "/api/security/isolation/status");
+}
+
 // ── Workflows ──
 
 export interface Workflow {
