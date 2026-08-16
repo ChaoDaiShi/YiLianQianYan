@@ -171,6 +171,7 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 - Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
 - Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。
 - Phase 3 Unified Capability Registry：`capability/` 模块统一 Builtin/MCP/Subagent/Agent/Workflow/Skill 的能力发现（`CapabilityDescriptor` + providers + 原子 refresh + 重复检测 + runtime readiness）。**Registry 只做发现，绝不执行能力**；真实授权仍在 Security Execution Gateway。`GET/POST /api/capabilities` API + Planner 引用校验（missing/disabled/unavailable → reject）+ 桌面「能力」页面。
+- Phase 4 MCP Runtime Expansion + Plugin Manifest Foundation：Plugin Manifest（声明式 `plugin.json` 模型 + 校验 + registry + 路径 containment，绝不加载 native code / 自动连接 MCP）；MCP 协议基元（2026-07-28 modern metadata/header 生成，base64 sentinel + CRLF 注入拒绝，transport config + URL 校验）。MCP Tool 执行仍经过 Security Execution Gateway；Resource/Prompt 不自动注入 Agent 上下文。
 
 **Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中。
 

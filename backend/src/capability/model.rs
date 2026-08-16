@@ -50,6 +50,9 @@ pub enum CapabilityKind {
     Agent,
     Workflow,
     Skill,
+    McpResource,
+    McpResourceTemplate,
+    McpPrompt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

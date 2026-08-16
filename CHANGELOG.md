@@ -10,6 +10,8 @@
 - Runtime readiness status + atomic refresh + duplicate detection
 - Planner capability reference validation (missing/disabled/unavailable → reject)
 - `GET/POST /api/capabilities` API + desktop capability surface
+- Plugin Manifest Foundation: declarative `plugin.json` model + validation + registry + path containment (no native execution, no auto-connect)
+- MCP protocol primitives: 2026-07-28 modern metadata/header generation (base64 sentinel, CRLF rejection), transport config + URL validation
 
 ### Security
 
@@ -17,6 +19,8 @@
 - No provider may execute capabilities during discovery
 - Registry metadata cannot grant permission; real authorization remains the Security Execution Gateway
 - Shared secret-detection source of truth between Chat Memory Extraction and Agent Memory Learning
+- Plugin discovery is side-effect-free; plugin paths are constrained to the plugin root; plugin permissions never grant RBAC
+- MCP Streamable HTTP rejects remote plain HTTP, embedded credentials, and fragments
 
 ## 0.6.0 — Workspace / Task / Multi-Agent Runtime
 

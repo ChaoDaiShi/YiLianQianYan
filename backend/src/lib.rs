@@ -11,6 +11,8 @@ pub mod db;
 pub mod execution;
 pub mod llm;
 pub mod mcp;
+pub mod mcp_runtime;
+pub mod plugin;
 pub mod safety;
 pub mod server;
 pub mod task;
