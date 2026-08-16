@@ -66,6 +66,9 @@ pub struct McpToolAdapter {
     description: String,
     input_schema: serde_json::Value,
     server: McpServer,
+    /// Optional managed-runtime backend. When set, execution goes through the
+    /// McpRuntimeManager instead of the legacy stdio executor.
+    manager: Option<std::sync::Arc<crate::mcp_runtime::McpRuntimeManager>>,
 }
 
 // Manual Debug: never print the full server config (may contain command/env/secrets).
@@ -116,7 +119,19 @@ impl McpToolAdapter {
             description,
             input_schema: tool.input_schema.clone(),
             server: server.clone(),
+            manager: None,
         })
+    }
+
+    /// Attach a managed-runtime backend so `execute` routes through the
+    /// McpRuntimeManager (the production path) instead of the legacy stdio
+    /// executor.
+    pub fn with_manager(
+        mut self,
+        manager: std::sync::Arc<crate::mcp_runtime::McpRuntimeManager>,
+    ) -> Self {
+        self.manager = Some(manager);
+        self
     }
 
     /// Construct an adapter while enforcing exposed-name uniqueness against
@@ -296,6 +311,22 @@ impl Tool for McpToolAdapter {
     /// (never a panic, never propagated as an `Err`). Approval decisions are
     /// handled upstream by the SecurityExecutionGateway.
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
+        // Managed runtime path (production): route through McpRuntimeManager.
+        if let Some(manager) = &self.manager {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            return match manager
+                .call_tool(&self.server_id, &self.remote_tool_name, args, &cancel)
+                .await
+            {
+                Ok(result) if !result.is_error => ToolResult::success(result.text),
+                Ok(result) => ToolResult::error(result.text),
+                Err(error) => {
+                    let safe = crate::utils::text::truncate_chars(&error.to_string(), 500);
+                    ToolResult::error(format!("MCP tool execution failed: {safe}"))
+                }
+            };
+        }
+        // Legacy stdio path (compatibility).
         match crate::mcp::call_stdio_tool(&self.server, &self.remote_tool_name, args).await {
             Ok(result) => result,
             Err(error) => {
@@ -320,10 +351,26 @@ pub fn register_discovered_mcp_tools(
     server: &McpServer,
     tools: &[McpTool],
 ) -> usize {
+    register_discovered_mcp_tools_with_manager(registry, occupied_names, server, tools, None)
+}
+
+/// Same as [`register_discovered_mcp_tools`], but attaches a managed-runtime
+/// backend so execution routes through the McpRuntimeManager.
+pub fn register_discovered_mcp_tools_with_manager(
+    registry: &mut crate::tools::ToolRegistry,
+    occupied_names: &mut std::collections::HashSet<String>,
+    server: &McpServer,
+    tools: &[McpTool],
+    manager: Option<std::sync::Arc<crate::mcp_runtime::McpRuntimeManager>>,
+) -> usize {
     let mut registered = 0usize;
     for tool in tools {
         match McpToolAdapter::new_unique(server, tool, occupied_names) {
             Ok(adapter) => {
+                let adapter = match manager {
+                    Some(ref m) => adapter.with_manager(std::sync::Arc::clone(m)),
+                    None => adapter,
+                };
                 registry.register(std::sync::Arc::new(adapter));
                 registered += 1;
             }

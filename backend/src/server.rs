@@ -11,6 +11,32 @@ use crate::capability::{
     AgentProvider, BuiltinToolProvider, CapabilityRegistry, McpToolProvider, SkillProvider,
     SubagentProvider, WorkflowProvider,
 };
+use crate::mcp_runtime::{McpRuntimeManager, McpTransportConfig};
+
+/// Convert a legacy DB MCP server row into a runtime transport config.
+fn mcp_transport_config(server: &crate::db::McpServer) -> McpTransportConfig {
+    let env_map: std::collections::BTreeMap<String, String> = server
+        .env
+        .as_ref()
+        .and_then(|e| e.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    match server.transport.as_str() {
+        "http" | "streamable_http" => McpTransportConfig::StreamableHttp {
+            url: server.url.clone().unwrap_or_default(),
+            headers_from_env: env_map,
+        },
+        _ => McpTransportConfig::Stdio {
+            command: server.command.clone().unwrap_or_default(),
+            args: server.args.clone().unwrap_or_default(),
+            env: env_map,
+        },
+    }
+}
 use crate::config::types::AppConfig;
 use crate::db::Database;
 use crate::safety::{approval::ApprovalStore, AuditRecorder, ControlSession};
@@ -118,6 +144,8 @@ pub struct AppServer {
     pub control_session: ControlSession,
     /// Lazily-built unified capability registry (discovery-only).
     pub capability_registry: Arc<RwLock<Option<Arc<CapabilityRegistry>>>>,
+    /// Application-lifetime MCP runtime manager (managed production path).
+    pub mcp_runtime_manager: Arc<McpRuntimeManager>,
 }
 
 impl AppServer {
@@ -190,6 +218,7 @@ impl AppServer {
             audit_recorder,
             control_session,
             capability_registry: Arc::new(RwLock::new(None)),
+            mcp_runtime_manager: Arc::new(McpRuntimeManager::new()),
         })
     }
 
@@ -296,11 +325,12 @@ impl AppServer {
             }
             match crate::mcp::probe_stdio_server(&server).await {
                 Ok(probe) => {
-                    let registered = crate::tools::mcp::register_discovered_mcp_tools(
+                    let registered = crate::tools::mcp::register_discovered_mcp_tools_with_manager(
                         &mut base_registry,
                         &mut occupied_names,
                         &server,
                         &probe.tools,
+                        Some(std::sync::Arc::clone(&self.mcp_runtime_manager)),
                     );
                     tracing::info!(
                         server_id = %server.id,
@@ -357,6 +387,33 @@ impl AppServer {
         let registry = self.build_capability_registry().await;
         *self.capability_registry.write() = Some(Arc::clone(&registry));
         registry
+    }
+
+    /// Register enabled DB MCP servers into the runtime manager (stdio + HTTP).
+    pub fn register_mcp_servers_from_db(&self) {
+        let servers = self.db.list_mcp_servers().unwrap_or_default();
+        for server in &servers {
+            if !server.enabled {
+                continue;
+            }
+            let config = mcp_transport_config(server);
+            self.mcp_runtime_manager.register_server(
+                server.id.clone(),
+                server.name.clone(),
+                config,
+            );
+        }
+    }
+
+    /// Best-effort refresh of every registered MCP server (bounded by each
+    /// transport's own timeouts). A dead server must not fail the app.
+    pub async fn refresh_mcp_runtime(&self) {
+        for runtime in self.mcp_runtime_manager.list_servers() {
+            let id = runtime.server_id.clone();
+            if let Err(error) = self.mcp_runtime_manager.refresh_server(&id).await {
+                tracing::warn!(server_id = %id, error = %error, "MCP runtime refresh failed");
+            }
+        }
     }
 
     /// Build a fresh capability registry from the current runtime sources.

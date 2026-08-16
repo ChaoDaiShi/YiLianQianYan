@@ -70,6 +70,15 @@ async fn create_server_with_control_session(
         }
         None => AppServer::new(&db_path, &workspace_root)?,
     });
+    // Register enabled MCP servers and refresh them best-effort in the
+    // background (a dead MCP server must never block startup).
+    server.register_mcp_servers_from_db();
+    {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move {
+            server.refresh_mcp_runtime().await;
+        });
+    }
     let router = api::build_router(server.clone());
 
     Ok((server, router))
