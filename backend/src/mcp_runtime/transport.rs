@@ -8,7 +8,24 @@
 
 use std::collections::BTreeMap;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
+
+use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
+use super::model::McpRuntimeError;
+
+/// A concrete MCP transport (stdio or Streamable HTTP). Implementations own
+/// their connection lifecycle and serialize requests as needed.
+#[async_trait]
+pub trait McpTransport: Send + Sync {
+    async fn send(
+        &self,
+        request: &JsonRpcRequest,
+        cancel: &CancellationToken,
+    ) -> Result<JsonRpcMessage, McpRuntimeError>;
+    async fn shutdown(&self);
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

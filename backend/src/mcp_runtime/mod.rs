@@ -9,15 +9,30 @@
 
 pub mod cache;
 pub mod header_schema;
+pub mod http;
+pub mod jsonrpc;
+pub mod manager;
 pub mod model;
 pub mod protocol;
+pub mod stdio;
+pub mod tools;
 pub mod transport;
 
+#[cfg(test)]
+mod http_tests;
+#[cfg(test)]
+mod stdio_tests;
 #[cfg(test)]
 mod tests;
 
 pub use cache::{CacheScope, McpCache};
 pub use header_schema::scan_tool_header_bindings;
+pub use http::HttpTransport;
+pub use jsonrpc::{
+    parse_message, JsonRpcError, JsonRpcErrorBody, JsonRpcMessage, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcSuccess,
+};
+pub use manager::{McpRuntimeManager, McpServerRuntime, McpToolCallResult};
 pub use model::{
     McpHeaderBinding, McpHeaderValueType, McpInputRequired, McpOperationOutcome, McpPromptArgument,
     McpPromptDescriptor, McpPromptMessage, McpPromptMessageContent, McpPromptResult,
@@ -31,4 +46,6 @@ pub use protocol::{
     attach_request_metadata, build_request_metadata, encode_header_value, is_valid_header_token,
     param_header, reject_crlf, McpProtocolEra, LEGACY_MCP_VERSION, MODERN_MCP_VERSION,
 };
+pub use stdio::StdioTransport;
+pub use tools::{call_result_text, parse_call_result, parse_tool_list};
 pub use transport::{validate_mcp_url, McpTransportConfig};

@@ -21,6 +21,8 @@ pub const MAX_RESOURCE_CONTENT_ITEMS: usize = 32;
 pub const MAX_RESOURCE_TEXT_CHARS: usize = 2_000_000;
 pub const MAX_RESOURCE_BLOB_BASE64_CHARS: usize = 8_000_000;
 pub const MAX_MCP_CACHE_TTL_MS: u64 = 60 * 60 * 1000;
+pub const MAX_MCP_SSE_EVENT_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_MCP_SSE_EVENTS_PER_REQUEST: usize = 10_000;
 
 // ── Protocol / status ──
 
@@ -44,6 +46,7 @@ pub enum McpRuntimeStatus {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpServerCapabilities {
     #[serde(default)]
     pub tools: bool,
@@ -60,6 +63,7 @@ pub struct McpServerCapabilities {
 // ── Tool model ──
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpTool {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
