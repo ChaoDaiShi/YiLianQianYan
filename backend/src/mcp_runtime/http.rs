@@ -144,12 +144,24 @@ impl HttpTransport {
         expected_id: i64,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError> {
-        let bytes = tokio::select! {
-            _ = cancel.cancelled() => return Err(McpRuntimeError::Cancelled),
-            b = response.bytes() => b.map_err(|e| McpRuntimeError::Transport(e.to_string()))?,
-        };
-        if bytes.len() > MAX_MCP_RESPONSE_BYTES {
-            return Err(McpRuntimeError::ResponseTooLarge);
+        use futures::StreamExt;
+        let mut stream = response.bytes_stream();
+        let mut total = 0usize;
+        let mut bytes: Vec<u8> = Vec::new();
+        loop {
+            let chunk = tokio::select! {
+                _ = cancel.cancelled() => return Err(McpRuntimeError::Cancelled),
+                c = stream.next() => match c {
+                    Some(Ok(c)) => c,
+                    Some(Err(e)) => return Err(McpRuntimeError::Transport(e.to_string())),
+                    None => break,
+                },
+            };
+            total += chunk.len();
+            if total > MAX_MCP_RESPONSE_BYTES {
+                return Err(McpRuntimeError::ResponseTooLarge);
+            }
+            bytes.extend_from_slice(&chunk);
         }
         let value: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(|_| McpRuntimeError::InvalidResponse)?;
@@ -172,6 +184,7 @@ impl HttpTransport {
         let mut buffer = String::new();
         let mut data_lines: Vec<String> = Vec::new();
         let mut event_count = 0usize;
+        let mut total_received = 0usize;
 
         loop {
             let chunk = tokio::select! {
@@ -182,7 +195,16 @@ impl HttpTransport {
                     None => return Err(McpRuntimeError::InvalidResponse),
                 },
             };
+            total_received += chunk.len();
+            if total_received > MAX_MCP_RESPONSE_BYTES {
+                return Err(McpRuntimeError::ResponseTooLarge);
+            }
             buffer.push_str(&String::from_utf8_lossy(&chunk));
+            // A server that never emits a newline must not grow the buffer
+            // without bound.
+            if buffer.len() > MAX_MCP_SSE_EVENT_BYTES {
+                return Err(McpRuntimeError::ResponseTooLarge);
+            }
 
             while let Some(nl) = buffer.find('\n') {
                 let mut line = buffer[..nl].to_string();

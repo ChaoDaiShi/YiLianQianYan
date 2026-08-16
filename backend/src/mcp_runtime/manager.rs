@@ -60,9 +60,12 @@ impl McpServerRuntime {
     }
 }
 
+const DEFAULT_CACHE_TTL_MS: u64 = 60_000;
+
 pub struct McpRuntimeManager {
     servers: RwLock<HashMap<String, Arc<McpServerRuntime>>>,
     next_id: AtomicI64,
+    cache: super::cache::McpCache,
 }
 
 impl Default for McpRuntimeManager {
@@ -76,7 +79,19 @@ impl McpRuntimeManager {
         Self {
             servers: RwLock::new(HashMap::new()),
             next_id: AtomicI64::new(1),
+            cache: super::cache::McpCache::new(),
         }
+    }
+
+    pub fn invalidate_server_cache(&self, server_id: &str) {
+        self.cache.invalidate_server(server_id);
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 
     pub fn register_server(&self, server_id: String, name: String, config: McpTransportConfig) {
@@ -142,6 +157,8 @@ impl McpRuntimeManager {
 
     /// Connect (or reconnect) a server and populate its tool catalog.
     pub async fn refresh_server(&self, server_id: &str) -> Result<(), McpRuntimeError> {
+        // Manual refresh always bypasses + invalidates the cache.
+        self.invalidate_server_cache(server_id);
         let Some(runtime) = self.get_server(server_id) else {
             return Err(McpRuntimeError::ServerNotFound);
         };
@@ -340,6 +357,12 @@ impl McpRuntimeManager {
             .as_ref()
             .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
         let params = serde_json::json!({ "uri": uri });
+        let cache_key = super::cache::McpCache::key(server_id, "resources/read", &params);
+        if let Some(super::cache::McpCacheValue::ResourceRead(contents)) =
+            self.cache.get(&cache_key, Self::now_ms())
+        {
+            return Ok(McpOperationOutcome::Complete(contents));
+        }
         let result = self
             .send(
                 transport.as_ref(),
@@ -358,9 +381,17 @@ impl McpRuntimeManager {
                     .to_string(),
                 input_schema: result.get("inputSchema").cloned(),
             })),
-            _ => Ok(McpOperationOutcome::Complete(parse_resource_contents(
-                &result,
-            )?)),
+            _ => {
+                let contents = parse_resource_contents(&result)?;
+                self.cache.put(
+                    &cache_key,
+                    super::cache::McpCacheValue::ResourceRead(contents.clone()),
+                    DEFAULT_CACHE_TTL_MS,
+                    super::cache::CacheScope::Private,
+                    Self::now_ms(),
+                );
+                Ok(McpOperationOutcome::Complete(contents))
+            }
         }
     }
 

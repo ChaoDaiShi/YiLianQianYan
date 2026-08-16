@@ -3,6 +3,10 @@
 // loopback axum mock server (no external network).
 // ============================================================
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::{routing::post, Json, Router};
 use serde_json::{json, Value};
@@ -10,17 +14,33 @@ use serde_json::{json, Value};
 use super::transport::McpTransport;
 use super::*;
 
+#[derive(Clone, Default)]
+struct MockState {
+    read_count: Arc<AtomicUsize>,
+}
+
 async fn start_mock_http() -> String {
-    let app = Router::new().route("/mcp", post(handler));
+    let (addr, _) = start_mock_http_counted().await;
+    addr
+}
+
+async fn start_mock_http_counted() -> (String, MockState) {
+    let state = MockState::default();
+    let app = Router::new()
+        .route("/mcp", post(handler))
+        .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    addr
+    (addr, state)
 }
 
-async fn handler(Json(body): Json<Value>) -> axum::response::Response {
+async fn handler(
+    State(state): State<MockState>,
+    Json(body): Json<Value>,
+) -> axum::response::Response {
     let id = body.get("id").cloned().unwrap_or(json!(0));
     let method = body
         .get("method")
@@ -48,9 +68,12 @@ async fn handler(Json(body): Json<Value>) -> axum::response::Response {
                 { "uri": "file:///notes", "name": "notes", "mimeType": "text/plain" }
             ]
         }),
-        "resources/read" => json!({
-            "contents": [ { "uri": "file:///notes", "mimeType": "text/plain", "text": "hello resource" } ]
-        }),
+        "resources/read" => {
+            state.read_count.fetch_add(1, Ordering::SeqCst);
+            json!({
+                "contents": [ { "uri": "file:///notes", "mimeType": "text/plain", "text": "hello resource" } ]
+            })
+        }
         "prompts/list" => json!({
             "prompts": [
                 { "name": "greet", "description": "a greeting", "arguments": [{ "name": "name", "required": true }] }
@@ -166,4 +189,34 @@ async fn http_resources_and_prompts_real_wire() {
         McpOperationOutcome::Complete(result) => assert_eq!(result.messages.len(), 1),
         McpOperationOutcome::InputRequired(_) => panic!("unexpected input required"),
     }
+}
+
+#[tokio::test]
+async fn resource_read_cache_avoids_second_wire() {
+    let (addr, state) = start_mock_http_counted().await;
+    let manager = McpRuntimeManager::new();
+    manager.register_server("http3".to_string(), "Cache".to_string(), http_config(&addr));
+    manager.refresh_server("http3").await.unwrap();
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let _ = manager
+        .read_resource("http3", "file:///notes", &cancel)
+        .await
+        .unwrap();
+    assert_eq!(state.read_count.load(Ordering::SeqCst), 1);
+
+    // Second read is served from cache — no new wire call.
+    let _ = manager
+        .read_resource("http3", "file:///notes", &cancel)
+        .await
+        .unwrap();
+    assert_eq!(state.read_count.load(Ordering::SeqCst), 1);
+
+    // Manual refresh bypasses cache.
+    manager.refresh_server("http3").await.unwrap();
+    let _ = manager
+        .read_resource("http3", "file:///notes", &cancel)
+        .await
+        .unwrap();
+    assert_eq!(state.read_count.load(Ordering::SeqCst), 2);
 }
