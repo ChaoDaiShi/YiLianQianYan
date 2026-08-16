@@ -309,43 +309,47 @@ impl AppServer {
             .map(|info| info.name)
             .collect();
 
-        // MCP DB failure must not close Subagent registration: treat it as an
-        // empty server list and keep building.
-        let servers = match self.db.list_mcp_servers() {
-            Ok(servers) => servers,
-            Err(error) => {
-                tracing::warn!(error = %error, "failed to load MCP servers; continuing without MCP");
-                Vec::new()
-            }
-        };
+        // Production discovery reads the runtime manager snapshot (never
+        // spawns/probes). DB rows are only used for adapter identity metadata
+        // (naming / binding tag), never for discovery or execution.
+        let db_servers: HashMap<String, crate::db::McpServer> = self
+            .db
+            .list_mcp_servers()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| (s.id.clone(), s))
+            .collect();
 
-        for server in servers {
-            if !server.enabled || server.transport != "stdio" {
+        for runtime in self.mcp_runtime_manager.list_servers() {
+            if runtime.status != crate::mcp_runtime::McpRuntimeStatus::Ready
+                || !runtime.capabilities.tools
+            {
                 continue;
             }
-            match crate::mcp::probe_stdio_server(&server).await {
-                Ok(probe) => {
-                    let registered = crate::tools::mcp::register_discovered_mcp_tools_with_manager(
-                        &mut base_registry,
-                        &mut occupied_names,
-                        &server,
-                        &probe.tools,
-                        Some(std::sync::Arc::clone(&self.mcp_runtime_manager)),
-                    );
-                    tracing::info!(
-                        server_id = %server.id,
-                        registered,
-                        "MCP tools discovered for runtime registry"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        server_id = %server.id,
-                        error = %error,
-                        "MCP discovery failed; skipping server"
-                    );
-                }
-            }
+            let Some(db_server) = db_servers.get(&runtime.server_id) else {
+                continue;
+            };
+            let local_tools: Vec<crate::mcp::McpTool> = runtime
+                .tools
+                .iter()
+                .map(|t| crate::mcp::McpTool {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    input_schema: t.input_schema.clone(),
+                })
+                .collect();
+            let registered = crate::tools::mcp::register_discovered_mcp_tools_with_manager(
+                &mut base_registry,
+                &mut occupied_names,
+                db_server,
+                &local_tools,
+                Some(std::sync::Arc::clone(&self.mcp_runtime_manager)),
+            );
+            tracing::info!(
+                server_id = %runtime.server_id,
+                registered,
+                "MCP tools registered from runtime manager snapshot"
+            );
         }
 
         // Freeze the Child Source snapshot (builtins + MCP, never subagents).

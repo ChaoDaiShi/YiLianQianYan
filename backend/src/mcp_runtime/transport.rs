@@ -15,6 +15,13 @@ use tokio_util::sync::CancellationToken;
 use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
 use super::model::{McpNegotiationResult, McpProtocolVersion, McpRuntimeError};
 
+/// Optional per-request transport context (HTTP-only extra headers, e.g. the
+/// `Mcp-Param-*` headers derived from `x-mcp-header`).
+#[derive(Debug, Clone, Default)]
+pub struct McpRequestOptions {
+    pub extra_headers: BTreeMap<String, String>,
+}
+
 /// A concrete MCP transport (stdio or Streamable HTTP). Implementations own
 /// their connection lifecycle and serialize requests as needed.
 #[async_trait]
@@ -28,6 +35,16 @@ pub trait McpTransport: Send + Sync {
     async fn send(
         &self,
         request: &JsonRpcRequest,
+        cancel: &CancellationToken,
+    ) -> Result<JsonRpcMessage, McpRuntimeError> {
+        self.send_with_options(request, &McpRequestOptions::default(), cancel)
+            .await
+    }
+    /// Send with transport-specific options (extra headers are ignored by stdio).
+    async fn send_with_options(
+        &self,
+        request: &JsonRpcRequest,
+        options: &McpRequestOptions,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError>;
     async fn shutdown(&self);

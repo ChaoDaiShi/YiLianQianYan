@@ -67,7 +67,17 @@ impl McpServerRuntime {
     }
 }
 
-const DEFAULT_CACHE_TTL_MS: u64 = 60_000;
+/// Parse a remote cache `ttlMs` from a response (in `_meta` or top-level).
+/// Returns 0 (do not cache) when absent — the modern protocol's conservative
+/// default.
+fn parse_cache_ttl(result: &serde_json::Value) -> u64 {
+    result
+        .get("_meta")
+        .and_then(|m| m.get("ttlMs"))
+        .or_else(|| result.get("ttlMs"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
 
 pub struct McpRuntimeManager {
     servers: RwLock<HashMap<String, Arc<McpServerRuntime>>>,
@@ -391,16 +401,39 @@ impl McpRuntimeManager {
             .transport
             .as_ref()
             .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
-        let params = serde_json::json!({ "name": tool_name, "arguments": arguments });
-        let result = self
-            .send(
-                transport.as_ref(),
-                "tools/call",
-                params,
-                runtime.protocol_version,
-                cancel,
-            )
+        // x-mcp-header: derive Mcp-Param-* headers from the tool's bindings.
+        let extra_headers = runtime
+            .tools
+            .iter()
+            .find(|t| t.name == tool_name)
+            .map(|tool| {
+                super::header_schema::extract_header_values(&arguments, &tool.header_bindings).map(
+                    |values| {
+                        values
+                            .into_iter()
+                            .map(|(name, value)| (super::protocol::param_header(&name), value))
+                            .collect::<std::collections::BTreeMap<_, _>>()
+                    },
+                )
+            })
+            .transpose()
+            .map_err(|e| McpRuntimeError::Protocol(e))?
+            .unwrap_or_default();
+
+        let mut params = serde_json::json!({ "name": tool_name, "arguments": arguments });
+        if runtime.protocol_version == McpProtocolVersion::V2026_07_28 {
+            attach_request_metadata(&mut params, "0.8.0");
+        }
+        let request = JsonRpcRequest::new(self.next_id(), "tools/call", Some(params));
+        let options = super::transport::McpRequestOptions { extra_headers };
+        let message = transport
+            .send_with_options(&request, &options, cancel)
             .await?;
+        let result = match message {
+            JsonRpcMessage::Success(s) => s.result,
+            JsonRpcMessage::Error(e) => return Err(McpRuntimeError::ServerError(e.error.message)),
+            JsonRpcMessage::Notification(_) => return Err(McpRuntimeError::InvalidResponse),
+        };
         match parse_call_result(&result) {
             super::model::McpOperationOutcome::Complete(value) => {
                 let is_error = value
@@ -493,13 +526,16 @@ impl McpRuntimeManager {
             })),
             _ => {
                 let contents = parse_resource_contents(&result)?;
-                self.cache.put(
-                    &cache_key,
-                    super::cache::McpCacheValue::ResourceRead(contents.clone()),
-                    DEFAULT_CACHE_TTL_MS,
-                    super::cache::CacheScope::Private,
-                    Self::now_ms(),
-                );
+                let ttl_ms = parse_cache_ttl(&result);
+                if ttl_ms > 0 {
+                    self.cache.put(
+                        &cache_key,
+                        super::cache::McpCacheValue::ResourceRead(contents.clone()),
+                        ttl_ms,
+                        super::cache::CacheScope::Private,
+                        Self::now_ms(),
+                    );
+                }
                 Ok(McpOperationOutcome::Complete(contents))
             }
         }

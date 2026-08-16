@@ -71,7 +71,8 @@ async fn handler(
         "resources/read" => {
             state.read_count.fetch_add(1, Ordering::SeqCst);
             json!({
-                "contents": [ { "uri": "file:///notes", "mimeType": "text/plain", "text": "hello resource" } ]
+                "contents": [ { "uri": "file:///notes", "mimeType": "text/plain", "text": "hello resource" } ],
+                "_meta": { "ttlMs": 60000 }
             })
         }
         "prompts/list" => json!({

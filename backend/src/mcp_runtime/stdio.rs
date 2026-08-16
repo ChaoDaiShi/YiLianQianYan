@@ -334,11 +334,13 @@ impl McpTransport for StdioTransport {
         })
     }
 
-    async fn send(
+    async fn send_with_options(
         &self,
         request: &JsonRpcRequest,
+        _options: &super::transport::McpRequestOptions,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError> {
+        // stdio has no HTTP headers; options are ignored.
         self.send_locked(request, cancel).await
     }
 

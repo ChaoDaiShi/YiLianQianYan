@@ -78,6 +78,7 @@ impl HttpTransport {
     async fn send_inner(
         &self,
         request: &JsonRpcRequest,
+        options: &super::transport::McpRequestOptions,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError> {
         let body = request.to_bounded_string(MAX_MCP_REQUEST_BYTES)?;
@@ -100,6 +101,14 @@ impl HttpTransport {
         }
         for (name, value) in self.resolve_headers()? {
             http_req = http_req.header(name, value);
+        }
+        // Extra per-request headers (e.g. Mcp-Param-* from x-mcp-header).
+        for (name, value) in &options.extra_headers {
+            reject_crlf(name)
+                .map_err(|_| McpRuntimeError::Protocol("invalid header name".to_string()))?;
+            reject_crlf(value)
+                .map_err(|_| McpRuntimeError::Protocol("invalid header value".to_string()))?;
+            http_req = http_req.header(name, encode_header_value(value));
         }
 
         let response = tokio::select! {
@@ -257,28 +266,35 @@ impl McpTransport for HttpTransport {
         cancel: &CancellationToken,
     ) -> Result<super::model::McpNegotiationResult, McpRuntimeError> {
         // Modern Streamable HTTP is always 2026-07-28. Discover capabilities.
+        // Fail closed: a discover failure must NOT assume tools=true.
         let mut params = serde_json::json!({});
         super::protocol::attach_request_metadata(&mut params, "0.8.0");
         let discover = JsonRpcRequest::new(0, "server/discover", Some(params));
-        let capabilities = match self.send_inner(&discover, cancel).await {
-            Ok(JsonRpcMessage::Success(s)) => super::model::parse_capabilities(&s.result),
-            _ => super::model::McpServerCapabilities {
-                tools: true,
-                ..Default::default()
-            },
-        };
-        Ok(super::model::McpNegotiationResult {
-            protocol_version: super::model::McpProtocolVersion::V2026_07_28,
-            capabilities,
-        })
+        match self
+            .send_inner(
+                &discover,
+                &super::transport::McpRequestOptions::default(),
+                cancel,
+            )
+            .await
+        {
+            Ok(JsonRpcMessage::Success(s)) => Ok(super::model::McpNegotiationResult {
+                protocol_version: super::model::McpProtocolVersion::V2026_07_28,
+                capabilities: super::model::parse_capabilities(&s.result),
+            }),
+            Ok(JsonRpcMessage::Error(e)) => Err(McpRuntimeError::ServerError(e.error.message)),
+            Ok(JsonRpcMessage::Notification(_)) => Err(McpRuntimeError::InvalidResponse),
+            Err(e) => Err(e),
+        }
     }
 
-    async fn send(
+    async fn send_with_options(
         &self,
         request: &JsonRpcRequest,
+        options: &super::transport::McpRequestOptions,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError> {
-        self.send_inner(request, cancel).await
+        self.send_inner(request, options, cancel).await
     }
 
     async fn shutdown(&self) {
