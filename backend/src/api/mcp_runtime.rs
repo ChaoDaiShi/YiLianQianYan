@@ -20,14 +20,14 @@ use crate::server::AppServer;
 fn server_dto(runtime: &McpServerRuntime) -> serde_json::Value {
     let transport = match &runtime.config {
         McpTransportConfig::Stdio { .. } => "stdio",
-        McpTransportConfig::StreamableHttp { .. } => "http",
+        McpTransportConfig::StreamableHttp { .. } => "streamable_http",
     };
     serde_json::json!({
         "id": runtime.server_id,
         "name": runtime.name,
         "transport": transport,
-        "protocol_version": runtime.protocol_version,
-        "status": runtime.status,
+        "protocol_version": runtime.protocol_version.as_str(),
+        "status": runtime.status.as_str(),
         "capabilities": runtime.capabilities,
         "tools_count": runtime.tools.len(),
         "resources_count": runtime.resources.len(),

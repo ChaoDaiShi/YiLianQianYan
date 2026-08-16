@@ -45,6 +45,32 @@ pub enum McpRuntimeStatus {
     Misconfigured,
 }
 
+impl McpProtocolVersion {
+    /// Canonical wire version string (matches the MCP spec, not the Rust
+    /// variant name).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            McpProtocolVersion::V2026_07_28 => "2026-07-28",
+            McpProtocolVersion::V2025_11_25 => "2025-11-25",
+        }
+    }
+}
+
+impl McpRuntimeStatus {
+    /// Canonical snake_case status string.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            McpRuntimeStatus::Disconnected => "disconnected",
+            McpRuntimeStatus::Connecting => "connecting",
+            McpRuntimeStatus::Ready => "ready",
+            McpRuntimeStatus::Degraded => "degraded",
+            McpRuntimeStatus::Unavailable => "unavailable",
+            McpRuntimeStatus::Disabled => "disabled",
+            McpRuntimeStatus::Misconfigured => "misconfigured",
+        }
+    }
+}
+
 /// The result of a transport `connect()`: the negotiated protocol version and
 /// the server's advertised capabilities.
 #[derive(Debug, Clone, PartialEq)]

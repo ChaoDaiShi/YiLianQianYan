@@ -47,4 +47,6 @@ pub use sandbox::{
 pub use subject::{BuiltInRole, SecuritySubject, SubjectType};
 
 #[cfg(test)]
+mod gateway_mcp_e2e;
+#[cfg(test)]
 mod tests;

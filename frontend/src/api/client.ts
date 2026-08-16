@@ -9,7 +9,7 @@ export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ||
   "http://127.0.0.1:9420";
 
-async function request<T>(
+export async function request<T>(
   method: string,
   path: string,
   body?: unknown
@@ -235,15 +235,13 @@ export interface McpServer {
   created_at: number;
   updated_at: number;
   runtime_status?: string;
-}
-
-export const MCP_RUNTIME_STATUS_LABELS = {
-  ready: "MCP stdio Runtime 已启用",
-  unready: "MCP Runtime 未就绪",
-} as const;
-
-export function mcpTransportRuntimeLabel(transport: string): string {
-  return transport === "stdio" ? "Runtime supported" : "Not supported by current runtime";
+  protocol_version?: string | null;
+  tools_count?: number;
+  resources_count?: number;
+  resource_templates_count?: number;
+  prompts_count?: number;
+  last_refresh?: number | null;
+  safe_error?: string | null;
 }
 
 export interface PluginListResponse {

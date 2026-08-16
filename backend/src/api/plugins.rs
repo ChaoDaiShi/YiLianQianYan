@@ -17,6 +17,8 @@ use crate::server::AppServer;
 pub struct PluginListResponse {
     pub builtin: Vec<BuiltinTool>,
     pub mcp: Vec<PublicMcpServer>,
+    /// True only when at least one enabled server has negotiated + populated
+    /// its catalog (runtime status `ready`). Never hardcoded.
     pub mcp_runtime_ready: bool,
 }
 
@@ -33,6 +35,16 @@ pub struct PublicMcpServer {
     pub enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    // ── Runtime summary (safe, display-only) ──
+    // Never transports / env values / auth / stderr.
+    pub runtime_status: String,
+    pub protocol_version: Option<String>,
+    pub tools_count: usize,
+    pub resources_count: usize,
+    pub resource_templates_count: usize,
+    pub prompts_count: usize,
+    pub last_refresh: Option<i64>,
+    pub safe_error: Option<String>,
 }
 
 fn redact_env(env: Option<serde_json::Value>) -> Option<serde_json::Value> {
@@ -47,8 +59,43 @@ fn redact_env(env: Option<serde_json::Value>) -> Option<serde_json::Value> {
     }
 }
 
+impl PublicMcpServer {
+    /// Merge the manager's live runtime snapshot into the DTO. Falls back to a
+    /// truthful non-ready state when the server is disabled or not registered.
+    fn with_runtime_summary(
+        mut self,
+        runtime: Option<&crate::mcp_runtime::McpServerRuntime>,
+    ) -> Self {
+        if !self.enabled {
+            self.runtime_status = "disabled".to_string();
+            return self;
+        }
+        match runtime {
+            Some(runtime) => {
+                self.runtime_status = runtime.status.as_str().to_string();
+                self.protocol_version = Some(runtime.protocol_version.as_str().to_string());
+                self.tools_count = runtime.tools.len();
+                self.resources_count = runtime.resources.len();
+                self.resource_templates_count = runtime.resource_templates.len();
+                self.prompts_count = runtime.prompts.len();
+                self.last_refresh = runtime.last_refresh;
+                self.safe_error = runtime.last_error.clone();
+            }
+            None => {
+                self.runtime_status = "disconnected".to_string();
+            }
+        }
+        self
+    }
+}
+
 impl From<McpServer> for PublicMcpServer {
     fn from(server: McpServer) -> Self {
+        let runtime_status = if server.enabled {
+            "disconnected"
+        } else {
+            "disabled"
+        };
         Self {
             id: server.id,
             name: server.name,
@@ -60,6 +107,14 @@ impl From<McpServer> for PublicMcpServer {
             enabled: server.enabled,
             created_at: server.created_at,
             updated_at: server.updated_at,
+            runtime_status: runtime_status.to_string(),
+            protocol_version: None,
+            tools_count: 0,
+            resources_count: 0,
+            resource_templates_count: 0,
+            prompts_count: 0,
+            last_refresh: None,
+            safe_error: None,
         }
     }
 }
@@ -115,21 +170,24 @@ pub async fn list_plugins(State(server): State<Arc<AppServer>>) -> Json<PluginLi
         })
         .collect();
 
-    let mcp = server
+    let mcp: Vec<PublicMcpServer> = server
         .db
         .list_mcp_servers()
         .unwrap_or_default()
         .into_iter()
-        .map(PublicMcpServer::from)
+        .map(|db_server| {
+            let runtime = server.mcp_runtime_manager.get_server(&db_server.id);
+            PublicMcpServer::from(db_server).with_runtime_summary(runtime.as_deref())
+        })
         .collect();
+
+    // Real signal: at least one enabled server has a Ready runtime catalog.
+    let mcp_runtime_ready = mcp.iter().any(|s| s.enabled && s.runtime_status == "ready");
 
     Json(PluginListResponse {
         builtin,
         mcp,
-        // stdio MCP runtime is integrated into Agent execution: chat builds a
-        // MCP-aware runtime registry and approval resume rebuilds it. This does
-        // NOT imply SSE / Streamable HTTP / MCP Tasks are ready.
-        mcp_runtime_ready: true,
+        mcp_runtime_ready,
     })
 }
 

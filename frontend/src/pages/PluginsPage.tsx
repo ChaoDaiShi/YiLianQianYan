@@ -1,16 +1,65 @@
 import { useEffect, useState } from "react";
 import {
   Link, Plus, Trash2, ToggleLeft, ToggleRight, Wrench,
-  Loader2, TestTube, AlertTriangle,
+  Loader2, TestTube, AlertTriangle, RefreshCw, Eye, ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
   listPlugins, createMcpServer, updateMcpServer, deleteMcpServer,
   toggleMcpServer, testMcpServer,
   listSubagents,
-  MCP_RUNTIME_STATUS_LABELS, mcpTransportRuntimeLabel,
   type McpServer, type PluginListResponse, type SubagentMetadata,
 } from "../api/client";
+import {
+  mcpTransportRuntimeLabel,
+  MCP_RUNTIME_STATUS_LABELS,
+  MCP_RUNTIME_STATUS_TONES,
+  EXTERNAL_PROMPT_WARNING,
+  resourcePreview,
+  promptMessageText,
+  listMcpRuntimeTools,
+  listMcpResources,
+  listMcpResourceTemplates,
+  listMcpPrompts,
+  readMcpResource,
+  getMcpPrompt,
+  refreshMcpRuntimeServer,
+  type McpRuntimeTool,
+  type McpResourceDescriptor,
+  type McpResourceTemplate,
+  type McpPromptDescriptor,
+  type McpResourceReadResponse,
+  type McpPromptGetResponse,
+  type McpRuntimeStatus,
+} from "../api/mcpRuntime";
 import { PageHeader, Button, Badge, Modal, Input, EmptyState, Spinner, Panel } from "../components/ui";
+
+type DetailTab = "tools" | "resources" | "prompts";
+
+interface DetailState {
+  tools: McpRuntimeTool[] | null;
+  resources: McpResourceDescriptor[] | null;
+  templates: McpResourceTemplate[] | null;
+  prompts: McpPromptDescriptor[] | null;
+  loading: boolean;
+  error: string;
+}
+
+const EMPTY_DETAIL: DetailState = {
+  tools: null,
+  resources: null,
+  templates: null,
+  prompts: null,
+  loading: false,
+  error: "",
+};
+
+function runtimeStatusTone(status: string): "default" | "success" | "warning" | "danger" | "info" {
+  return MCP_RUNTIME_STATUS_TONES[(status as McpRuntimeStatus)] ?? "default";
+}
+
+function runtimeStatusLabel(status: string): string {
+  return MCP_RUNTIME_STATUS_LABELS[(status as McpRuntimeStatus)] ?? status;
+}
 
 export default function PluginsPage() {
   const [data, setData] = useState<PluginListResponse | null>(null);
@@ -24,7 +73,7 @@ export default function PluginsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
-  const [formTransport, setFormTransport] = useState<"stdio" | "sse">("stdio");
+  const [formTransport, setFormTransport] = useState<"stdio" | "streamable_http">("stdio");
   const [formCommand, setFormCommand] = useState("");
   const [formArgs, setFormArgs] = useState("");
   const [formUrl, setFormUrl] = useState("");
@@ -32,6 +81,29 @@ export default function PluginsPage() {
   const [formEnvKeyCount, setFormEnvKeyCount] = useState(0);
   const [saving, setSaving] = useState(false);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+
+  // Server detail (Tools / Resources / Prompts)
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<DetailTab>("tools");
+  const [detail, setDetail] = useState<Record<string, DetailState>>({});
+
+  // Resource preview
+  const [resourcePreviewState, setResourcePreviewState] = useState<{
+    resource: McpResourceDescriptor;
+    result: McpResourceReadResponse | null;
+    loading: boolean;
+    error: string;
+  } | null>(null);
+
+  // Prompt preview
+  const [promptPreviewState, setPromptPreviewState] = useState<{
+    serverId: string;
+    prompt: McpPromptDescriptor;
+    formValues: Record<string, string>;
+    result: McpPromptGetResponse | null;
+    loading: boolean;
+    error: string;
+  } | null>(null);
 
   const load = async () => {
     const [res, subagentRes] = await Promise.all([listPlugins(), listSubagents()]);
@@ -67,7 +139,7 @@ export default function PluginsPage() {
   const openEdit = (mcp: McpServer) => {
     setEditingId(mcp.id);
     setFormName(mcp.name);
-    setFormTransport(mcp.transport as "stdio" | "sse");
+    setFormTransport(mcp.transport === "stdio" ? "stdio" : "streamable_http");
     setFormCommand(mcp.command || "");
     setFormArgs(mcp.args ? JSON.stringify(mcp.args) : "");
     setFormUrl(mcp.url || "");
@@ -87,7 +159,7 @@ export default function PluginsPage() {
       transport: formTransport,
       command: formTransport === "stdio" ? formCommand.trim() || null : null,
       args: formArgs.trim() ? (() => { try { return JSON.parse(formArgs); } catch { return [formArgs.trim()]; } })() : [],
-      url: formTransport === "sse" ? formUrl.trim() || null : null,
+      url: formTransport === "streamable_http" ? formUrl.trim() || null : null,
       ...(env === undefined ? {} : { env }),
     };
     if (editingId) {
@@ -116,6 +188,98 @@ export default function PluginsPage() {
     const result = await testMcpServer(id);
     if (result) setTestResults((current) => ({ ...current, [id]: result }));
     setTestingId(null);
+  };
+
+  const handleRefresh = async (id: string) => {
+    const d = detail[id] ?? EMPTY_DETAIL;
+    setDetail((current) => ({ ...current, [id]: { ...d, loading: true, error: "" } }));
+    const refreshed = await refreshMcpRuntimeServer(id);
+    setDetail((current) => ({
+      ...current,
+      [id]: {
+        ...(current[id] ?? EMPTY_DETAIL),
+        loading: false,
+        error: refreshed ? "" : "刷新失败",
+      },
+    }));
+    load();
+  };
+
+  const loadTab = async (id: string, tab: DetailTab) => {
+    const d = detail[id] ?? EMPTY_DETAIL;
+    setDetail((current) => ({ ...current, [id]: { ...d, loading: true, error: "" } }));
+    try {
+      if (tab === "tools") {
+        const tools = await listMcpRuntimeTools(id);
+        setDetail((current) => ({ ...current, [id]: { ...(current[id] ?? EMPTY_DETAIL), tools, loading: false } }));
+      } else if (tab === "resources") {
+        const [resources, templates] = await Promise.all([listMcpResources(id), listMcpResourceTemplates(id)]);
+        setDetail((current) => ({
+          ...current,
+          [id]: { ...(current[id] ?? EMPTY_DETAIL), resources, templates, loading: false },
+        }));
+      } else {
+        const prompts = await listMcpPrompts(id);
+        setDetail((current) => ({ ...current, [id]: { ...(current[id] ?? EMPTY_DETAIL), prompts, loading: false } }));
+      }
+    } catch {
+      setDetail((current) => ({
+        ...current,
+        [id]: { ...(current[id] ?? EMPTY_DETAIL), loading: false, error: "加载失败" },
+      }));
+    }
+  };
+
+  const toggleDetail = (id: string) => {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(id);
+    setActiveTab("tools");
+    if (!detail[id]) {
+      setDetail((current) => ({ ...current, [id]: EMPTY_DETAIL }));
+      loadTab(id, "tools");
+    }
+  };
+
+  const switchTab = (id: string, tab: DetailTab) => {
+    setActiveTab(tab);
+    const d = detail[id] ?? EMPTY_DETAIL;
+    const needsLoad =
+      (tab === "tools" && d.tools === null) ||
+      (tab === "resources" && (d.resources === null || d.templates === null)) ||
+      (tab === "prompts" && d.prompts === null);
+    if (needsLoad) loadTab(id, tab);
+  };
+
+  const openResource = async (id: string, resource: McpResourceDescriptor) => {
+    setResourcePreviewState({ resource, result: null, loading: true, error: "" });
+    const result = await readMcpResource(id, resource.uri);
+    setResourcePreviewState((current) => current
+      ? { ...current, result, loading: false, error: result ? "" : "读取失败" }
+      : current);
+  };
+
+  const openPrompt = (id: string, prompt: McpPromptDescriptor) => {
+    const formValues: Record<string, string> = {};
+    prompt.arguments.forEach((arg) => { formValues[arg.name] = ""; });
+    setPromptPreviewState({ serverId: id, prompt, formValues, result: null, loading: false, error: "" });
+  };
+
+  const submitPromptPreview = async () => {
+    if (!promptPreviewState) return;
+    setPromptPreviewState((current) => current ? { ...current, loading: true, error: "" } : current);
+    const result = await getMcpPrompt(promptPreviewState.serverId, promptPreviewState.prompt.name, promptPreviewState.formValues);
+    setPromptPreviewState((current) => current
+      ? { ...current, result, loading: false, error: result ? "" : "获取失败" }
+      : current);
+  };
+
+  const updatePromptFormValue = (name: string, value: string) => {
+    setPromptPreviewState((current) => current
+      ? { ...current, formValues: { ...current.formValues, [name]: value } }
+      : current);
   };
 
   if (loading) {
@@ -154,11 +318,9 @@ export default function PluginsPage() {
         <Panel className="flex items-start gap-3">
           <Wrench className="w-5 h-5 text-[var(--accent)] flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium">
-              {data?.mcp_runtime_ready ? MCP_RUNTIME_STATUS_LABELS.ready : MCP_RUNTIME_STATUS_LABELS.unready}
-            </p>
+            <p className="text-sm font-medium">MCP 运行时（stdio + Streamable HTTP）</p>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              当前生产 Runtime 仅支持 stdio；sse / http 配置不会进入可运行 Runtime。
+              每个 MCP 服务器按真实运行时状态展示；Tools / Resources / Prompts 可查看，但工具执行始终经过安全审批网关，前端不提供直接执行入口。
             </p>
           </div>
         </Panel>
@@ -201,100 +363,110 @@ export default function PluginsPage() {
           />
         ) : (
           <div className="space-y-3">
-            {data.mcp.map((mcp) => (
-              <Panel key={mcp.id} className="group">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Link className="w-5 h-5 text-[var(--accent)] flex-shrink-0" />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-medium text-sm">{mcp.name}</h4>
-                        {mcp.enabled ? (
-                          <Badge tone="success">已启用</Badge>
-                        ) : (
-                          <Badge tone="default">已禁用</Badge>
+            {data.mcp.map((mcp) => {
+              const isExpanded = expandedId === mcp.id;
+              const d = detail[mcp.id] ?? EMPTY_DETAIL;
+              return (
+                <Panel key={mcp.id} className="group">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Link className="w-5 h-5 text-[var(--accent)] flex-shrink-0" />
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-medium text-sm">{mcp.name}</h4>
+                          {mcp.enabled ? (
+                            <Badge tone="success">已启用</Badge>
+                          ) : (
+                            <Badge tone="default">已禁用</Badge>
+                          )}
+                          <Badge tone={runtimeStatusTone(mcp.runtime_status || (mcp.enabled ? "disconnected" : "disabled"))}>
+                            {runtimeStatusLabel(mcp.runtime_status || (mcp.enabled ? "disconnected" : "disabled"))}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">
+                          {mcpTransportRuntimeLabel(mcp.transport)}
+                          {mcp.transport === "stdio" ? ` · ${mcp.command || "(未配置)"}` : ` · ${mcp.url || "(未配置)"}`}
+                        </p>
+                        <p className="text-[10px] text-[var(--text-faint)] mt-1">
+                          {mcp.protocol_version ? `协议 ${mcp.protocol_version}` : "协议未协商"} · Tools {mcp.tools_count ?? 0} · Resources {mcp.resources_count ?? 0} · Prompts {mcp.prompts_count ?? 0}
+                          {mcp.env && Object.keys(mcp.env).length > 0 ? ` · 环境变量 ${Object.keys(mcp.env).length} 个（值不展示）` : ""}
+                        </p>
+                        {mcp.safe_error && (
+                          <p className="text-[10px] text-[var(--danger)] mt-0.5 truncate max-w-[420px]">
+                            {mcp.safe_error}
+                          </p>
                         )}
-                        {!data.mcp_runtime_ready && mcp.enabled && (
-                          <span className="text-[10px] text-[var(--text-faint)] italic">
-                            不会进入 Agent Runtime registry
-                          </span>
-                        )}
-                        {!mcp.enabled && (
-                          <span className="text-[10px] text-[var(--text-faint)] italic">
-                            不会进入 Agent Runtime registry
-                          </span>
+                        {testResults[mcp.id] && (
+                          <p className={`text-xs mt-2 ${testResults[mcp.id].ok ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
+                            {testResults[mcp.id].ok ? "连接成功" : "连接失败"}：{testResults[mcp.id].message}
+                          </p>
                         )}
                       </div>
-                      <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">
-                        {mcp.transport === "stdio"
-                          ? `stdio · ${mcp.command || "(未配置)"}`
-                          : `${mcp.transport} · ${mcp.url || "(未配置)"}`}
-                      </p>
-                      <p className="text-[10px] text-[var(--text-faint)] mt-1">
-                        {mcpTransportRuntimeLabel(mcp.transport)} · 参数 {mcp.args?.length || 0} 个 · 环境变量 {mcp.env ? Object.keys(mcp.env).length : 0} 个（值不展示）
-                      </p>
-                      <p className="text-[10px] text-[var(--text-faint)] mt-0.5">
-                        运行状态：{mcp.runtime_status || mcpTransportRuntimeLabel(mcp.transport)}
-                      </p>
-                      {testResults[mcp.id] && (
-                        <p className={`text-xs mt-2 ${testResults[mcp.id].ok ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
-                          {testResults[mcp.id].ok ? "连接成功" : "连接失败"}：{testResults[mcp.id].message}
-                        </p>
-                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <button
+                        onClick={() => handleRefresh(mcp.id)}
+                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
+                        title="刷新运行时"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => toggleDetail(mcp.id)}
+                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
+                        title="查看详情"
+                      >
+                        {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      </button>
+                      <button
+                        onClick={() => handleToggle(mcp.id)}
+                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
+                        title={mcp.enabled ? "禁用" : "启用"}
+                      >
+                        {mcp.enabled ? <ToggleRight className="w-4 h-4 text-[var(--success)]" /> : <ToggleLeft className="w-4 h-4" />}
+                      </button>
+                      <button
+                        onClick={() => handleTest(mcp.id)}
+                        disabled={testingId === mcp.id}
+                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
+                        title="测试连接"
+                      >
+                        {testingId === mcp.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <TestTube className="w-4 h-4" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => openEdit(mcp)}
+                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
+                        title="编辑"
+                      >
+                        <Wrench className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(mcp.id, mcp.name)}
+                        className="p-1.5 rounded hover:bg-[var(--danger)]/20 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                        title="删除"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                    <button
-                      onClick={() => handleToggle(mcp.id)}
-                      className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                      title={mcp.enabled ? "禁用" : "启用"}
-                    >
-                      {mcp.enabled ? <ToggleRight className="w-4 h-4 text-[var(--success)]" /> : <ToggleLeft className="w-4 h-4" />}
-                    </button>
-                    <button
-                      onClick={() => handleTest(mcp.id)}
-                      disabled={testingId === mcp.id}
-                      className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                      title="测试连接"
-                    >
-                      {testingId === mcp.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <TestTube className="w-4 h-4" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => openEdit(mcp)}
-                      className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                      title="编辑"
-                    >
-                      <Wrench className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(mcp.id, mcp.name)}
-                      className="p-1.5 rounded hover:bg-[var(--danger)]/20 text-[var(--text-muted)] hover:text-[var(--danger)]"
-                      title="删除"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </Panel>
-            ))}
-          </div>
-        )}
-
-        {/* Runtime status notice */}
-        {data && !data.mcp_runtime_ready && (
-          <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10">
-            <AlertTriangle className="w-5 h-5 text-[var(--warning)] flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-[var(--warning)]">{MCP_RUNTIME_STATUS_LABELS.unready}</p>
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                当前启用配置不会进入 Agent Runtime registry，请先确认 stdio Runtime 已就绪。
-              </p>
-            </div>
+                  {isExpanded && (
+                    <McpDetailPanel
+                      tab={activeTab}
+                      detail={d}
+                      onSwitchTab={(tab) => switchTab(mcp.id, tab)}
+                      onOpenResource={(resource) => openResource(mcp.id, resource)}
+                      onOpenPrompt={(prompt) => openPrompt(mcp.id, prompt)}
+                    />
+                  )}
+                </Panel>
+              );
+            })}
           </div>
         )}
 
@@ -379,11 +551,11 @@ export default function PluginsPage() {
             <label className="block text-sm font-medium mb-1">传输方式</label>
             <select
               value={formTransport}
-              onChange={(e) => setFormTransport(e.target.value as "stdio" | "sse")}
+              onChange={(e) => setFormTransport(e.target.value as "stdio" | "streamable_http")}
               className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
             >
               <option value="stdio">Stdio (命令行)</option>
-              <option value="sse">SSE (HTTP)</option>
+              <option value="streamable_http">Streamable HTTP</option>
             </select>
           </div>
 
@@ -407,7 +579,7 @@ export default function PluginsPage() {
               label="URL"
               value={formUrl}
               onChange={(e) => setFormUrl(e.target.value)}
-              placeholder="例如：http://127.0.0.1:3001/sse"
+              placeholder="例如：http://127.0.0.1:3001/mcp"
             />
           )}
 
@@ -424,14 +596,333 @@ export default function PluginsPage() {
               className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none font-mono"
             />
           </div>
-
-          {!data?.mcp_runtime_ready && (
-            <p className="text-xs text-[var(--text-muted)] italic">
-              配置保存后将持久化到数据库。MCP 运行时注入将在后续版本中接入。
-            </p>
-          )}
         </div>
       </Modal>
+
+      {/* Resource Preview Modal */}
+      <ResourcePreviewModal state={resourcePreviewState} onClose={() => setResourcePreviewState(null)} />
+
+      {/* Prompt Preview Modal */}
+      <PromptPreviewModal
+        state={promptPreviewState}
+        onClose={() => setPromptPreviewState(null)}
+        onSubmit={submitPromptPreview}
+        onFormChange={updatePromptFormValue}
+      />
     </div>
+  );
+}
+
+// ── Detail panel (Tools / Resources / Prompts) ──
+
+function McpDetailPanel({
+  tab,
+  detail,
+  onSwitchTab,
+  onOpenResource,
+  onOpenPrompt,
+}: {
+  tab: DetailTab;
+  detail: DetailState;
+  onSwitchTab: (tab: DetailTab) => void;
+  onOpenResource: (resource: McpResourceDescriptor) => void;
+  onOpenPrompt: (prompt: McpPromptDescriptor) => void;
+}) {
+  const tabs: { key: DetailTab; label: string; count: number }[] = [
+    { key: "tools", label: "Tools", count: detail.tools?.length ?? 0 },
+    { key: "resources", label: "Resources", count: (detail.resources?.length ?? 0) + (detail.templates?.length ?? 0) },
+    { key: "prompts", label: "Prompts", count: detail.prompts?.length ?? 0 },
+  ];
+
+  return (
+    <div className="mt-4 border-t border-[var(--border)] pt-3">
+      <div className="flex items-center gap-2 mb-3">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => onSwitchTab(t.key)}
+            className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+              tab === t.key
+                ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
+                : "border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]"
+            }`}
+          >
+            {t.label} ({t.count})
+          </button>
+        ))}
+      </div>
+
+      {detail.error && <p className="text-xs text-[var(--danger)] mb-2">{detail.error}</p>}
+      {detail.loading ? (
+        <div className="flex justify-center py-6"><Spinner className="w-5 h-5" /></div>
+      ) : tab === "tools" ? (
+        <ToolsTab tools={detail.tools} />
+      ) : tab === "resources" ? (
+        <ResourcesTab
+          resources={detail.resources}
+          templates={detail.templates}
+          onOpenResource={onOpenResource}
+        />
+      ) : (
+        <PromptsTab prompts={detail.prompts} onOpenPrompt={onOpenPrompt} />
+      )}
+
+      <p className="text-[10px] text-[var(--text-faint)] mt-3">
+        {tab === "tools"
+          ? "仅展示工具元数据；工具执行由安全审批网关统一处理，本页不提供执行按钮。"
+          : tab === "resources"
+            ? "资源为只读预览；二进制内容不会自动展开或下载。"
+            : "Prompt 仅供预览，不会自动进入对话、任务或 System Prompt。"}
+      </p>
+    </div>
+  );
+}
+
+function ToolsTab({ tools }: { tools: McpRuntimeTool[] | null }) {
+  if (!tools || tools.length === 0) {
+    return <p className="text-sm text-[var(--text-faint)]">无可用工具。</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {tools.map((tool) => (
+        <div key={tool.name} className="rounded-lg border border-[var(--border)] px-3 py-2">
+          <div className="flex items-center gap-2">
+            <code className="text-sm font-mono font-medium">{tool.name}</code>
+            {tool.inputSchema && typeof tool.inputSchema === "object" && (
+              <span className="text-[10px] text-[var(--text-faint)]">
+                {Object.keys((tool.inputSchema as Record<string, unknown>).properties ?? {}).length} 个入参
+              </span>
+            )}
+          </div>
+          {tool.description && (
+            <p className="text-xs text-[var(--text-muted)] mt-1">{tool.description}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ResourcesTab({
+  resources,
+  templates,
+  onOpenResource,
+}: {
+  resources: McpResourceDescriptor[] | null;
+  templates: McpResourceTemplate[] | null;
+  onOpenResource: (resource: McpResourceDescriptor) => void;
+}) {
+  const hasResources = resources && resources.length > 0;
+  const hasTemplates = templates && templates.length > 0;
+  if (!hasResources && !hasTemplates) {
+    return <p className="text-sm text-[var(--text-faint)]">无可用资源。</p>;
+  }
+  return (
+    <div className="space-y-3">
+      {hasResources && (
+        <div>
+          <h5 className="text-xs font-semibold text-[var(--text-muted)] mb-1">资源 ({resources!.length})</h5>
+          <div className="space-y-1.5">
+            {resources!.map((resource) => (
+              <div key={resource.uri} className="flex items-center justify-between rounded-lg border border-[var(--border)] px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{resource.name}</p>
+                  <p className="text-[10px] text-[var(--text-faint)] font-mono truncate">{resource.uri}</p>
+                  {resource.mimeType && <p className="text-[10px] text-[var(--text-faint)]">{resource.mimeType}</p>}
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => onOpenResource(resource)}>
+                  <Eye className="w-3.5 h-3.5" />
+                  预览
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {hasTemplates && (
+        <div>
+          <h5 className="text-xs font-semibold text-[var(--text-muted)] mb-1">资源模板 ({templates!.length})</h5>
+          <div className="space-y-1.5">
+            {templates!.map((template) => (
+              <div key={template.uriTemplate} className="rounded-lg border border-[var(--border)] px-3 py-2">
+                <p className="text-sm font-medium">{template.name}</p>
+                <p className="text-[10px] text-[var(--text-faint)] font-mono">{template.uriTemplate}</p>
+                {template.mimeType && <p className="text-[10px] text-[var(--text-faint)]">{template.mimeType}</p>}
+                {template.description && <p className="text-xs text-[var(--text-muted)] mt-1">{template.description}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PromptsTab({
+  prompts,
+  onOpenPrompt,
+}: {
+  prompts: McpPromptDescriptor[] | null;
+  onOpenPrompt: (prompt: McpPromptDescriptor) => void;
+}) {
+  if (!prompts || prompts.length === 0) {
+    return <p className="text-sm text-[var(--text-faint)]">无可用 Prompt。</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {prompts.map((prompt) => (
+        <div key={prompt.name} className="flex items-center justify-between rounded-lg border border-[var(--border)] px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{prompt.title || prompt.name}</p>
+            {prompt.description && <p className="text-xs text-[var(--text-muted)] mt-1">{prompt.description}</p>}
+            {prompt.arguments.length > 0 && (
+              <p className="text-[10px] text-[var(--text-faint)] mt-1">
+                参数：{prompt.arguments.map((a) => (a.required ? `${a.name}*` : a.name)).join(", ")}
+              </p>
+            )}
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => onOpenPrompt(prompt)}>
+            <Eye className="w-3.5 h-3.5" />
+            预览
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Resource preview modal ──
+
+function ResourcePreviewModal({
+  state,
+  onClose,
+}: {
+  state: {
+    resource: McpResourceDescriptor;
+    result: McpResourceReadResponse | null;
+    loading: boolean;
+    error: string;
+  } | null;
+  onClose: () => void;
+}) {
+  if (!state) return null;
+  const { resource, result, loading, error } = state;
+
+  return (
+    <Modal open onClose={onClose} title={`资源预览 · ${resource.name}`}>
+      <div className="space-y-3">
+        <p className="text-[10px] text-[var(--text-faint)] font-mono break-all">{resource.uri}</p>
+        {loading && (
+          <div className="flex justify-center py-6"><Spinner className="w-5 h-5" /></div>
+        )}
+        {!loading && error && <p className="text-sm text-[var(--danger)]">{error}</p>}
+        {!loading && result && "input_required" in result && (
+          <div className="rounded-lg border border-[var(--border)] px-3 py-3">
+            <p className="text-sm text-[var(--text-muted)]">该资源需要额外输入，当前预览不继续交互。</p>
+          </div>
+        )}
+        {!loading && result && "contents" in result && (
+          <div className="space-y-3">
+            {result.contents.map((content, index) => {
+              const preview = resourcePreview(content);
+              if (preview.kind === "blob") {
+                return (
+                  <div key={index} className="rounded-lg border border-[var(--border)] px-3 py-3">
+                    <p className="text-sm font-medium">Binary MCP Resource</p>
+                    <p className="text-xs text-[var(--text-muted)] mt-1">MIME Type：{preview.mimeType || "未知"}</p>
+                    <p className="text-xs text-[var(--text-muted)] mt-1">Encoded Size：{preview.size} 字符</p>
+                    <p className="text-xs text-[var(--text-faint)] mt-2">内容未自动展开。</p>
+                  </div>
+                );
+              }
+              return (
+                <pre
+                  key={index}
+                  className="whitespace-pre-wrap break-words rounded-lg border border-[var(--border)] bg-[var(--panel)]/50 px-3 py-3 text-xs max-h-64 overflow-y-auto scrollbar-thin"
+                >
+                  {preview.text}
+                </pre>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// ── Prompt preview modal ──
+
+function PromptPreviewModal({
+  state,
+  onClose,
+  onSubmit,
+  onFormChange,
+}: {
+  state: {
+    prompt: McpPromptDescriptor;
+    formValues: Record<string, string>;
+    result: McpPromptGetResponse | null;
+    loading: boolean;
+    error: string;
+  } | null;
+  onClose: () => void;
+  onSubmit: () => void;
+  onFormChange: (name: string, value: string) => void;
+}) {
+  if (!state) return null;
+  const { prompt, formValues, result, loading, error } = state;
+
+  return (
+    <Modal open onClose={onClose} title={`Prompt 预览 · ${prompt.title || prompt.name}`}>
+      <div className="space-y-3">
+        <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2">
+          <p className="text-xs text-[var(--warning)]">{EXTERNAL_PROMPT_WARNING}</p>
+        </div>
+
+        {prompt.arguments.length > 0 && (
+          <div className="space-y-2">
+            {prompt.arguments.map((arg) => (
+              <div key={arg.name}>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                  {arg.name}{arg.required ? " *" : ""}
+                </label>
+                <input
+                  value={formValues[arg.name] ?? ""}
+                  onChange={(e) => onFormChange(arg.name, e.target.value)}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <Button size="sm" onClick={onSubmit} disabled={loading}>
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            生成预览
+          </Button>
+        </div>
+
+        {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
+
+        {result && "input_required" in result && (
+          <div className="rounded-lg border border-[var(--border)] px-3 py-3">
+            <p className="text-sm text-[var(--text-muted)]">该 Prompt 需要额外输入，当前预览不继续交互。</p>
+          </div>
+        )}
+
+        {result && "messages" in result && (
+          <div className="space-y-2">
+            {result.messages.map((message, index) => (
+              <div key={index} className="rounded-lg border border-[var(--border)] px-3 py-2">
+                <p className="text-[10px] text-[var(--text-faint)] uppercase mb-1">{message.role}</p>
+                <p className="text-xs whitespace-pre-wrap break-words">{promptMessageText(message)}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

@@ -166,14 +166,19 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 
 ## v0.8 Development — Agent Memory + Unified Capability Registry
 
-状态：**In Development（未标记 Completed）**
+状态：**Phase 1–4 Completed（Phase 5 SecretStore 未开始）**
 
 - Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
 - Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。
 - Phase 3 Unified Capability Registry：`capability/` 模块统一 Builtin/MCP/Subagent/Agent/Workflow/Skill 的能力发现（`CapabilityDescriptor` + providers + 原子 refresh + 重复检测 + runtime readiness）。**Registry 只做发现，绝不执行能力**；真实授权仍在 Security Execution Gateway。`GET/POST /api/capabilities` API + Planner 引用校验（missing/disabled/unavailable → reject）+ 桌面「能力」页面。
-- Phase 4 MCP Runtime Expansion + Plugin Manifest Foundation：Plugin Manifest（声明式 `plugin.json` 模型 + 校验 + registry + 路径 containment，绝不加载 native code / 自动连接 MCP）；MCP 协议基元（2026-07-28 modern metadata/header 生成，base64 sentinel + CRLF 注入拒绝，transport config + URL 校验）。MCP Tool 执行仍经过 Security Execution Gateway；Resource/Prompt 不自动注入 Agent 上下文。
+- Phase 4 ✅ COMPLETED — MCP Runtime Expansion + Plugin Manifest Foundation：
+  - Plugin Manifest（声明式 `plugin.json` 模型 + 校验 + registry + 路径 containment，绝不加载 native code / 自动连接 MCP）。
+  - MCP Runtime：modern 2026-07-28 Streamable HTTP + legacy stdio；持久化 stdio 子进程；Tools/Resources/Prompts 目录；x-mcp-header 完整 wire；MRTR `resultType`；资源读缓存（`cacheScope` + TTL）；capability-gated 目录发现 + unknown-tool fail-closed。
+  - **Production chain**：`DB MCP Config → McpRuntimeManager → Runtime Catalog → McpToolAdapter → ToolRegistry → SecurityExecutionGateway → Remote MCP`（approved/authorized remote call = 1，denied / pre-approval = 0）。
+  - **Product surface**：Tools 元数据、Resources/read 只读预览（二进制不展开）、Prompts 预览（外部内容警告，不自动进对话/任务/System Prompt）、Plugin/MCP 生命周期（CRUD ↔ Runtime 同步 + shutdown_all + bounded startup refresh）。
+  - 无 direct MCP Tool REST API，前端无 Tool 执行按钮；`call_tool` 保持 `pub(crate)`；Resource/Prompt 不自动注入 Agent 上下文。
 
-**Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中。
+**Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。
 
 ## v0.4 Workflow Runtime
 

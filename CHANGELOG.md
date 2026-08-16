@@ -12,6 +12,11 @@
 - `GET/POST /api/capabilities` API + desktop capability surface
 - Plugin Manifest Foundation: declarative `plugin.json` model + validation + registry + path containment (no native execution, no auto-connect)
 - MCP protocol primitives: 2026-07-28 modern metadata/header generation (base64 sentinel, CRLF rejection), transport config + URL validation
+- MCP Runtime Manager: persistent stdio + Streamable HTTP transports, protocol negotiation, capability-gated Tools/Resources/Prompts discovery, resource-read cache (cacheScope + TTL), x-mcp-header wire, shutdown_all lifecycle
+- Managed MCP trusted execution: McpToolAdapter → McpRuntimeManager, Tools capability gate + unknown-tool fail-closed
+- SecurityExecutionGateway → Managed MCP real E2E (approved = 1 remote call, denied / pre-approval = 0)
+- Protected runtime APIs: `GET /api/mcp/servers` + tools/resources/prompts/read (no direct tool execution)
+- Frontend MCP surface: per-server runtime status / protocol / counts, Tools metadata, Resources/read preview, Prompts preview with external-content warning (no auto-submit, no tool execute button)
 
 ### Security
 
@@ -21,6 +26,10 @@
 - Shared secret-detection source of truth between Chat Memory Extraction and Agent Memory Learning
 - Plugin discovery is side-effect-free; plugin paths are constrained to the plugin root; plugin permissions never grant RBAC
 - MCP Streamable HTTP rejects remote plain HTTP, embedded credentials, and fragments
+- No direct MCP tool execution REST API; `call_tool` remains `pub(crate)`
+- Frontend can never execute an MCP tool; prompt preview never auto-triggers chat/task/agent/system-prompt/memory
+- Gateway E2E: unauthorized remote call = 0, approval-before-execution remote call = 0, approved = 1
+- Production discovery/execution never use legacy `probe_stdio_server` / `call_stdio_tool`
 
 ## 0.6.0 — Workspace / Task / Multi-Agent Runtime
 
