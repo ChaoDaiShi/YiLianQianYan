@@ -433,6 +433,9 @@ impl AppServer {
             Arc::new(AgentProvider::new(self.db.clone_connection())),
             Arc::new(WorkflowProvider::new(self.db.clone_connection())),
             Arc::new(SkillProvider::new(skills)),
+            Arc::new(crate::capability::McpRuntimeProvider::new(Arc::clone(
+                &self.mcp_runtime_manager,
+            ))),
         ];
         let registry = Arc::new(CapabilityRegistry::new(providers));
         let _report = registry.refresh().await;

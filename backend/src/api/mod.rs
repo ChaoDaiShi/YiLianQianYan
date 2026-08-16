@@ -22,6 +22,7 @@ mod capabilities;
 mod chat;
 mod conversations;
 mod logs;
+mod mcp_runtime;
 mod memories;
 mod plugins;
 mod security;
@@ -177,6 +178,34 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             post(capabilities::refresh_capabilities),
         )
         .route("/api/capabilities/:id", get(capabilities::get_capability))
+        // MCP runtime API (read-only; no direct tool execution)
+        .route("/api/mcp/servers", get(mcp_runtime::list_servers))
+        .route("/api/mcp/servers/:id", get(mcp_runtime::get_server))
+        .route(
+            "/api/mcp/servers/:id/refresh",
+            post(mcp_runtime::refresh_server),
+        )
+        .route("/api/mcp/servers/:id/tools", get(mcp_runtime::list_tools))
+        .route(
+            "/api/mcp/servers/:id/resources",
+            get(mcp_runtime::list_resources),
+        )
+        .route(
+            "/api/mcp/servers/:id/resource-templates",
+            get(mcp_runtime::list_resource_templates),
+        )
+        .route(
+            "/api/mcp/servers/:id/resources/read",
+            post(mcp_runtime::read_resource),
+        )
+        .route(
+            "/api/mcp/servers/:id/prompts",
+            get(mcp_runtime::list_prompts),
+        )
+        .route(
+            "/api/mcp/servers/:id/prompts/get",
+            post(mcp_runtime::get_prompt),
+        )
         // Logs API
         .route("/api/logs", get(logs::get_logs))
         .route("/api/logs", post(logs::push_log))

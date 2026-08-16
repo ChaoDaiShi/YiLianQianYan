@@ -30,4 +30,6 @@ pub use model::{
 };
 pub use provider::{CapabilityProvider, CapabilityProviderError};
 pub use registry::{CapabilityRegistry, RegistryRefreshReport};
-pub use runtime_providers::{AgentProvider, SkillProvider, SubagentProvider, WorkflowProvider};
+pub use runtime_providers::{
+    AgentProvider, McpRuntimeProvider, SkillProvider, SubagentProvider, WorkflowProvider,
+};

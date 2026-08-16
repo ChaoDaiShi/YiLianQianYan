@@ -39,6 +39,9 @@ pub struct McpServerRuntime {
     pub status: McpRuntimeStatus,
     pub capabilities: McpServerCapabilities,
     pub tools: Vec<McpTool>,
+    pub resources: Vec<McpResourceDescriptor>,
+    pub resource_templates: Vec<McpResourceTemplate>,
+    pub prompts: Vec<McpPromptDescriptor>,
     pub last_error: Option<String>,
     pub last_refresh: Option<i64>,
     transport: Option<Arc<dyn McpTransport>>,
@@ -54,6 +57,9 @@ impl McpServerRuntime {
             status: McpRuntimeStatus::Disconnected,
             capabilities: McpServerCapabilities::default(),
             tools: Vec::new(),
+            resources: Vec::new(),
+            resource_templates: Vec::new(),
+            prompts: Vec::new(),
             last_error: None,
             last_refresh: None,
             transport: None,
@@ -166,9 +172,36 @@ impl McpRuntimeManager {
         let transport = Self::build_transport(&runtime.config)?;
         let cancel = CancellationToken::new();
         let negotiation = transport.connect(&cancel).await?;
-        let tools = self
-            .tools_list_wire(&*transport, negotiation.protocol_version)
-            .await?;
+
+        // Capability-gated catalog discovery: never send an unsupported RPC.
+        let tools = if negotiation.capabilities.tools {
+            self.tools_list_wire(&*transport, negotiation.protocol_version)
+                .await?
+        } else {
+            Vec::new()
+        };
+        let resources = if negotiation.capabilities.resources {
+            self.resources_list_wire(&*transport, negotiation.protocol_version)
+                .await
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let resource_templates = if negotiation.capabilities.resources {
+            self.resource_templates_wire(&*transport, negotiation.protocol_version)
+                .await
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let prompts = if negotiation.capabilities.prompts {
+            self.prompts_list_wire(&*transport, negotiation.protocol_version)
+                .await
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         // Rebuild the runtime entry with the real negotiated version + catalog.
         let refreshed = Arc::new(McpServerRuntime {
             server_id: runtime.server_id.clone(),
@@ -178,6 +211,9 @@ impl McpRuntimeManager {
             status: McpRuntimeStatus::Ready,
             capabilities: negotiation.capabilities,
             tools,
+            resources,
+            resource_templates,
+            prompts,
             last_error: None,
             last_refresh: Some(chrono::Utc::now().timestamp_millis()),
             transport: Some(transport),
@@ -220,6 +256,102 @@ impl McpRuntimeManager {
                 return Err(McpRuntimeError::ResponseTooLarge);
             }
             match next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(all)
+    }
+
+    async fn resources_list_wire(
+        &self,
+        transport: &dyn McpTransport,
+        protocol_version: McpProtocolVersion,
+    ) -> Result<Vec<McpResourceDescriptor>, McpRuntimeError> {
+        let cancel = CancellationToken::new();
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_MCP_LIST_PAGES {
+            let mut params = serde_json::json!({});
+            if let Some(c) = &cursor {
+                params["cursor"] = serde_json::json!(c);
+            }
+            let result = self
+                .send(
+                    transport,
+                    "resources/list",
+                    params,
+                    protocol_version,
+                    &cancel,
+                )
+                .await?;
+            let (resources, next) = parse_resource_list(&result)?;
+            all.extend(resources);
+            if all.len() > MAX_MCP_RESOURCES_PER_SERVER {
+                return Err(McpRuntimeError::ResponseTooLarge);
+            }
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(all)
+    }
+
+    async fn resource_templates_wire(
+        &self,
+        transport: &dyn McpTransport,
+        protocol_version: McpProtocolVersion,
+    ) -> Result<Vec<McpResourceTemplate>, McpRuntimeError> {
+        let cancel = CancellationToken::new();
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_MCP_LIST_PAGES {
+            let mut params = serde_json::json!({});
+            if let Some(c) = &cursor {
+                params["cursor"] = serde_json::json!(c);
+            }
+            let result = self
+                .send(
+                    transport,
+                    "resources/templates/list",
+                    params,
+                    protocol_version,
+                    &cancel,
+                )
+                .await?;
+            let (templates, next) = parse_resource_template_list(&result)?;
+            all.extend(templates);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(all)
+    }
+
+    async fn prompts_list_wire(
+        &self,
+        transport: &dyn McpTransport,
+        protocol_version: McpProtocolVersion,
+    ) -> Result<Vec<McpPromptDescriptor>, McpRuntimeError> {
+        let cancel = CancellationToken::new();
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_MCP_LIST_PAGES {
+            let mut params = serde_json::json!({});
+            if let Some(c) = &cursor {
+                params["cursor"] = serde_json::json!(c);
+            }
+            let result = self
+                .send(transport, "prompts/list", params, protocol_version, &cancel)
+                .await?;
+            let (prompts, next) = parse_prompt_list(&result)?;
+            all.extend(prompts);
+            match next {
                 Some(c) => cursor = Some(c),
                 None => break,
             }
@@ -298,39 +430,7 @@ impl McpRuntimeManager {
                 "resources".to_string(),
             ));
         }
-        let transport = runtime
-            .transport
-            .as_ref()
-            .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
-        let cancel = CancellationToken::new();
-        let mut all = Vec::new();
-        let mut cursor: Option<String> = None;
-        for _ in 0..MAX_MCP_LIST_PAGES {
-            let mut params = serde_json::json!({});
-            if let Some(c) = &cursor {
-                params["cursor"] = serde_json::json!(c);
-            }
-            let result = self
-                .send(
-                    transport.as_ref(),
-                    "resources/list",
-                    params,
-                    runtime.protocol_version,
-                    &cancel,
-                )
-                .await?;
-            let (resources, next) = parse_resource_list(&result)?;
-            all.extend(resources);
-            if all.len() > MAX_MCP_RESOURCES_PER_SERVER {
-                return Err(McpRuntimeError::ResponseTooLarge);
-            }
-            match next {
-                Some(c) => cursor = Some(c),
-                None => break,
-            }
-        }
-        all.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(all)
+        Ok(runtime.resources.clone())
     }
 
     pub async fn list_resource_templates(
@@ -345,23 +445,7 @@ impl McpRuntimeManager {
                 "resources".to_string(),
             ));
         }
-        let transport = runtime
-            .transport
-            .as_ref()
-            .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
-        let cancel = CancellationToken::new();
-        let params = serde_json::json!({});
-        let result = self
-            .send(
-                transport.as_ref(),
-                "resources/templates/list",
-                params,
-                runtime.protocol_version,
-                &cancel,
-            )
-            .await?;
-        let (templates, _) = parse_resource_template_list(&result)?;
-        Ok(templates)
+        Ok(runtime.resource_templates.clone())
     }
 
     pub async fn read_resource(
@@ -433,36 +517,7 @@ impl McpRuntimeManager {
                 "prompts".to_string(),
             ));
         }
-        let transport = runtime
-            .transport
-            .as_ref()
-            .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
-        let cancel = CancellationToken::new();
-        let mut all = Vec::new();
-        let mut cursor: Option<String> = None;
-        for _ in 0..MAX_MCP_LIST_PAGES {
-            let mut params = serde_json::json!({});
-            if let Some(c) = &cursor {
-                params["cursor"] = serde_json::json!(c);
-            }
-            let result = self
-                .send(
-                    transport.as_ref(),
-                    "prompts/list",
-                    params,
-                    runtime.protocol_version,
-                    &cancel,
-                )
-                .await?;
-            let (prompts, next) = parse_prompt_list(&result)?;
-            all.extend(prompts);
-            match next {
-                Some(c) => cursor = Some(c),
-                None => break,
-            }
-        }
-        all.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(all)
+        Ok(runtime.prompts.clone())
     }
 
     pub async fn get_prompt(
