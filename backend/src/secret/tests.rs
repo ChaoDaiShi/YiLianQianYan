@@ -48,6 +48,30 @@ impl SecretStore for FailingSecretStore {
     }
 }
 
+// ── Store that "succeeds" on write but returns a WRONG value on read ──
+
+struct CorruptingSecretStore;
+
+#[async_trait]
+impl SecretStore for CorruptingSecretStore {
+    async fn put(
+        &self,
+        _secret_ref: &SecretRef,
+        _value: SecretString,
+    ) -> Result<(), SecretStoreError> {
+        Ok(())
+    }
+    async fn get(&self, _secret_ref: &SecretRef) -> Result<Option<SecretString>, SecretStoreError> {
+        Ok(Some(SecretString::from("WRONG_VALUE".to_string())))
+    }
+    async fn delete(&self, _secret_ref: &SecretRef) -> Result<(), SecretStoreError> {
+        Ok(())
+    }
+    async fn status(&self) -> SecretStoreStatus {
+        SecretStoreStatus::Available
+    }
+}
+
 // ── SecretRef + store basics ──
 
 #[test]
@@ -254,6 +278,57 @@ async fn migration_idempotent() {
     assert_eq!(got.expose_secret(), "SUPER_SECRET_CHAT");
 }
 
+// ── Read-back value equality HARD gate: a corrupting store must NOT clear ──
+
+#[tokio::test]
+async fn migration_verification_mismatch_preserves_model_plaintext() {
+    let corrupting = CorruptingSecretStore;
+    let mut config = AppConfig::default();
+    config.model.api_key = "ORIGINAL_CHAT_SECRET".to_string();
+
+    let report = migrate_legacy_secrets(&corrupting, &mut config, &mut []).await;
+    assert!(!report.migrated_chat_key);
+    assert_eq!(report.failed, 1);
+    assert_eq!(report.pending, 1);
+    // Plaintext preserved in the in-memory model — never cleared on mismatch.
+    assert_eq!(config.model.api_key, "ORIGINAL_CHAT_SECRET");
+    assert!(config.model.api_key_ref.is_none());
+}
+
+#[tokio::test]
+async fn migration_verification_mismatch_preserves_mcp_plaintext() {
+    let corrupting = CorruptingSecretStore;
+    let mut server = McpServer {
+        id: "mcp-1".to_string(),
+        name: "fs".to_string(),
+        transport: "stdio".to_string(),
+        command: Some("x".to_string()),
+        args: None,
+        url: None,
+        env: Some(serde_json::json!({"API_KEY": "ORIGINAL_MCP_SECRET"})),
+        env_secret_refs: Default::default(),
+        enabled: true,
+        created_at: 0,
+        updated_at: 0,
+    };
+
+    let report = migrate_legacy_secrets(
+        &corrupting,
+        &mut AppConfig::default(),
+        std::slice::from_mut(&mut server),
+    )
+    .await;
+    assert_eq!(report.migrated_mcp_values, 0);
+    assert_eq!(report.failed, 1);
+    assert_eq!(report.pending, 1);
+    // Plaintext env preserved; no ref recorded.
+    assert_eq!(
+        server.env,
+        Some(serde_json::json!({"API_KEY": "ORIGINAL_MCP_SECRET"}))
+    );
+    assert!(server.env_secret_refs.is_empty());
+}
+
 // ── Raw SQLite HARD gate: no plaintext after successful migration ──
 
 #[tokio::test]
@@ -338,6 +413,53 @@ async fn raw_sqlite_legacy_secrets_migrated_and_plaintext_removed() {
         .unwrap()
         .unwrap();
     assert_eq!(embed.expose_secret(), "SUPER_SECRET_EMBED_456");
+
+    drop(server);
+    let _ = std::fs::remove_file(&path);
+}
+
+// ── Raw SQLite: a corrupting store must NOT clear the DB plaintext ──
+
+#[tokio::test]
+async fn migration_verification_mismatch_preserves_sqlite_plaintext() {
+    let (path, db) = temp_db("raw-mismatch");
+
+    // Simulate an OLD database with a legacy chat key.
+    {
+        let conn = db.conn();
+        let legacy_config = serde_json::json!({
+            "model": { "api_key": "ORIGINAL_CHAT_SECRET" }
+        });
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('app_config', ?1)",
+            rusqlite::params![legacy_config.to_string()],
+        )
+        .unwrap();
+    }
+    drop(db);
+
+    let server = AppServer::new_with_control_session_and_store(
+        &path,
+        ".",
+        ControlSession::generate(),
+        Arc::new(CorruptingSecretStore),
+    )
+    .unwrap();
+    let report = server.migrate_secrets().await;
+    assert!(!report.migrated_chat_key);
+    assert_eq!(report.failed, 1);
+
+    // Raw SQLite scan — plaintext MUST still be present (data never lost).
+    let conn = server.db.conn();
+    let settings_value: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'app_config'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(settings_value.contains("ORIGINAL_CHAT_SECRET"));
+    drop(conn);
 
     drop(server);
     let _ = std::fs::remove_file(&path);

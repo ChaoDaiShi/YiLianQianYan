@@ -10,7 +10,7 @@
 //   - Idempotent: re-running never duplicates refs or corrupts values.
 // ============================================================
 
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 
 use super::model::{
     mcp_env_ref, SecretMigrationReport, SecretRef, SecretStoreError, CHAT_KEY_REF,
@@ -114,7 +114,10 @@ pub async fn migrate_legacy_secrets(
     report
 }
 
-/// Write a secret and verify it reads back before reporting success.
+/// Write a secret and verify it reads back with the EXACT same value before
+/// reporting success. Only a value-equal read-back authorizes clearing the
+/// legacy plaintext. Any mismatch (or missing read-back) fails closed and
+/// leaves the legacy plaintext untouched. The error carries no secret value.
 async fn migrate_one(
     store: &dyn SecretStore,
     secret_ref: &SecretRef,
@@ -122,9 +125,12 @@ async fn migrate_one(
 ) -> Result<(), SecretStoreError> {
     let secret = SecretString::from(value.to_string());
     store.put(secret_ref, secret).await?;
-    let read_back = store.get(secret_ref).await?;
-    match read_back {
-        Some(_) => Ok(()),
-        None => Err(SecretStoreError::Backend),
+    let read_back = store
+        .get(secret_ref)
+        .await?
+        .ok_or(SecretStoreError::Backend)?;
+    if read_back.expose_secret() != value {
+        return Err(SecretStoreError::Backend);
     }
+    Ok(())
 }
