@@ -53,7 +53,7 @@ export default function Modal({ open, onClose, title, children, className, foote
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          "relative w-full max-w-lg rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] shadow-[var(--shadow-float)] outline-none animate-scale-in",
+          "shadow-float-token relative w-full max-w-lg rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] outline-none animate-scale-in",
           className
         )}
         onClick={(event) => event.stopPropagation()}

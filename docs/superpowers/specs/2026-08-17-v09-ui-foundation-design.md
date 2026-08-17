@@ -149,4 +149,3 @@ Phase 1 is accepted when:
 5. Reduced-motion and keyboard focus behavior remain available.
 6. Frontend tests and production build pass with fresh command output.
 7. No backend, Agent, API, route, or SSE behavior has been changed.
-

@@ -18,33 +18,63 @@ function withOpacity(color: string, opacity: number): string {
   return color;
 }
 
-function buildSemanticTokens(theme: ThemeConfig): Record<string, string> {
-  if (theme.presetId === "cyrene-ripple") {
+function buildSemanticTokens(
+  theme: ThemeConfig,
+  legacy: Record<string, string>,
+  hasLegacyOverrides: boolean,
+): Record<string, string> {
+  if (theme.presetId === "cyrene-ripple" && !hasLegacyOverrides) {
     return { ...CYRENE_SEMANTIC_TOKENS };
   }
 
-  const c = theme.colors;
+  const accent = legacy["--accent"];
+  const accentFg = legacy["--accent-fg"];
+  const backdrop = legacy["--backdrop"];
+  const danger = legacy["--danger"];
+  const info = legacy["--info"];
+  const nav = legacy["--nav"];
+  const navText = legacy["--nav-text"];
+  const success = legacy["--success"];
+  const warning = legacy["--warning"];
 
   return {
-    "--bg-app": c.bg,
-    "--bg-subtle": c.bg2,
-    "--surface": withOpacity(c.panel, theme.panelOpacity),
-    "--surface-solid": c.panel2,
-    "--surface-muted": c.panelHover,
-    "--surface-elevated": c.panel2,
-    "--surface-hover": c.panelHover,
-    "--text-primary": c.text,
-    "--text-secondary": c.textMuted,
-    "--text-faint": c.textFaint,
-    "--accent-primary": c.accent,
-    "--accent-primary-hover": c.focusRing,
-    "--accent-contrast": c.accentFg,
-    "--accent-soft": withOpacity(c.accent, 0.16),
-    "--border-soft": c.border,
-    "--sidebar-bg": c.nav,
-    "--sidebar-fg": c.navText,
-    "--shadow-card": `0 18px 40px ${withOpacity(c.backdrop, 0.14)}`,
-    "--shadow-float": `0 28px 72px ${withOpacity(c.backdrop, 0.24)}`,
+    "--bg-app": legacy["--bg"],
+    "--bg-soft": legacy["--bg-2"],
+    "--bg-subtle": legacy["--bg-2"],
+    "--surface": legacy["--panel"],
+    "--surface-solid": legacy["--panel-2"],
+    "--surface-muted": legacy["--panel-hover"],
+    "--surface-elevated": legacy["--panel-2"],
+    "--surface-hover": legacy["--panel-hover"],
+    "--text-primary": legacy["--text"],
+    "--text-secondary": legacy["--text-muted"],
+    "--text-faint": legacy["--text-faint"],
+    "--accent-primary": accent,
+    "--accent-primary-hover": accent,
+    "--accent-contrast": accentFg,
+    "--accent-soft": withOpacity(accent, 0.16),
+    "--accent-purple": accent,
+    "--accent-blue": info,
+    "--accent-gold": warning,
+    "--accent-border": withOpacity(accent, 0.25),
+    "--focus-ring-soft": withOpacity(legacy["--focus-ring"], 0.3),
+    "--border-soft": legacy["--border"],
+    "--success-soft": withOpacity(success, 0.12),
+    "--success-border": withOpacity(success, 0.3),
+    "--warning-soft": withOpacity(warning, 0.12),
+    "--warning-border": withOpacity(warning, 0.3),
+    "--danger-soft": withOpacity(danger, 0.12),
+    "--danger-border": withOpacity(danger, 0.3),
+    "--danger-fg": accentFg,
+    "--info-soft": withOpacity(info, 0.12),
+    "--info-border": withOpacity(info, 0.3),
+    "--sidebar-bg": nav,
+    "--sidebar-bg-2": nav,
+    "--sidebar-fg": navText,
+    "--sidebar-muted": withOpacity(navText, 0.68),
+    "--sidebar-active": withOpacity(accent, 0.17),
+    "--shadow-card": `0 18px 40px ${withOpacity(backdrop, 0.14)}`,
+    "--shadow-float": `0 28px 72px ${withOpacity(backdrop, 0.24)}`,
     "--radius-sm": CYRENE_SEMANTIC_TOKENS["--radius-sm"],
     "--radius-md": CYRENE_SEMANTIC_TOKENS["--radius-md"],
     "--radius-lg": CYRENE_SEMANTIC_TOKENS["--radius-lg"],
@@ -84,7 +114,7 @@ export function applyThemeToDom(theme: ThemeConfig, bgImageUrl?: string | null) 
 
 export function buildThemeVariables(theme: ThemeConfig): Record<string, string> {
   const c = theme.colors;
-  const variables: Record<string, string> = {
+  const legacyVariables: Record<string, string> = {
     "--bg": c.bg,
     "--bg-2": c.bg2,
     "--panel": withOpacity(c.panel, theme.panelOpacity),
@@ -108,20 +138,24 @@ export function buildThemeVariables(theme: ThemeConfig): Record<string, string> 
     "--font-size-base": `${theme.fontSize}px`,
     "--bg-blur": `${theme.blur}px`,
     "--bg-brightness": String(theme.brightness),
-    ...buildSemanticTokens(theme),
   };
 
+  let hasLegacyOverrides = false;
   for (const [key, value] of Object.entries(theme.customVars || {})) {
     if (
       (THEME_VAR_WHITELIST as readonly string[]).includes(key) &&
       !(PROTECTED_THEME_VAR_NAMES as readonly string[]).includes(key) &&
       typeof value === "string"
     ) {
-      variables[key] = value;
+      legacyVariables[key] = value;
+      hasLegacyOverrides = true;
     }
   }
 
-  return variables;
+  return {
+    ...legacyVariables,
+    ...buildSemanticTokens(theme, legacyVariables, hasLegacyOverrides),
+  };
 }
 
 export function sanitizeCustomVars(raw: unknown): Record<string, string> {

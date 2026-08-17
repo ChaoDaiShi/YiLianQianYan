@@ -18,7 +18,7 @@ export default function Input({ label, hint, className, id, ...props }: InputPro
         id={inputId}
         className={cn(
           "w-full rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2 text-sm text-[var(--text)] transition-colors duration-[var(--motion-fast)]",
-          "placeholder:text-[var(--text-secondary)] focus:border-[var(--accent-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/30",
+          "focus-ring-token placeholder:text-[var(--text-secondary)] focus:border-[var(--accent-primary)] focus:outline-none",
           className
         )}
         {...props}

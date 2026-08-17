@@ -11,7 +11,7 @@ export default function PageHeader({ title, description, actions, className }: P
   return (
     <div
       className={cn(
-        "mx-4 mt-4 flex items-start justify-between gap-4 rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] px-5 py-4 shadow-[var(--shadow-card)] transition-[background-color,border-color,box-shadow] duration-[var(--motion-fast)]",
+        "shadow-card-token mx-4 mt-4 flex items-start justify-between gap-4 rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] px-5 py-4 transition-[background-color,border-color,box-shadow] duration-[var(--motion-fast)]",
         className
       )}
     >

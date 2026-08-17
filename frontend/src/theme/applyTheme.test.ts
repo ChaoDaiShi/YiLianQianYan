@@ -7,9 +7,22 @@ describe("semantic theme variables", () => {
     const variables = buildThemeVariables(DEFAULT_THEME);
 
     expect(variables["--bg-app"]).toBe("#f9f7ff");
+    expect(variables["--bg-soft"]).toBe("#f4f0fc");
+    expect(variables["--bg-subtle"]).toBe("#f4f0fc");
     expect(variables["--surface-solid"]).toBe("#ffffff");
+    expect(variables["--text-primary"]).toBe("#292536");
+    expect(variables["--text-faint"]).toBe("#9b95a6");
     expect(variables["--accent-primary"]).toBe("#ea91b9");
+    expect(variables["--accent-primary-hover"]).toBe("#df7eaa");
+    expect(variables["--accent-soft"]).toBe("#f9dce9");
+    expect(variables["--accent-purple"]).toBe("#ad9be8");
+    expect(variables["--accent-blue"]).toBe("#99cfea");
+    expect(variables["--accent-gold"]).toBe("#ebcf8c");
     expect(variables["--sidebar-bg"]).toBe("#29263a");
+    expect(variables["--sidebar-bg-2"]).toBe("#312c46");
+    expect(variables["--sidebar-muted"]).toBe("#aaa3ba");
+    expect(variables["--sidebar-active"]).toBe("rgba(234,145,185,0.17)");
+    expect(variables["--danger-fg"]).toBe("#292536");
     expect(variables["--radius-md"]).toBe("12px");
     expect(variables["--bg"]).toBe("#f9f7ff");
     expect(variables["--accent"]).toBe("#ea91b9");
@@ -39,12 +52,68 @@ describe("semantic theme variables", () => {
     const cyreneVariables = buildThemeVariables(DEFAULT_THEME);
 
     expect(variables["--bg-app"]).toBe(PRESETS["precision-neutral"].colors.bg);
+    expect(variables["--bg-soft"]).toBe(PRESETS["precision-neutral"].colors.bg2);
     expect(variables["--surface-solid"]).toBe(PRESETS["precision-neutral"].colors.panel2);
+    expect(variables["--text-primary"]).toBe(PRESETS["precision-neutral"].colors.text);
     expect(variables["--accent-primary"]).toBe(PRESETS["precision-neutral"].colors.accent);
+    expect(variables["--accent-blue"]).toBe(PRESETS["precision-neutral"].colors.info);
+    expect(variables["--accent-gold"]).toBe(PRESETS["precision-neutral"].colors.warning);
     expect(variables["--sidebar-bg"]).toBe(PRESETS["precision-neutral"].colors.nav);
+    expect(variables["--danger-fg"]).toBe(PRESETS["precision-neutral"].colors.accentFg);
 
     expect(variables["--bg-app"]).not.toBe(cyreneVariables["--bg-app"]);
     expect(variables["--accent-primary"]).not.toBe(cyreneVariables["--accent-primary"]);
     expect(variables["--sidebar-bg"]).not.toBe(cyreneVariables["--sidebar-bg"]);
+  });
+
+  it("derives semantic variables after allowed legacy custom overrides", () => {
+    const variables = buildThemeVariables({
+      ...PRESETS["precision-neutral"],
+      presetId: "custom",
+      customVars: {
+        "--bg": "#101112",
+        "--bg-2": "#202122",
+        "--panel": "rgba(30,31,32,0.91)",
+        "--panel-2": "#303132",
+        "--panel-hover": "#404142",
+        "--text": "#f1f2f3",
+        "--text-muted": "#b1b2b3",
+        "--text-faint": "#818283",
+        "--border": "rgba(241,242,243,0.2)",
+        "--accent": "#556677",
+        "--accent-fg": "#ffffff",
+        "--nav": "#090a0b",
+        "--nav-text": "#dedfe0",
+        "--warning": "#c0a050",
+        "--danger": "#b04050",
+        "--info": "#5080b0",
+      },
+    });
+
+    expect(variables["--bg-app"]).toBe("#101112");
+    expect(variables["--bg-soft"]).toBe("#202122");
+    expect(variables["--surface"]).toBe("rgba(30,31,32,0.91)");
+    expect(variables["--surface-solid"]).toBe("#303132");
+    expect(variables["--surface-hover"]).toBe("#404142");
+    expect(variables["--text-primary"]).toBe("#f1f2f3");
+    expect(variables["--text-secondary"]).toBe("#b1b2b3");
+    expect(variables["--text-faint"]).toBe("#818283");
+    expect(variables["--border-soft"]).toBe("rgba(241,242,243,0.2)");
+    expect(variables["--accent-primary"]).toBe("#556677");
+    expect(variables["--accent-soft"]).toBe("rgba(85,102,119,0.16)");
+    expect(variables["--accent-blue"]).toBe("#5080b0");
+    expect(variables["--accent-gold"]).toBe("#c0a050");
+    expect(variables["--sidebar-bg"]).toBe("#090a0b");
+    expect(variables["--sidebar-fg"]).toBe("#dedfe0");
+    expect(variables["--danger-fg"]).toBe("#ffffff");
+  });
+
+  it("sets the same variable key set for cyrene and non-cyrene themes", () => {
+    const cyreneKeys = Object.keys(buildThemeVariables(DEFAULT_THEME)).sort();
+    const nonCyreneKeys = Object.keys(
+      buildThemeVariables(PRESETS["graphite-pro"]),
+    ).sort();
+
+    expect(nonCyreneKeys).toEqual(cyreneKeys);
   });
 });

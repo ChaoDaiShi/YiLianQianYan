@@ -55,7 +55,7 @@ export default function Drawer({
         aria-label={title}
         tabIndex={-1}
         className={cn(
-          "relative z-10 flex h-full w-[min(88vw,360px)] flex-col border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] shadow-[var(--shadow-float)] outline-none transition-[background-color,border-color,box-shadow] duration-[var(--motion-fast)]",
+          "shadow-float-token relative z-10 flex h-full w-[min(88vw,360px)] flex-col border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] outline-none transition-[background-color,border-color,box-shadow] duration-[var(--motion-fast)]",
           side === "left" ? "mr-auto border-r" : "ml-auto border-l"
         )}
         onClick={(event) => event.stopPropagation()}

@@ -14,7 +14,7 @@ const variants: Record<Variant, string> = {
   secondary:
     "border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] hover:bg-[var(--surface-hover)]",
   ghost: "bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]",
-  danger: "bg-[var(--danger)] text-[var(--surface-solid)] hover:opacity-90",
+  danger: "bg-[var(--danger)] text-[var(--danger-fg)] hover:opacity-90",
 };
 
 const sizes: Record<Size, string> = {
@@ -34,7 +34,7 @@ export default function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 font-medium transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-app)] disabled:pointer-events-none disabled:opacity-40",
+        "focus-ring-token inline-flex items-center justify-center gap-1.5 font-medium transition-colors duration-[var(--motion-fast)] focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40",
         variants[variant],
         sizes[size],
         className
