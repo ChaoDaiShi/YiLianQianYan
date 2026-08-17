@@ -8,5 +8,7 @@ export { default as Modal } from "./Modal";
 export { default as PageHeader } from "./PageHeader";
 export { default as EmptyState } from "./EmptyState";
 export { default as Spinner } from "./Spinner";
+export { default as Skeleton } from "./Skeleton";
+export { default as ErrorState } from "./ErrorState";
 export { default as Drawer } from "./Drawer";
 export { default as Tooltip } from "./Tooltip";

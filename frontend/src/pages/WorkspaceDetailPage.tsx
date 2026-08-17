@@ -1,105 +1,114 @@
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, Check, Clipboard, FolderOpen, Plus } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Play, Plus, RotateCcw, XCircle } from "lucide-react";
 import {
-  Button,
+  createTask,
+  getWorkspace,
+  listTasks,
+  type Task,
+  type Workspace,
+} from "../api/client";
+import TaskDetailPanel from "../components/tasks/TaskDetailPanel";
+import {
   Badge,
+  Button,
+  EmptyState,
+  ErrorState,
   Input,
-  Textarea,
   Modal,
   PageHeader,
   Panel,
-  EmptyState,
-  Spinner,
+  Skeleton,
+  Textarea,
 } from "../components/ui";
 import {
-  Workspace,
-  Task,
-  TaskEvent,
-  Artifact,
-  TaskExecution,
-  getWorkspace,
-  listTasks,
-  createTask,
-  startTask,
-  retryTask,
-  cancelTask,
-  listTaskTimeline,
-  listTaskArtifacts,
-  listTaskExecutions,
-} from "../api/client";
-
-const TASK_STATUS_TONE: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
-  draft: "default",
-  ready: "info",
-  running: "info",
-  waiting_approval: "warning",
-  waiting_user: "warning",
-  blocked: "warning",
-  completed: "success",
-  failed: "danger",
-  cancelled: "default",
-};
+  formatTaskDate,
+  getTaskStatusLabel,
+  getTaskStatusTone,
+} from "../features/tasks/taskPresentation";
+import { deriveTaskDisplayTitle } from "../components/chat/taskTitle";
+import { formatWorkspacePath } from "../features/tasks/workspacePresentation";
 
 export default function WorkspaceDetailPage() {
   const { id = "" } = useParams();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
-  const [selected, setSelected] = useState<Task | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const reload = useCallback(async () => {
-    const ws = await getWorkspace(id);
-    if (!ws.ok) {
-      setError(ws.error);
+    setError(null);
+    setTaskError(null);
+    const workspaceResult = await getWorkspace(id);
+    if (!workspaceResult.ok) {
+      setWorkspace(null);
+      setTasks(null);
+      setError(workspaceResult.error);
       return;
     }
-    setWorkspace(ws.data);
-    const ts = await listTasks({ workspace_id: id, limit: 100 });
-    if (ts.ok) {
-      setTasks(ts.data);
-      setSelected((prev) => prev && ts.data.find((t) => t.id === prev.id)?.id === prev.id
-        ? ts.data.find((t) => t.id === prev.id)!
-        : ts.data[0] ?? null);
-    } else {
-      setError(ts.error);
+
+    setWorkspace(workspaceResult.data);
+    const taskResult = await listTasks({ workspace_id: id, limit: 100 });
+    if (!taskResult.ok) {
+      setTasks(null);
+      setTaskError(taskResult.error);
+      return;
     }
+
+    setTasks(taskResult.data);
+    setSelectedId((current) =>
+      current && taskResult.data.some((task) => task.id === current)
+        ? current
+        : taskResult.data[0]?.id || null
+    );
   }, [id]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
+  const selectedTask = tasks?.find((task) => task.id === selectedId) || null;
+
   const handleCreate = async () => {
     if (!title.trim()) return;
-    const res = await createTask({ workspace_id: id, title, description });
-    if (res.ok) {
+    const result = await createTask({ workspace_id: id, title, description });
+    if (result.ok) {
       setShowCreate(false);
       setTitle("");
       setDescription("");
       void reload();
     } else {
-      setError(res.error);
+      setTaskError(result.error);
     }
   };
 
+  const copyPath = async () => {
+    const path = formatWorkspacePath(workspace?.root_path);
+    if (!path || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(path);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  };
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        title={workspace?.name ?? "工作空间"}
-        description={workspace?.description}
+        title={workspace?.name || "工作空间"}
+        description={workspace?.description || "查看任务使用的文件与上下文。"}
         actions={
           <>
             <Link to="/workspaces">
-              <Button variant="ghost">
+              <Button type="button" variant="ghost">
                 <ArrowLeft className="h-4 w-4" />
                 返回
               </Button>
             </Link>
-            <Button onClick={() => setShowCreate(true)}>
+            <Button type="button" onClick={() => setShowCreate(true)} disabled={!workspace}>
               <Plus className="h-4 w-4" />
               新建任务
             </Button>
@@ -107,217 +116,151 @@ export default function WorkspaceDetailPage() {
         }
       />
 
-      {error && (
-        <p className="mx-4 mt-3 text-sm text-[var(--danger)]">{error}</p>
-      )}
-
-      <div className="mx-4 mt-4 flex flex-1 gap-3 overflow-hidden pb-4">
-        {/* Task list */}
-        <div className="w-72 shrink-0 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--panel)] p-2">
-          {tasks === null ? (
-            <div className="flex justify-center py-8">
-              <Spinner />
-            </div>
-          ) : tasks.length === 0 ? (
-            <EmptyState title="暂无任务" description="新建第一个任务。" />
-          ) : (
-            tasks.map((task) => (
-              <button
-                key={task.id}
-                onClick={() => setSelected(task)}
-                className={`mb-1 w-full rounded-lg px-3 py-2 text-left transition-colors ${
-                  selected?.id === task.id
-                    ? "bg-[var(--panel-hover)]"
-                    : "hover:bg-[var(--panel-hover)]"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-1">
-                  <span className="truncate text-sm font-medium text-[var(--text)]">
-                    {task.title}
-                  </span>
-                  <Badge tone={TASK_STATUS_TONE[task.status] ?? "default"}>
-                    {task.status}
-                  </Badge>
+      {error ? (
+        <div className="min-h-0 flex-1 p-4">
+          <ErrorState
+            title="工作空间暂时无法加载"
+            description={error}
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void reload()}>
+                重新加载
+              </Button>
+            }
+          />
+        </div>
+      ) : (
+        <>
+          <Panel className="mx-4 mt-4 shrink-0">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="rounded-[var(--radius-md)] bg-[var(--accent-soft)] p-2 text-[var(--accent-primary)]">
+                  <FolderOpen className="h-5 w-5" />
                 </div>
-              </button>
-            ))
-          )}
-        </div>
+                <div className="min-w-0">
+                  <p className="text-xs text-[var(--text-faint)]">当前工作空间</p>
+                  <h2 className="mt-0.5 truncate text-base font-semibold text-[var(--text)]">
+                    {workspace?.name || "加载中…"}
+                  </h2>
+                  {formatWorkspacePath(workspace?.root_path) && (
+                    <div className="mt-1 flex max-w-full items-center gap-2">
+                      <p className="truncate font-mono text-xs text-[var(--text-secondary)]" title={workspace?.root_path || undefined}>
+                        {workspace?.root_path}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void copyPath()}
+                        className="shrink-0 rounded p-1 text-[var(--text-faint)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus-ring-token focus-visible:outline-none"
+                        aria-label="复制工作空间路径"
+                      >
+                        {copied ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {workspace && <Badge tone={workspace.status === "active" ? "success" : "default"}>{workspace.status === "active" ? "活跃" : "已归档"}</Badge>}
+            </div>
+          </Panel>
 
-        {/* Task detail */}
-        <div className="flex-1 overflow-y-auto">
-          {!selected ? (
-            <EmptyState title="选择一个任务" description="在左侧选择任务查看详情。" />
-          ) : (
-            <TaskDetail key={selected.id} task={selected} onChanged={reload} />
+          {taskError && (
+            <div className="mx-4 mt-3">
+              <ErrorState
+                title="任务列表暂时无法加载"
+                description={taskError}
+                action={
+                  <Button size="sm" variant="secondary" onClick={() => void reload()}>
+                    重新加载
+                  </Button>
+                }
+              />
+            </div>
           )}
-        </div>
-      </div>
+
+          <div className="workspace-detail-grid min-h-0 flex-1 gap-3 px-4 pb-4 pt-4">
+            <Panel padding={false} className="min-h-0 overflow-hidden">
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="shrink-0 border-b border-[var(--border-soft)] px-4 py-3">
+                  <h2 className="text-sm font-semibold text-[var(--text)]">任务与产物</h2>
+                  <p className="mt-0.5 text-xs text-[var(--text-faint)]">浏览这个工作空间关联的真实任务记录</p>
+                </div>
+                <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2">
+                  {tasks === null ? (
+                    <div className="space-y-2 p-1">
+                      {Array.from({ length: 4 }).map((_, index) => (
+                        <div key={index} className="space-y-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] p-3">
+                          <Skeleton className="h-4 w-3/4" />
+                          <Skeleton className="h-3 w-1/2" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : tasks.length === 0 ? (
+                    <EmptyState
+                      icon={<FolderOpen className="h-5 w-5" />}
+                      title="还没有关联任务"
+                      description="创建一个任务后，执行记录和真实产物会显示在这里。"
+                      action={<Button size="sm" onClick={() => setShowCreate(true)}>新建任务</Button>}
+                      className="py-16"
+                    />
+                  ) : (
+                    <div className="space-y-1">
+                      {tasks.map((task) => (
+                        <button
+                          key={task.id}
+                          type="button"
+                          aria-selected={selectedId === task.id}
+                          onClick={() => setSelectedId(task.id)}
+                          className={`relative flex min-h-[68px] w-full items-center gap-3 rounded-[var(--radius-md)] border px-3 py-2 text-left transition-colors focus-ring-token focus-visible:outline-none ${
+                            selectedId === task.id
+                              ? "border-[var(--accent-border)] bg-[var(--accent-soft)]"
+                              : "border-transparent hover:border-[var(--border-soft)] hover:bg-[var(--surface-hover)]"
+                          }`}
+                        >
+                          {selectedId === task.id && <span className="absolute inset-y-3 left-0 w-0.5 rounded-r-full bg-[var(--accent-primary)]" />}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-[var(--text)]">{deriveTaskDisplayTitle(task.title)}</p>
+                            <p className="mt-1 text-xs text-[var(--text-faint)]">{formatTaskDate(task.updated_at) || "时间未知"}</p>
+                          </div>
+                          <Badge tone={getTaskStatusTone(task.status)}>{getTaskStatusLabel(task.status)}</Badge>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </Panel>
+
+            <Panel padding={false} className="workspace-detail-content min-h-0 overflow-y-auto">
+              {selectedTask ? (
+                <div className="p-3 sm:p-4">
+                  <TaskDetailPanel
+                    task={selectedTask}
+                    workspaceName={workspace?.name}
+                    onChanged={() => void reload()}
+                  />
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<FolderOpen className="h-6 w-6" />}
+                  title="选择一个任务"
+                  description="在左侧浏览任务及其真实产物。"
+                  className="py-20"
+                />
+              )}
+            </Panel>
+          </div>
+        </>
+      )}
 
       <Modal open={showCreate} onClose={() => setShowCreate(false)} title="新建任务">
         <div className="space-y-3">
-          <Input label="标题" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-          <Textarea
-            label="描述"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={3}
-          />
+          <Input label="标题" value={title} onChange={(event) => setTitle(event.target.value)} autoFocus />
+          <Textarea label="描述" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setShowCreate(false)}>
-              取消
-            </Button>
-            <Button onClick={handleCreate} disabled={!title.trim()}>
-              创建
-            </Button>
+            <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>取消</Button>
+            <Button type="button" onClick={() => void handleCreate()} disabled={!title.trim()}>创建</Button>
           </div>
         </div>
       </Modal>
-    </div>
-  );
-}
-
-function TaskDetail({ task, onChanged }: { task: Task; onChanged: () => void }) {
-  const [timeline, setTimeline] = useState<TaskEvent[] | null>(null);
-  const [artifacts, setArtifacts] = useState<Artifact[] | null>(null);
-  const [executions, setExecutions] = useState<TaskExecution[] | null>(null);
-
-  const reloadDetail = useCallback(async () => {
-    const [tl, arts, exes] = await Promise.all([
-      listTaskTimeline(task.id),
-      listTaskArtifacts(task.id),
-      listTaskExecutions(task.id),
-    ]);
-    if (tl.ok) setTimeline(tl.data);
-    if (arts.ok) setArtifacts(arts.data);
-    if (exes.ok) setExecutions(exes.data);
-  }, [task.id]);
-
-  useEffect(() => {
-    void reloadDetail();
-  }, [reloadDetail]);
-
-  const active = !["completed", "failed", "cancelled"].includes(task.status);
-
-  const handleStart = async () => {
-    await startTask(task.id);
-    onChanged();
-    void reloadDetail();
-  };
-  const handleRetry = async () => {
-    await retryTask(task.id);
-    onChanged();
-    void reloadDetail();
-  };
-  const handleCancel = async () => {
-    await cancelTask(task.id);
-    onChanged();
-    void reloadDetail();
-  };
-
-  return (
-    <div className="space-y-3">
-      <Panel>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-[var(--text)]">{task.title}</h3>
-            {task.description && (
-              <p className="mt-1 text-sm text-[var(--text-muted)]">{task.description}</p>
-            )}
-            <div className="mt-2 flex items-center gap-2">
-              <Badge tone={TASK_STATUS_TONE[task.status] ?? "default"}>{task.status}</Badge>
-              <Badge tone="default">优先级：{task.priority}</Badge>
-              {task.workflow_graph_id && <Badge tone="info">绑定工作流</Badge>}
-              {task.agent_team_id && <Badge tone="info">绑定团队</Badge>}
-            </div>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            {active && (
-              <Button size="sm" onClick={handleStart}>
-                <Play className="h-3.5 w-3.5" />
-                启动
-              </Button>
-            )}
-            {!active && task.status !== "completed" && (
-              <Button size="sm" variant="secondary" onClick={handleRetry}>
-                <RotateCcw className="h-3.5 w-3.5" />
-                重试
-              </Button>
-            )}
-            {active && (
-              <Button size="sm" variant="danger" onClick={handleCancel}>
-                <XCircle className="h-3.5 w-3.5" />
-                取消
-              </Button>
-            )}
-          </div>
-        </div>
-      </Panel>
-
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel>
-          <h4 className="mb-2 text-sm font-semibold text-[var(--text)]">时间线</h4>
-          {timeline === null ? (
-            <Spinner />
-          ) : timeline.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">暂无记录。</p>
-          ) : (
-            <ul className="space-y-2">
-              {timeline.map((event) => (
-                <li key={event.id} className="text-sm">
-                  <span className="text-[var(--text-faint)]">
-                    {new Date(event.created_at).toLocaleTimeString()}
-                  </span>{" "}
-                  <span className="text-[var(--text)]">{event.message}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-
-        <Panel>
-          <h4 className="mb-2 text-sm font-semibold text-[var(--text)]">执行历史</h4>
-          {executions === null ? (
-            <Spinner />
-          ) : executions.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">暂无执行。</p>
-          ) : (
-            <ul className="space-y-2">
-              {executions.map((execution) => (
-                <li key={execution.id} className="flex items-center justify-between text-sm">
-                  <span className="text-[var(--text-muted)]">attempt #{execution.attempt}</span>
-                  <Badge tone={execution.status === "completed" ? "success" : "default"}>
-                    {execution.status}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-      </div>
-
-      <Panel>
-        <h4 className="mb-2 text-sm font-semibold text-[var(--text)]">产物</h4>
-        {artifacts === null ? (
-          <Spinner />
-        ) : artifacts.length === 0 ? (
-          <p className="text-sm text-[var(--text-muted)]">暂无产物。</p>
-        ) : (
-          <ul className="space-y-2">
-            {artifacts.map((artifact) => (
-              <li key={artifact.id} className="text-sm">
-                <span className="font-medium text-[var(--text)]">{artifact.name}</span>
-                <span className="ml-2 text-xs text-[var(--text-faint)]">
-                  {artifact.artifact_type}
-                </span>
-                {artifact.summary && (
-                  <p className="mt-0.5 text-[var(--text-muted)]">{artifact.summary}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
     </div>
   );
 }

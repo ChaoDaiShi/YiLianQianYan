@@ -162,6 +162,29 @@
   }
 }
 
+.task-center-grid,
+.workspace-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.85fr);
+}
+
+.workspace-detail-grid {
+  grid-template-columns: minmax(260px, 0.75fr) minmax(0, 1.5fr);
+}
+
+@media (max-width: 980px) {
+  .task-center-grid,
+  .workspace-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(220px, 0.8fr) minmax(320px, 1.2fr);
+  }
+
+  .task-center-detail,
+  .workspace-detail-content {
+    min-height: 0;
+  }
+}
+
 @layer components {
   .workbench-grid {
     display: grid;

@@ -7,6 +7,7 @@ describe("NavRail groups", () => {
     const items = NAV_GROUPS.flatMap((group) => group.items);
 
     expect(items.map((item) => item.to)).toEqual([
+      "/tasks",
       "/chat",
       "/workflows",
       "/workspaces",

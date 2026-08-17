@@ -6,6 +6,7 @@ import {
   FolderKanban,
   GitBranch,
   MessageSquare,
+  ListTodo,
   Puzzle,
   ScrollText,
   Settings,
@@ -29,6 +30,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: "核心",
     items: [
+      { to: "/tasks", id: "tasks", label: "任务", icon: ListTodo },
       { to: "/chat", id: "chat", label: "对话", icon: MessageSquare },
       { to: "/workflows", id: "workflows", label: "工作流", icon: GitBranch },
       {

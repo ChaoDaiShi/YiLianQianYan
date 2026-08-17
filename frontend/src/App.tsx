@@ -13,6 +13,7 @@ import KnowledgePage from "./pages/KnowledgePage";
 import SettingsPage from "./pages/SettingsPage";
 import SystemPage from "./pages/SystemPage";
 import LogsPage from "./pages/LogsPage";
+import TaskCenterPage from "./pages/TaskCenterPage";
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
             <Route index element={<Navigate to="/chat" replace />} />
             <Route path="chat" element={<ChatPage />} />
             <Route path="chat/:id" element={<ChatPage />} />
+            <Route path="tasks" element={<TaskCenterPage />} />
             <Route path="system" element={<SystemPage />} />
             <Route path="logs" element={<LogsPage />} />
             <Route path="skills" element={<SkillsPage />} />
