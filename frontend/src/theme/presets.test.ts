@@ -1,19 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_THEME, PRESETS } from "./presets";
+import { DEFAULT_THEME, PRESETS, PRESET_META } from "./presets";
 import { normalizeStoredTheme } from "./ThemeProvider";
 
 describe("theme presets", () => {
-  it("uses warm-local as the default", () => {
-    expect(DEFAULT_THEME.presetId).toBe("warm-local");
+  it("uses cyrene-ripple as the default for new installations", () => {
+    expect(DEFAULT_THEME.presetId).toBe("cyrene-ripple");
+    expect(DEFAULT_THEME.colors.bg).toBe("#f9f7ff");
+    expect(DEFAULT_THEME.colors.accent).toBe("#ea91b9");
   });
 
-  it("exposes the four approved presets", () => {
+  it("keeps all approved presets including cyrene-ripple", () => {
     expect(Object.keys(PRESETS)).toEqual([
+      "cyrene-ripple",
       "warm-local",
       "precision-neutral",
       "graphite-pro",
       "high-contrast",
     ]);
+  });
+
+  it("exposes cyrene-ripple in the appearance preset metadata", () => {
+    expect(PRESET_META[0]).toMatchObject({
+      id: "cyrene-ripple",
+      name: "昔涟 · 涟漪",
+    });
   });
 
   it("migrates legacy paper-light to warm-local", () => {
@@ -25,6 +35,12 @@ describe("theme presets", () => {
   it("migrates legacy claude-dark to graphite-pro", () => {
     expect(normalizeStoredTheme({ presetId: "claude-dark" }).presetId).toBe(
       "graphite-pro"
+    );
+  });
+
+  it("normalizes an unknown stored preset to cyrene-ripple", () => {
+    expect(normalizeStoredTheme({ presetId: "missing-preset" }).presetId).toBe(
+      "cyrene-ripple"
     );
   });
 

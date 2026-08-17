@@ -28,6 +28,38 @@ function makeColors(
 }
 
 export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
+  "cyrene-ripple": {
+    presetId: "cyrene-ripple",
+    bgMode: "solid",
+    colors: makeColors({
+      bg: "#f9f7ff",
+      bg2: "#f4f0fc",
+      panel: "rgba(255,255,255,0.82)",
+      panel2: "#ffffff",
+      panelHover: "#faf5ff",
+      text: "#292536",
+      textMuted: "#6d6678",
+      textFaint: "#9b95a6",
+      border: "rgba(86,72,117,0.10)",
+      accent: "#ea91b9",
+      accentFg: "#292536",
+      inputBg: "rgba(255,255,255,0.94)",
+      success: "#73b99a",
+      warning: "#d9b866",
+      danger: "#df7995",
+      nav: "#29263a",
+      navText: "#eeeaf8",
+      info: "#84bcdc",
+      focusRing: "#ea91b9",
+      backdrop: "rgba(41,38,58,0.34)",
+    }),
+    blur: 0,
+    brightness: 1,
+    panelOpacity: 0.82,
+    fontSize: 14,
+    monoTitles: false,
+    customVars: {},
+  },
   "warm-local": {
     presetId: "warm-local",
     bgMode: "solid",
@@ -158,13 +190,18 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
   },
 };
 
-export const DEFAULT_THEME = PRESETS["warm-local"];
+export const DEFAULT_THEME = PRESETS["cyrene-ripple"];
 
 export const PRESET_META: {
   id: BuiltInPresetId;
   name: string;
   description: string;
 }[] = [
+  {
+    id: "cyrene-ripple",
+    name: "昔涟 · 涟漪",
+    description: "轻盈、清澈的默认工作台",
+  },
   { id: "warm-local", name: "暖色本地", description: "温和、可信的默认工作台" },
   { id: "precision-neutral", name: "精密中性", description: "清晰克制的浅色界面" },
   { id: "graphite-pro", name: "石墨专业", description: "低眩光的深色工作环境" },

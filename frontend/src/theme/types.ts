@@ -1,6 +1,7 @@
 export type BgMode = "solid" | "gradient" | "image";
 
 export type PresetId =
+  | "cyrene-ripple"
   | "warm-local"
   | "precision-neutral"
   | "graphite-pro"
