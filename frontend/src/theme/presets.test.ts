@@ -6,6 +6,11 @@ describe("theme presets", () => {
   it("uses cyrene-ripple as the default for new installations", () => {
     expect(DEFAULT_THEME.presetId).toBe("cyrene-ripple");
     expect(DEFAULT_THEME.colors.bg).toBe("#f9f7ff");
+    expect(DEFAULT_THEME.colors.bg2).toBe("#f4f0fc");
+    expect(DEFAULT_THEME.colors.panel).toBe("rgba(255,255,255,0.78)");
+    expect(DEFAULT_THEME.colors.panelHover).toBe("#f9f3fc");
+    expect(DEFAULT_THEME.colors.textMuted).toBe("#696276");
+    expect(DEFAULT_THEME.colors.textFaint).toBe("#9690A1");
     expect(DEFAULT_THEME.colors.accent).toBe("#ea91b9");
   });
 
