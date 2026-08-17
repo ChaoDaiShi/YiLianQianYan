@@ -18,6 +18,41 @@ function withOpacity(color: string, opacity: number): string {
   return color;
 }
 
+function buildSemanticTokens(theme: ThemeConfig): Record<string, string> {
+  if (theme.presetId === "cyrene-ripple") {
+    return { ...CYRENE_SEMANTIC_TOKENS };
+  }
+
+  const c = theme.colors;
+
+  return {
+    "--bg-app": c.bg,
+    "--bg-subtle": c.bg2,
+    "--surface": withOpacity(c.panel, theme.panelOpacity),
+    "--surface-solid": c.panel2,
+    "--surface-muted": c.panelHover,
+    "--surface-elevated": c.panel2,
+    "--surface-hover": c.panelHover,
+    "--text-primary": c.text,
+    "--text-secondary": c.textMuted,
+    "--text-faint": c.textFaint,
+    "--accent-primary": c.accent,
+    "--accent-primary-hover": c.focusRing,
+    "--accent-contrast": c.accentFg,
+    "--accent-soft": withOpacity(c.accent, 0.16),
+    "--border-soft": c.border,
+    "--sidebar-bg": c.nav,
+    "--sidebar-fg": c.navText,
+    "--shadow-card": `0 18px 40px ${withOpacity(c.backdrop, 0.14)}`,
+    "--shadow-float": `0 28px 72px ${withOpacity(c.backdrop, 0.24)}`,
+    "--radius-sm": CYRENE_SEMANTIC_TOKENS["--radius-sm"],
+    "--radius-md": CYRENE_SEMANTIC_TOKENS["--radius-md"],
+    "--radius-lg": CYRENE_SEMANTIC_TOKENS["--radius-lg"],
+    "--motion-fast": CYRENE_SEMANTIC_TOKENS["--motion-fast"],
+    "--motion-normal": CYRENE_SEMANTIC_TOKENS["--motion-normal"],
+  };
+}
+
 export function applyThemeToDom(theme: ThemeConfig, bgImageUrl?: string | null) {
   const root = document.documentElement;
   const variables = buildThemeVariables(theme);
@@ -73,7 +108,7 @@ export function buildThemeVariables(theme: ThemeConfig): Record<string, string> 
     "--font-size-base": `${theme.fontSize}px`,
     "--bg-blur": `${theme.blur}px`,
     "--bg-brightness": String(theme.brightness),
-    ...CYRENE_SEMANTIC_TOKENS,
+    ...buildSemanticTokens(theme),
   };
 
   for (const [key, value] of Object.entries(theme.customVars || {})) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildThemeVariables } from "./applyTheme";
-import { DEFAULT_THEME } from "./presets";
+import { DEFAULT_THEME, PRESETS } from "./presets";
 
 describe("semantic theme variables", () => {
   it("maps the cyrene preset to semantic and legacy variables", () => {
@@ -32,5 +32,19 @@ describe("semantic theme variables", () => {
     expect(variables["--radius-lg"]).toBe("16px");
     expect(variables["--shadow-card"]).toContain("rgba");
     expect(variables["--motion-fast"]).toBe("140ms");
+  });
+
+  it("derives non-cyrene semantic variables from the active preset palette", () => {
+    const variables = buildThemeVariables(PRESETS["precision-neutral"]);
+    const cyreneVariables = buildThemeVariables(DEFAULT_THEME);
+
+    expect(variables["--bg-app"]).toBe(PRESETS["precision-neutral"].colors.bg);
+    expect(variables["--surface-solid"]).toBe(PRESETS["precision-neutral"].colors.panel2);
+    expect(variables["--accent-primary"]).toBe(PRESETS["precision-neutral"].colors.accent);
+    expect(variables["--sidebar-bg"]).toBe(PRESETS["precision-neutral"].colors.nav);
+
+    expect(variables["--bg-app"]).not.toBe(cyreneVariables["--bg-app"]);
+    expect(variables["--accent-primary"]).not.toBe(cyreneVariables["--accent-primary"]);
+    expect(variables["--sidebar-bg"]).not.toBe(cyreneVariables["--sidebar-bg"]);
   });
 });
