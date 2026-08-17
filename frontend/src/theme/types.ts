@@ -69,6 +69,22 @@ export const THEME_VAR_WHITELIST = [
   "--backdrop",
 ] as const;
 
+export const PROTECTED_THEME_VAR_NAMES = [
+  "--bg-app",
+  "--bg-subtle",
+  "--surface",
+  "--surface-solid",
+  "--surface-muted",
+  "--surface-elevated",
+  "--accent-primary",
+  "--accent-contrast",
+  "--sidebar-bg",
+  "--sidebar-fg",
+  "--radius-sm",
+  "--radius-md",
+  "--radius-lg",
+] as const;
+
 export const STORAGE_KEY = "ylqy.theme";
 export const BG_IMAGE_DB = "ylqy-theme-db";
 export const BG_IMAGE_STORE = "images";

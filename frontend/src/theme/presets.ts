@@ -192,6 +192,22 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
 
 export const DEFAULT_THEME = PRESETS["cyrene-ripple"];
 
+export const CYRENE_SEMANTIC_TOKENS = {
+  "--bg-app": "#f9f7ff",
+  "--bg-subtle": "#f4f0fc",
+  "--surface": "rgba(255,255,255,0.82)",
+  "--surface-solid": "#ffffff",
+  "--surface-muted": "#faf5ff",
+  "--surface-elevated": "#ffffff",
+  "--accent-primary": "#ea91b9",
+  "--accent-contrast": "#292536",
+  "--sidebar-bg": "#29263a",
+  "--sidebar-fg": "#eeeaf8",
+  "--radius-sm": "8px",
+  "--radius-md": "12px",
+  "--radius-lg": "18px",
+} as const;
+
 export const PRESET_META: {
   id: BuiltInPresetId;
   name: string;

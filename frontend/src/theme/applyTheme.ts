@@ -1,5 +1,6 @@
 import type { ThemeConfig } from "./types";
-import { THEME_VAR_WHITELIST } from "./types";
+import { PROTECTED_THEME_VAR_NAMES, THEME_VAR_WHITELIST } from "./types";
+import { CYRENE_SEMANTIC_TOKENS } from "./presets";
 
 function withOpacity(color: string, opacity: number): string {
   if (color.startsWith("rgba(")) {
@@ -19,35 +20,15 @@ function withOpacity(color: string, opacity: number): string {
 
 export function applyThemeToDom(theme: ThemeConfig, bgImageUrl?: string | null) {
   const root = document.documentElement;
-  const c = theme.colors;
+  const variables = buildThemeVariables(theme);
 
-  root.style.setProperty("--bg", c.bg);
-  root.style.setProperty("--bg-2", c.bg2);
-  root.style.setProperty("--panel", withOpacity(c.panel, theme.panelOpacity));
-  root.style.setProperty("--panel-2", c.panel2);
-  root.style.setProperty("--panel-hover", c.panelHover);
-  root.style.setProperty("--text", c.text);
-  root.style.setProperty("--text-muted", c.textMuted);
-  root.style.setProperty("--text-faint", c.textFaint);
-  root.style.setProperty("--border", c.border);
-  root.style.setProperty("--accent", c.accent);
-  root.style.setProperty("--accent-fg", c.accentFg);
-  root.style.setProperty("--input-bg", c.inputBg);
-  root.style.setProperty("--success", c.success);
-  root.style.setProperty("--warning", c.warning);
-  root.style.setProperty("--danger", c.danger);
-  root.style.setProperty("--nav", c.nav);
-  root.style.setProperty("--nav-text", c.navText);
-  root.style.setProperty("--info", c.info);
-  root.style.setProperty("--focus-ring", c.focusRing);
-  root.style.setProperty("--backdrop", c.backdrop);
-  root.style.setProperty("--font-size-base", `${theme.fontSize}px`);
-  root.style.setProperty("--bg-blur", `${theme.blur}px`);
-  root.style.setProperty("--bg-brightness", String(theme.brightness));
+  for (const [key, value] of Object.entries(variables)) {
+    root.style.setProperty(key, value);
+  }
 
   if (theme.bgMode === "gradient") {
-    const from = theme.gradientFrom || c.bg;
-    const to = theme.gradientTo || c.bg2;
+    const from = theme.gradientFrom || theme.colors.bg;
+    const to = theme.gradientTo || theme.colors.bg2;
     root.style.setProperty("--bg-image", `linear-gradient(160deg, ${from}, ${to})`);
   } else if (theme.bgMode === "image" && bgImageUrl) {
     root.style.setProperty("--bg-image", `url(${bgImageUrl})`);
@@ -55,19 +36,57 @@ export function applyThemeToDom(theme: ThemeConfig, bgImageUrl?: string | null) 
     root.style.setProperty("--bg-image", "none");
   }
 
-  for (const [key, value] of Object.entries(theme.customVars || {})) {
-    if ((THEME_VAR_WHITELIST as readonly string[]).includes(key) && typeof value === "string") {
-      root.style.setProperty(key, value);
-    }
-  }
-
   root.classList.toggle("theme-mono", theme.monoTitles);
   root.dataset.theme = theme.presetId;
   // Keep these compatibility classes while existing dark: utilities are migrated.
   const isLight =
-    theme.presetId === "warm-local" || theme.presetId === "precision-neutral";
+    theme.presetId === "cyrene-ripple" ||
+    theme.presetId === "warm-local" ||
+    theme.presetId === "precision-neutral";
   root.classList.toggle("dark", !isLight);
   root.classList.toggle("light", isLight);
+}
+
+export function buildThemeVariables(theme: ThemeConfig): Record<string, string> {
+  const c = theme.colors;
+  const variables: Record<string, string> = {
+    "--bg": c.bg,
+    "--bg-2": c.bg2,
+    "--panel": withOpacity(c.panel, theme.panelOpacity),
+    "--panel-2": c.panel2,
+    "--panel-hover": c.panelHover,
+    "--text": c.text,
+    "--text-muted": c.textMuted,
+    "--text-faint": c.textFaint,
+    "--border": c.border,
+    "--accent": c.accent,
+    "--accent-fg": c.accentFg,
+    "--input-bg": c.inputBg,
+    "--success": c.success,
+    "--warning": c.warning,
+    "--danger": c.danger,
+    "--nav": c.nav,
+    "--nav-text": c.navText,
+    "--info": c.info,
+    "--focus-ring": c.focusRing,
+    "--backdrop": c.backdrop,
+    "--font-size-base": `${theme.fontSize}px`,
+    "--bg-blur": `${theme.blur}px`,
+    "--bg-brightness": String(theme.brightness),
+    ...CYRENE_SEMANTIC_TOKENS,
+  };
+
+  for (const [key, value] of Object.entries(theme.customVars || {})) {
+    if (
+      (THEME_VAR_WHITELIST as readonly string[]).includes(key) &&
+      !(PROTECTED_THEME_VAR_NAMES as readonly string[]).includes(key) &&
+      typeof value === "string"
+    ) {
+      variables[key] = value;
+    }
+  }
+
+  return variables;
 }
 
 export function sanitizeCustomVars(raw: unknown): Record<string, string> {
