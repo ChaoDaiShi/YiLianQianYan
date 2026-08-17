@@ -27,8 +27,13 @@ describe("NavRail groups", () => {
     ]);
   });
 
-  it("uses a readable wide grouped layout at the default desktop breakpoint", () => {
-    expect(navRailSource).toContain("min-[1180px]:w-[176px]");
+  it("uses a compact readable grouped layout at the default desktop breakpoint", () => {
+    expect(navRailSource).toContain("min-[1180px]:w-[148px]");
+    expect(navRailSource).toContain("min-[1180px]:mx-2");
+    expect(navRailSource).toContain("min-[1180px]:px-2.5");
+    expect(navRailSource).toContain("min-[1180px]:h-8");
+    expect(navRailSource).toContain("whitespace-nowrap");
+    expect(navRailSource).toContain("absolute right-2");
     expect(navRailSource).toContain("min-[1180px]:flex-row");
     expect(navRailSource).toContain("min-[1180px]:block");
     expect(navRailSource).toContain("✦");
