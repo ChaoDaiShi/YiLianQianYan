@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 — Release Gate
+## 0.8.0 — 2026-08-17
 
 ### Added
 
@@ -48,7 +48,7 @@
 ### Known Boundaries
 
 - OS-backed filesystem and network isolation remain capability-level boundaries; they are not presented as a complete host sandbox.
-- Release readiness still requires the real Windows desktop launch, packaged install, SecretStore smoke, and upgrade evidence recorded in the release checklist.
+- v0.8.0 packaged Windows acceptance completed; the release checklist records the user-confirmed launch, health, lifecycle, and persistence evidence.
 
 ## 0.6.0 — Workspace / Task / Multi-Agent Runtime
 

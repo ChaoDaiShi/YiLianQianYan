@@ -142,7 +142,7 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 
 ## v0.6 Workspace / Task / Multi-Agent Runtime
 
-状态：**v0.8.0 Release Gate in progress（安全执行、授权证据与桌面打包冻结验收）**
+状态：**v0.8.0 Released**
 
 v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「能长期管理项目、任务、多智能体协作、产物与执行历史的本地 Agent Runtime」：
 
@@ -166,7 +166,7 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 
 ## v0.8 Development — Agent Memory + Unified Capability Registry
 
-状态：**Phase 1–6 Completed（下一阶段：v0.8 Release Gate）**
+状态：**Phase 1–6 Completed（v0.8.0 Released）**
 
 - Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
 - Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。
@@ -197,6 +197,10 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
   - Settings「权限」页面提供 Filesystem/Network/Process/Shell 授权创建、删除、风险提示与真实隔离状态；不宣传 Full Sandbox。
 
 **Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。SecretStore 只负责存取，绝不授予权限或绕过 Gateway；Grant 是 authority，不是 execution。
+
+## Next: v0.9
+
+重点：UI / visual polish、UX improvements、bug fixes、performance optimization。Voice / TTS 不属于初始 v0.9 范围。
 
 ## v0.4 Workflow Runtime
 
