@@ -13,17 +13,56 @@ use crate::safety::{describe_builtin_tool, DescriptorError, ToolSecurityDescript
 pub struct ToolExecutionContext {
     pub(crate) managed_process_registry: crate::isolation::SharedManagedProcessRegistry,
     pub(crate) tool_call_id: String,
+    pub(crate) authorized_resources: Vec<crate::safety::grant::AuthorizedResource>,
 }
 
 impl ToolExecutionContext {
-    pub(crate) fn new(
+    pub(crate) fn new_with_resources(
         managed_process_registry: crate::isolation::SharedManagedProcessRegistry,
         tool_call_id: impl Into<String>,
+        authorized_resources: Vec<crate::safety::grant::AuthorizedResource>,
     ) -> Self {
         Self {
             managed_process_registry,
             tool_call_id: tool_call_id.into(),
+            authorized_resources,
         }
+    }
+
+    pub(crate) fn authorized_network(
+        &self,
+        scheme: &str,
+        host: &str,
+        port: u16,
+        method: &str,
+    ) -> Option<&crate::safety::grant::AuthorizedResource> {
+        self.authorized_resources.iter().find(|resource| {
+            matches!(
+                resource,
+                crate::safety::grant::AuthorizedResource::Network {
+                    scheme: evidence_scheme,
+                    host: evidence_host,
+                    port: evidence_port,
+                    method: evidence_method,
+                    ..
+                } if evidence_scheme.eq_ignore_ascii_case(scheme)
+                    && evidence_host.eq_ignore_ascii_case(host)
+                    && *evidence_port == port
+                    && evidence_method.eq_ignore_ascii_case(method)
+            )
+        })
+    }
+
+    pub(crate) fn authorized_process(&self, pid: Option<u32>) -> bool {
+        self.authorized_resources.iter().any(|resource| {
+            matches!(
+                resource,
+                crate::safety::grant::AuthorizedResource::Process {
+                    pid: evidence_pid,
+                    managed_only: true,
+                } if evidence_pid == &pid
+            )
+        })
     }
 }
 

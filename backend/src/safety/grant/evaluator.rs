@@ -11,9 +11,16 @@ use std::sync::Arc;
 use crate::safety::{PermissionId, ResourceDescriptor};
 
 use super::model::{
-    host_matches, parse_network_target, zone_allows, GrantDecision, GrantResource,
-    ProcessGrantScope, SecurityGrant,
+    host_matches, parse_network_target, GrantDecision, GrantResource, ProcessGrantScope,
+    SecurityGrant,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantEvaluation {
+    pub decision: GrantDecision,
+    pub matched_grant_id: Option<String>,
+    pub matched_resource: Option<GrantResource>,
+}
 
 pub struct GrantEvaluator {
     grants: Vec<SecurityGrant>,
@@ -52,10 +59,26 @@ impl GrantEvaluator {
         resource: &ResourceDescriptor,
         now_ms: i64,
     ) -> GrantDecision {
+        self.evaluate_with_evidence(permission, resource, now_ms)
+            .decision
+    }
+
+    /// Evaluate and retain the server-side grant evidence used by the gateway
+    /// when it constructs a trusted tool context.
+    pub fn evaluate_with_evidence(
+        &self,
+        permission: PermissionId,
+        resource: &ResourceDescriptor,
+        now_ms: i64,
+    ) -> GrantEvaluation {
         // Only a subset of permissions are resource-grant enforced; the rest
         // (ProcessInspect, Desktop*, Skill, Agent, Mcp) remain RBAC-only.
         if !is_grant_enforced(permission) {
-            return GrantDecision::Allow;
+            return GrantEvaluation {
+                decision: GrantDecision::Allow,
+                matched_grant_id: None,
+                matched_resource: None,
+            };
         }
         let mut allowed = false;
         for grant in &self.grants {
@@ -64,6 +87,25 @@ impl GrantEvaluator {
             }
             if grant.is_expired(now_ms) {
                 continue;
+            }
+            // Legacy process scopes remain readable for migration/diagnostic
+            // purposes but are never executable in v0.8.
+            if permission == PermissionId::ProcessControl
+                && matches!(
+                    grant.resource,
+                    GrantResource::Process {
+                        scope: ProcessGrantScope::ExplicitPid { .. }
+                            | ProcessGrantScope::AllHostProcesses
+                    }
+                )
+            {
+                return GrantEvaluation {
+                    decision: GrantDecision::Deny {
+                        reason: "legacy process grant scope is unsupported in v0.8".to_string(),
+                    },
+                    matched_grant_id: Some(grant.id.clone()),
+                    matched_resource: Some(grant.resource.clone()),
+                };
             }
             if !resource_matches(
                 &grant.resource,
@@ -75,18 +117,41 @@ impl GrantEvaluator {
             }
             match grant.effect {
                 super::model::GrantEffect::Deny => {
-                    return GrantDecision::Deny {
-                        reason: "resource denied by explicit grant".to_string(),
-                    }
+                    return GrantEvaluation {
+                        decision: GrantDecision::Deny {
+                            reason: "resource denied by explicit grant".to_string(),
+                        },
+                        matched_grant_id: Some(grant.id.clone()),
+                        matched_resource: Some(grant.resource.clone()),
+                    };
                 }
                 super::model::GrantEffect::Allow => allowed = true,
             }
         }
         if allowed {
-            GrantDecision::Allow
+            let matched = self.grants.iter().rev().find(|grant| {
+                grant.permission == permission
+                    && !grant.is_expired(now_ms)
+                    && matches!(grant.effect, super::model::GrantEffect::Allow)
+                    && resource_matches(
+                        &grant.resource,
+                        resource,
+                        &self.workspace_root,
+                        self.registry.as_ref(),
+                    )
+            });
+            GrantEvaluation {
+                decision: GrantDecision::Allow,
+                matched_grant_id: matched.map(|grant| grant.id.clone()),
+                matched_resource: matched.map(|grant| grant.resource.clone()),
+            }
         } else {
-            GrantDecision::RequireApproval {
-                reason: "no matching resource grant".to_string(),
+            GrantEvaluation {
+                decision: GrantDecision::RequireApproval {
+                    reason: "no matching resource grant".to_string(),
+                },
+                matched_grant_id: None,
+                matched_resource: None,
             }
         }
     }
@@ -158,7 +223,16 @@ fn resource_matches(
             if !methods.is_empty() && !methods.iter().any(|m| m.eq_ignore_ascii_case(method)) {
                 return false;
             }
-            zone_allows(*zone, &parsed.host)
+            parsed
+                .host
+                .parse::<std::net::IpAddr>()
+                .map(|ip| {
+                    let actual = super::model::classify_ip(ip);
+                    actual == *zone
+                        || (*zone == super::model::NetworkZone::Private
+                            && actual != super::model::NetworkZone::Public)
+                })
+                .unwrap_or(true)
         }
         (GrantResource::Process { scope }, ResourceDescriptor::Process { pid, .. }) => {
             match scope {

@@ -1,13 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
   "productName": "忆涟千言",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "identifier": "com.yilianqianyan.desktop",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm --prefix ./frontend run build",
-    "beforeDevCommand": "npm --prefix ./frontend run dev"
+    "beforeBuildCommand": "npm.cmd --prefix ./frontend run build",
+    "beforeDevCommand": "npm.cmd --prefix ./frontend run dev"
   },
   "app": {
     "windows": [
@@ -26,7 +26,8 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": ["nsis"],
     "icon": ["icons/icon.ico"]
   }
 }

@@ -86,15 +86,6 @@ fn is_blocked_request_header(name: &str) -> bool {
     ) || name.starts_with("proxy-")
 }
 
-fn requested_zone(host: &str) -> NetworkZone {
-    if host.eq_ignore_ascii_case("localhost") {
-        return NetworkZone::Loopback;
-    }
-    host.parse::<std::net::IpAddr>()
-        .map(classify_ip)
-        .unwrap_or(NetworkZone::Public)
-}
-
 fn address_matches_requested_zone(requested: NetworkZone, address: SocketAddr) -> bool {
     let actual = classify_ip(address.ip());
     match requested {
@@ -104,11 +95,13 @@ fn address_matches_requested_zone(requested: NetworkZone, address: SocketAddr) -
     }
 }
 
-fn validate_resolved_addresses(host: &str, addresses: &[SocketAddr]) -> Result<(), String> {
+fn validate_resolved_addresses(
+    requested: NetworkZone,
+    addresses: &[SocketAddr],
+) -> Result<(), String> {
     if addresses.is_empty() {
         return Err("DNS 解析失败（SSRF 防护：没有可验证地址）".to_string());
     }
-    let requested = requested_zone(host);
     if addresses
         .iter()
         .any(|address| !address_matches_requested_zone(requested, *address))
@@ -153,14 +146,18 @@ impl Tool for HttpRequestTool {
     async fn execute_with_context(
         &self,
         args: serde_json::Value,
-        _context: &crate::tools::trait_def::ToolExecutionContext,
+        context: &crate::tools::trait_def::ToolExecutionContext,
     ) -> ToolResult {
-        self.execute_request(args).await
+        self.execute_request(args, context).await
     }
 }
 
 impl HttpRequestTool {
-    async fn execute_request(&self, args: serde_json::Value) -> ToolResult {
+    async fn execute_request(
+        &self,
+        args: serde_json::Value,
+        context: &crate::tools::trait_def::ToolExecutionContext,
+    ) -> ToolResult {
         let raw_url = args["url"].as_str().unwrap_or("");
         if raw_url.is_empty() {
             return ToolResult::error("url不能为空");
@@ -175,16 +172,24 @@ impl HttpRequestTool {
         };
         let method = args["method"].as_str().unwrap_or("GET").to_uppercase();
         let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000).min(300000);
+        let port = target
+            .port
+            .unwrap_or(if target.scheme.eq_ignore_ascii_case("http") {
+                80
+            } else {
+                443
+            });
+        let Some(crate::safety::grant::AuthorizedResource::Network { zone, .. }) =
+            context.authorized_network(&target.scheme, &target.host, port, &method)
+        else {
+            return ToolResult::error("HTTP请求缺少安全网关创建的网络授权证据");
+        };
 
-        let addresses = match self
-            .resolver
-            .resolve(&target.host, target.port.unwrap_or(443))
-            .await
-        {
+        let addresses = match self.resolver.resolve(&target.host, port).await {
             Ok(addresses) => addresses,
             Err(error) => return ToolResult::error(error),
         };
-        if let Err(error) = validate_resolved_addresses(&target.host, &addresses) {
+        if let Err(error) = validate_resolved_addresses(*zone, &addresses) {
             return ToolResult::error(error);
         }
 
@@ -287,15 +292,17 @@ mod tests {
 
     #[test]
     fn resolver_result_is_validated_once_before_request() {
-        let result =
-            validate_resolved_addresses("example.com", &["93.184.216.34:443".parse().unwrap()]);
+        let result = validate_resolved_addresses(
+            NetworkZone::Public,
+            &["93.184.216.34:443".parse().unwrap()],
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn resolver_rejects_any_mixed_zone_candidate() {
         let result = validate_resolved_addresses(
-            "example.com",
+            NetworkZone::Public,
             &[
                 "93.184.216.34:443".parse().unwrap(),
                 "127.0.0.1:443".parse().unwrap(),
@@ -336,9 +343,18 @@ mod tests {
             addresses: vec![address],
             calls: Arc::clone(&calls),
         }));
-        let context = ToolExecutionContext::new(
+        let context = ToolExecutionContext::new_with_resources(
             Arc::new(crate::isolation::ManagedProcessRegistry::new()),
             "http-test",
+            vec![crate::safety::grant::AuthorizedResource::Network {
+                scheme: "http".into(),
+                host: "127.0.0.1".into(),
+                port: address.port(),
+                method: "GET".into(),
+                zone: NetworkZone::Loopback,
+                grant_id: None,
+                one_shot_approval: true,
+            }],
         );
         let result = tool
             .execute_with_context(

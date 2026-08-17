@@ -15,6 +15,10 @@ pub struct DecisionContext {
     pub policy_version: String,
     pub requested_permissions: Vec<PermissionId>,
     pub resource_scopes: Vec<ResourceScope>,
+    /// Trusted evidence created by the execution gateway. It is intentionally
+    /// omitted from the public policy JSON shape.
+    #[serde(skip)]
+    pub(crate) authorized_resources: Vec<crate::safety::grant::AuthorizedResource>,
     pub reason: String,
 }
 
@@ -61,6 +65,7 @@ impl PolicyEngine {
             policy_version: POLICY_VERSION.to_string(),
             requested_permissions: permissions.clone(),
             resource_scopes: scopes.clone(),
+            authorized_resources: Vec::new(),
             reason,
         };
 

@@ -11,7 +11,7 @@ export interface GrantEditorState {
   port: string;
   methods: string;
   zone: "public" | "loopback" | "private";
-  processScope: "managed_children" | "explicit_pid" | "all_host_processes";
+  processScope: "managed_children";
   pid: string;
   hostEscapeAcknowledged: boolean;
 }
@@ -64,9 +64,7 @@ export function grantPayload(state: GrantEditorState): {
         resource: {
           type: "process",
           scope:
-            state.processScope === "explicit_pid"
-              ? { kind: "explicit_pid", pid: Number(state.pid) }
-              : { kind: state.processScope },
+          { kind: state.processScope },
         },
       };
     case "shell":
@@ -84,9 +82,6 @@ export function grantWarning(state: GrantEditorState): string | null {
   }
   if (state.kind === "network" && state.zone === "private") {
     return "私有网络授权可能触达内网服务或云元数据地址；请确认范围。";
-  }
-  if (state.kind === "process" && state.processScope === "all_host_processes") {
-    return "这会允许控制主机上的任意进程，不限于本 Agent 管理的子进程。";
   }
   if (state.kind === "shell" && state.hostEscapeAcknowledged) {
     return "Shell 授权允许命令逃逸工作区边界；仅在明确需要时启用。";

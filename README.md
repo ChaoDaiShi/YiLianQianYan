@@ -142,7 +142,7 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 
 ## v0.6 Workspace / Task / Multi-Agent Runtime
 
-状态：**Completed（v0.6.0 Workspace / Task / Multi-Agent Runtime）**
+状态：**v0.8.0 Release Gate in progress（安全执行、授权证据与桌面打包冻结验收）**
 
 v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「能长期管理项目、任务、多智能体协作、产物与执行历史的本地 Agent Runtime」：
 

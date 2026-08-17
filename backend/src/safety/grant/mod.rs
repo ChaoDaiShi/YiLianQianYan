@@ -8,11 +8,11 @@ pub mod evaluator;
 pub mod model;
 pub mod store;
 
-pub use evaluator::GrantEvaluator;
+pub use evaluator::{GrantEvaluation, GrantEvaluator};
 pub use model::{
-    classify_ip, host_matches, parse_network_target, validate_grant, zone_allows, GrantDecision,
-    GrantEffect, GrantResource, GrantSource, NetworkTarget, NetworkZone, ProcessGrantScope,
-    SecurityGrant,
+    classify_ip, host_matches, parse_network_target, validate_grant, zone_allows,
+    AuthorizedResource, GrantDecision, GrantEffect, GrantResource, GrantSource, NetworkTarget,
+    NetworkZone, ProcessGrantScope, SecurityGrant,
 };
 
 #[cfg(test)]

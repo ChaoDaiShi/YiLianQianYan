@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v0.8 Development
+## 0.8.0 — Release Gate
 
 ### Added
 
@@ -26,6 +26,8 @@
 - SecurityExecutionGateway grant enforcement (RBAC → Grants → Sandbox → Risk); approval = one-shot, revalidates live grants
 - Filesystem read/write grant + canonical-path/symlink containment; Network target grants + SSRF/DNS-rebinding hardening (redirect=none + private/loopback reject)
 - Managed process runner for Bash: sanitized env (no secret inheritance) + real async timeout + whole-tree kill
+- Process grants and UI are limited to `ManagedChildren`; legacy explicit-PID/all-host rows remain readable but fail closed
+- Network execution consumes gateway-created zone evidence after one DNS resolution; ordinary host approvals default to Public
 
 ### Security
 
@@ -42,6 +44,11 @@
 - New secret writes never fall back to plaintext: `save_settings` / `create` / `update_mcp_server` reject plaintext API keys / stdio MCP env
 - Secret value never appears in API / logs / audit / Debug; only exposed at the Authorization header / Command.env boundary
 - SecretStore only stores/resolves secrets — it never grants permission or bypasses the Security Execution Gateway
+
+### Known Boundaries
+
+- OS-backed filesystem and network isolation remain capability-level boundaries; they are not presented as a complete host sandbox.
+- Release readiness still requires the real Windows desktop launch, packaged install, SecretStore smoke, and upgrade evidence recorded in the release checklist.
 
 ## 0.6.0 — Workspace / Task / Multi-Agent Runtime
 

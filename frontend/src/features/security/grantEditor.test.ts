@@ -8,8 +8,8 @@ describe("grant editor", () => {
   });
 
   it("builds a process grant payload", () => {
-    const payload = grantPayload({ ...initialGrantEditorState, kind: "process", processScope: "explicit_pid", pid: "42" });
-    expect(payload.resource).toEqual({ type: "process", scope: { kind: "explicit_pid", pid: 42 } });
+    const payload = grantPayload({ ...initialGrantEditorState, kind: "process" });
+    expect(payload.resource).toEqual({ type: "process", scope: { kind: "managed_children" } });
   });
 
   it("warns for private and loopback network grants", () => {
@@ -17,8 +17,7 @@ describe("grant editor", () => {
     expect(grantWarning({ ...initialGrantEditorState, kind: "network", zone: "loopback" })).toContain("回环");
   });
 
-  it("warns for all-host process and host shell grants", () => {
-    expect(grantWarning({ ...initialGrantEditorState, kind: "process", processScope: "all_host_processes" })).toContain("任意进程");
+  it("warns for host shell grants", () => {
     expect(grantWarning({ ...initialGrantEditorState, kind: "shell", hostEscapeAcknowledged: true })).toContain("逃逸");
   });
 

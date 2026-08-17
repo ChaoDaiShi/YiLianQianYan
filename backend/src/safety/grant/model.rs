@@ -136,6 +136,25 @@ pub enum NetworkZone {
     Private,
 }
 
+/// Server-created authorization evidence passed to side-effecting tools.
+/// Tool JSON can describe a request, but it cannot manufacture this evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthorizedResource {
+    Network {
+        scheme: String,
+        host: String,
+        port: u16,
+        method: String,
+        zone: NetworkZone,
+        grant_id: Option<String>,
+        one_shot_approval: bool,
+    },
+    Process {
+        pid: Option<u32>,
+        managed_only: bool,
+    },
+}
+
 /// Scope of process control. `AllHostProcesses` is deliberately a distinct,
 /// high-risk variant — it is never implied by a plain allow grant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,7 +249,13 @@ pub fn validate_grant(permission: PermissionId, resource: &GrantResource) -> Res
                 });
             scheme_valid && host_valid && methods_valid
         }
-        (PermissionId::ProcessControl, GrantResource::Process { .. }) => true,
+        (
+            PermissionId::ProcessControl,
+            GrantResource::Process {
+                scope: ProcessGrantScope::ManagedChildren,
+            },
+        ) => true,
+        (PermissionId::ProcessControl, GrantResource::Process { .. }) => false,
         (PermissionId::ShellExecute, GrantResource::Shell { .. }) => true,
         _ => false,
     };

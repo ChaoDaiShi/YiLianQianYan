@@ -53,10 +53,6 @@ export function GrantEditor({ grants, onChanged }: GrantEditorProps) {
       setError("网络主机必须是明确主机或单级通配域名，不能使用 *");
       return;
     }
-    if (state.kind === "process" && state.processScope === "explicit_pid" && Number(state.pid) <= 0) {
-      setError("显式进程 PID 必须大于 0");
-      return;
-    }
     setBusy(true);
     const result = await createSecurityGrant(payload);
     setBusy(false);
@@ -105,10 +101,7 @@ export function GrantEditor({ grants, onChanged }: GrantEditorProps) {
           <div className="grid grid-cols-2 gap-3"><Input label="HTTP 方法（逗号分隔）" value={state.methods} onChange={(e) => update("methods", e.target.value)} /><label className="text-xs">网络区域<select value={state.zone} onChange={(e) => update("zone", e.target.value as GrantEditorState["zone"])} className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-2 text-sm text-[var(--text)]"><option value="public">Public</option><option value="loopback">Loopback</option><option value="private">Private</option></select></label></div>
         </>}
 
-        {state.kind === "process" && <>
-          <label className="text-xs">进程范围<select value={state.processScope} onChange={(e) => update("processScope", e.target.value as GrantEditorState["processScope"])} className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-2 text-sm text-[var(--text)]"><option value="managed_children">仅 Agent 管理的子进程</option><option value="explicit_pid">指定 PID</option><option value="all_host_processes">主机所有进程（危险）</option></select></label>
-          {state.processScope === "explicit_pid" && <Input label="PID" value={state.pid} onChange={(e) => update("pid", e.target.value)} type="number" min="1" />}
-        </>}
+        {state.kind === "process" && <p className="rounded-md border border-[var(--border)] px-2 py-2 text-xs text-[var(--text-muted)]">进程控制范围固定为仅 Agent 管理的子进程；主机任意进程和显式 PID 不属于 v0.8 授权模型。</p>}
 
         {state.kind === "shell" && <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={state.hostEscapeAcknowledged} onChange={(e) => update("hostEscapeAcknowledged", e.target.checked)} />我明确知道这会允许 Shell 逃逸工作区边界</label>}
         {warning && <p className="rounded-md border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2 py-2 text-xs text-[var(--warning)]">{warning}</p>}

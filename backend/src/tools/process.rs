@@ -185,6 +185,9 @@ impl Tool for ProcessTool {
         if pid == std::process::id() {
             return ToolResult::error("禁止终止后端自身进程");
         }
+        if !context.authorized_process(Some(pid)) {
+            return ToolResult::error("进程控制缺少安全网关创建的 ManagedChildren 授权证据");
+        }
         match context.managed_process_registry.terminate_pid(pid) {
             Ok(()) => ToolResult::success(format!("受控进程 {} 已终止", pid)),
             Err(error) => ToolResult::error(error),
@@ -201,8 +204,14 @@ mod tests {
     #[tokio::test]
     async fn kill_unknown_pid_and_self_pid_are_hard_denied() {
         let tool = ProcessTool;
-        let context =
-            ToolExecutionContext::new(Arc::new(ManagedProcessRegistry::new()), "process-test");
+        let context = ToolExecutionContext::new_with_resources(
+            Arc::new(ManagedProcessRegistry::new()),
+            "process-test",
+            vec![crate::safety::grant::AuthorizedResource::Process {
+                pid: Some(4294967294),
+                managed_only: true,
+            }],
+        );
 
         let unknown = tool
             .execute_with_context(

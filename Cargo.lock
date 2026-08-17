@@ -6365,7 +6365,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "yi-lian-qian-yan"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "tauri",
  "tauri-build",
@@ -6378,7 +6378,7 @@ dependencies = [
 
 [[package]]
 name = "yilian-backend"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "async-stream",
  "async-trait",

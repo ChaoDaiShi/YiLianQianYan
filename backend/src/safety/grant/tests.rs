@@ -107,6 +107,27 @@ fn validate_grant_rejects_empty_filesystem_root() {
 }
 
 #[test]
+fn validate_grant_rejects_legacy_process_scopes_for_v08() {
+    for scope in [
+        ProcessGrantScope::ExplicitPid { pid: 1234 },
+        ProcessGrantScope::AllHostProcesses,
+    ] {
+        assert!(validate_grant(
+            PermissionId::ProcessControl,
+            &GrantResource::Process { scope }
+        )
+        .is_err());
+    }
+    assert!(validate_grant(
+        PermissionId::ProcessControl,
+        &GrantResource::Process {
+            scope: ProcessGrantScope::ManagedChildren,
+        }
+    )
+    .is_ok());
+}
+
+#[test]
 fn validate_grant_rejects_wildcard_all_invalid_scheme_and_method() {
     for resource in [
         GrantResource::Network {

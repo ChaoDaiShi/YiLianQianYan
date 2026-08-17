@@ -18,10 +18,11 @@ use crate::{
 };
 
 use super::{
-    describe_builtin_tool, grant::GrantDecision, grant::GrantEvaluator, AuditError,
-    AuditEventInput, AuditEventType, AuditRecorder, BuiltInRole, DecisionContext, DescriptorError,
-    PermissionId, PolicyDecision, PolicyEngine, ResourceDescriptor, ResourceScope, SafetyPolicy,
-    SecuritySubject, ToolSecurityDescriptor, POLICY_VERSION,
+    describe_builtin_tool,
+    grant::{AuthorizedResource, GrantDecision, GrantEvaluation, GrantEvaluator},
+    AuditError, AuditEventInput, AuditEventType, AuditRecorder, BuiltInRole, DecisionContext,
+    DescriptorError, PermissionId, PolicyDecision, PolicyEngine, ResourceDescriptor, ResourceScope,
+    SafetyPolicy, SecuritySubject, ToolSecurityDescriptor, POLICY_VERSION,
 };
 
 #[derive(Debug)]
@@ -350,9 +351,10 @@ impl SecurityExecutionGateway {
     {
         self.record_execution_started(request, &context)?;
         on_execution_start();
-        let tool_context = ToolExecutionContext::new(
+        let tool_context = ToolExecutionContext::new_with_resources(
             std::sync::Arc::clone(&self.managed_process_registry),
             request.tool_call_id.clone(),
+            context.authorized_resources.clone(),
         );
         let tool_result = match self
             .tool_registry
@@ -458,7 +460,7 @@ impl SecurityExecutionGateway {
             event_type: AuditEventType::PolicyDecided,
             correlation_id: request.tool_call_id.clone(),
             request_id: request.tool_call_id.clone(),
-            subject_id: "local-user".to_string(),
+            subject_id: request.subject.subject_id.clone(),
             role_key: context.role.as_str().to_string(),
             conversation_id: Some(request.conversation_id.clone()),
             tool_call_id: Some(request.tool_call_id.clone()),
@@ -502,7 +504,7 @@ impl SecurityExecutionGateway {
             event_type: AuditEventType::ApprovalRequested,
             correlation_id: request.tool_call_id.clone(),
             request_id: request.tool_call_id.clone(),
-            subject_id: "local-user".to_string(),
+            subject_id: request.subject.subject_id.clone(),
             role_key: context.role.as_str().to_string(),
             conversation_id: Some(request.conversation_id.clone()),
             tool_call_id: Some(request.tool_call_id.clone()),
@@ -589,7 +591,7 @@ impl SecurityExecutionGateway {
             event_type,
             correlation_id: request.tool_call_id.clone(),
             request_id: request.tool_call_id.clone(),
-            subject_id: "local-user".to_string(),
+            subject_id: request.subject.subject_id.clone(),
             role_key: context.role.as_str().to_string(),
             conversation_id: Some(request.conversation_id.clone()),
             tool_call_id: Some(request.tool_call_id.clone()),
@@ -634,7 +636,7 @@ impl SecurityExecutionGateway {
             event_type: AuditEventType::VerificationFinished,
             correlation_id: request.tool_call_id.clone(),
             request_id: request.tool_call_id.clone(),
-            subject_id: "local-user".to_string(),
+            subject_id: request.subject.subject_id.clone(),
             role_key: context.role.as_str().to_string(),
             conversation_id: Some(request.conversation_id.clone()),
             tool_call_id: Some(request.tool_call_id.clone()),
@@ -829,6 +831,7 @@ impl SecurityExecutionGateway {
             policy_version: POLICY_VERSION.to_string(),
             requested_permissions,
             resource_scopes,
+            authorized_resources: Vec::new(),
             reason: format!("tool {} requested security evaluation", request.tool_name),
         })
     }
@@ -897,6 +900,7 @@ impl SecurityExecutionGateway {
             resource_scopes,
             assessed_risk.max(final_risk),
         )?;
+        let mut authorized_resources = Vec::new();
 
         if sandbox_allows_file_write == Some(false) {
             context.reason = format!(
@@ -935,16 +939,24 @@ impl SecurityExecutionGateway {
                 let mut missing = false;
                 for requested in &descriptor.requested_permissions {
                     for resource in &descriptor.resources {
-                        let grant_decision =
-                            grant_evaluator.evaluate(requested.permission, resource, now_ms);
+                        let grant_decision = grant_evaluator.evaluate_with_evidence(
+                            requested.permission,
+                            resource,
+                            now_ms,
+                        );
                         self.record_grant_evaluated(
                             request,
                             &context,
                             requested.permission,
                             resource,
-                            &grant_decision,
+                            &grant_decision.decision,
                         )?;
-                        match grant_decision {
+                        if let Some(evidence) =
+                            authorized_resource_from_evaluation(resource, &grant_decision, true)
+                        {
+                            authorized_resources.push(evidence);
+                        }
+                        match grant_decision.decision {
                             GrantDecision::Deny { reason } => {
                                 context.reason = format!(
                                     "resource grant denied {}: {reason}",
@@ -964,12 +976,36 @@ impl SecurityExecutionGateway {
                         "tool {} requires a resource grant (missing)",
                         request.tool_name
                     );
-                    return Ok(PolicyDecision::RequireApproval(context));
                 }
             }
         }
 
-        Ok(rbac)
+        if !self.grants_enabled || authorized_resources.is_empty() {
+            authorized_resources.extend(descriptor.resources.iter().filter_map(|resource| {
+                authorized_resource_from_evaluation(
+                    resource,
+                    &GrantEvaluation {
+                        decision: GrantDecision::Allow,
+                        matched_grant_id: None,
+                        matched_resource: None,
+                    },
+                    false,
+                )
+            }));
+        }
+        context.authorized_resources = authorized_resources;
+        if matches!(rbac, PolicyDecision::Allow(_))
+            && context.reason.contains("requires a resource grant")
+        {
+            return Ok(PolicyDecision::RequireApproval(context));
+        }
+        match rbac {
+            PolicyDecision::Allow(mut rbac_context) => {
+                rbac_context.authorized_resources = context.authorized_resources;
+                Ok(PolicyDecision::Allow(rbac_context))
+            }
+            other => Ok(other),
+        }
     }
 
     /// Evaluate the security policy for a request using the subject's
@@ -1046,6 +1082,54 @@ fn grant_resource_evidence(resource: &ResourceDescriptor) -> serde_json::Value {
         }),
         ResourceDescriptor::Subagent { .. } => serde_json::json!({ "kind": "subagent" }),
     }
+}
+
+fn authorized_resource_from_evaluation(
+    resource: &ResourceDescriptor,
+    evaluation: &GrantEvaluation,
+    grant_enforced: bool,
+) -> Option<AuthorizedResource> {
+    match resource {
+        ResourceDescriptor::Network { url, method } => {
+            let target = crate::safety::grant::parse_network_target(url).ok()?;
+            let port = target
+                .port
+                .unwrap_or(if target.scheme.eq_ignore_ascii_case("http") {
+                    80
+                } else {
+                    443
+                });
+            let (zone, grant_id, one_shot_approval) = match &evaluation.matched_resource {
+                Some(crate::safety::grant::GrantResource::Network { zone, .. }) => {
+                    (*zone, evaluation.matched_grant_id.clone(), false)
+                }
+                _ => (default_network_zone(&target.host), None, grant_enforced),
+            };
+            Some(AuthorizedResource::Network {
+                scheme: target.scheme,
+                host: target.host,
+                port,
+                method: method.to_ascii_uppercase(),
+                zone,
+                grant_id,
+                one_shot_approval,
+            })
+        }
+        ResourceDescriptor::Process { pid, .. } => Some(AuthorizedResource::Process {
+            pid: *pid,
+            managed_only: true,
+        }),
+        _ => None,
+    }
+}
+
+fn default_network_zone(host: &str) -> crate::safety::grant::NetworkZone {
+    if host.eq_ignore_ascii_case("localhost") {
+        return crate::safety::grant::NetworkZone::Loopback;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(crate::safety::grant::classify_ip)
+        .unwrap_or(crate::safety::grant::NetworkZone::Public)
 }
 
 #[cfg(test)]
@@ -1607,9 +1691,7 @@ mod tests {
         db.create_grant(&user_grant(
             PermissionId::ProcessControl,
             GrantResource::Process {
-                scope: crate::safety::grant::ProcessGrantScope::ExplicitPid {
-                    pid: std::process::id(),
-                },
+                scope: crate::safety::grant::ProcessGrantScope::ManagedChildren,
             },
         ))
         .unwrap();
@@ -2084,6 +2166,43 @@ mod tests {
             .unwrap()
             .find("README.md")
             .is_none());
+        drop(gateway);
+        drop(recorder);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn runtime_audit_events_preserve_non_default_subject_id() {
+        let (registry, _executions) = registry_with_counting_tool("read_file");
+        let (verifier, _verifications) = counting_verifier();
+        let (recorder, db_path) = audit_recorder("subject-propagation");
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::ReadOnly, &[], &[]),
+            "workspace",
+            registry,
+            verifier,
+            Arc::clone(&recorder),
+        );
+        let mut request = request("read_file", serde_json::json!({"path": "README.md"}));
+        request.subject = SecuritySubject::from_subject_id("subject-test-123");
+
+        let outcome = gateway
+            .execute_with_role(&request, BuiltInRole::Standard, RiskLevel::Low)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, SecurityExecutionOutcome::Executed { .. }));
+
+        let events = recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(request.tool_call_id),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(events.len() >= 4);
+        assert!(events
+            .iter()
+            .all(|event| event.subject_id == "subject-test-123"));
+
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
