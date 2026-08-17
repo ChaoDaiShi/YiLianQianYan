@@ -50,44 +50,42 @@ export default function ChatInput({
   };
 
   return (
-    <div className="shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
-      <div className="message-column">
-        <div className="surface-elevated flex items-end gap-2 rounded-2xl p-2.5">
-          <div className="min-w-0 flex-1">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="告诉我你想完成什么…"
-              rows={1}
-              disabled={isLoading}
-              className="block max-h-[180px] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text)] outline-none placeholder:text-[var(--text-faint)] disabled:opacity-60"
-            />
-            <p className="px-2 pt-1 text-[10px] text-[var(--text-faint)]">
-              Enter 发送 · Shift + Enter 换行
-            </p>
-          </div>
+    <div className="w-full">
+      <div className="composer-card mx-auto rounded-2xl p-3 [width:min(680px,calc(100%-48px))]">
+        <textarea
+          ref={textareaRef}
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="告诉小昔涟你想完成什么……"
+          rows={1}
+          disabled={isLoading}
+          className="block min-h-[52px] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text)] outline-none placeholder:text-[var(--text-faint)] disabled:opacity-60"
+        />
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <p className="text-[10px] text-[var(--text-faint)]">
+            Enter 发送 · Shift + Enter 换行
+          </p>
           {isLoading ? (
             <Button
               type="button"
               variant="danger"
+              size="sm"
               onClick={onStop}
               title="停止执行"
-              className="mb-0.5 shrink-0"
             >
-              <Square className="h-4 w-4" />
+              <Square className="h-3.5 w-3.5" />
               停止
             </Button>
           ) : (
             <Button
               type="button"
+              size="sm"
               onClick={send}
               disabled={!input.trim()}
               title="发送消息"
-              className="mb-0.5 shrink-0"
             >
-              <Send className="h-4 w-4" />
+              <Send className="h-3.5 w-3.5" />
               发送
             </Button>
           )}

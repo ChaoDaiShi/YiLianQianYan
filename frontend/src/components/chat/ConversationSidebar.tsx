@@ -3,6 +3,7 @@ import { MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
 import { deleteConversation, listConversations } from "../../api/client";
 import type { ConversationSummary } from "../../types";
 import { Button, EmptyState } from "../ui";
+import { deriveTaskDisplayTitle, looksLikeCommand } from "./taskTitle";
 
 interface Props {
   activeId: string | null;
@@ -80,7 +81,7 @@ export default function ConversationSidebar({
       </div>
 
       <div className="space-y-2 border-b border-[var(--border)] p-3">
-        <Button type="button" onClick={createNew} className="w-full" size="md">
+        <Button type="button" onClick={createNew} className="h-10 w-full" size="md">
           <Plus className="h-4 w-4" />
           新建任务
         </Button>
@@ -107,6 +108,8 @@ export default function ConversationSidebar({
           <div className="space-y-1">
             {filtered.map((conversation) => {
               const active = activeId === conversation.id;
+              const displayTitle = deriveTaskDisplayTitle(conversation.title);
+              const isCommand = looksLikeCommand(conversation.title ?? "");
               return (
                 <div
                   key={conversation.id}
@@ -123,16 +126,20 @@ export default function ConversationSidebar({
                     type="button"
                     onClick={() => selectConversation(conversation.id)}
                     className="min-w-0 flex-1 truncate text-left"
-                    title={conversation.title || "新任务"}
+                    title={
+                      isCommand
+                        ? `命令：${conversation.title}`
+                        : conversation.title || "新任务"
+                    }
                   >
-                    {conversation.title || "新任务"}
+                    {displayTitle}
                   </button>
                   <button
                     type="button"
                     onClick={() => void removeConversation(conversation)}
                     className="rounded p-1 text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] focus:opacity-100 group-hover:opacity-100"
                     title="删除任务"
-                    aria-label={`删除${conversation.title || "任务"}`}
+                    aria-label={`删除${displayTitle}`}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>

@@ -6,7 +6,7 @@ describe("semantic theme variables", () => {
   it("maps the cyrene preset to semantic and legacy variables", () => {
     const variables = buildThemeVariables(DEFAULT_THEME);
 
-    expect(variables["--bg-app"]).toBe("#f9f7ff");
+    expect(variables["--bg-app"]).toBe("#F8F6FD");
     expect(variables["--bg-soft"]).toBe("#f4f0fc");
     expect(variables["--bg-subtle"]).toBe("#f4f0fc");
     expect(variables["--surface-solid"]).toBe("#ffffff");
@@ -34,7 +34,7 @@ describe("semantic theme variables", () => {
     expect(variables["--shadow-float"]).toBe(
       "0 12px 36px rgba(48,38,76,0.10)",
     );
-    expect(variables["--bg"]).toBe("#f9f7ff");
+    expect(variables["--bg"]).toBe("#F8F6FD");
     expect(variables["--accent"]).toBe("#ea91b9");
   });
 
@@ -44,7 +44,7 @@ describe("semantic theme variables", () => {
       customVars: { "--bg-app": "url(javascript:alert(1))", "--accent": "#123456" },
     });
 
-    expect(variables["--bg-app"]).toBe("#f9f7ff");
+    expect(variables["--bg-app"]).toBe("#F8F6FD");
     expect(variables["--accent"]).toBe("#123456");
   });
 

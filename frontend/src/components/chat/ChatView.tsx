@@ -39,6 +39,7 @@ import {
 import ChatInput from "./ChatInput";
 import ChatHeader from "./ChatHeader";
 import MessageList, { type StreamingState } from "./MessageList";
+import WorkbenchHome from "./WorkbenchHome";
 
 interface ChatViewProps {
   conversationId: string | null;
@@ -374,21 +375,38 @@ export default function ChatView({
           onSelectWorkflow={handleSelectWorkflow}
         />
 
-      <MessageList
-        messages={messages}
-        streaming={streaming}
-        scrollContainerRef={messagesScrollRef}
-        onHint={setSuggestedText}
-        error={error}
-      />
+      {messages.length === 0 && !streaming && !error ? (
+        <WorkbenchHome
+          connection={runState.connection}
+          pendingApprovals={pendingApprovals}
+          isLoading={isLoading}
+          onSend={handleSend}
+          onStop={handleStop}
+          suggestedText={suggestedText}
+          onTextUsed={() => setSuggestedText("")}
+          onHint={setSuggestedText}
+        />
+      ) : (
+        <>
+          <MessageList
+            messages={messages}
+            streaming={streaming}
+            scrollContainerRef={messagesScrollRef}
+            onHint={setSuggestedText}
+            error={error}
+          />
 
-      <ChatInput
-        onSend={handleSend}
-        isLoading={isLoading}
-        onStop={handleStop}
-        suggestedText={suggestedText}
-        onTextUsed={() => setSuggestedText("")}
-      />
+          <footer className="shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
+            <ChatInput
+              onSend={handleSend}
+              isLoading={isLoading}
+              onStop={handleStop}
+              suggestedText={suggestedText}
+              onTextUsed={() => setSuggestedText("")}
+            />
+          </footer>
+        </>
+      )}
 
       </div>
       {renderExecution?.({

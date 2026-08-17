@@ -44,7 +44,7 @@ export default function ExecutionSidebar({
   ).length;
 
   return (
-    <aside className="flex h-full min-h-0 flex-col bg-[var(--bg-2)] text-[var(--text)]">
+    <aside className="flex h-full min-h-0 flex-col bg-[var(--surface-muted)] text-[var(--text)]">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
         <div>
           <h2 className="text-sm font-semibold">执行轨迹</h2>

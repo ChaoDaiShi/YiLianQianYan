@@ -5,9 +5,9 @@ import { normalizeStoredTheme } from "./ThemeProvider";
 describe("theme presets", () => {
   it("uses cyrene-ripple as the default for new installations", () => {
     expect(DEFAULT_THEME.presetId).toBe("cyrene-ripple");
-    expect(DEFAULT_THEME.colors.bg).toBe("#f9f7ff");
+    expect(DEFAULT_THEME.colors.bg).toBe("#F8F6FD");
     expect(DEFAULT_THEME.colors.bg2).toBe("#f4f0fc");
-    expect(DEFAULT_THEME.colors.panel).toBe("rgba(255,255,255,0.78)");
+    expect(DEFAULT_THEME.colors.panel).toBe("rgba(255,255,255,0.82)");
     expect(DEFAULT_THEME.colors.panelHover).toBe("#f9f3fc");
     expect(DEFAULT_THEME.colors.textMuted).toBe("#696276");
     expect(DEFAULT_THEME.colors.textFaint).toBe("#9690A1");
@@ -68,12 +68,12 @@ describe("theme presets", () => {
       presetId: "cyrene-ripple",
       colors: {
         ...DEFAULT_THEME.colors,
-        panel: "rgba(255,255,255,0.82)",
+        panel: "rgba(255,255,255,0.5)",
         panelHover: "#faf5ff",
       },
     });
 
-    expect(normalized.colors.panel).toBe("rgba(255,255,255,0.78)");
+    expect(normalized.colors.panel).toBe("rgba(255,255,255,0.82)");
     expect(normalized.colors.panelHover).toBe("#f9f3fc");
   });
 });

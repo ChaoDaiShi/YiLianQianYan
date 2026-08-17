@@ -11,14 +11,15 @@
 
   :root {
     color-scheme: light;
-    --bg-app: #f9f7ff;
+    --bg-app: #F8F6FD;
     --bg-soft: #f4f0fc;
     --bg-subtle: var(--bg-soft);
-    --surface: rgba(255, 255, 255, 0.78);
+    --surface: rgba(255, 255, 255, 0.82);
     --surface-solid: #ffffff;
-    --surface-muted: #f9f3fc;
+    --surface-muted: rgba(252, 249, 255, 0.68);
     --surface-elevated: #ffffff;
     --surface-hover: #f9f3fc;
+    --titlebar-bg: #FBF9FF;
     --text-primary: #292536;
     --text-secondary: #696276;
     --text-faint: #9690A1;
@@ -149,11 +150,11 @@
   }
 
   .workbench-grid[data-mode="full"] {
-    grid-template-columns: 248px minmax(0, 1fr) 304px;
+    grid-template-columns: 288px minmax(0, 1fr) 312px;
   }
 
   .workbench-grid[data-mode="compact"] {
-    grid-template-columns: 248px minmax(0, 1fr);
+    grid-template-columns: 288px minmax(0, 1fr);
   }
 
   .workbench-grid[data-mode="narrow"] {
@@ -173,6 +174,37 @@
       background-color var(--motion-fast) ease,
       border-color var(--motion-fast) ease,
       box-shadow var(--motion-normal) ease;
+  }
+
+  .composer-card {
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-soft);
+    box-shadow: var(--shadow-card);
+    transition:
+      border-color var(--motion-fast) ease,
+      box-shadow var(--motion-fast) ease;
+  }
+
+  .composer-card:focus-within {
+    border-color: var(--accent-border);
+    box-shadow: 0 0 0 3px rgba(234, 145, 185, 0.08);
+  }
+
+  /* Ambient 昔涟 background for the idle workbench home. */
+  .home-ambient {
+    background:
+      radial-gradient(58% 46% at 50% 34%, rgba(234, 145, 185, 0.08), transparent 72%),
+      radial-gradient(42% 34% at 26% 72%, rgba(173, 155, 232, 0.06), transparent 72%),
+      radial-gradient(42% 34% at 74% 74%, rgba(153, 207, 234, 0.05), transparent 72%);
+  }
+
+  .home-ambient-stars {
+    background-image:
+      radial-gradient(1.5px 1.5px at 18% 22%, rgba(234, 145, 185, 0.5), transparent 100%),
+      radial-gradient(1px 1px at 72% 18%, rgba(173, 155, 232, 0.55), transparent 100%),
+      radial-gradient(1.5px 1.5px at 84% 48%, rgba(234, 145, 185, 0.4), transparent 100%),
+      radial-gradient(1px 1px at 12% 62%, rgba(153, 207, 234, 0.5), transparent 100%),
+      radial-gradient(1.5px 1.5px at 62% 82%, rgba(173, 155, 232, 0.35), transparent 100%);
   }
 
   .scrollbar-thin {

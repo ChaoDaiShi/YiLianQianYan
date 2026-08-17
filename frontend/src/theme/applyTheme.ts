@@ -51,6 +51,7 @@ function buildSemanticTokens(
     "--surface-muted": legacy["--panel-hover"],
     "--surface-elevated": legacy["--panel-2"],
     "--surface-hover": legacy["--panel-hover"],
+    "--titlebar-bg": legacy["--panel-2"],
     "--text-primary": legacy["--text"],
     "--text-secondary": legacy["--text-muted"],
     "--text-faint": legacy["--text-faint"],

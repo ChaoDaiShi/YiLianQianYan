@@ -60,7 +60,7 @@ export default function ChatHeader({
   };
 
   return (
-    <header className="relative z-30 flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--panel)] px-3 min-[960px]:px-4">
+    <header className="relative z-30 flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--titlebar-bg)] px-3 min-[960px]:px-4">
       {showConversationToggle && (
         <button
           ref={conversationToggleRef}

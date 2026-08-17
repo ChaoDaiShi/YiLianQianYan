@@ -28,7 +28,7 @@ describe("NavRail groups", () => {
   });
 
   it("uses a readable wide grouped layout at the default desktop breakpoint", () => {
-    expect(navRailSource).toContain("min-[1180px]:w-[220px]");
+    expect(navRailSource).toContain("min-[1180px]:w-[176px]");
     expect(navRailSource).toContain("min-[1180px]:flex-row");
     expect(navRailSource).toContain("min-[1180px]:block");
     expect(navRailSource).toContain("✦");

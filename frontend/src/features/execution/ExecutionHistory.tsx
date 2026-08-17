@@ -56,7 +56,7 @@ export default function ExecutionHistory({
 }) {
   if (records.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-[var(--border)] px-4 py-6 text-center text-xs text-[var(--text-muted)]">
+      <div className="rounded-xl border border-dashed border-[var(--border-soft)] px-4 py-6 text-center text-xs text-[var(--text-faint)]">
         暂无执行记录
       </div>
     );

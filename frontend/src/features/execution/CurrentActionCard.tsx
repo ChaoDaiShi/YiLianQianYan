@@ -41,18 +41,18 @@ export default function CurrentActionCard({
   if (!record) {
     const interrupted = connection === "interrupted" || connection === "error";
     return (
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
+      <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4">
         <div className="flex items-start gap-3">
           {interrupted ? (
             <Unplug className="mt-0.5 h-4 w-4 shrink-0 text-[var(--danger)]" />
           ) : (
-            <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--success)]" />
+            <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-faint)]" />
           )}
           <div>
-            <p className="text-sm font-medium">
+            <p className="text-sm font-normal text-[var(--text-secondary)]">
               {interrupted ? "执行流已中断" : "当前没有待处理动作"}
             </p>
-            <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
+            <p className="mt-1 text-xs leading-5 text-[var(--text-faint)]">
               {interrupted
                 ? "连接未正常结束，请检查聊天区提示后重试。"
                 : "新的工具调用或审批请求会显示在这里。"}

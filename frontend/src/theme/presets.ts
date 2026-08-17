@@ -32,9 +32,9 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
     presetId: "cyrene-ripple",
     bgMode: "solid",
     colors: makeColors({
-      bg: "#f9f7ff",
+      bg: "#F8F6FD",
       bg2: "#f4f0fc",
-      panel: "rgba(255,255,255,0.78)",
+      panel: "rgba(255,255,255,0.82)",
       panel2: "#ffffff",
       panelHover: "#f9f3fc",
       text: "#292536",
@@ -193,14 +193,15 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
 export const DEFAULT_THEME = PRESETS["cyrene-ripple"];
 
 export const CYRENE_SEMANTIC_TOKENS = {
-  "--bg-app": "#f9f7ff",
+  "--bg-app": "#F8F6FD",
   "--bg-soft": "#f4f0fc",
   "--bg-subtle": "#f4f0fc",
-  "--surface": "rgba(255,255,255,0.78)",
+  "--surface": "rgba(255,255,255,0.82)",
   "--surface-solid": "#ffffff",
-  "--surface-muted": "#f9f3fc",
+  "--surface-muted": "rgba(252,249,255,0.68)",
   "--surface-elevated": "#ffffff",
   "--surface-hover": "#f9f3fc",
+  "--titlebar-bg": "#FBF9FF",
   "--text-primary": "#292536",
   "--text-secondary": "#696276",
   "--text-faint": "#9690A1",

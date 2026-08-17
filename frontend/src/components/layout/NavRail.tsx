@@ -48,7 +48,7 @@ export default function NavRail() {
   return (
     <nav
       aria-label="全局导航"
-      className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center gap-0.5 border-r border-[var(--border)] bg-[var(--sidebar-bg)] py-3 text-[var(--sidebar-text)] min-[960px]:w-[88px] min-[1180px]:w-[220px] min-[1180px]:items-stretch"
+      className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center gap-0.5 border-r border-[var(--border)] bg-[var(--sidebar-bg)] py-3 text-[var(--sidebar-text)] min-[960px]:w-[88px] min-[1180px]:w-[176px] min-[1180px]:items-stretch"
     >
       <button
         type="button"
@@ -67,7 +67,7 @@ export default function NavRail() {
         </span>
       </button>
 
-      <div className="mb-2 w-8 shrink-0 border-t border-white/15 min-[1180px]:mx-3 min-[1180px]:w-auto" />
+      <div className="mb-2 w-8 shrink-0 border-t border-white/[0.07] min-[1180px]:mx-3 min-[1180px]:w-auto" />
 
       <div
         className="mb-2 hidden shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-xs text-[var(--sidebar-text)] opacity-80 min-[1180px]:mx-3 min-[1180px]:flex"
@@ -91,11 +91,11 @@ export default function NavRail() {
           >
             {groupIndex > 0 && (
               <div
-                className="mb-2 w-8 border-t border-white/10 min-[1180px]:mx-3 min-[1180px]:mb-3 min-[1180px]:w-auto"
+                className="mb-2 w-8 border-t border-white/[0.07] min-[1180px]:mx-3 min-[1180px]:mb-3 min-[1180px]:w-auto"
                 aria-hidden="true"
               />
             )}
-            <div className="mb-1 hidden px-3 text-xs tracking-[0.12em] text-[var(--sidebar-muted)] min-[1180px]:block">
+            <div className="mb-1 hidden px-3 text-[11px] tracking-[0.12em] text-[var(--sidebar-muted)] min-[1180px]:block">
               {group.label}
             </div>
             {group.items.map((item) => {
@@ -106,9 +106,9 @@ export default function NavRail() {
                   to={item.to}
                   className={({ isActive }) =>
                     cn(
-                      "relative flex w-[60px] flex-col items-center gap-0.5 rounded-lg py-1.5 text-[10px] leading-tight transition-colors min-[960px]:w-[76px] min-[1180px]:mx-3 min-[1180px]:w-auto min-[1180px]:flex-row min-[1180px]:gap-2 min-[1180px]:rounded-xl min-[1180px]:px-3 min-[1180px]:py-2 min-[1180px]:text-sm",
+                      "relative flex w-[60px] flex-col items-center gap-0.5 rounded-lg py-1.5 text-[10px] leading-tight transition-colors duration-[var(--motion-fast)] min-[960px]:w-[76px] min-[1180px]:mx-3 min-[1180px]:min-h-10 min-[1180px]:w-auto min-[1180px]:flex-row min-[1180px]:gap-2 min-[1180px]:rounded-xl min-[1180px]:px-3 min-[1180px]:py-2 min-[1180px]:text-sm",
                       isActive
-                        ? "bg-[var(--sidebar-active)] font-medium text-[var(--accent-primary)]"
+                        ? "bg-[var(--sidebar-active)] font-medium text-white"
                         : "text-[var(--sidebar-text)] opacity-80 hover:bg-white/10 hover:opacity-100",
                     )
                   }
