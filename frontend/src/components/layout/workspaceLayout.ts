@@ -15,6 +15,23 @@ export interface MessageScrollTarget {
   scrollTo(options: ScrollToOptions): void;
 }
 
+export interface MessageScrollMetrics {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+}
+
+export function isNearBottom(
+  container: MessageScrollMetrics | null,
+  threshold = 48
+): boolean {
+  if (!container) return true;
+  return (
+    container.scrollHeight - container.scrollTop - container.clientHeight <=
+    threshold
+  );
+}
+
 export function scrollMessageListToBottom(
   container: MessageScrollTarget | null,
   behavior: ScrollBehavior = "smooth"

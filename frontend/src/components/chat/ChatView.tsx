@@ -34,6 +34,7 @@ import type { PendingApproval, RiskLevel } from "../../types/approval";
 import type { AgentRunState } from "../../features/execution/model";
 import {
   CHAT_COLUMN_VIEWPORT_CLASS_NAME,
+  isNearBottom,
   scrollMessageListToBottom,
 } from "../layout/workspaceLayout";
 import ChatInput from "./ChatInput";
@@ -116,6 +117,7 @@ export default function ChatView({
   const abortRef = useRef<AbortController | null>(null);
   const finishedTimerRef = useRef<number | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const shouldFollowMessagesRef = useRef(true);
   const unknownEventTypes = useRef(new Set<string>());
 
   useEffect(() => {
@@ -142,6 +144,7 @@ export default function ChatView({
   }, [loadWorkflows]);
 
   useEffect(() => {
+    shouldFollowMessagesRef.current = true;
     let cancelled = false;
     setFinished(false);
     if (finishedTimerRef.current !== null) {
@@ -311,8 +314,16 @@ export default function ChatView({
   }, [currentConvId, execution.completed]);
 
   useEffect(() => {
+    if (!shouldFollowMessagesRef.current) return;
     scrollMessageListToBottom(messagesScrollRef.current);
   }, [messages, runState.content, runState.order.length]);
+
+  const handleMessageScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      shouldFollowMessagesRef.current = isNearBottom(event.currentTarget);
+    },
+    []
+  );
 
   const streaming = useMemo<StreamingState | null>(() => {
     const hasLiveOutput = runState.content.length > 0 || runState.order.length > 0;
@@ -341,6 +352,7 @@ export default function ChatView({
   const handleSend = useCallback(
     (text: string) => {
       if (!text.trim() || isLoading) return;
+      shouldFollowMessagesRef.current = true;
       setError(null);
       setFinished(false);
       setLastSubmittedText(text);
@@ -433,6 +445,7 @@ export default function ChatView({
             messages={messages}
             streaming={streaming}
             scrollContainerRef={messagesScrollRef}
+            onScroll={handleMessageScroll}
             error={error}
             onRetry={handleRetry}
           />

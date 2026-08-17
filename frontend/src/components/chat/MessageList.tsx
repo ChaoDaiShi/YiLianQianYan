@@ -13,6 +13,7 @@ interface MessageListProps {
   messages: Message[];
   streaming: StreamingState | null;
   scrollContainerRef: React.RefObject<HTMLDivElement>;
+  onScroll?: React.UIEventHandler<HTMLDivElement>;
   error?: string | null;
   onRetry?: () => void;
 }
@@ -61,11 +62,16 @@ export default function MessageList({
   messages,
   streaming,
   scrollContainerRef,
+  onScroll,
   error,
   onRetry,
 }: MessageListProps) {
   return (
-    <div ref={scrollContainerRef} className={MESSAGE_LIST_VIEWPORT_CLASS_NAME}>
+    <div
+      ref={scrollContainerRef}
+      onScroll={onScroll}
+      className={MESSAGE_LIST_VIEWPORT_CLASS_NAME}
+    >
       <div className="message-column">
         {messages.map((message, index) => (
           <MessageBubble

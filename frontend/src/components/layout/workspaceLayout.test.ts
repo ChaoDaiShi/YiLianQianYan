@@ -6,7 +6,7 @@ import messageListSource from "../chat/MessageList.tsx?raw";
 import executionSidebarSource from "../../features/execution/ExecutionSidebar.tsx?raw";
 import * as workspaceLayout from "./workspaceLayout";
 
-const { getDrawerState, getWorkspaceMode } = workspaceLayout;
+const { getDrawerState, getWorkspaceMode, isNearBottom } = workspaceLayout;
 
 describe("getWorkspaceMode", () => {
   it.each([
@@ -89,6 +89,15 @@ describe("history conversation viewport contract", () => {
     ).not.toThrow();
   });
 
+  it("only follows a message list while it is near the bottom", () => {
+    expect(
+      isNearBottom({ scrollTop: 900, clientHeight: 100, scrollHeight: 1_000 })
+    ).toBe(true);
+    expect(
+      isNearBottom({ scrollTop: 700, clientHeight: 100, scrollHeight: 1_000 })
+    ).toBe(false);
+  });
+
   it.each([
     ["APP_CONTENT_VIEWPORT_CLASS_NAME", ["min-h-0", "overflow-hidden"]],
     [
@@ -112,6 +121,9 @@ describe("history conversation viewport contract", () => {
     expect(chatViewSource).not.toContain("scrollIntoView");
     expect(messageListSource).toContain("MESSAGE_LIST_VIEWPORT_CLASS_NAME");
     expect(messageListSource).toContain("ref={scrollContainerRef}");
+    expect(messageListSource).toContain("onScroll?:");
+    expect(chatViewSource).toContain("isNearBottom");
+    expect(chatViewSource).toContain("onScroll={handleMessageScroll}");
     expect(messageListSource).toContain("AgentProgressCard");
     expect(messageListSource).not.toContain("描述你的目标");
     expect(messageListSource).toContain("任务没有成功完成");

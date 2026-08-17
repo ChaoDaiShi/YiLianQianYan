@@ -119,7 +119,7 @@ export default function WorkbenchHome({
         aria-hidden="true"
       />
 
-      <div className="relative z-10 flex min-h-full flex-1 flex-col items-center justify-center gap-5 px-6 py-8">
+      <div className="home-content relative z-10 flex min-h-full flex-1 flex-col items-center justify-center gap-5 px-6 py-8">
         <div className="text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">
             {greeting()}{" "}
@@ -132,7 +132,7 @@ export default function WorkbenchHome({
           </p>
         </div>
 
-        <div className="relative">
+        <div className="home-character relative">
           <div
             className="absolute -inset-6 -z-10 rounded-full bg-[radial-gradient(circle,rgba(234,145,185,0.16),rgba(234,145,185,0)_70%)]"
             aria-hidden="true"
@@ -140,7 +140,7 @@ export default function WorkbenchHome({
           <img
             src="/favicon.png"
             alt="小昔涟"
-            className="h-[168px] w-[168px] object-contain"
+            className="home-character-image h-[168px] w-[168px] object-contain"
           />
         </div>
 
@@ -164,7 +164,7 @@ export default function WorkbenchHome({
           onTextUsed={onTextUsed}
         />
 
-        <div className="flex flex-wrap justify-center gap-3">
+        <div className="home-quick-actions flex flex-wrap justify-center gap-3">
           {QUICK_ACTIONS.map((action) => {
             const Icon = action.icon;
             return (
@@ -172,7 +172,7 @@ export default function WorkbenchHome({
                 key={action.title}
                 type="button"
                 onClick={() => onHint?.(action.prompt)}
-                className="flex w-[168px] flex-col items-start gap-2 rounded-xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3 text-left shadow-[var(--shadow-card)] transition-[transform,border-color] duration-[var(--motion-fast)] hover:-translate-y-px hover:border-[var(--accent-border)]"
+                className="home-quick-action flex w-[168px] flex-col items-start gap-2 rounded-xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3 text-left shadow-[var(--shadow-card)] transition-[transform,border-color] duration-[var(--motion-fast)] hover:-translate-y-px hover:border-[var(--accent-border)]"
               >
                 <Icon className="h-4 w-4 text-[var(--accent-purple)]" />
                 <span>
