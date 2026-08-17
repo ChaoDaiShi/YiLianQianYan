@@ -57,7 +57,10 @@ export function normalizeStoredTheme(raw: unknown): ThemeConfig {
       ? (rawPresetId as PresetId)
       : DEFAULT_THEME.presetId);
   const base = presetId === "custom" ? DEFAULT_THEME : PRESETS[presetId];
-  const storedColors = !migratedPresetId && isRecord(raw.colors) ? raw.colors : {};
+  const storedColors =
+    presetId === "custom" && !migratedPresetId && isRecord(raw.colors)
+      ? raw.colors
+      : {};
 
   return {
     ...base,

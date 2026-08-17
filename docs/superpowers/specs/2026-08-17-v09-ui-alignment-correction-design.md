@@ -10,6 +10,7 @@
 2. 增加 `sidebar-text`、`divider`、`radius-xs`、`radius-xl` 等定稿别名，同时保留现有 `sidebar-fg`、`border-soft` 等兼容名称。
 3. 将背景图片的绘制责任收敛到 AppShell，避免 body 与 AppShell 重复叠加背景图层。
 4. Sidebar 在默认宽窗口显示可读的分组式导航：Logo、产品名、连接状态、核心/能力/系统分组和粉紫 Active 状态；窄窗口保留现有紧凑导航，不改变路由或工作台抽屉逻辑。
+5. 内置主题使用规范值覆盖旧版已持久化的内置主题颜色；只有 `custom` 主题继续读取用户自定义颜色，避免历史状态把修复后的 Token 覆盖回去。
 
 ## 不变项
 

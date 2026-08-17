@@ -62,4 +62,18 @@ describe("theme presets", () => {
     expect(normalized.panelOpacity).toBe(0.72);
     expect(normalized.customVars).toEqual({ "--accent": "#123456" });
   });
+
+  it("uses the canonical Cyrene palette instead of stale persisted preset colors", () => {
+    const normalized = normalizeStoredTheme({
+      presetId: "cyrene-ripple",
+      colors: {
+        ...DEFAULT_THEME.colors,
+        panel: "rgba(255,255,255,0.82)",
+        panelHover: "#faf5ff",
+      },
+    });
+
+    expect(normalized.colors.panel).toBe("rgba(255,255,255,0.78)");
+    expect(normalized.colors.panelHover).toBe("#f9f3fc");
+  });
 });
