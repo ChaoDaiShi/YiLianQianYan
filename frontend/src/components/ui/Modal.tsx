@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef } from "react";
+import { useId } from "react";
 import { X } from "lucide-react";
 import { cn } from "./cn";
 import Button from "./Button";
+import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle";
 
 interface ModalProps {
   open: boolean;
@@ -13,30 +14,8 @@ interface ModalProps {
 }
 
 export default function Modal({ open, onClose, title, children, className, footer }: ModalProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const panelRef = useDialogFocusLifecycle({ open, onClose });
   const titleId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onClose();
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    panelRef.current?.focus();
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      previousFocusRef.current?.focus();
-    };
-  }, [onClose, open]);
 
   if (!open) return null;
   return (

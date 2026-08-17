@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildThemeVariables } from "./applyTheme";
-import { DEFAULT_THEME, PRESETS } from "./presets";
+import { CYRENE_SEMANTIC_TOKENS, DEFAULT_THEME, PRESETS } from "./presets";
 
 describe("semantic theme variables", () => {
   it("maps the cyrene preset to semantic and legacy variables", () => {
@@ -59,11 +59,56 @@ describe("semantic theme variables", () => {
     expect(variables["--accent-blue"]).toBe(PRESETS["precision-neutral"].colors.info);
     expect(variables["--accent-gold"]).toBe(PRESETS["precision-neutral"].colors.warning);
     expect(variables["--sidebar-bg"]).toBe(PRESETS["precision-neutral"].colors.nav);
-    expect(variables["--danger-fg"]).toBe(PRESETS["precision-neutral"].colors.accentFg);
+    expect(variables["--danger-fg"]).toBe(PRESETS["precision-neutral"].colors.text);
 
     expect(variables["--bg-app"]).not.toBe(cyreneVariables["--bg-app"]);
     expect(variables["--accent-primary"]).not.toBe(cyreneVariables["--accent-primary"]);
     expect(variables["--sidebar-bg"]).not.toBe(cyreneVariables["--sidebar-bg"]);
+  });
+
+  it.each([
+    ["font size", { fontSize: 17 }],
+    ["blur", { blur: 18 }],
+    ["panel opacity", { panelOpacity: 0.56 }],
+    ["background mode", { bgMode: "image" as const, bgImageKey: "background" }],
+  ])("keeps the Cyrene semantic base after a %s customization", (_label, patch) => {
+    const variables = buildThemeVariables({
+      ...DEFAULT_THEME,
+      ...patch,
+      presetId: "custom",
+      colors: { ...DEFAULT_THEME.colors },
+      customVars: {},
+    });
+
+    expect(variables).toMatchObject(CYRENE_SEMANTIC_TOKENS);
+  });
+
+  it("honors explicit color overrides on a Cyrene-origin custom theme", () => {
+    const variables = buildThemeVariables({
+      ...DEFAULT_THEME,
+      presetId: "custom",
+      colors: { ...DEFAULT_THEME.colors, accent: "#556677" },
+    });
+
+    expect(variables["--accent-primary"]).toBe("#556677");
+    expect(variables["--accent-soft"]).toBe("rgba(85,102,119,0.16)");
+  });
+
+  it("provides readable semantic foregrounds for every badge tone", () => {
+    const tokenNames = [
+      "--success-fg",
+      "--warning-fg",
+      "--danger-fg",
+      "--info-fg",
+      "--accent-soft-fg",
+    ];
+
+    for (const theme of Object.values(PRESETS)) {
+      const variables = buildThemeVariables(theme);
+      for (const tokenName of tokenNames) {
+        expect(variables[tokenName]).toBe(theme.colors.text);
+      }
+    }
   });
 
   it("derives semantic variables after allowed legacy custom overrides", () => {
@@ -105,7 +150,7 @@ describe("semantic theme variables", () => {
     expect(variables["--accent-gold"]).toBe("#c0a050");
     expect(variables["--sidebar-bg"]).toBe("#090a0b");
     expect(variables["--sidebar-fg"]).toBe("#dedfe0");
-    expect(variables["--danger-fg"]).toBe("#ffffff");
+    expect(variables["--danger-fg"]).toBe("#f1f2f3");
   });
 
   it("sets the same variable key set for cyrene and non-cyrene themes", () => {

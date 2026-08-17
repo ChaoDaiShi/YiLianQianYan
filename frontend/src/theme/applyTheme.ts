@@ -1,6 +1,6 @@
 import type { ThemeConfig } from "./types";
 import { PROTECTED_THEME_VAR_NAMES, THEME_VAR_WHITELIST } from "./types";
-import { CYRENE_SEMANTIC_TOKENS } from "./presets";
+import { CYRENE_SEMANTIC_TOKENS, PRESETS } from "./presets";
 
 function withOpacity(color: string, opacity: number): string {
   if (color.startsWith("rgba(")) {
@@ -23,7 +23,12 @@ function buildSemanticTokens(
   legacy: Record<string, string>,
   hasLegacyOverrides: boolean,
 ): Record<string, string> {
-  if (theme.presetId === "cyrene-ripple" && !hasLegacyOverrides) {
+  const cyreneColors = PRESETS["cyrene-ripple"].colors;
+  const hasCyrenePalette = Object.entries(cyreneColors).every(
+    ([key, value]) => theme.colors[key as keyof typeof cyreneColors] === value,
+  );
+
+  if (hasCyrenePalette && !hasLegacyOverrides) {
     return { ...CYRENE_SEMANTIC_TOKENS };
   }
 
@@ -61,13 +66,17 @@ function buildSemanticTokens(
     "--border-soft": legacy["--border"],
     "--success-soft": withOpacity(success, 0.12),
     "--success-border": withOpacity(success, 0.3),
+    "--success-fg": legacy["--text"],
     "--warning-soft": withOpacity(warning, 0.12),
     "--warning-border": withOpacity(warning, 0.3),
+    "--warning-fg": legacy["--text"],
     "--danger-soft": withOpacity(danger, 0.12),
     "--danger-border": withOpacity(danger, 0.3),
-    "--danger-fg": accentFg,
+    "--danger-fg": legacy["--text"],
     "--info-soft": withOpacity(info, 0.12),
     "--info-border": withOpacity(info, 0.3),
+    "--info-fg": legacy["--text"],
+    "--accent-soft-fg": legacy["--text"],
     "--sidebar-bg": nav,
     "--sidebar-bg-2": nav,
     "--sidebar-fg": navText,

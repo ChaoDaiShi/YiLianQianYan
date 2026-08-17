@@ -1,6 +1,7 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { type ReactNode, type RefObject } from "react";
 import { X } from "lucide-react";
 import { cn } from "./cn";
+import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle";
 
 interface DrawerProps {
   open: boolean;
@@ -21,23 +22,7 @@ export default function Drawer({
   showHeader = true,
   children,
 }: DrawerProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    panelRef.current?.focus();
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      returnFocusRef?.current?.focus();
-    };
-  }, [onClose, open, returnFocusRef]);
+  const panelRef = useDialogFocusLifecycle({ open, onClose, returnFocusRef });
 
   if (!open) return null;
 
