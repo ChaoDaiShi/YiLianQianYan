@@ -10,7 +10,10 @@ use std::sync::Arc;
 
 use crate::safety::{PermissionId, ResourceDescriptor};
 
-use super::model::{GrantDecision, GrantResource, NetworkZone, ProcessGrantScope, SecurityGrant};
+use super::model::{
+    host_matches, parse_network_target, zone_allows, GrantDecision, GrantResource,
+    ProcessGrantScope, SecurityGrant,
+};
 
 pub struct GrantEvaluator {
     grants: Vec<SecurityGrant>,
@@ -136,7 +139,7 @@ fn resource_matches(
             },
             ResourceDescriptor::Network { url, method },
         ) => {
-            let Ok(parsed) = parse_net_target(url) else {
+            let Ok(parsed) = parse_network_target(url) else {
                 return false;
             };
             if let Some(scheme) = scheme {
@@ -178,111 +181,6 @@ fn resource_matches(
         ) => *host_escape_acknowledged,
         _ => false,
     }
-}
-
-struct NetTarget {
-    scheme: String,
-    host: String,
-    port: Option<u16>,
-}
-
-fn parse_net_target(url: &str) -> Result<NetTarget, ()> {
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
-        ("https", r)
-    } else if let Some(r) = url.strip_prefix("http://") {
-        ("http", r)
-    } else {
-        return Err(());
-    };
-    let authority = rest
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .split('?')
-        .next()
-        .unwrap_or("");
-    if authority.contains('@') {
-        return Err(()); // userinfo not allowed
-    }
-    let (host, port) = if let Some(host) = authority.strip_prefix('[') {
-        // IPv6 literal
-        let end = host.find(']').ok_or(())?;
-        let h = &host[..end];
-        let after = &host[end + 1..];
-        let p = after.strip_prefix(':').and_then(|s| s.parse::<u16>().ok());
-        (h.to_string(), p)
-    } else {
-        let (h, p) = authority
-            .rsplit_once(':')
-            .map(|(h, p)| (h.to_string(), p.parse::<u16>().ok()))
-            .unwrap_or((authority.to_string(), None));
-        (h, p)
-    };
-    if host.is_empty() {
-        return Err(());
-    }
-    Ok(NetTarget {
-        scheme: scheme.to_string(),
-        host: host.to_lowercase(),
-        port,
-    })
-}
-
-fn host_matches(grant_host: &str, actual_host: &str) -> bool {
-    if let Some(_wild) = grant_host.strip_prefix("*.") {
-        // label-boundary wildcard: *.example.com matches a.example.com (single
-        // label) but not evil-example.com or a.b.example.com.
-        let suffix = &grant_host[1..]; // ".example.com"
-        if !actual_host.ends_with(suffix) {
-            return false;
-        }
-        let prefix_len = actual_host.len().saturating_sub(suffix.len());
-        let prefix = &actual_host[..prefix_len];
-        !prefix.is_empty() && !prefix.contains('.')
-    } else {
-        grant_host.eq_ignore_ascii_case(actual_host)
-    }
-}
-
-fn zone_allows(zone: NetworkZone, host: &str) -> bool {
-    match zone {
-        NetworkZone::Public => {
-            !is_literal_loopback(host) && !is_literal_private(host) && host != "localhost"
-        }
-        NetworkZone::Loopback => is_literal_loopback(host) || host == "localhost",
-        NetworkZone::Private => is_literal_private(host) || is_literal_loopback(host),
-    }
-}
-
-fn is_literal_loopback(host: &str) -> bool {
-    host == "::1" || host.starts_with("127.")
-}
-
-fn is_literal_private(host: &str) -> bool {
-    // RFC1918 + link-local + unspecified + multicast + metadata.
-    host == "0.0.0.0"
-        || host == "169.254.169.254"
-        || host.starts_with("10.")
-        || host.starts_with("192.168.")
-        || host.starts_with("169.254.")
-        || host.starts_with("172.16.")
-        || host.starts_with("172.17.")
-        || host.starts_with("172.18.")
-        || host.starts_with("172.19.")
-        || host.starts_with("172.20.")
-        || host.starts_with("172.21.")
-        || host.starts_with("172.22.")
-        || host.starts_with("172.23.")
-        || host.starts_with("172.24.")
-        || host.starts_with("172.25.")
-        || host.starts_with("172.26.")
-        || host.starts_with("172.27.")
-        || host.starts_with("172.28.")
-        || host.starts_with("172.29.")
-        || host.starts_with("172.30.")
-        || host.starts_with("172.31.")
-        || host.starts_with("fc")
-        || host.starts_with("fd")
 }
 
 fn canonicalize_target(root: &Path, path: &Path) -> Option<PathBuf> {

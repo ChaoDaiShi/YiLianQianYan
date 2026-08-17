@@ -10,7 +10,11 @@ use crate::{
     agent::verifier::{DefaultVerifier, VerificationResult, Verifier},
     config::types::SandboxConfig,
     db::Database,
-    tools::{trait_def::RiskLevel, ToolRegistry, ToolResult},
+    isolation::SharedManagedProcessRegistry,
+    tools::{
+        trait_def::{RiskLevel, ToolExecutionContext},
+        ToolRegistry, ToolResult,
+    },
 };
 
 use super::{
@@ -74,6 +78,7 @@ pub struct SecurityExecutionGateway {
     /// loaded live from the DB per evaluation (so approval revalidation sees
     /// current grants). Off by default for legacy construction paths + tests.
     grants_enabled: bool,
+    managed_process_registry: SharedManagedProcessRegistry,
 }
 
 impl SecurityExecutionGateway {
@@ -157,6 +162,7 @@ impl SecurityExecutionGateway {
         verifier: Arc<dyn Verifier>,
         audit_recorder: Option<Arc<AuditRecorder>>,
     ) -> Self {
+        let managed_process_registry = tool_registry.process_registry();
         Self {
             policy_engine: PolicyEngine,
             sandbox_config,
@@ -166,6 +172,7 @@ impl SecurityExecutionGateway {
             audit_recorder,
             db: None,
             grants_enabled: false,
+            managed_process_registry,
         }
     }
 
@@ -343,9 +350,13 @@ impl SecurityExecutionGateway {
     {
         self.record_execution_started(request, &context)?;
         on_execution_start();
+        let tool_context = ToolExecutionContext::new(
+            std::sync::Arc::clone(&self.managed_process_registry),
+            request.tool_call_id.clone(),
+        );
         let tool_result = match self
             .tool_registry
-            .execute(&request.tool_name, request.arguments.clone())
+            .execute_with_context(&request.tool_name, request.arguments.clone(), &tool_context)
             .await
         {
             Some(tool_result) => tool_result,
@@ -381,6 +392,50 @@ impl SecurityExecutionGateway {
             tool_result,
             verification,
         })
+    }
+
+    fn record_grant_evaluated(
+        &self,
+        request: &SecurityExecutionRequest,
+        context: &DecisionContext,
+        permission: PermissionId,
+        resource: &ResourceDescriptor,
+        decision: &GrantDecision,
+    ) -> Result<(), SecurityGatewayError> {
+        let Some(recorder) = &self.audit_recorder else {
+            return Ok(());
+        };
+        let (status, reason) = match decision {
+            GrantDecision::Allow => ("allow", None),
+            GrantDecision::RequireApproval { reason } => ("require_approval", Some(reason)),
+            GrantDecision::Deny { reason } => ("deny", Some(reason)),
+        };
+        recorder.record(AuditEventInput {
+            event_type: AuditEventType::GrantEvaluated,
+            correlation_id: request.tool_call_id.clone(),
+            request_id: request.tool_call_id.clone(),
+            subject_id: request.subject.subject_id.clone(),
+            role_key: context.role.as_str().to_string(),
+            conversation_id: Some(request.conversation_id.clone()),
+            tool_call_id: Some(request.tool_call_id.clone()),
+            tool_name: Some(request.tool_name.clone()),
+            capabilities: vec![permission.as_str().to_string()],
+            actions: vec![permission.as_str().to_string()],
+            resources: serde_json::json!([grant_resource_evidence(resource)]),
+            policy_version: Some(context.policy_version.clone()),
+            risk_level: Some(context.risk_level.to_string()),
+            decision_status: Some(status.to_string()),
+            result: Some(serde_json::json!({
+                "decision": status,
+                "reason": reason.map(|value| crate::utils::text::truncate_chars(value, 160)),
+            })),
+            details: serde_json::json!({
+                "phase": AuditEventType::GrantEvaluated.as_str(),
+                "permission": permission.as_str(),
+            }),
+            ..Default::default()
+        })?;
+        Ok(())
     }
 
     fn record_policy_decided(
@@ -874,12 +929,22 @@ impl SecurityExecutionGateway {
                 let grants = db
                     .list_grants(&request.subject.subject_id)
                     .unwrap_or_default();
-                let grant_evaluator = GrantEvaluator::new(grants, &self.workspace_root);
+                let grant_evaluator = GrantEvaluator::new(grants, &self.workspace_root)
+                    .with_registry(std::sync::Arc::clone(&self.managed_process_registry));
                 let now_ms = chrono::Utc::now().timestamp_millis();
                 let mut missing = false;
                 for requested in &descriptor.requested_permissions {
                     for resource in &descriptor.resources {
-                        match grant_evaluator.evaluate(requested.permission, resource, now_ms) {
+                        let grant_decision =
+                            grant_evaluator.evaluate(requested.permission, resource, now_ms);
+                        self.record_grant_evaluated(
+                            request,
+                            &context,
+                            requested.permission,
+                            resource,
+                            &grant_decision,
+                        )?;
+                        match grant_decision {
                             GrantDecision::Deny { reason } => {
                                 context.reason = format!(
                                     "resource grant denied {}: {reason}",
@@ -935,6 +1000,54 @@ impl SecurityExecutionGateway {
     }
 }
 
+fn grant_resource_evidence(resource: &ResourceDescriptor) -> serde_json::Value {
+    match resource {
+        ResourceDescriptor::File { .. } => serde_json::json!({ "kind": "file" }),
+        ResourceDescriptor::Shell {
+            working_directory, ..
+        } => serde_json::json!({
+            "kind": "shell",
+            "working_directory_present": working_directory.is_some(),
+        }),
+        ResourceDescriptor::Process { action, pid } => serde_json::json!({
+            "kind": "process",
+            "action": action,
+            "pid": pid,
+        }),
+        ResourceDescriptor::Network { url, method } => {
+            let target = crate::safety::grant::parse_network_target(url).ok();
+            serde_json::json!({
+                "kind": "network",
+                "scheme": target.as_ref().map(|value| value.scheme.as_str()),
+                "host": target.as_ref().map(|value| value.host.as_str()),
+                "port": target.as_ref().and_then(|value| value.port),
+                "method": method.to_ascii_uppercase(),
+                "url_valid": target.is_some(),
+            })
+        }
+        ResourceDescriptor::NetworkFromResponse { method, .. } => serde_json::json!({
+            "kind": "network_from_response",
+            "method": method.to_ascii_uppercase(),
+        }),
+        ResourceDescriptor::Desktop { action, .. } => {
+            serde_json::json!({ "kind": "desktop", "action": action })
+        }
+        ResourceDescriptor::Skill { .. } => serde_json::json!({ "kind": "skill" }),
+        ResourceDescriptor::Agent { action } => {
+            serde_json::json!({ "kind": "agent", "action": action })
+        }
+        ResourceDescriptor::Mcp {
+            server_id,
+            tool_name,
+        } => serde_json::json!({
+            "kind": "mcp",
+            "server_id": server_id,
+            "tool_name": tool_name,
+        }),
+        ResourceDescriptor::Subagent { .. } => serde_json::json!({ "kind": "subagent" }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -944,13 +1057,16 @@ mod tests {
     use crate::agent::verifier::{DefaultVerifier, VerificationResult, Verifier};
     use crate::config::types::{SandboxConfig, SandboxProfile};
     use crate::db::{Database, SecurityAuditQuery};
+    use crate::safety::grant::{GrantEffect, GrantResource, GrantSource, SecurityGrant};
     use crate::safety::{
         AuditRecorder, BuiltInRole, DescriptorError, PermissionId, PolicyDecision,
         ResourceDescriptor, ResourceScope, SecuritySubject, ToolSecurityDescriptor,
     };
+    use crate::tools::http_client::{HttpRequestTool, NetworkResolver};
     use crate::tools::trait_def::RiskLevel;
     use crate::tools::{Tool, ToolRegistry, ToolResult};
     use async_trait::async_trait;
+    use axum::{http::HeaderMap, response::IntoResponse, routing::get, Router};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -970,6 +1086,21 @@ mod tests {
 
     struct CountingVerifier {
         verifications: Arc<AtomicUsize>,
+    }
+
+    struct GatewayStaticResolver {
+        address: std::net::SocketAddr,
+    }
+
+    #[async_trait]
+    impl NetworkResolver for GatewayStaticResolver {
+        async fn resolve(
+            &self,
+            _host: &str,
+            _port: u16,
+        ) -> Result<Vec<std::net::SocketAddr>, String> {
+            Ok(vec![self.address])
+        }
     }
 
     #[async_trait]
@@ -1091,6 +1222,19 @@ mod tests {
         ));
         let db = Database::new(&path).unwrap();
         (Arc::new(AuditRecorder::new(db.clone_connection())), path)
+    }
+
+    fn user_grant(permission: PermissionId, resource: GrantResource) -> SecurityGrant {
+        SecurityGrant {
+            id: uuid::Uuid::new_v4().to_string(),
+            subject_id: "local-user".to_string(),
+            effect: GrantEffect::Allow,
+            permission,
+            resource,
+            source: GrantSource::User,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            expires_at: None,
+        }
     }
 
     fn policy_event(recorder: &AuditRecorder, tool_call_id: &str) -> crate::db::SecurityAuditEvent {
@@ -1367,6 +1511,179 @@ mod tests {
         drop(gateway);
         drop(recorder);
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn grant_evaluation_is_audited_without_sensitive_resource_values() {
+        let (recorder, db_path) = audit_recorder("grant-evaluated");
+        let db = Database::new(&db_path).unwrap();
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            "workspace",
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DefaultVerifier::new("workspace")),
+            Arc::clone(&recorder),
+        )
+        .with_db(Arc::new(db.clone_connection()))
+        .with_grant_enforcement();
+        let request = request(
+            "http_request",
+            serde_json::json!({
+                "url": "https://example.com/private?token=secret",
+                "headers": {"Authorization": "Bearer secret"}
+            }),
+        );
+
+        let decision = gateway
+            .evaluate_with_role(&request, BuiltInRole::Owner, RiskLevel::Medium)
+            .unwrap();
+        assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
+
+        let events = recorder
+            .query(&SecurityAuditQuery {
+                correlation_id: Some(request.tool_call_id.clone()),
+                event_type: Some("grant_evaluated".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(serialized.contains("example.com"));
+        assert!(!serialized.contains("token=secret"));
+        assert!(!serialized.contains("Bearer secret"));
+
+        drop(gateway);
+        drop(recorder);
+        drop(db);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn gateway_executes_granted_filesystem_network_and_process_tools() {
+        let workspace =
+            std::env::temp_dir().join(format!("yilian-gateway-e2e-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let db_path =
+            std::env::temp_dir().join(format!("yilian-gateway-e2e-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&db_path).unwrap();
+        let recorder = Arc::new(AuditRecorder::new(db.clone_connection()));
+        db.create_grant(&user_grant(
+            PermissionId::FilesystemWrite,
+            GrantResource::Filesystem {
+                root: workspace.to_string_lossy().to_string(),
+                recursive: true,
+            },
+        ))
+        .unwrap();
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count_for_handler = Arc::clone(&request_count);
+        let app = Router::new().route(
+            "/",
+            get(move |_headers: HeaderMap| {
+                let count = Arc::clone(&count_for_handler);
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    "gateway-ok".into_response()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        db.create_grant(&user_grant(
+            PermissionId::NetworkRequest,
+            GrantResource::Network {
+                scheme: Some("http".into()),
+                host: "127.0.0.1".into(),
+                port: Some(address.port()),
+                methods: vec!["GET".into()],
+                zone: crate::safety::grant::NetworkZone::Loopback,
+            },
+        ))
+        .unwrap();
+        db.create_grant(&user_grant(
+            PermissionId::ProcessControl,
+            GrantResource::Process {
+                scope: crate::safety::grant::ProcessGrantScope::ExplicitPid {
+                    pid: std::process::id(),
+                },
+            },
+        ))
+        .unwrap();
+
+        let mut registry = ToolRegistry::with_defaults(workspace.to_string_lossy().as_ref());
+        registry.register(Arc::new(HttpRequestTool::with_resolver(Arc::new(
+            GatewayStaticResolver { address },
+        ))));
+        let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            workspace.clone(),
+            Arc::new(registry),
+            Arc::new(DefaultVerifier::new(workspace.to_string_lossy().as_ref())),
+            Arc::clone(&recorder),
+        )
+        .with_db(Arc::new(db.clone_connection()))
+        .with_grant_enforcement();
+
+        let mut fs_request = request(
+            "write_file",
+            serde_json::json!({ "path": "e2e.txt", "content": "gateway" }),
+        );
+        fs_request.tool_call_id = "e2e-fs".into();
+        let fs_outcome = gateway
+            .execute_with_role(&fs_request, BuiltInRole::Owner, RiskLevel::Medium)
+            .await
+            .unwrap();
+        assert!(
+            matches!(fs_outcome, SecurityExecutionOutcome::Executed { tool_result, .. } if tool_result.ok)
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("e2e.txt")).unwrap(),
+            "gateway"
+        );
+
+        let mut net_request = request(
+            "http_request",
+            serde_json::json!({ "url": format!("http://127.0.0.1:{}/?token=secret", address.port()) }),
+        );
+        net_request.tool_call_id = "e2e-network".into();
+        let net_outcome = gateway
+            .execute_with_role(&net_request, BuiltInRole::Owner, RiskLevel::Medium)
+            .await
+            .unwrap();
+        match net_outcome {
+            SecurityExecutionOutcome::Executed { tool_result, .. } => {
+                assert!(tool_result.ok, "{}", tool_result.content);
+                assert!(tool_result.content.contains("gateway-ok"));
+            }
+            other => panic!("expected network execution, got {other:?}"),
+        }
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+
+        let mut process_request = request(
+            "process",
+            serde_json::json!({ "action": "kill", "pid": std::process::id() }),
+        );
+        process_request.tool_name = "process".into();
+        process_request.tool_call_id = "e2e-process".into();
+        let process_outcome = gateway
+            .execute_approved_with_role(&process_request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+        match process_outcome {
+            SecurityExecutionOutcome::Executed { tool_result, .. } => assert!(!tool_result.ok),
+            other => panic!("expected process tool dispatch, got {other:?}"),
+        }
+
+        server.abort();
+        drop(gateway);
+        drop(recorder);
+        drop(db);
+        std::fs::remove_dir_all(workspace).ok();
+        std::fs::remove_file(db_path).ok();
     }
 
     #[test]

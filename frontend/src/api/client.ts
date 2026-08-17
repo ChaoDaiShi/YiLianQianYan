@@ -304,6 +304,9 @@ export interface IsolationStatus {
   backend: string;
   process_containment: boolean;
   restricted_token: boolean;
+  privilege_reduction: boolean;
+  restricting_sids: boolean;
+  job_object: boolean;
   kill_tree: boolean;
   filesystem_os_enforced: boolean;
   network_os_enforced: boolean;

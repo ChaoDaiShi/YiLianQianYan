@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::model::{
-    validate_grant, GrantEffect, GrantResource, NetworkZone, ProcessGrantScope, SecurityGrant,
+    parse_network_target, validate_grant, GrantEffect, GrantResource, NetworkZone,
+    ProcessGrantScope, SecurityGrant,
 };
 use super::GrantEvaluator;
 use crate::safety::{PermissionId, ResourceDescriptor};
@@ -91,6 +92,47 @@ fn validate_grant_rejects_bad_combos() {
         }
     )
     .is_err()); // empty methods rejected
+}
+
+#[test]
+fn validate_grant_rejects_empty_filesystem_root() {
+    assert!(validate_grant(
+        PermissionId::FilesystemRead,
+        &GrantResource::Filesystem {
+            root: "  ".into(),
+            recursive: true,
+        }
+    )
+    .is_err());
+}
+
+#[test]
+fn validate_grant_rejects_wildcard_all_invalid_scheme_and_method() {
+    for resource in [
+        GrantResource::Network {
+            scheme: Some("ftp".into()),
+            host: "example.com".into(),
+            port: None,
+            methods: vec!["GET".into()],
+            zone: NetworkZone::Public,
+        },
+        GrantResource::Network {
+            scheme: Some("https".into()),
+            host: "*".into(),
+            port: None,
+            methods: vec!["GET".into()],
+            zone: NetworkZone::Public,
+        },
+        GrantResource::Network {
+            scheme: Some("https".into()),
+            host: "example.com".into(),
+            port: None,
+            methods: vec!["TRACE".into()],
+            zone: NetworkZone::Public,
+        },
+    ] {
+        assert!(validate_grant(PermissionId::NetworkRequest, &resource).is_err());
+    }
 }
 
 // ── Filesystem ──
@@ -189,6 +231,21 @@ fn expired_grant_is_ignored() {
 }
 
 // ── Network ──
+
+#[test]
+fn network_target_uses_url_parser_and_ignores_query_for_identity() {
+    let target = parse_network_target("https://api.example.com:443/v1?token=secret").unwrap();
+    assert_eq!(target.scheme, "https");
+    assert_eq!(target.host, "api.example.com");
+    assert_eq!(target.port, Some(443));
+    assert!(parse_network_target("https://user:pass@example.com").is_err());
+}
+
+#[test]
+fn network_target_rejects_invalid_scheme_and_wildcard_all() {
+    assert!(parse_network_target("file:///etc/passwd").is_err());
+    assert!(parse_network_target("https://*").is_err());
+}
 
 #[test]
 fn network_exact_host_match() {
@@ -317,7 +374,8 @@ fn loopback_zone_allows_loopback() {
 #[test]
 fn process_kill_managed_children_allow() {
     let registry = Arc::new(crate::isolation::ManagedProcessRegistry::new());
-    registry.record(123, None, "test-child".to_string());
+    let pid = std::process::id();
+    registry.record(pid, None, "test-child".to_string());
     let evaluator = GrantEvaluator::new(
         vec![grant(
             PermissionId::ProcessControl,
@@ -331,7 +389,7 @@ fn process_kill_managed_children_allow() {
     .with_registry(registry);
     let desc = ResourceDescriptor::Process {
         action: "kill".into(),
-        pid: Some(123),
+        pid: Some(pid),
     };
     assert!(matches!(
         evaluator.evaluate(PermissionId::ProcessControl, &desc, 0),

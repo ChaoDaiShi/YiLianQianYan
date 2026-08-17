@@ -166,7 +166,7 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 
 ## v0.8 Development — Agent Memory + Unified Capability Registry
 
-状态：**Phase 1–5 Completed，Phase 6 In Progress（下一阶段：v0.8 Release Gate / Security Closure）**
+状态：**Phase 1–6 Completed（下一阶段：v0.8 Release Gate）**
 
 - Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
 - Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。
@@ -190,6 +190,11 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
   - Filesystem Read/Write grant 强制 + canonical path + symlink/junction containment；Network target grant（scheme/host/port/method + zone）；http_request SSRF/DNS rebinding 硬化（redirect=none + private/loopback 拒绝）。
   - 进程隔离：Bash 走 ManagedProcessRunner（sanitized env，secret 剥离 + 真实 async timeout + 超时 kill 整个 process tree）；ManagedProcessRegistry 区分 managed child 与宿主 PID。
   - Grant CRUD API（protected）+ `/api/security/isolation/status`（诚实：process containment Active；OS filesystem/network namespace **未实现**，非容器级隔离）。
+  - Windows hardening：受限令牌必须验证为严格降权；管道句柄继承失败即阻断；Job Object 真实回归覆盖孙进程树；优雅退出会清理 ManagedProcessRegistry。
+  - ProcessTool 只能终止 Gateway 注册的 managed child，拒绝后端自身 PID 与未知宿主 PID；Bash/HTTP 直达 Tool Registry 的执行路径 fail closed。
+  - HTTP 只允许经 Gateway 的固定 DNS 地址请求；解析结果必须全部属于目标 NetworkZone，重定向关闭，敏感请求/响应头与 URL query 不进入可见结果。
+  - 每次资源授权评估写入 `grant_evaluated` 审计事件，审计上下文只保留类型化、脱敏证据；审计持久化失败时在副作用前 fail closed。
+  - Settings「权限」页面提供 Filesystem/Network/Process/Shell 授权创建、删除、风险提示与真实隔离状态；不宣传 Full Sandbox。
 
 **Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。SecretStore 只负责存取，绝不授予权限或绕过 Gateway；Grant 是 authority，不是 execution。
 

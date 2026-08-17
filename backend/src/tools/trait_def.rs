@@ -7,6 +7,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::safety::{describe_builtin_tool, DescriptorError, ToolSecurityDescriptor};
 
+/// Context supplied only by the SecurityExecutionGateway for side-effecting
+/// tools. Direct registry callers cannot use managed process controls without
+/// this context.
+pub struct ToolExecutionContext {
+    pub(crate) managed_process_registry: crate::isolation::SharedManagedProcessRegistry,
+    pub(crate) tool_call_id: String,
+}
+
+impl ToolExecutionContext {
+    pub(crate) fn new(
+        managed_process_registry: crate::isolation::SharedManagedProcessRegistry,
+        tool_call_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            managed_process_registry,
+            tool_call_id: tool_call_id.into(),
+        }
+    }
+}
+
 /// Risk level of a tool — used by the SafetyPolicy to decide permissions.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
@@ -109,6 +129,16 @@ pub trait Tool: Send + Sync {
     /// Execute the tool with the given arguments.
     /// `args` is the parsed JSON value of the tool call's function.arguments.
     async fn execute(&self, args: serde_json::Value) -> ToolResult;
+
+    /// Execute with the trusted runtime context created by the security
+    /// gateway. Legacy tools inherit the context-free implementation.
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _context: &ToolExecutionContext,
+    ) -> ToolResult {
+        self.execute(args).await
+    }
 
     /// Convert to an OpenAI-compatible tool definition
     fn to_openai_tool(&self) -> serde_json::Value {

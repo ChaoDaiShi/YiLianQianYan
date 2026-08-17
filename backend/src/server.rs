@@ -40,6 +40,7 @@ pub(crate) fn mcp_transport_config(server: &crate::db::McpServer) -> McpTranspor
 }
 use crate::config::types::AppConfig;
 use crate::db::Database;
+use crate::isolation::{ManagedProcessRegistry, SharedManagedProcessRegistry};
 use crate::safety::{
     approval::ApprovalStore, grant::GrantEffect, grant::GrantResource, grant::GrantSource,
     AuditRecorder, ControlSession, PermissionId,
@@ -127,6 +128,9 @@ pub struct AppServer {
     pub db: Database,
     pub config: Arc<RwLock<AppConfig>>,
     pub tool_registry: Arc<ToolRegistry>,
+    /// Application-lifetime registry shared by Bash, ProcessTool, and every
+    /// production SecurityExecutionGateway.
+    pub managed_process_registry: SharedManagedProcessRegistry,
     pub skill_discovery: Arc<RwLock<SkillDiscovery>>,
     pub subagents: Vec<DiscoveredSubagent>,
     /// Workspace root used for tool path resolution and verification.
@@ -210,7 +214,11 @@ impl AppServer {
             tracing::info!("System prompt migrated to new version");
         }
 
-        let tool_registry = Arc::new(ToolRegistry::with_defaults(workspace_root));
+        let managed_process_registry = Arc::new(ManagedProcessRegistry::new());
+        let tool_registry = Arc::new(ToolRegistry::with_defaults_and_process_registry(
+            workspace_root,
+            Arc::clone(&managed_process_registry),
+        ));
 
         let skill_dirs = if config.skills.directories.is_empty() {
             vec!["./skills".to_string()]
@@ -235,6 +243,7 @@ impl AppServer {
             db,
             config: Arc::new(RwLock::new(config)),
             tool_registry,
+            managed_process_registry,
             skill_discovery,
             subagents,
             workspace_root: workspace_root.to_string(),
@@ -442,7 +451,10 @@ impl AppServer {
     /// the immutable builtin registry).
     pub async fn build_agent_tool_registry(&self) -> Arc<ToolRegistry> {
         // ── Phase A: Child Source snapshot (builtins + MCP) ──
-        let mut base_registry = ToolRegistry::with_defaults(&self.workspace_root);
+        let mut base_registry = ToolRegistry::with_defaults_and_process_registry(
+            &self.workspace_root,
+            Arc::clone(&self.managed_process_registry),
+        );
         let mut occupied_names: HashSet<String> = base_registry
             .list_tools()
             .into_iter()

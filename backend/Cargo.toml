@@ -28,6 +28,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 
 # HTTP client (for LLM calls)
 reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+url = "2"
 
 # Async utilities
 futures = "0.3"

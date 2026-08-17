@@ -1,17 +1,16 @@
 // ============================================================
-// HTTP Request tool — make HTTP requests from the agent
+// HTTP Request tool — canonical URL parsing and pinned DNS resolution.
 // ============================================================
 
 use async_trait::async_trait;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::trait_def::{RiskLevel, Tool, ToolResult};
+use crate::safety::grant::{classify_ip, parse_network_target, NetworkZone};
 use crate::utils::text::truncate_chars;
 
-pub struct HttpRequestTool;
-
-/// Allowlist of safe response headers to surface. Set-Cookie / WWW-Authenticate
-/// / Authorization / Proxy-* are never returned.
 const SAFE_RESPONSE_HEADERS: &[&str] = &[
     "content-type",
     "content-length",
@@ -20,6 +19,45 @@ const SAFE_RESPONSE_HEADERS: &[&str] = &[
     "location",
     "cache-control",
 ];
+
+#[async_trait]
+pub trait NetworkResolver: Send + Sync {
+    async fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String>;
+}
+
+struct SystemNetworkResolver;
+
+#[async_trait]
+impl NetworkResolver for SystemNetworkResolver {
+    async fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
+        let addresses = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|_| "DNS 解析失败（SSRF 防护：无法验证目标地址）".to_string())?
+            .collect::<Vec<_>>();
+        if addresses.is_empty() {
+            Err("DNS 解析失败（SSRF 防护：没有可验证地址）".to_string())
+        } else {
+            Ok(addresses)
+        }
+    }
+}
+
+pub struct HttpRequestTool {
+    resolver: Arc<dyn NetworkResolver>,
+}
+
+impl HttpRequestTool {
+    pub fn new() -> Self {
+        Self {
+            resolver: Arc::new(SystemNetworkResolver),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_resolver(resolver: Arc<dyn NetworkResolver>) -> Self {
+        Self { resolver }
+    }
+}
 
 fn safe_response_headers(headers: &reqwest::header::HeaderMap) -> String {
     let mut out = String::new();
@@ -33,88 +71,51 @@ fn safe_response_headers(headers: &reqwest::header::HeaderMap) -> String {
     out
 }
 
-/// Reject SSRF-prone targets: resolve the host and fail closed if ANY resolved
-/// address is loopback / private / link-local / unspecified / multicast.
-async fn reject_private_target(url: &str) -> Result<(), String> {
-    let host = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .and_then(|rest| rest.split('/').next())
-        .and_then(|authority| authority.split('@').last())
-        .and_then(|authority| {
-            if authority.starts_with('[') {
-                authority
-                    .strip_prefix('[')
-                    .and_then(|h| h.split(']').next())
-            } else {
-                authority.split(':').next()
-            }
-        })
-        .unwrap_or("");
-
-    // Quick literal checks before DNS.
-    if host.is_empty()
-        || host.eq_ignore_ascii_case("localhost")
-        || host.starts_with("127.")
-        || host == "::1"
-        || host == "0.0.0.0"
-        || host.starts_with("169.254.")
-        || host.starts_with("10.")
-        || host.starts_with("192.168.")
-        || host.starts_with("172.16.")
-        || host.starts_with("172.17.")
-        || host.starts_with("172.18.")
-        || host.starts_with("172.19.")
-        || host.starts_with("172.20.")
-        || host.starts_with("172.21.")
-        || host.starts_with("172.22.")
-        || host.starts_with("172.23.")
-        || host.starts_with("172.24.")
-        || host.starts_with("172.25.")
-        || host.starts_with("172.26.")
-        || host.starts_with("172.27.")
-        || host.starts_with("172.28.")
-        || host.starts_with("172.29.")
-        || host.starts_with("172.30.")
-        || host.starts_with("172.31.")
-    {
-        return Err("已阻止请求内网/回环地址（SSRF 防护）".to_string());
-    }
-
-    // DNS resolution: fail closed — a host that cannot be resolved must NOT be
-    // passed to reqwest for a second, unvalidated lookup.
-    let addrs = tokio::net::lookup_host((host, 80))
-        .await
-        .map_err(|_| "DNS 解析失败（SSRF 防护：无法验证目标地址）".to_string())?;
-    for addr in addrs {
-        let ip = addr.ip();
-        let bad = match ip {
-            std::net::IpAddr::V4(v4) => {
-                v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_unspecified()
-                    || v4.is_multicast()
-            }
-            std::net::IpAddr::V6(v6) => {
-                v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || v6.is_unique_local()
-                    || v6.is_unicast_link_local()
-            }
-        };
-        if bad {
-            return Err("已阻止请求内网/回环地址（SSRF 防护）".to_string());
-        }
-    }
-    Ok(())
+fn safe_url_display(url: &url::Url) -> String {
+    let mut display = url.clone();
+    display.set_query(None);
+    display.set_fragment(None);
+    display.to_string()
 }
 
-impl HttpRequestTool {
-    pub fn new() -> Self {
-        Self
+fn is_blocked_request_header(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "authorization" | "proxy-authorization" | "cookie" | "set-cookie" | "www-authenticate"
+    ) || name.starts_with("proxy-")
+}
+
+fn requested_zone(host: &str) -> NetworkZone {
+    if host.eq_ignore_ascii_case("localhost") {
+        return NetworkZone::Loopback;
     }
+    host.parse::<std::net::IpAddr>()
+        .map(classify_ip)
+        .unwrap_or(NetworkZone::Public)
+}
+
+fn address_matches_requested_zone(requested: NetworkZone, address: SocketAddr) -> bool {
+    let actual = classify_ip(address.ip());
+    match requested {
+        NetworkZone::Public => actual == NetworkZone::Public,
+        NetworkZone::Loopback => actual == NetworkZone::Loopback,
+        NetworkZone::Private => actual != NetworkZone::Public,
+    }
+}
+
+fn validate_resolved_addresses(host: &str, addresses: &[SocketAddr]) -> Result<(), String> {
+    if addresses.is_empty() {
+        return Err("DNS 解析失败（SSRF 防护：没有可验证地址）".to_string());
+    }
+    let requested = requested_zone(host);
+    if addresses
+        .iter()
+        .any(|address| !address_matches_requested_zone(requested, *address))
+    {
+        return Err("已阻止请求地址类别变化（SSRF 防护）".to_string());
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -124,34 +125,18 @@ impl Tool for HttpRequestTool {
     }
 
     fn description(&self) -> &str {
-        "发送HTTP请求。支持GET/POST/PUT/DELETE/PATCH方法。自动防止SSRF攻击（阻止内网IP）。"
+        "发送HTTP请求。使用规范化URL、一次性DNS解析和固定地址连接。"
     }
 
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "请求URL（仅限http/https）"
-                },
-                "method": {
-                    "type": "string",
-                    "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
-                    "description": "HTTP方法，默认GET"
-                },
-                "headers": {
-                    "type": "object",
-                    "description": "请求头（键值对）"
-                },
-                "body": {
-                    "type": "string",
-                    "description": "请求体（POST/PUT/PATCH时使用）"
-                },
-                "timeout_ms": {
-                    "type": "number",
-                    "description": "超时毫秒，默认30000"
-                }
+                "url": {"type": "string", "description": "请求URL（仅限http/https）"},
+                "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]},
+                "headers": {"type": "object"},
+                "body": {"type": "string"},
+                "timeout_ms": {"type": "number", "description": "超时毫秒，默认30000"}
             },
             "required": ["url"]
         })
@@ -161,57 +146,79 @@ impl Tool for HttpRequestTool {
         RiskLevel::Medium
     }
 
-    async fn execute(&self, args: serde_json::Value) -> ToolResult {
-        let url = args["url"].as_str().unwrap_or("");
-        if url.is_empty() {
+    async fn execute(&self, _args: serde_json::Value) -> ToolResult {
+        ToolResult::error("http_request requires SecurityExecutionGateway trusted context")
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _context: &crate::tools::trait_def::ToolExecutionContext,
+    ) -> ToolResult {
+        self.execute_request(args).await
+    }
+}
+
+impl HttpRequestTool {
+    async fn execute_request(&self, args: serde_json::Value) -> ToolResult {
+        let raw_url = args["url"].as_str().unwrap_or("");
+        if raw_url.is_empty() {
             return ToolResult::error("url不能为空");
         }
-
-        // Basic SSRF protection: only allow http/https
-        let url_lower = url.to_lowercase();
-        if !url_lower.starts_with("https://") && !url_lower.starts_with("http://") {
-            return ToolResult::error("只支持http/https协议");
-        }
-
+        let url = match url::Url::parse(raw_url) {
+            Ok(url) => url,
+            Err(_) => return ToolResult::error("URL格式无效"),
+        };
+        let target = match parse_network_target(raw_url) {
+            Ok(target) => target,
+            Err(error) => return ToolResult::error(error),
+        };
         let method = args["method"].as_str().unwrap_or("GET").to_uppercase();
-        let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000);
-        let body = args["body"].as_str().map(|s| s.to_string());
+        let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(30000).min(300000);
 
-        // SSRF hardening: no automatic redirects (a redirect target would be a
-        // second, unvalidated network target), and reject loopback/private/
-        // link-local/multicast/unspecified targets before any request is sent.
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(timeout_ms))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| format!("创建HTTP客户端失败: {}", e))
-            .unwrap();
-
-        if let Err(e) = reject_private_target(url).await {
-            return ToolResult::error(e);
+        let addresses = match self
+            .resolver
+            .resolve(&target.host, target.port.unwrap_or(443))
+            .await
+        {
+            Ok(addresses) => addresses,
+            Err(error) => return ToolResult::error(error),
+        };
+        if let Err(error) = validate_resolved_addresses(&target.host, &addresses) {
+            return ToolResult::error(error);
         }
 
-        let mut request = match method.as_str() {
-            "GET" => client.get(url),
-            "POST" => client.post(url),
-            "PUT" => client.put(url),
-            "DELETE" => client.delete(url),
-            "PATCH" => client.patch(url),
-            _ => return ToolResult::error(format!("不支持的HTTP方法: {}", method)),
+        let client = match reqwest::Client::builder()
+            .timeout(Duration::from_millis(timeout_ms))
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve_to_addrs(&target.host, &addresses)
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => return ToolResult::error(format!("创建HTTP客户端失败: {error}")),
         };
 
-        // Add headers
+        let mut request = match method.as_str() {
+            "GET" => client.get(url.clone()),
+            "POST" => client.post(url.clone()),
+            "PUT" => client.put(url.clone()),
+            "DELETE" => client.delete(url.clone()),
+            "PATCH" => client.patch(url.clone()),
+            _ => return ToolResult::error(format!("不支持的HTTP方法: {method}")),
+        };
         if let Some(headers) = args["headers"].as_object() {
             for (key, value) in headers {
-                if let Some(v) = value.as_str() {
-                    request = request.header(key.as_str(), v);
+                if is_blocked_request_header(key) {
+                    continue;
+                }
+                if let Some(value) = value.as_str() {
+                    request = request.header(key.as_str(), value);
                 }
             }
         }
-
-        // Add body
-        if let Some(b) = body {
-            request = request.body(b);
+        if let Some(body) = args["body"].as_str() {
+            request = request.body(body.to_string());
         }
 
         match request.send().await {
@@ -219,8 +226,6 @@ impl Tool for HttpRequestTool {
                 let status = response.status();
                 let headers = safe_response_headers(response.headers());
                 let body = response.text().await.unwrap_or_default();
-
-                // Truncate response body if too large
                 let body_display = truncate_chars(&body, 10000);
                 let body_display = if body.chars().count() > 10000 {
                     format!(
@@ -231,13 +236,126 @@ impl Tool for HttpRequestTool {
                 } else {
                     body_display
                 };
-
                 ToolResult::success(format!(
                     "HTTP {} {}\n响应状态: {}\n响应头:\n{}\n\n响应体:\n{}",
-                    method, url, status, headers, body_display
+                    method,
+                    safe_url_display(&url),
+                    status,
+                    headers,
+                    body_display
                 ))
             }
-            Err(e) => ToolResult::error(format!("HTTP请求失败: {}", e)),
+            Err(error) => ToolResult::error(format!("HTTP请求失败: {error}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::trait_def::ToolExecutionContext;
+    use async_trait::async_trait;
+    use axum::{http::HeaderMap, response::IntoResponse, routing::get, Router};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct StaticResolver {
+        addresses: Vec<SocketAddr>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl NetworkResolver for StaticResolver {
+        async fn resolve(&self, _host: &str, _port: u16) -> Result<Vec<SocketAddr>, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.addresses.clone())
+        }
+    }
+
+    #[test]
+    fn request_url_display_removes_query_and_fragment() {
+        let url = url::Url::parse("https://example.com/path?token=secret#frag").unwrap();
+        assert_eq!(safe_url_display(&url), "https://example.com/path");
+    }
+
+    #[test]
+    fn request_header_filter_blocks_credentials_and_cookies() {
+        assert!(is_blocked_request_header("authorization"));
+        assert!(is_blocked_request_header("proxy-authorization"));
+        assert!(is_blocked_request_header("cookie"));
+        assert!(!is_blocked_request_header("accept"));
+    }
+
+    #[test]
+    fn resolver_result_is_validated_once_before_request() {
+        let result =
+            validate_resolved_addresses("example.com", &["93.184.216.34:443".parse().unwrap()]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resolver_rejects_any_mixed_zone_candidate() {
+        let result = validate_resolved_addresses(
+            "example.com",
+            &[
+                "93.184.216.34:443".parse().unwrap(),
+                "127.0.0.1:443".parse().unwrap(),
+            ],
+        );
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn approved_loopback_request_uses_pinned_addresses_and_redacts_sensitive_values() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let authorization_seen = Arc::new(AtomicBool::new(false));
+        let count_for_handler = Arc::clone(&request_count);
+        let auth_for_handler = Arc::clone(&authorization_seen);
+        let app = Router::new().route(
+            "/",
+            get(move |headers: HeaderMap| {
+                let count = Arc::clone(&count_for_handler);
+                let auth = Arc::clone(&auth_for_handler);
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    auth.store(headers.contains_key("authorization"), Ordering::SeqCst);
+                    let mut response = "ok".into_response();
+                    response
+                        .headers_mut()
+                        .insert("set-cookie", "session=secret".parse().unwrap());
+                    response
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool = HttpRequestTool::with_resolver(Arc::new(StaticResolver {
+            addresses: vec![address],
+            calls: Arc::clone(&calls),
+        }));
+        let context = ToolExecutionContext::new(
+            Arc::new(crate::isolation::ManagedProcessRegistry::new()),
+            "http-test",
+        );
+        let result = tool
+            .execute_with_context(
+                serde_json::json!({
+                    "url": format!("http://127.0.0.1:{}/?token=secret", address.port()),
+                    "headers": {"Authorization": "Bearer secret", "Accept": "text/plain"}
+                }),
+                &context,
+            )
+            .await;
+        server.abort();
+
+        assert!(result.ok, "request failed: {}", result.content);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(!authorization_seen.load(Ordering::SeqCst));
+        assert!(!result.content.contains("token=secret"));
+        assert!(!result.content.contains("set-cookie"));
     }
 }

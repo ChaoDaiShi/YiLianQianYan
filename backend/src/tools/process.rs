@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use std::process::Command;
 
-use super::trait_def::{RiskLevel, Tool, ToolResult};
+use super::trait_def::{RiskLevel, Tool, ToolExecutionContext, ToolResult};
 
 #[derive(Debug, Serialize)]
 struct ProcessInfo {
@@ -105,22 +105,6 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
     Ok(processes)
 }
 
-/// Kill a process by PID
-fn kill_process(pid: u32) -> Result<String, String> {
-    if cfg!(target_os = "windows") {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .output()
-            .map_err(|e| format!("无法终止进程: {}", e))?;
-    } else {
-        Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .output()
-            .map_err(|e| format!("无法终止进程: {}", e))?;
-    }
-    Ok(format!("进程 {} 已终止", pid))
-}
-
 pub struct ProcessTool;
 
 #[async_trait]
@@ -179,16 +163,63 @@ impl Tool for ProcessTool {
                 Err(e) => ToolResult::error(e),
             },
             "kill" => {
-                let pid = args["pid"].as_u64().unwrap_or(0) as u32;
-                if pid == 0 {
-                    return ToolResult::error("请提供要终止的进程PID");
-                }
-                match kill_process(pid) {
-                    Ok(msg) => ToolResult::success(msg),
-                    Err(e) => ToolResult::error(e),
-                }
+                ToolResult::error("process kill requires SecurityExecutionGateway trusted context")
             }
             _ => ToolResult::error(format!("未知操作: {}，支持 list 和 kill", action)),
         }
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        context: &ToolExecutionContext,
+    ) -> ToolResult {
+        let action = args["action"].as_str().unwrap_or("list");
+        if action != "kill" {
+            return self.execute(args).await;
+        }
+        let pid = args["pid"].as_u64().unwrap_or(0) as u32;
+        if pid == 0 {
+            return ToolResult::error("请提供要终止的进程PID");
+        }
+        if pid == std::process::id() {
+            return ToolResult::error("禁止终止后端自身进程");
+        }
+        match context.managed_process_registry.terminate_pid(pid) {
+            Ok(()) => ToolResult::success(format!("受控进程 {} 已终止", pid)),
+            Err(error) => ToolResult::error(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::isolation::ManagedProcessRegistry;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn kill_unknown_pid_and_self_pid_are_hard_denied() {
+        let tool = ProcessTool;
+        let context =
+            ToolExecutionContext::new(Arc::new(ManagedProcessRegistry::new()), "process-test");
+
+        let unknown = tool
+            .execute_with_context(
+                serde_json::json!({"action":"kill", "pid": 4294967294u64}),
+                &context,
+            )
+            .await;
+        assert!(!unknown.ok);
+        assert!(unknown.content.contains("not active"));
+
+        let self_result = tool
+            .execute_with_context(
+                serde_json::json!({"action":"kill", "pid": std::process::id()}),
+                &context,
+            )
+            .await;
+        assert!(!self_result.ok);
+        assert!(self_result.content.contains("自身"));
     }
 }

@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 
-use super::trait_def::{RiskLevel, Tool, ToolResult};
+use super::trait_def::{RiskLevel, Tool, ToolExecutionContext, ToolResult};
 
 pub struct BashTool {
     workspace_root: String,
@@ -18,6 +18,68 @@ impl BashTool {
     pub fn new(workspace_root: &str) -> Self {
         Self {
             workspace_root: workspace_root.to_string(),
+        }
+    }
+
+    async fn execute_managed(
+        &self,
+        args: serde_json::Value,
+        context: &ToolExecutionContext,
+    ) -> ToolResult {
+        let command = args["command"].as_str().unwrap_or("");
+        if command.is_empty() {
+            return ToolResult::error("command不能为空");
+        }
+
+        let timeout_ms = args["timeout_ms"]
+            .as_u64()
+            .unwrap_or(30000)
+            .max(1000)
+            .min(300000);
+
+        let (program, argv): (&str, Vec<&str>) = if cfg!(target_os = "windows") {
+            (
+                "powershell.exe",
+                vec!["-NoProfile", "-NonInteractive", "-Command", command],
+            )
+        } else {
+            ("bash", vec!["-c", command])
+        };
+
+        let result = crate::isolation::run_managed_process_with_registry(
+            program,
+            &argv,
+            &self.workspace_root,
+            &BTreeMap::new(),
+            timeout_ms,
+            &context.managed_process_registry,
+            Some(context.tool_call_id.clone()),
+            "bash",
+        )
+        .await;
+
+        if result.timed_out {
+            return ToolResult::error(format!("命令超时 ({}ms)，进程树已终止", timeout_ms));
+        }
+
+        let mut output = String::new();
+        if !result.stdout.is_empty() {
+            output.push_str(&result.stdout);
+        }
+        if !result.stderr.is_empty() {
+            if !output.is_empty() {
+                output.push_str("\n[stderr]\n");
+            }
+            output.push_str(&result.stderr);
+        }
+        if output.is_empty() {
+            output = "(no output)".to_string();
+        }
+
+        match result.exit_code {
+            Some(0) => ToolResult::success(output),
+            Some(code) => ToolResult::error(format!("Exit code: {}\n{}", code, output)),
+            None => ToolResult::error(output),
         }
     }
 }
@@ -54,58 +116,15 @@ impl Tool for BashTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
-        let command = args["command"].as_str().unwrap_or("");
-        if command.is_empty() {
-            return ToolResult::error("command不能为空");
-        }
+        let _ = args;
+        ToolResult::error("bash requires SecurityExecutionGateway trusted context")
+    }
 
-        let timeout_ms = args["timeout_ms"]
-            .as_u64()
-            .unwrap_or(30000)
-            .max(1000)
-            .min(300000); // 1s ~ 5min
-
-        let (program, argv): (&str, Vec<&str>) = if cfg!(target_os = "windows") {
-            (
-                "powershell.exe",
-                vec!["-NoProfile", "-NonInteractive", "-Command", command],
-            )
-        } else {
-            ("bash", vec!["-c", command])
-        };
-
-        // No explicit env → sanitized allowlist env only (secrets stripped).
-        let result = crate::isolation::run_managed_process(
-            program,
-            &argv,
-            &self.workspace_root,
-            &BTreeMap::new(),
-            timeout_ms,
-        )
-        .await;
-
-        if result.timed_out {
-            return ToolResult::error(format!("命令超时 ({}ms)，进程树已终止", timeout_ms));
-        }
-
-        let mut output = String::new();
-        if !result.stdout.is_empty() {
-            output.push_str(&result.stdout);
-        }
-        if !result.stderr.is_empty() {
-            if !output.is_empty() {
-                output.push_str("\n[stderr]\n");
-            }
-            output.push_str(&result.stderr);
-        }
-        if output.is_empty() {
-            output = "(no output)".to_string();
-        }
-
-        match result.exit_code {
-            Some(0) => ToolResult::success(output),
-            Some(code) => ToolResult::error(format!("Exit code: {}\n{}", code, output)),
-            None => ToolResult::error(output),
-        }
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        context: &ToolExecutionContext,
+    ) -> ToolResult {
+        self.execute_managed(args, context).await
     }
 }

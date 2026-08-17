@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { Check, Monitor, Upload, Download, RotateCcw } from "lucide-react";
-import { getSettings, updateSettings, getIsolationStatus, type IsolationStatus } from "../api/client";
+import { getSettings, updateSettings, getIsolationStatus, listSecurityGrants, type IsolationStatus, type SecurityGrant } from "../api/client";
 import { useTheme } from "../theme";
 import { PRESET_META } from "../theme/presets";
 import type { AppConfig } from "../types";
 import type { PresetId } from "../theme/types";
 import { PageHeader, Button, Input, Badge } from "../components/ui";
+import { GrantEditor } from "../features/security/GrantEditor";
+import { isolationRows } from "../features/security/grantEditorModel";
 
 const defaultConfig: AppConfig = {
   agent: { name: "忆涟千言", system_prompt: "你是一个桌面AI助手...", workspace_root: "" },
@@ -62,6 +64,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("model");
   const [isolation, setIsolation] = useState<IsolationStatus | null>(null);
+  const [grants, setGrants] = useState<SecurityGrant[]>([]);
   const theme = useTheme();
 
   useEffect(() => {
@@ -75,7 +78,13 @@ export default function SettingsPage() {
       }
     });
     getIsolationStatus().then((s) => { if (s) setIsolation(s); });
+    listSecurityGrants().then((items) => { if (items) setGrants(items); });
   }, []);
+
+  const refreshGrants = async () => {
+    const items = await listSecurityGrants();
+    if (items) setGrants(items);
+  };
 
   const handleSave = async () => {
     await updateSettings(config);
@@ -222,13 +231,9 @@ export default function SettingsPage() {
             <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">权限配置</h3>
             {isolation && (
               <div className="rounded-lg border border-[var(--border)] px-3 py-3 space-y-1">
-                <h4 className="text-sm font-medium">OS 进程隔离</h4>
-                <p className="text-xs text-[var(--text-muted)]">Process containment: {isolation.process_containment ? "Active" : "Inactive"}</p>
-                <p className="text-xs text-[var(--text-muted)]">Kill process tree: {isolation.kill_tree ? "Active" : "Inactive"}</p>
-                <p className="text-xs text-[var(--text-muted)]">Restricted Token: {isolation.restricted_token ? "Active" : "Not enabled"}</p>
-                <p className="text-xs text-[var(--text-faint)]">OS filesystem isolation: {isolation.filesystem_os_enforced ? "Enabled" : "Not enabled"}</p>
-                <p className="text-xs text-[var(--text-faint)]">OS network isolation: {isolation.network_os_enforced ? "Enabled" : "Not enabled"}</p>
-                <p className="text-[11px] text-[var(--text-faint)] mt-1">资源授权（Filesystem/Network/Process/Shell）由安全网关强制执行；Shell 默认每次询问。当前为应用层进程隔离，非容器级隔离。</p>
+                <h4 className="text-sm font-medium">Windows 隔离能力</h4>
+                {isolationRows(isolation).map(([label, active]) => <div key={label} className="flex items-center justify-between text-xs"><span className="text-[var(--text-muted)]">{label}</span><Badge tone={active ? "success" : "default"}>{active ? "Active" : "Not enabled"}</Badge></div>)}
+                <p className="text-[11px] text-[var(--text-faint)] mt-2">当前安全边界由 Windows 令牌降权、Job Object 和应用层资源授权共同组成；Restricting-SID、OS 命名空间、GUI 沙箱与容器级隔离尚未启用。</p>
               </div>
             )}
             <div>
@@ -254,6 +259,7 @@ export default function SettingsPage() {
               />
               <p className="mt-1 text-xs text-[var(--text-muted)]">逗号分隔的工具名称列表</p>
             </div>
+            <GrantEditor grants={grants} onChanged={refreshGrants} />
           </div>
         );
 

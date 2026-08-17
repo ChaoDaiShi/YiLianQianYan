@@ -101,8 +101,9 @@ pub async fn serve(addr: &str) {
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             let _ = tokio::signal::ctrl_c().await;
-            tracing::info!("shutdown signal received; closing MCP runtime");
+            tracing::info!("shutdown signal received; closing MCP runtime and managed processes");
             server_for_shutdown.mcp_runtime_manager.shutdown_all().await;
+            server_for_shutdown.managed_process_registry.shutdown_all();
         })
         .await
         .expect("Server error");

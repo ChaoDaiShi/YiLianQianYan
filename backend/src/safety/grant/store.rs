@@ -110,4 +110,17 @@ impl Database {
         )?;
         Ok(())
     }
+
+    pub fn delete_grant_for_subject(
+        &self,
+        id: &str,
+        subject_id: &str,
+    ) -> Result<bool, rusqlite::Error> {
+        let conn = self.conn();
+        let changed = conn.execute(
+            "DELETE FROM security_grants WHERE grant_id = ?1 AND subject_id = ?2",
+            rusqlite::params![id, subject_id],
+        )?;
+        Ok(changed == 1)
+    }
 }

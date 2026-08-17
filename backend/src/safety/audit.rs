@@ -31,6 +31,7 @@ pub enum AuditEventType {
     SecretStoreUnavailable,
     GrantCreated,
     GrantDeleted,
+    GrantEvaluated,
 }
 
 impl AuditEventType {
@@ -53,6 +54,7 @@ impl AuditEventType {
             Self::SecretStoreUnavailable => "secret_store_unavailable",
             Self::GrantCreated => "grant_created",
             Self::GrantDeleted => "grant_deleted",
+            Self::GrantEvaluated => "grant_evaluated",
         }
     }
 }

@@ -20,6 +20,7 @@
 
 use std::collections::BTreeMap;
 use std::os::windows::ffi::OsStrExt;
+use std::sync::Arc;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
@@ -77,14 +78,38 @@ unsafe impl Send for WinHandle {}
 unsafe impl Sync for WinHandle {}
 
 pub struct WindowsChild {
-    process: WinHandle,
+    process: Arc<WinHandle>,
     // Held for RAII cleanup (CloseHandle on drop).
     #[allow(dead_code)]
     thread: WinHandle,
-    job: WinHandle,
+    job: Arc<WinHandle>,
     pid: u32,
     stdout_reader: Option<WinHandle>,
     stderr_reader: Option<WinHandle>,
+}
+
+struct WindowsProcessControl {
+    process: Arc<WinHandle>,
+    job: Arc<WinHandle>,
+}
+
+impl crate::isolation::ManagedProcessControl for WindowsProcessControl {
+    fn is_alive(&self) -> bool {
+        unsafe { WaitForSingleObject(self.process.raw(), 0) != WAIT_OBJECT_0 }
+    }
+
+    fn terminate(&self) -> Result<(), String> {
+        unsafe {
+            if TerminateJobObject(self.job.raw(), 1) == 0 {
+                Err(format!(
+                    "TerminateJobObject failed (GetLastError={})",
+                    std::io::Error::last_os_error()
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
 }
 
 impl WindowsChild {
@@ -182,6 +207,18 @@ pub fn privilege_summary(token: HANDLE) -> (u32, u32) {
     }
 }
 
+fn is_strict_privilege_reduction(parent_total: u32, child_total: u32) -> bool {
+    child_total < parent_total
+}
+
+fn check_non_inheritable_handle_result(result: i32) -> Result<(), String> {
+    if result == 0 {
+        Err("SetHandleInformation failed".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 /// Create a privilege-reduced token (DISABLE_MAX_PRIVILEGE, no restricting SIDs)
 /// and verify the privilege surface is strictly reduced. Returns (token, parent_total, child_total).
 fn create_privilege_reduced_token() -> Result<(WinHandle, u32, u32), String> {
@@ -216,16 +253,10 @@ fn create_privilege_reduced_token() -> Result<(WinHandle, u32, u32), String> {
         let restricted_handle = WinHandle::new(restricted).ok_or("invalid restricted token")?;
         let (child_total, _) = privilege_summary(restricted_handle.raw());
 
-        // HARD GATE: privilege surface strictly reduced. SeChangeNotifyPrivilege
-        // is always enabled and exempt, so a non-empty parent may reduce to 1.
-        if child_total >= parent_total && parent_total > 1 {
+        // HARD GATE: the child privilege surface must be strictly smaller.
+        if !is_strict_privilege_reduction(parent_total, child_total) {
             return Err(format!(
                 "privilege reduction not verified: parent={parent_total} child={child_total}"
-            ));
-        }
-        if child_total > parent_total {
-            return Err(format!(
-                "child gained privileges: parent={parent_total} child={child_total}"
             ));
         }
         Ok((restricted_handle, parent_total, child_total))
@@ -273,7 +304,7 @@ fn create_pipe_pair() -> Result<(WinHandle, WinHandle), String> {
         if CreatePipe(&mut read, &mut write, &attrs, 0) == 0 {
             return Err("CreatePipe failed".to_string());
         }
-        SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
+        check_non_inheritable_handle_result(SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0))?;
         let read_handle = WinHandle::new(read).ok_or("invalid read pipe")?;
         let write_handle = WinHandle::new(write).ok_or("invalid write pipe")?;
         Ok((read_handle, write_handle))
@@ -316,6 +347,30 @@ pub async fn run_windows_managed_process(
     explicit_env: &BTreeMap<String, String>,
     timeout_ms: u64,
 ) -> crate::isolation::ProcessRunResult {
+    let registry = Arc::new(crate::isolation::ManagedProcessRegistry::new());
+    run_windows_managed_process_with_registry(
+        program,
+        args,
+        current_dir,
+        explicit_env,
+        timeout_ms,
+        &registry,
+        None,
+        program,
+    )
+    .await
+}
+
+pub async fn run_windows_managed_process_with_registry(
+    program: &str,
+    args: &[&str],
+    current_dir: &str,
+    explicit_env: &BTreeMap<String, String>,
+    timeout_ms: u64,
+    registry: &crate::isolation::SharedManagedProcessRegistry,
+    tool_call_id: Option<String>,
+    name: &str,
+) -> crate::isolation::ProcessRunResult {
     use crate::isolation::ProcessRunResult;
     let env = crate::isolation::build_child_env(explicit_env);
 
@@ -331,6 +386,17 @@ pub async fn run_windows_managed_process(
             }
         }
     };
+
+    let pid = child.pid();
+    registry.record_with_control(
+        pid,
+        tool_call_id,
+        name.to_string(),
+        Arc::new(WindowsProcessControl {
+            process: Arc::clone(&child.process),
+            job: Arc::clone(&child.job),
+        }),
+    );
 
     let stdout_reader = child.take_stdout_reader().unwrap();
     let stderr_reader = child.take_stderr_reader().unwrap();
@@ -358,12 +424,14 @@ pub async fn run_windows_managed_process(
     let stdout = stdout_task.await.unwrap_or_default();
     let stderr = stderr_task.await.unwrap_or_default();
 
-    ProcessRunResult {
+    let result = ProcessRunResult {
         exit_code: if timed_out { None } else { Some(exit_code) },
         stdout,
         stderr,
         timed_out,
-    }
+    };
+    registry.remove_pid(pid);
+    result
 }
 
 pub fn spawn_isolated(
@@ -412,7 +480,8 @@ pub fn spawn_isolated(
                 std::io::Error::last_os_error()
             ));
         }
-        let process = WinHandle::new(process_info.hProcess).ok_or("invalid process handle")?;
+        let process =
+            Arc::new(WinHandle::new(process_info.hProcess).ok_or("invalid process handle")?);
         let thread = WinHandle::new(process_info.hThread).ok_or("invalid thread handle")?;
 
         // Drop the parent's child-write copies so reads can see EOF on exit.
@@ -420,6 +489,7 @@ pub fn spawn_isolated(
         drop(stderr_writer);
 
         // HARD GATE: assign to Job BEFORE resume.
+        let job = Arc::new(job);
         if AssignProcessToJobObject(job.raw(), process.raw()) == 0 {
             TerminateJobObject(job.raw(), 1);
             return Err("AssignProcessToJobObject failed".to_string());
@@ -443,6 +513,9 @@ pub fn spawn_isolated(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    };
 
     fn current_exe() -> String {
         std::env::current_exe()
@@ -474,14 +547,25 @@ mod tests {
             let _ = std::fs::write(&path, format!("total={total} enabled={enabled}"));
         }
         if std::env::var("YILIAN_SPAWN_GRANDCHILD").as_deref() == Ok("1") {
-            let _ = std::process::Command::new(current_exe())
+            let grandchild = std::process::Command::new(current_exe())
                 .args([
                     "--exact",
                     "isolation::windows::tests::grandchild_sleep",
                     "--nocapture",
                 ])
                 .env("YILIAN_GRANDCHILD", "1")
-                .spawn();
+                .spawn()
+                .expect("grandchild should start");
+            if let Ok(path) = std::env::var("YILIAN_RESULT_FILE") {
+                let _ = std::fs::write(
+                    &path,
+                    format!(
+                        "parent_pid={}\ngrandchild_pid={}\n",
+                        std::process::id(),
+                        grandchild.id()
+                    ),
+                );
+            }
             std::thread::sleep(std::time::Duration::from_secs(60));
         }
     }
@@ -499,10 +583,24 @@ mod tests {
         let (token, parent, child) = create_privilege_reduced_token().unwrap();
         assert!(parent > 1, "expected a non-empty parent privilege set");
         assert!(
-            child < parent,
+            is_strict_privilege_reduction(parent, child),
             "privilege surface not reduced: parent={parent} child={child}"
         );
         let _ = token;
+    }
+
+    #[test]
+    fn privilege_reduction_rejects_equal_or_increased_surface() {
+        assert!(!is_strict_privilege_reduction(1, 1));
+        assert!(!is_strict_privilege_reduction(5, 5));
+        assert!(!is_strict_privilege_reduction(5, 6));
+        assert!(is_strict_privilege_reduction(5, 4));
+    }
+
+    #[test]
+    fn non_inheritable_handle_failure_is_fail_closed() {
+        assert!(check_non_inheritable_handle_result(1).is_ok());
+        assert!(check_non_inheritable_handle_result(0).is_err());
     }
 
     #[test]
@@ -516,6 +614,10 @@ mod tests {
     #[test]
     fn job_object_terminates_descendant_tree() {
         let exe = current_exe();
+        let result_file = std::env::temp_dir().join(format!(
+            "yilian-isolation-grandchild-{}.txt",
+            std::process::id()
+        ));
         let args: Vec<&str> = vec![
             "--exact",
             "isolation::windows::tests::isolation_helper_child",
@@ -524,14 +626,57 @@ mod tests {
         let mut env = helper_env();
         env.insert("YILIAN_ISOLATION_HELPER".to_string(), "1".to_string());
         env.insert("YILIAN_SPAWN_GRANDCHILD".to_string(), "1".to_string());
+        env.insert(
+            "YILIAN_RESULT_FILE".to_string(),
+            result_file.to_string_lossy().to_string(),
+        );
         let child = spawn_isolated(&exe, &args, ".", &env).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let grandchild_pid = loop {
+            if let Ok(contents) = std::fs::read_to_string(&result_file) {
+                if let Some(pid) = contents
+                    .lines()
+                    .find_map(|line| line.strip_prefix("grandchild_pid=")?.parse::<u32>().ok())
+                {
+                    break pid;
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "grandchild did not report a PID"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
+        assert!(process_is_alive(grandchild_pid), "grandchild was not live");
         child.terminate_tree();
         child.wait_blocking();
         assert!(
             child.has_exited(),
             "parent did not exit after job termination"
         );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while process_is_alive(grandchild_pid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(
+            !process_is_alive(grandchild_pid),
+            "grandchild survived Job termination"
+        );
+        let _ = std::fs::remove_file(result_file);
+    }
+
+    fn process_is_alive(pid: u32) -> bool {
+        unsafe {
+            let handle = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                0,
+                pid,
+            );
+            let Some(handle) = WinHandle::new(handle) else {
+                return false;
+            };
+            WaitForSingleObject(handle.raw(), 0) != WAIT_OBJECT_0
+        }
     }
 
     #[tokio::test]

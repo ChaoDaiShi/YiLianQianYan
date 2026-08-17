@@ -9,6 +9,108 @@ use serde::{Deserialize, Serialize};
 
 use crate::safety::{PermissionId, ResourceScope};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkTarget {
+    pub scheme: String,
+    pub host: String,
+    pub port: Option<u16>,
+}
+
+pub fn parse_network_target(raw: &str) -> Result<NetworkTarget, String> {
+    let url = url::Url::parse(raw).map_err(|_| "invalid network URL".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("only http and https URLs are supported".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("network URL userinfo is not allowed".to_string());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "network URL host is required".to_string())?
+        .to_ascii_lowercase();
+    if host.is_empty() || host == "*" || host.contains('*') {
+        return Err("network URL host must be a literal host".to_string());
+    }
+    Ok(NetworkTarget {
+        scheme: url.scheme().to_string(),
+        host,
+        port: url.port_or_known_default(),
+    })
+}
+
+pub fn host_matches(grant_host: &str, actual_host: &str) -> bool {
+    let grant_host = grant_host.to_ascii_lowercase();
+    let actual_host = actual_host.to_ascii_lowercase();
+    if let Some(suffix) = grant_host.strip_prefix("*.") {
+        let prefix = actual_host.strip_suffix(&format!(".{suffix}"));
+        prefix.is_some_and(|prefix| !prefix.is_empty() && !prefix.contains('.'))
+    } else {
+        grant_host == actual_host
+    }
+}
+
+pub fn zone_allows(zone: NetworkZone, host: &str) -> bool {
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match zone {
+            NetworkZone::Public => classify_ip(ip) == NetworkZone::Public,
+            NetworkZone::Loopback => classify_ip(ip) == NetworkZone::Loopback,
+            NetworkZone::Private => classify_ip(ip) != NetworkZone::Public,
+        };
+    }
+    match zone {
+        NetworkZone::Public => !is_loopback_or_private_literal(host),
+        NetworkZone::Loopback => is_loopback_literal(host),
+        NetworkZone::Private => is_loopback_or_private_literal(host),
+    }
+}
+
+pub fn classify_ip(ip: std::net::IpAddr) -> NetworkZone {
+    match ip {
+        std::net::IpAddr::V4(ip) if ip.is_loopback() => NetworkZone::Loopback,
+        std::net::IpAddr::V4(ip)
+            if ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_multicast() =>
+        {
+            NetworkZone::Private
+        }
+        std::net::IpAddr::V6(ip) if ip.is_loopback() => NetworkZone::Loopback,
+        std::net::IpAddr::V6(ip)
+            if ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || ip.is_unspecified()
+                || ip.is_multicast() =>
+        {
+            NetworkZone::Private
+        }
+        _ => NetworkZone::Public,
+    }
+}
+
+fn is_loopback_literal(host: &str) -> bool {
+    host == "localhost" || host == "::1" || host.starts_with("127.")
+}
+
+fn is_loopback_or_private_literal(host: &str) -> bool {
+    if is_loopback_literal(host) {
+        return true;
+    }
+    host == "0.0.0.0"
+        || host == "169.254.169.254"
+        || host.starts_with("10.")
+        || host.starts_with("192.168.")
+        || host.starts_with("169.254.")
+        || (host.starts_with("172.")
+            && host
+                .split('.')
+                .nth(1)
+                .and_then(|octet| octet.parse::<u8>().ok())
+                .is_some_and(|octet| (16..=31).contains(&octet)))
+        || host.starts_with("fc")
+        || host.starts_with("fd")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GrantEffect {
@@ -102,10 +204,31 @@ pub fn validate_grant(permission: PermissionId, resource: &GrantResource) -> Res
     let ok = match (permission, resource) {
         (
             PermissionId::FilesystemRead | PermissionId::FilesystemWrite,
-            GrantResource::Filesystem { .. },
-        ) => true,
-        (PermissionId::NetworkRequest, GrantResource::Network { methods, .. }) => {
-            !methods.is_empty()
+            GrantResource::Filesystem { root, .. },
+        ) => !root.trim().is_empty() && !root.contains('\0'),
+        (
+            PermissionId::NetworkRequest,
+            GrantResource::Network {
+                scheme,
+                host,
+                methods,
+                ..
+            },
+        ) => {
+            let scheme_valid = scheme
+                .as_deref()
+                .map(|scheme| matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https"))
+                .unwrap_or(true);
+            let host_valid = (!host.trim().is_empty() && host != "*" && !host.contains('*'))
+                || (host.starts_with("*.") && host.len() > 2 && !host[2..].contains('*'));
+            let methods_valid = !methods.is_empty()
+                && methods.iter().all(|method| {
+                    matches!(
+                        method.to_ascii_uppercase().as_str(),
+                        "GET" | "HEAD" | "OPTIONS" | "POST" | "PUT" | "PATCH" | "DELETE"
+                    )
+                });
+            scheme_valid && host_valid && methods_valid
         }
         (PermissionId::ProcessControl, GrantResource::Process { .. }) => true,
         (PermissionId::ShellExecute, GrantResource::Shell { .. }) => true,

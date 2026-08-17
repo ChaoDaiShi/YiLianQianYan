@@ -85,10 +85,13 @@ pub async fn delete_grant(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    server
+    let deleted = server
         .db
-        .delete_grant(&id)
+        .delete_grant_for_subject(&id, LOCAL_SUBJECT)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !deleted {
+        return Err((StatusCode::NOT_FOUND, "grant not found".to_string()));
+    }
     server
         .audit_recorder
         .record(crate::safety::AuditEventInput {

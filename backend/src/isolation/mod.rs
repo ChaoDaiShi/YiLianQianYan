@@ -155,7 +155,45 @@ pub async fn run_managed_process(
     explicit_env: &BTreeMap<String, String>,
     timeout_ms: u64,
 ) -> ProcessRunResult {
-    windows::run_windows_managed_process(program, args, current_dir, explicit_env, timeout_ms).await
+    let registry = Arc::new(ManagedProcessRegistry::new());
+    run_managed_process_with_registry(
+        program,
+        args,
+        current_dir,
+        explicit_env,
+        timeout_ms,
+        &registry,
+        None,
+        program,
+    )
+    .await
+}
+
+/// Run a process while registering its live control object in the shared
+/// application registry. The registry is the only supported process-control
+/// authority for Gateway-routed tools.
+#[cfg(windows)]
+pub async fn run_managed_process_with_registry(
+    program: &str,
+    args: &[&str],
+    current_dir: &str,
+    explicit_env: &BTreeMap<String, String>,
+    timeout_ms: u64,
+    registry: &SharedManagedProcessRegistry,
+    tool_call_id: Option<String>,
+    name: &str,
+) -> ProcessRunResult {
+    windows::run_windows_managed_process_with_registry(
+        program,
+        args,
+        current_dir,
+        explicit_env,
+        timeout_ms,
+        registry,
+        tool_call_id,
+        name,
+    )
+    .await
 }
 
 /// Run a child process with a sanitized env, a real async timeout, and whole
@@ -167,6 +205,31 @@ pub async fn run_managed_process(
     current_dir: &str,
     explicit_env: &BTreeMap<String, String>,
     timeout_ms: u64,
+) -> ProcessRunResult {
+    let registry = Arc::new(ManagedProcessRegistry::new());
+    run_managed_process_with_registry(
+        program,
+        args,
+        current_dir,
+        explicit_env,
+        timeout_ms,
+        &registry,
+        None,
+        program,
+    )
+    .await
+}
+
+#[cfg(not(windows))]
+pub async fn run_managed_process_with_registry(
+    program: &str,
+    args: &[&str],
+    current_dir: &str,
+    explicit_env: &BTreeMap<String, String>,
+    timeout_ms: u64,
+    registry: &SharedManagedProcessRegistry,
+    tool_call_id: Option<String>,
+    name: &str,
 ) -> ProcessRunResult {
     let env = build_child_env(explicit_env);
 
@@ -191,10 +254,18 @@ pub async fn run_managed_process(
         }
     };
     let pid = child.id();
+    if let Some(pid) = pid {
+        registry.record_with_control(
+            pid,
+            tool_call_id,
+            name.to_string(),
+            Arc::new(PortableProcessControl { pid }),
+        );
+    }
 
     let output = timeout(Duration::from_millis(timeout_ms), child.wait_with_output()).await;
 
-    match output {
+    let result = match output {
         Ok(Ok(output)) => {
             let stdout = truncate_chars(&String::from_utf8_lossy(&output.stdout), 20_000);
             let stderr = truncate_chars(&String::from_utf8_lossy(&output.stderr), 20_000);
@@ -223,7 +294,11 @@ pub async fn run_managed_process(
                 timed_out: true,
             }
         }
+    };
+    if let Some(pid) = pid {
+        registry.remove_pid(pid);
     }
+    result
 }
 
 /// Managed process registry — tracks children started by the agent so process
@@ -233,12 +308,64 @@ pub struct ManagedProcessRegistry {
     next_id: AtomicU64,
 }
 
-#[derive(Debug, Clone)]
+pub trait ManagedProcessControl: Send + Sync {
+    fn is_alive(&self) -> bool;
+    fn terminate(&self) -> Result<(), String>;
+}
+
+struct PortableProcessControl {
+    pid: u32,
+}
+
+impl ManagedProcessControl for PortableProcessControl {
+    fn is_alive(&self) -> bool {
+        #[cfg(windows)]
+        {
+            return std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {}", self.pid), "/NH"])
+                .output()
+                .map(|output| {
+                    output.status.success()
+                        && String::from_utf8_lossy(&output.stdout).contains(&self.pid.to_string())
+                })
+                .unwrap_or(false);
+        }
+        #[cfg(not(windows))]
+        std::process::Command::new("kill")
+            .args(["-0", &self.pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    fn terminate(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        let status = std::process::Command::new("taskkill")
+            .args(["/PID", &self.pid.to_string(), "/T", "/F"])
+            .status();
+        #[cfg(not(windows))]
+        let status = std::process::Command::new("kill")
+            .args(["-TERM", &format!("-{}", self.pid)])
+            .status();
+        status
+            .map_err(|error| format!("managed process termination failed: {error}"))
+            .and_then(|status| {
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("managed process termination exited with {status}"))
+                }
+            })
+    }
+}
+
+#[derive(Clone)]
 pub struct ManagedProcessRecord {
     pub pid: u32,
     pub tool_call_id: Option<String>,
     pub started_at: i64,
     pub name: String,
+    control: Arc<dyn ManagedProcessControl>,
 }
 
 impl ManagedProcessRegistry {
@@ -250,16 +377,70 @@ impl ManagedProcessRegistry {
     }
 
     pub fn record(&self, pid: u32, tool_call_id: Option<String>, name: String) {
+        self.record_with_control(
+            pid,
+            tool_call_id,
+            name,
+            Arc::new(PortableProcessControl { pid }),
+        );
+    }
+
+    pub fn record_with_control(
+        &self,
+        pid: u32,
+        tool_call_id: Option<String>,
+        name: String,
+        control: Arc<dyn ManagedProcessControl>,
+    ) {
         self.entries.lock().push(ManagedProcessRecord {
             pid,
             tool_call_id,
             started_at: chrono::Utc::now().timestamp_millis(),
             name,
+            control,
         });
     }
 
     pub fn contains_pid(&self, pid: u32) -> bool {
-        self.entries.lock().iter().any(|e| e.pid == pid)
+        self.contains_active_pid(pid)
+    }
+
+    pub fn contains_active_pid(&self, pid: u32) -> bool {
+        let mut entries = self.entries.lock();
+        entries.retain(|entry| entry.control.is_alive());
+        entries.iter().any(|entry| entry.pid == pid)
+    }
+
+    pub fn terminate_pid(&self, pid: u32) -> Result<(), String> {
+        let control = {
+            let mut entries = self.entries.lock();
+            entries.retain(|entry| entry.control.is_alive());
+            entries
+                .iter()
+                .find(|entry| entry.pid == pid)
+                .map(|entry| Arc::clone(&entry.control))
+                .ok_or_else(|| format!("managed process {pid} is not active"))?
+        };
+        control.terminate()?;
+        self.remove_pid(pid);
+        Ok(())
+    }
+
+    pub fn shutdown_all(&self) {
+        let controls = {
+            let mut entries = self.entries.lock();
+            let controls = entries
+                .iter()
+                .map(|entry| (entry.pid, Arc::clone(&entry.control)))
+                .collect::<Vec<_>>();
+            entries.clear();
+            controls
+        };
+        for (pid, control) in controls {
+            if let Err(error) = control.terminate() {
+                tracing::warn!(pid, %error, "failed to terminate managed process during shutdown");
+            }
+        }
     }
 
     pub fn remove_pid(&self, pid: u32) {
@@ -277,3 +458,60 @@ impl ManagedProcessRegistry {
 }
 
 pub type SharedManagedProcessRegistry = Arc<ManagedProcessRegistry>;
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct TestControl {
+        alive: AtomicBool,
+        terminated: AtomicBool,
+    }
+
+    impl ManagedProcessControl for TestControl {
+        fn is_alive(&self) -> bool {
+            self.alive.load(Ordering::SeqCst)
+        }
+
+        fn terminate(&self) -> Result<(), String> {
+            self.terminated.store(true, Ordering::SeqCst);
+            self.alive.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn registry_only_controls_active_process_and_removes_after_termination() {
+        let registry = ManagedProcessRegistry::new();
+        let control = Arc::new(TestControl {
+            alive: AtomicBool::new(true),
+            terminated: AtomicBool::new(false),
+        });
+        registry.record_with_control(
+            4242,
+            Some("call-1".to_string()),
+            "test-child".to_string(),
+            control.clone(),
+        );
+
+        assert!(registry.contains_active_pid(4242));
+        registry.terminate_pid(4242).unwrap();
+        assert!(control.terminated.load(Ordering::SeqCst));
+        assert!(!registry.contains_active_pid(4242));
+    }
+
+    #[test]
+    fn registry_prunes_dead_processes_and_unknown_pid_is_side_effect_free() {
+        let registry = ManagedProcessRegistry::new();
+        let control = Arc::new(TestControl {
+            alive: AtomicBool::new(false),
+            terminated: AtomicBool::new(false),
+        });
+        registry.record_with_control(4343, None, "dead".to_string(), control.clone());
+
+        assert!(!registry.contains_active_pid(4343));
+        assert!(registry.terminate_pid(9999).is_err());
+        assert!(!control.terminated.load(Ordering::SeqCst));
+    }
+}

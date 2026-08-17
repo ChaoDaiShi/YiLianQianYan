@@ -13,25 +13,45 @@ use super::process::ProcessTool;
 use super::screenshot::ScreenshotTool;
 use super::search::{GlobTool, GrepTool};
 use super::skill::{LoadSkillTool, WriteTodosTool};
-use super::trait_def::{RiskLevel, Tool, ToolInfo};
+use super::trait_def::{RiskLevel, Tool, ToolExecutionContext, ToolInfo};
 use super::upscale::UpscaleTool;
 
 /// Registry holding all available tools
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
+    process_registry: crate::isolation::SharedManagedProcessRegistry,
 }
 
 impl ToolRegistry {
     /// Create an empty registry
     pub fn new() -> Self {
+        Self::new_with_process_registry(std::sync::Arc::new(
+            crate::isolation::ManagedProcessRegistry::new(),
+        ))
+    }
+
+    pub fn new_with_process_registry(
+        process_registry: crate::isolation::SharedManagedProcessRegistry,
+    ) -> Self {
         Self {
             tools: HashMap::new(),
+            process_registry,
         }
     }
 
     /// Create a registry with all default built-in tools
     pub fn with_defaults(workspace_root: &str) -> Self {
-        let mut registry = Self::new();
+        Self::with_defaults_and_process_registry(
+            workspace_root,
+            std::sync::Arc::new(crate::isolation::ManagedProcessRegistry::new()),
+        )
+    }
+
+    pub fn with_defaults_and_process_registry(
+        workspace_root: &str,
+        process_registry: crate::isolation::SharedManagedProcessRegistry,
+    ) -> Self {
+        let mut registry = Self::new_with_process_registry(process_registry);
 
         // System control tools
         registry.register(Arc::new(BashTool::new(workspace_root)));
@@ -80,6 +100,10 @@ impl ToolRegistry {
         self.tools.get(name)
     }
 
+    pub fn process_registry(&self) -> crate::isolation::SharedManagedProcessRegistry {
+        std::sync::Arc::clone(&self.process_registry)
+    }
+
     /// List all registered tools
     pub fn all(&self) -> Vec<&Arc<dyn Tool>> {
         self.tools.values().collect()
@@ -95,10 +119,26 @@ impl ToolRegistry {
         self.tools.values().map(|t| t.to_info()).collect()
     }
 
-    /// Execute a tool by name
-    pub async fn execute(&self, name: &str, args: serde_json::Value) -> Option<super::ToolResult> {
+    /// Compatibility shim: direct registry execution is disabled. All tools
+    /// must be dispatched through the SecurityExecutionGateway.
+    pub async fn execute(&self, name: &str, _args: serde_json::Value) -> Option<super::ToolResult> {
+        if self.tools.contains_key(name) {
+            Some(super::ToolResult::error(
+                "direct ToolRegistry execution is disabled; use SecurityExecutionGateway",
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub async fn execute_with_context(
+        &self,
+        name: &str,
+        args: serde_json::Value,
+        context: &ToolExecutionContext,
+    ) -> Option<super::ToolResult> {
         if let Some(tool) = self.tools.get(name) {
-            Some(tool.execute(args).await)
+            Some(tool.execute_with_context(args, context).await)
         } else {
             None
         }
@@ -131,5 +171,24 @@ impl ToolRegistry {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolRegistry;
+
+    #[tokio::test]
+    async fn direct_execution_of_side_effecting_tool_requires_gateway() {
+        let registry = ToolRegistry::with_defaults(".");
+        let result = registry
+            .execute(
+                "bash",
+                serde_json::json!({ "command": "Write-Output bypass" }),
+            )
+            .await
+            .expect("registered bash tool");
+        assert!(!result.ok);
+        assert!(result.content.contains("SecurityExecutionGateway"));
     }
 }
