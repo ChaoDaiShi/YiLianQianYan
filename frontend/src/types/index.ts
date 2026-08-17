@@ -18,6 +18,8 @@ export interface ToolCallRecord {
     | "expired";
   verificationStatus?: "not_requested" | "pending" | "passed" | "failed";
   verificationReason?: string;
+  startedAt?: number;
+  finishedAt?: number;
 }
 
 export interface Message {

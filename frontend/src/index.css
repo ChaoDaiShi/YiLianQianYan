@@ -153,6 +153,10 @@
     grid-template-columns: 288px minmax(0, 1fr) 312px;
   }
 
+  .workbench-grid[data-mode="full"][data-execution-collapsed="true"] {
+    grid-template-columns: 288px minmax(0, 1fr) 48px;
+  }
+
   .workbench-grid[data-mode="compact"] {
     grid-template-columns: 288px minmax(0, 1fr);
   }
@@ -164,6 +168,10 @@
   .message-column {
     width: min(100%, 860px);
     margin-inline: auto;
+  }
+
+  .message-column > * {
+    min-width: 0;
   }
 
   .surface-elevated {

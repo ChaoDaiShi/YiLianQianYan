@@ -1,20 +1,24 @@
 import { Activity, FileCode, Folder, ListChecks, type LucideIcon } from "lucide-react";
 import type { AgentRunState } from "../../features/execution/model";
 import type { PendingApproval } from "../../types/approval";
+import {
+  AGENT_STATUS_LABELS,
+  resolveAgentStatus,
+  type AgentStatus,
+} from "./agentStatus";
 import ChatInput from "./ChatInput";
 
 interface WorkbenchHomeProps {
   connection: AgentRunState["connection"];
   pendingApprovals: PendingApproval[];
   isLoading: boolean;
+  finished?: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
   suggestedText?: string;
   onTextUsed?: () => void;
   onHint?: (text: string) => void;
 }
-
-type AgentStatus = "idle" | "running" | "approval";
 
 interface QuickAction {
   icon: LucideIcon;
@@ -57,35 +61,31 @@ function greeting(): string {
   return "晚上好，主人～";
 }
 
-function resolveStatus(
-  connection: AgentRunState["connection"],
-  pendingApprovals: PendingApproval[],
-  isLoading: boolean,
-): AgentStatus {
-  if (pendingApprovals.length > 0) return "approval";
-  if (isLoading || connection === "connecting" || connection === "connected") {
-    return "running";
-  }
-  return "idle";
-}
-
 const STATUS_META: Record<
   AgentStatus,
   { label: string; dotClass: string; pulse?: boolean }
 > = {
   idle: {
-    label: "小昔涟正在等待你的指令",
+    label: AGENT_STATUS_LABELS.idle,
     dotClass: "bg-[var(--text-faint)]",
   },
   running: {
-    label: "正在为你处理任务……",
+    label: AGENT_STATUS_LABELS.running,
     dotClass: "bg-[var(--accent-primary)]",
     pulse: true,
   },
   approval: {
-    label: "有一步需要你的确认",
-    dotClass: "bg-[var(--warning)]",
+    label: AGENT_STATUS_LABELS.approval,
+    dotClass: "bg-[var(--accent-gold)]",
     pulse: true,
+  },
+  finished: {
+    label: AGENT_STATUS_LABELS.finished,
+    dotClass: "bg-[var(--success)]",
+  },
+  error: {
+    label: AGENT_STATUS_LABELS.error,
+    dotClass: "bg-[var(--danger)]",
   },
 };
 
@@ -93,13 +93,19 @@ export default function WorkbenchHome({
   connection,
   pendingApprovals,
   isLoading,
+  finished = false,
   onSend,
   onStop,
   suggestedText,
   onTextUsed,
   onHint,
 }: WorkbenchHomeProps) {
-  const status = resolveStatus(connection, pendingApprovals, isLoading);
+  const status = resolveAgentStatus({
+    connection,
+    hasApproval: pendingApprovals.length > 0,
+    isLoading,
+    finished,
+  });
   const statusMeta = STATUS_META[status];
 
   return (

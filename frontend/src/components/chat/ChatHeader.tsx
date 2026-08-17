@@ -24,6 +24,7 @@ interface ChatHeaderProps {
   onToggleConversations: () => void;
   onToggleExecution: () => void;
   onSelectWorkflow: (workflow: Workflow | null) => void;
+  finished?: boolean;
 }
 
 const CONNECTION_META: Record<
@@ -50,9 +51,13 @@ export default function ChatHeader({
   onToggleConversations,
   onToggleExecution,
   onSelectWorkflow,
+  finished = false,
 }: ChatHeaderProps) {
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false);
   const connectionMeta = CONNECTION_META[connection];
+  const statusMeta = finished
+    ? { label: "已经处理好了", color: "bg-[var(--success)]" }
+    : connectionMeta;
 
   const selectWorkflow = (workflow: Workflow | null) => {
     onSelectWorkflow(workflow);
@@ -144,10 +149,10 @@ export default function ChatHeader({
       <div className="ml-auto flex items-center gap-2">
         <div
           className="hidden items-center gap-1.5 text-[11px] text-[var(--text-muted)] min-[720px]:flex"
-          aria-label={`连接状态：${connectionMeta.label}`}
+          aria-label={`Agent 状态：${statusMeta.label}`}
         >
-          <span className={`h-2 w-2 rounded-full ${connectionMeta.color}`} />
-          <span>{connectionMeta.label}</span>
+          <span className={`h-2 w-2 rounded-full ${statusMeta.color}`} />
+          <span>{statusMeta.label}</span>
         </div>
         {showExecutionToggle && (
           <button

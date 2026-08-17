@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createInitialAgentRunState,
   createInitialAgentWorkspaceState,
@@ -10,6 +10,36 @@ import {
 } from "./reducer";
 
 describe("reduceAgentEvent", () => {
+  it("records real tool start and end times for elapsed display", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-17T12:00:00.000Z"));
+
+    let state = createInitialAgentRunState("conv-1");
+    state = reduceAgentEvent(state, {
+      type: "tool_start",
+      conversation_id: "conv-1",
+      tool_call_id: "call-time",
+      tool_name: "powershell",
+      args: { command: "Get-Process" },
+    });
+    expect(state.records["call-time"].startedAt).toBe(
+      Date.parse("2026-08-17T12:00:00.000Z")
+    );
+
+    vi.advanceTimersByTime(2100);
+    state = reduceAgentEvent(state, {
+      type: "tool_end",
+      conversation_id: "conv-1",
+      tool_call_id: "call-time",
+      status: "success",
+      result: "done",
+    });
+    expect(state.records["call-time"].finishedAt).toBe(
+      Date.parse("2026-08-17T12:00:02.100Z")
+    );
+    vi.useRealTimers();
+  });
+
   it("keeps tool completion separate from verification", () => {
     let state = createInitialAgentRunState("conv-1");
     state = reduceAgentEvent(state, {
@@ -41,6 +71,27 @@ describe("reduceAgentEvent", () => {
     expect(state.records["call-1"].executionStatus).toBe("succeeded");
     expect(state.records["call-1"].verificationStatus).toBe("failed");
     expect(state.records["call-1"].verificationReason).toBe("content mismatch");
+  });
+
+  it("preserves a failed tool_end as an execution failure", () => {
+    let state = createInitialAgentRunState("conv-1");
+    state = reduceAgentEvent(state, {
+      type: "tool_start",
+      conversation_id: "conv-1",
+      tool_call_id: "call-failed",
+      tool_name: "powershell",
+      args: { command: "Get-Process" },
+    });
+    state = reduceAgentEvent(state, {
+      type: "tool_end",
+      conversation_id: "conv-1",
+      tool_call_id: "call-failed",
+      status: "error",
+      result: "access denied",
+    });
+
+    expect(state.records["call-failed"].executionStatus).toBe("failed");
+    expect(state.records["call-failed"].result).toBe("access denied");
   });
 
   it("merges approval events into one record and distinguishes rejection", () => {
@@ -105,6 +156,18 @@ describe("reduceAgentEvent", () => {
     });
     state = reduceAgentEvent(state, { type: "stream_end", conversation_id: "conv-1" });
     expect(state.connection).toBe("connected");
+  });
+
+  it("keeps observable error state for the friendly UI error layer", () => {
+    const state = reduceAgentEvent(createInitialAgentRunState("conv-1"), {
+      type: "error",
+      conversation_id: "conv-1",
+      error: "connection refused",
+    });
+
+    expect(state.connection).toBe("error");
+    expect(state.terminal).toBe(true);
+    expect(state.terminalError).toBe("connection refused");
   });
 
   it("marks an in-flight tool as interrupted when its stream stops", () => {

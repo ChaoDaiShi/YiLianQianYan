@@ -1,4 +1,8 @@
 import { Badge } from "../../components/ui";
+import {
+  formatElapsed,
+  formatToolDisplayName,
+} from "../../components/chat/toolDisplay";
 import type {
   ExecutionRecord,
   ExecutionStatus,
@@ -6,11 +10,11 @@ import type {
 } from "./model";
 
 const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
-  queued: "排队中",
-  awaiting_approval: "待审批",
-  running: "执行中",
+  queued: "等待执行",
+  awaiting_approval: "等待确认",
+  running: "正在执行",
   interrupted: "执行已中断",
-  succeeded: "已执行",
+  succeeded: "已完成",
   failed: "执行失败",
   rejected: "用户拒绝，未执行",
   cancelled: "已取消，未执行",
@@ -63,7 +67,7 @@ export default function ExecutionHistory({
   }
 
   return (
-    <ol className="space-y-2" aria-label="执行历史">
+    <ol className="space-y-2" aria-label="执行步骤">
       {records.map((record) => (
         <li
           key={record.toolCallId}
@@ -71,11 +75,13 @@ export default function ExecutionHistory({
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="truncate font-mono text-xs font-semibold">
-                {record.name}
+              <p className="truncate text-xs font-semibold text-[var(--text-primary)]">
+                {formatToolDisplayName(record.name)}
               </p>
               <p className="mt-1 truncate font-mono text-[10px] text-[var(--text-faint)]">
-                {record.toolCallId}
+                {record.startedAt !== undefined
+                  ? formatElapsed(record.startedAt, record.finishedAt ?? Date.now())
+                  : record.toolCallId}
               </p>
             </div>
             <span className="shrink-0 text-[10px] text-[var(--text-faint)]">

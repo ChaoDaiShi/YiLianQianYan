@@ -1,9 +1,8 @@
 import type { Message, ToolCallRecord } from "../../types";
 import { MESSAGE_LIST_VIEWPORT_CLASS_NAME } from "../layout/workspaceLayout";
-import { EmptyState } from "../ui";
+import AgentProgressCard from "./AgentProgressCard";
 import MessageBubble from "./MessageBubble";
 import StreamingText from "./StreamingText";
-import ToolCallCard from "./ToolCallCard";
 
 export interface StreamingState {
   content: string;
@@ -14,107 +13,104 @@ interface MessageListProps {
   messages: Message[];
   streaming: StreamingState | null;
   scrollContainerRef: React.RefObject<HTMLDivElement>;
-  onHint?: (text: string) => void;
   error?: string | null;
+  onRetry?: () => void;
 }
 
-const HINTS = [
-  "列出当前目录的文件",
-  "创建一个 Python 脚本",
-  "搜索包含 TODO 的文件",
-  "查看系统进程",
-];
+function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  return (
+    <section
+      className="mb-4 rounded-[var(--radius-lg)] border border-[var(--danger-border)] bg-[var(--danger-soft)] px-4 py-3"
+      aria-label="任务执行错误"
+    >
+      <div className="flex items-start gap-3">
+        <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--danger)]" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-[var(--danger-fg)]">
+            任务没有成功完成
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+            执行过程中遇到了问题，任务已经停止。
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-[var(--radius-sm)] bg-[var(--danger)] px-3 py-1.5 text-xs font-medium text-[var(--danger-fg)] transition-colors hover:opacity-90"
+              >
+                重新尝试
+              </button>
+            )}
+            <details className="text-xs text-[var(--text-secondary)]">
+              <summary className="cursor-pointer select-none hover:text-[var(--text-primary)]">
+                查看技术详情
+              </summary>
+              <pre className="mt-2 max-h-40 max-w-full overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2 font-mono text-[var(--text-secondary)]">
+                {error}
+              </pre>
+            </details>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export default function MessageList({
   messages,
   streaming,
   scrollContainerRef,
-  onHint,
   error,
+  onRetry,
 }: MessageListProps) {
   return (
-    <div
-      ref={scrollContainerRef}
-      className={MESSAGE_LIST_VIEWPORT_CLASS_NAME}
-    >
+    <div ref={scrollContainerRef} className={MESSAGE_LIST_VIEWPORT_CLASS_NAME}>
       <div className="message-column">
-      {messages.length === 0 && !streaming && (
-        <EmptyState
-          icon={
-            <img
-              src="/favicon.png"
-              alt=""
-              className="h-16 w-16 rounded-2xl object-cover shadow-lg"
-            />
-          }
-          title="忆涟千言"
-          description="描述你的目标，我会规划步骤、调用本地工具，并反馈执行与验证结果。"
-          action={
-            <div className="grid max-w-md grid-cols-2 gap-2 text-xs">
-              {HINTS.map((hint) => (
-                <button
-                  type="button"
-                  key={hint}
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5 text-left text-[var(--text-muted)] transition-colors hover:border-[var(--accent)]/50 hover:text-[var(--accent)]"
-                  onClick={() => onHint?.(hint)}
-                >
-                  {hint}
-                </button>
-              ))}
-            </div>
-          }
-          className="h-full"
-        />
-      )}
+        {messages.map((message, index) => (
+          <MessageBubble
+            key={message.id}
+            message={message}
+            showAssistantAvatar={
+              message.role !== "user" && messages[index - 1]?.role !== "assistant"
+            }
+          />
+        ))}
 
-      {messages.map((message) => (
-        <MessageBubble key={message.id} message={message} />
-      ))}
+        {streaming && (
+          <div className="mb-4 animate-msg-in">
+            <AgentProgressCard toolCalls={streaming.toolCalls} />
 
-      {streaming && (
-        <div className="mb-4 animate-msg-in">
-          {streaming.toolCalls.map((toolCall) => (
-            <ToolCallCard
-              key={toolCall.toolCallId}
-              toolCallId={toolCall.toolCallId}
-              name={toolCall.name}
-              args={toolCall.args}
-              status={toolCall.status}
-              result={toolCall.result}
-              riskLevel={toolCall.riskLevel}
-              approvalStatus={toolCall.approvalStatus}
-              verificationStatus={toolCall.verificationStatus}
-              verificationReason={toolCall.verificationReason}
-            />
-          ))}
-
-          {streaming.content && (
-            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 text-[var(--text)]">
-              <StreamingText text={streaming.content} />
-            </div>
-          )}
-
-          {!streaming.content && streaming.toolCalls.length === 0 && (
-            <div className="flex items-center gap-2 p-4" aria-label="正在生成">
-              <div className="flex gap-1">
-                {[0, 0.2, 0.4].map((delay) => (
-                  <span
-                    key={delay}
-                    className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]"
-                    style={{ animationDelay: `${delay}s` }}
-                  />
-                ))}
+            {streaming.content && (
+              <div className="flex items-start gap-3">
+                <img
+                  src="/favicon.png"
+                  alt="小昔涟"
+                  className="h-8 w-8 shrink-0 rounded-xl object-cover"
+                />
+                <div className="min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
+                  <StreamingText text={streaming.content} />
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
 
-      {error && (
-        <div className="mb-4 rounded-xl border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-4 py-3 text-sm text-[var(--danger)]">
-          {error}
-        </div>
-      )}
+            {!streaming.content && streaming.toolCalls.length === 0 && (
+              <div className="flex items-center gap-3 px-1 py-3" aria-label="正在生成">
+                <img
+                  src="/favicon.png"
+                  alt="小昔涟"
+                  className="h-8 w-8 rounded-xl object-cover"
+                />
+                <span className="text-xs text-[var(--text-secondary)]">
+                  正在接收小昔涟的回复…
+                </span>
+                <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent-primary)]" />
+              </div>
+            )}
+          </div>
+        )}
+
+        {error && <ErrorNotice error={error} onRetry={onRetry} />}
       </div>
     </div>
   );

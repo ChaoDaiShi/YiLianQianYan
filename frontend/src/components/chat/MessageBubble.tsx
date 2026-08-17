@@ -7,16 +7,20 @@ import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
 
 interface MessageBubbleProps {
   message: Message;
+  showAssistantAvatar?: boolean;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+export default function MessageBubble({
+  message,
+  showAssistantAvatar = true,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const [copied, setCopied] = useState(false);
 
   if (isTool) {
     return message.content?.startsWith("data:image/") ? (
-      <div className="mb-4">
+      <div className="mb-4 ml-11 max-w-[820px]">
         <ToolResultContent result={message.content} />
       </div>
     ) : null;
@@ -32,16 +36,31 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
 
   return (
     <article className="group mb-5 animate-msg-in">
-      <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div className={"flex items-start gap-3 " + (isUser ? "justify-end" : "justify-start")}>
+        {!isUser && (
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+            {showAssistantAvatar ? (
+              <img
+                src="/favicon.png"
+                alt="小昔涟"
+                className="h-8 w-8 rounded-xl object-cover"
+              />
+            ) : (
+              <span className="h-2 w-2 rounded-full bg-[var(--accent-purple)]/45" aria-hidden="true" />
+            )}
+          </div>
+        )}
+
         <div
-          className={`relative max-w-[88%] px-4 py-3 text-sm leading-7 ${
-            isUser
-              ? "rounded-2xl rounded-br-md bg-[var(--accent)] text-[var(--accent-fg)] shadow-sm"
-              : "w-full text-[var(--text)]"
-          }`}
+          className={
+            "relative min-w-0 text-sm leading-7 " +
+            (isUser
+              ? "max-w-[720px] rounded-2xl rounded-br-md border border-[var(--accent-border)] bg-[var(--accent-soft)] px-4 py-3 text-[var(--text-primary)]"
+              : "max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-4 py-3 text-[var(--text-primary)]")
+          }
         >
           {isUser ? (
-            <p className="whitespace-pre-wrap">{message.content}</p>
+            <p className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
             <div className="prose prose-sm max-w-none overflow-x-auto">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -53,7 +72,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             <button
               type="button"
               onClick={() => void copy()}
-              className="absolute -bottom-2 right-1 rounded-md border border-[var(--border)] bg-[var(--panel)] p-1.5 text-[var(--text-muted)] opacity-0 transition-opacity hover:text-[var(--text)] focus:opacity-100 group-hover:opacity-100"
+              className="absolute -bottom-2 right-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-1.5 text-[var(--text-muted)] opacity-0 transition-opacity hover:text-[var(--text-primary)] focus:opacity-100 group-hover:opacity-100"
               title="复制回答"
               aria-label="复制回答"
             >
@@ -68,20 +87,9 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       </div>
 
       {toolCalls.length > 0 && (
-        <div className="mt-3">
+        <div className="ml-11 mt-3 max-w-[900px]">
           {toolCalls.map((toolCall) => (
-            <ToolCallCard
-              key={toolCall.toolCallId}
-              toolCallId={toolCall.toolCallId}
-              name={toolCall.name}
-              args={toolCall.args}
-              status={toolCall.status}
-              result={toolCall.result}
-              riskLevel={toolCall.riskLevel}
-              approvalStatus={toolCall.approvalStatus}
-              verificationStatus={toolCall.verificationStatus}
-              verificationReason={toolCall.verificationReason}
-            />
+            <ToolCallCard key={toolCall.toolCallId} {...toolCall} />
           ))}
         </div>
       )}

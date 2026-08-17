@@ -2,7 +2,7 @@
 // Approval types — mirrors backend PendingApproval
 // ============================================================
 
-export type RiskLevel = "low" | "medium" | "high" | "critical";
+export type RiskLevel = "low" | "medium" | "high" | "critical" | "unknown";
 
 export type ApprovalStatus =
   | "pending"

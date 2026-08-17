@@ -20,6 +20,7 @@ export default function ChatPage() {
   );
   const [conversationDrawerOpen, setConversationDrawerOpen] = useState(false);
   const [executionDrawerOpen, setExecutionDrawerOpen] = useState(false);
+  const [executionCollapsed, setExecutionCollapsed] = useState(false);
   const conversationToggleRef = useRef<HTMLButtonElement>(null);
   const executionToggleRef = useRef<HTMLButtonElement>(null);
 
@@ -64,7 +65,13 @@ export default function ChatPage() {
   );
 
   return (
-    <div className={WORKBENCH_VIEWPORT_CLASS_NAME} data-mode={workspaceMode}>
+    <div
+      className={WORKBENCH_VIEWPORT_CLASS_NAME}
+      data-mode={workspaceMode}
+      data-execution-collapsed={
+        workspaceMode === "full" && executionCollapsed ? "true" : "false"
+      }
+    >
       {workspaceMode !== "narrow" && (
         <div className="min-h-0 border-r border-[var(--border)]">
           {conversationSidebar()}
@@ -96,7 +103,11 @@ export default function ChatPage() {
         renderExecution={(controller) =>
           workspaceMode === "full" ? (
             <div className="min-h-0 border-l border-[var(--border)]">
-              <ExecutionSidebar {...controller} />
+              <ExecutionSidebar
+                {...controller}
+                collapsed={executionCollapsed}
+                onToggleCollapse={() => setExecutionCollapsed((value) => !value)}
+              />
             </div>
           ) : (
             <Drawer

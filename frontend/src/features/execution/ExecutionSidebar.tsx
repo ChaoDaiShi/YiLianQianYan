@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Activity, PanelRightClose, PanelRightOpen, X } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
 import CurrentActionCard from "./CurrentActionCard";
 import ExecutionHistory from "./ExecutionHistory";
@@ -12,6 +12,8 @@ interface ExecutionSidebarProps {
   onApprove: (approval: PendingApproval) => void;
   onReject: (approval: PendingApproval) => void;
   onClose?: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 export default function ExecutionSidebar({
@@ -21,6 +23,8 @@ export default function ExecutionSidebar({
   onApprove,
   onReject,
   onClose,
+  collapsed = false,
+  onToggleCollapse,
 }: ExecutionSidebarProps) {
   const history = selectExecutionHistory(state);
   const current = selectCurrentAction(history);
@@ -43,6 +47,33 @@ export default function ExecutionSidebar({
       record.verificationStatus === "failed"
   ).length;
 
+  if (collapsed) {
+    const statusClass =
+      current?.approvalStatus === "pending"
+        ? "bg-[var(--accent-gold)]"
+        : current?.executionStatus === "failed" || state.connection === "error"
+          ? "bg-[var(--danger)]"
+          : current?.executionStatus === "running"
+            ? "bg-[var(--accent-blue)]"
+            : "bg-[var(--text-faint)]";
+
+    return (
+      <aside className="flex h-full w-12 min-h-0 flex-col items-center bg-[var(--surface-muted)] py-3 text-[var(--text)]">
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="rounded-lg p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+          aria-label="展开执行轨迹"
+          title="展开执行轨迹"
+        >
+          <PanelRightOpen className="h-4 w-4" />
+        </button>
+        <Activity className="mt-4 h-4 w-4 text-[var(--text-faint)]" aria-hidden="true" />
+        <span className={"mt-3 h-2 w-2 rounded-full " + statusClass} aria-label="执行状态" />
+      </aside>
+    );
+  }
+
   return (
     <aside className="flex h-full min-h-0 flex-col bg-[var(--surface-muted)] text-[var(--text)]">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
@@ -53,16 +84,29 @@ export default function ExecutionSidebar({
             {failures > 0 ? ` · ${failures} 个异常` : ""}
           </p>
         </div>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
-            aria-label="关闭执行轨迹"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {onToggleCollapse && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="rounded-md p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--text-primary)]"
+              aria-label="收起执行轨迹"
+              title="收起执行轨迹"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--text-primary)]"
+              aria-label="关闭执行轨迹"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-3 py-4">

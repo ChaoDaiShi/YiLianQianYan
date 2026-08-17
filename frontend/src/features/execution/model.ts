@@ -49,6 +49,8 @@ export interface ExecutionRecord {
   verificationStatus: VerificationStatus;
   verificationReason?: string;
   result?: string;
+  startedAt?: number;
+  finishedAt?: number;
   sequence: number;
 }
 

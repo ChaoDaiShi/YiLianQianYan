@@ -188,6 +188,7 @@ export function reduceAgentEvent(
       if (!toolCallId) return state;
       return upsertRecord(state, toolCallId, event, {
         executionStatus: "running",
+        startedAt: state.records[toolCallId]?.startedAt ?? Date.now(),
       });
     }
     case "approval_required": {
@@ -221,6 +222,7 @@ export function reduceAgentEvent(
       return upsertRecord(state, toolCallId, event, {
         executionStatus: event.status === "success" ? "succeeded" : "failed",
         result: event.result,
+        finishedAt: Date.now(),
       });
     }
     case "verification": {
@@ -298,6 +300,10 @@ export function hydrateToolCallRecords(raw: unknown): ExecutionRecord[] {
             ? source.verificationReason
             : undefined,
         result: typeof source.result === "string" ? source.result : undefined,
+        startedAt:
+          typeof source.startedAt === "number" ? source.startedAt : undefined,
+        finishedAt:
+          typeof source.finishedAt === "number" ? source.finishedAt : undefined,
         sequence: index + 1,
       },
     ];
@@ -320,6 +326,8 @@ export function toToolCallRecords(
     approvalStatus: record.approvalStatus,
     verificationStatus: record.verificationStatus,
     verificationReason: record.verificationReason,
+    startedAt: record.startedAt,
+    finishedAt: record.finishedAt,
   }));
 }
 

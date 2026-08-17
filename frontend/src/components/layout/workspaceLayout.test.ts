@@ -3,6 +3,7 @@ import appShellSource from "./AppShell.tsx?raw";
 import chatPageSource from "../../pages/ChatPage.tsx?raw";
 import chatViewSource from "../chat/ChatView.tsx?raw";
 import messageListSource from "../chat/MessageList.tsx?raw";
+import executionSidebarSource from "../../features/execution/ExecutionSidebar.tsx?raw";
 import * as workspaceLayout from "./workspaceLayout";
 
 const { getDrawerState, getWorkspaceMode } = workspaceLayout;
@@ -111,5 +112,16 @@ describe("history conversation viewport contract", () => {
     expect(chatViewSource).not.toContain("scrollIntoView");
     expect(messageListSource).toContain("MESSAGE_LIST_VIEWPORT_CLASS_NAME");
     expect(messageListSource).toContain("ref={scrollContainerRef}");
+    expect(messageListSource).toContain("AgentProgressCard");
+    expect(messageListSource).not.toContain("描述你的目标");
+    expect(messageListSource).toContain("任务没有成功完成");
+  });
+});
+
+describe("execution trace collapse contract", () => {
+  it("wires an accessible manual collapse control without changing execution state", () => {
+    expect(chatPageSource).toContain("data-execution-collapsed");
+    expect(executionSidebarSource).toContain("aria-label=\"收起执行轨迹\"");
+    expect(executionSidebarSource).toContain("aria-label=\"展开执行轨迹\"");
   });
 });

@@ -80,7 +80,7 @@ function riskLevel(value: string | undefined): RiskLevel {
     value === "high" ||
     value === "critical"
     ? value
-    : "high";
+    : "unknown";
 }
 
 export default function ChatView({
@@ -100,6 +100,8 @@ export default function ChatView({
     conversationId
   );
   const [error, setError] = useState<string | null>(null);
+  const [finished, setFinished] = useState(false);
+  const [lastSubmittedText, setLastSubmittedText] = useState("");
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [allWorkflows, setAllWorkflows] = useState<Workflow[]>([]);
   const [suggestedText, setSuggestedText] = useState("");
@@ -112,8 +114,17 @@ export default function ChatView({
   const pendingApprovals = useApprovalStore(selectPendingApprovals);
   const resolving = useApprovalStore((state) => state.resolving);
   const abortRef = useRef<AbortController | null>(null);
+  const finishedTimerRef = useRef<number | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const unknownEventTypes = useRef(new Set<string>());
+
+  useEffect(() => {
+    return () => {
+      if (finishedTimerRef.current !== null) {
+        window.clearTimeout(finishedTimerRef.current);
+      }
+    };
+  }, []);
 
   const loadWorkflows = useCallback(() => {
     listWorkflows().then((result) => {
@@ -132,6 +143,11 @@ export default function ChatView({
 
   useEffect(() => {
     let cancelled = false;
+    setFinished(false);
+    if (finishedTimerRef.current !== null) {
+      window.clearTimeout(finishedTimerRef.current);
+      finishedTimerRef.current = null;
+    }
     dispatchExecution({ type: "activate_conversation", conversationId });
 
     if (!conversationId) {
@@ -194,7 +210,7 @@ export default function ChatView({
               tool_name: event.tool_name || "",
               arguments: event.args || {},
               risk_level: riskLevel(event.risk_level),
-              reason: event.reason || "该操作需要明确授权",
+              reason: event.reason || "",
               status: "pending",
               created_at: new Date().toISOString(),
               expires_at: "",
@@ -214,10 +230,19 @@ export default function ChatView({
         case "done":
           setIsLoading(false);
           abortRef.current = null;
+          setFinished(true);
+          if (finishedTimerRef.current !== null) {
+            window.clearTimeout(finishedTimerRef.current);
+          }
+          finishedTimerRef.current = window.setTimeout(() => {
+            finishedTimerRef.current = null;
+            setFinished(false);
+          }, 1800);
           break;
         case "error":
           setIsLoading(false);
           abortRef.current = null;
+          setFinished(false);
           setError(event.error || "生成失败，请重试");
           clearResolvingForConversation(event.conversation_id);
           break;
@@ -317,6 +342,8 @@ export default function ChatView({
     (text: string) => {
       if (!text.trim() || isLoading) return;
       setError(null);
+      setFinished(false);
+      setLastSubmittedText(text);
       setMessages((current) => [
         ...current,
         {
@@ -337,6 +364,18 @@ export default function ChatView({
     },
     [activeWorkflow, currentConvId, handleAgentEvent, isLoading]
   );
+
+  const handleRetry = useCallback(() => {
+    const retryText = lastSubmittedText.trim();
+    if (!retryText || isLoading) return;
+    setMessages((current) => {
+      const last = current[current.length - 1];
+      return last?.role === "user" && last.content === retryText
+        ? current.slice(0, -1)
+        : current;
+    });
+    handleSend(retryText);
+  }, [handleSend, isLoading, lastSubmittedText]);
 
   const handleStop = useCallback(async () => {
     abortRef.current?.abort();
@@ -373,6 +412,7 @@ export default function ChatView({
           onToggleConversations={onToggleConversations}
           onToggleExecution={onToggleExecution}
           onSelectWorkflow={handleSelectWorkflow}
+          finished={finished}
         />
 
       {messages.length === 0 && !streaming && !error ? (
@@ -380,6 +420,7 @@ export default function ChatView({
           connection={runState.connection}
           pendingApprovals={pendingApprovals}
           isLoading={isLoading}
+          finished={finished}
           onSend={handleSend}
           onStop={handleStop}
           suggestedText={suggestedText}
@@ -392,8 +433,8 @@ export default function ChatView({
             messages={messages}
             streaming={streaming}
             scrollContainerRef={messagesScrollRef}
-            onHint={setSuggestedText}
             error={error}
+            onRetry={handleRetry}
           />
 
           <footer className="shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
