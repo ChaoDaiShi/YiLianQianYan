@@ -24,4 +24,13 @@ describe("semantic theme variables", () => {
     expect(variables["--bg-app"]).toBe("#f9f7ff");
     expect(variables["--accent"]).toBe("#123456");
   });
+
+  it("contains the shared component geometry and motion contract", () => {
+    const variables = buildThemeVariables(DEFAULT_THEME);
+
+    expect(variables["--radius-sm"]).toBe("10px");
+    expect(variables["--radius-lg"]).toBe("16px");
+    expect(variables["--shadow-card"]).toContain("rgba");
+    expect(variables["--motion-fast"]).toBe("140ms");
+  });
 });

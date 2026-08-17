@@ -76,13 +76,22 @@ export const PROTECTED_THEME_VAR_NAMES = [
   "--surface-solid",
   "--surface-muted",
   "--surface-elevated",
+  "--surface-hover",
   "--accent-primary",
+  "--accent-primary-hover",
   "--accent-contrast",
+  "--accent-soft",
+  "--text-secondary",
+  "--border-soft",
   "--sidebar-bg",
   "--sidebar-fg",
+  "--shadow-card",
+  "--shadow-float",
   "--radius-sm",
   "--radius-md",
   "--radius-lg",
+  "--motion-fast",
+  "--motion-normal",
 ] as const;
 
 export const STORAGE_KEY = "ylqy.theme";

@@ -11,30 +11,50 @@
 
   :root {
     color-scheme: light;
-    --bg: #f6f1e8;
-    --bg-2: #ece6dc;
-    --panel: rgba(255, 253, 249, 0.94);
-    --panel-2: rgba(239, 233, 223, 0.96);
-    --panel-hover: rgba(229, 220, 207, 0.96);
-    --text: #292722;
-    --text-muted: #6f685f;
-    --text-faint: #9a9287;
-    --border: rgba(62, 52, 40, 0.14);
-    --accent: #b86135;
-    --accent-fg: #fffaf4;
-    --input-bg: rgba(255, 254, 251, 0.96);
-    --success: #527c62;
-    --warning: #a96a2f;
-    --danger: #a84b43;
-    --nav: #292c27;
-    --nav-text: #d8dbd1;
-    --info: #527184;
-    --focus-ring: #b86135;
-    --backdrop: rgba(30, 27, 23, 0.38);
-    --shadow-soft: 0 12px 36px rgba(57, 45, 31, 0.10);
+    --bg-app: #f9f7ff;
+    --bg-subtle: #f4f0fc;
+    --surface: rgba(255, 255, 255, 0.82);
+    --surface-solid: #ffffff;
+    --surface-muted: #faf5ff;
+    --surface-elevated: #ffffff;
+    --surface-hover: #faf5ff;
+    --text-primary: #292536;
+    --text-secondary: #6d6678;
+    --text-faint: #9b95a6;
+    --border-soft: rgba(86, 72, 117, 0.10);
+    --accent-primary: #ea91b9;
+    --accent-primary-hover: #df7fac;
+    --accent-contrast: #292536;
+    --accent-fg: #292536;
+    --accent-soft: rgba(234, 145, 185, 0.16);
+    --sidebar-bg: #29263a;
+    --sidebar-fg: #eeeaf8;
+    --shadow-card: 0 18px 40px rgba(86, 72, 117, 0.14);
+    --shadow-float: 0 28px 72px rgba(41, 38, 58, 0.24);
+    --radius-sm: 10px;
     --radius-md: 12px;
+    --radius-lg: 16px;
     --motion-fast: 140ms;
     --motion-normal: 220ms;
+    --bg: var(--bg-app);
+    --bg-2: var(--bg-subtle);
+    --panel: var(--surface);
+    --panel-2: var(--surface-muted);
+    --panel-hover: var(--surface-hover);
+    --text: var(--text-primary);
+    --text-muted: var(--text-secondary);
+    --border: var(--border-soft);
+    --accent: var(--accent-primary);
+    --input-bg: var(--surface-solid);
+    --success: #73b99a;
+    --warning: #d9b866;
+    --danger: #df7995;
+    --nav: var(--sidebar-bg);
+    --nav-text: var(--sidebar-fg);
+    --info: #84bcdc;
+    --focus-ring: var(--accent-primary);
+    --backdrop: rgba(41, 38, 58, 0.34);
+    --shadow-soft: var(--shadow-card);
     --font-size-base: 14px;
     --bg-blur: 0px;
     --bg-brightness: 1;
@@ -46,10 +66,17 @@
   }
 
   body {
-    background: var(--bg);
-    color: var(--text);
+    background-color: var(--bg-app);
+    background-image: var(--bg-image);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    color: var(--text-primary);
     font-family: "IBM Plex Sans", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     -webkit-font-smoothing: antialiased;
+    transition:
+      background-color var(--motion-normal) ease,
+      color var(--motion-fast) ease;
   }
 
   :root.dark {
@@ -57,13 +84,13 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--focus-ring);
+    outline: 2px solid var(--accent-primary);
     outline-offset: 2px;
   }
 
   ::selection {
-    color: var(--accent-fg);
-    background: var(--accent);
+    color: var(--accent-contrast);
+    background: var(--accent-soft);
   }
 
   .theme-mono h1,
@@ -93,7 +120,9 @@
     display: grid;
     height: 100%;
     min-width: 0;
-    background: var(--bg);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0)) no-repeat,
+      var(--bg-app);
   }
 
   .workbench-grid[data-mode="full"] {
@@ -114,17 +143,18 @@
   }
 
   .surface-elevated {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    box-shadow: var(--shadow-soft);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-soft);
+    box-shadow: var(--shadow-card);
     transition:
+      background-color var(--motion-fast) ease,
       border-color var(--motion-fast) ease,
       box-shadow var(--motion-normal) ease;
   }
 
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: var(--text-faint) transparent;
+    scrollbar-color: var(--text-secondary) transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -136,23 +166,23 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: var(--text-faint);
-    border-radius: 3px;
+    background-color: var(--text-secondary);
+    border-radius: var(--radius-sm);
   }
 }
 
 @layer utilities {
   .animate-fade-in {
-    animation: fade-in 0.2s ease-out;
+    animation: fade-in var(--motion-fast) ease-out;
   }
   .animate-scale-in {
-    animation: scale-in 0.2s ease-out;
+    animation: scale-in var(--motion-normal) ease-out;
   }
   .animate-page-in {
-    animation: page-in 0.25s ease-out;
+    animation: page-in var(--motion-normal) ease-out;
   }
   .animate-msg-in {
-    animation: msg-in 0.3s ease-out;
+    animation: msg-in var(--motion-normal) ease-out;
   }
 }
 
@@ -178,17 +208,17 @@
 
 /* Markdown */
 .prose pre {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
   padding: 1rem;
   overflow-x: auto;
 }
 
 .prose code {
-  background: var(--panel-2);
+  background: var(--surface-muted);
   padding: 0.15rem 0.4rem;
-  border-radius: 0.25rem;
+  border-radius: var(--radius-sm);
   font-size: 0.875em;
 }
 
@@ -202,11 +232,11 @@
 }
 
 .prose thead {
-  border-bottom: 2px solid var(--border);
+  border-bottom: 2px solid var(--border-soft);
 }
 
 .prose th {
-  background: var(--panel-2);
+  background: var(--surface-muted);
   font-weight: 600;
   padding: 0.5rem 0.75rem;
   text-align: left;
@@ -216,20 +246,20 @@
 }
 
 .prose td {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
   padding: 0.5rem 0.75rem;
   vertical-align: top;
 }
 
 .prose tbody tr:hover {
-  background: var(--panel-hover);
+  background: var(--surface-hover);
 }
 
 .prose blockquote {
-  border-left: 4px solid var(--accent);
+  border-left: 4px solid var(--accent-primary);
   padding-left: 1rem;
   font-style: italic;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .prose ul,
@@ -246,6 +276,6 @@
 }
 
 .prose a {
-  color: var(--accent);
+  color: var(--accent-primary);
   text-decoration: underline;
 }

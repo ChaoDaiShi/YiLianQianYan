@@ -55,18 +55,18 @@ export default function Drawer({
         aria-label={title}
         tabIndex={-1}
         className={cn(
-          "relative z-10 flex h-full w-[min(88vw,360px)] flex-col border-[var(--border)] bg-[var(--panel)] text-[var(--text)] shadow-2xl outline-none",
+          "relative z-10 flex h-full w-[min(88vw,360px)] flex-col border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] shadow-[var(--shadow-float)] outline-none transition-[background-color,border-color,box-shadow] duration-[var(--motion-fast)]",
           side === "left" ? "mr-auto border-r" : "ml-auto border-l"
         )}
         onClick={(event) => event.stopPropagation()}
       >
         {showHeader && (
-          <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border-soft)] px-4">
             <h2 className="text-sm font-semibold">{title}</h2>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
+              className="rounded-[var(--radius-sm)] p-2 text-[var(--text-secondary)] transition-colors duration-[var(--motion-fast)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
               aria-label={`关闭${title}`}
             >
               <X className="h-4 w-4" />
