@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "../ui/cn";
+import { Tooltip } from "../ui";
 import { useTheme } from "../../theme";
 import { healthCheck } from "../../api/client";
 import { NAV_GROUPS } from "./navGroups";
@@ -48,117 +49,102 @@ export default function NavRail() {
   return (
     <nav
       aria-label="全局导航"
-      className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center gap-0.5 border-r border-[var(--border)] bg-[var(--sidebar-bg)] py-3 text-[var(--sidebar-text)] min-[960px]:w-[88px] min-[1180px]:w-[148px] min-[1180px]:items-stretch"
+      className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center gap-0.5 border-r border-[var(--border)] bg-[var(--sidebar-bg)] py-3 text-[var(--sidebar-text)] min-[960px]:w-[80px]"
     >
-      <button
-        type="button"
-        onClick={() => navigate("/chat")}
-        className="mb-2 flex shrink-0 items-center rounded-xl p-1 transition-colors hover:bg-white/10 min-[1180px]:mx-2 min-[1180px]:gap-2 min-[1180px]:px-2"
-        title="忆涟千言 · 新对话"
-        aria-label="忆涟千言 · 新对话"
-      >
-        <img
-          src="/favicon.png"
-          alt=""
-          className="h-9 w-9 rounded-lg object-cover min-[1180px]:h-8 min-[1180px]:w-8"
-        />
-        <span className="hidden text-sm font-semibold tracking-tight min-[1180px]:block">
-          忆涟千言
-        </span>
-      </button>
+      <Tooltip content="忆涟千言">
+        <button
+          type="button"
+          onClick={() => navigate("/chat")}
+          className="mb-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl p-1 transition-colors hover:bg-white/10"
+          aria-label="忆涟千言 · 新对话"
+        >
+          <img
+            src="/favicon.png"
+            alt=""
+            className="h-8 w-8 rounded-lg object-cover"
+          />
+        </button>
+      </Tooltip>
 
-      <div className="mb-2 w-8 shrink-0 border-t border-white/[0.07] min-[1180px]:mx-2 min-[1180px]:w-auto" />
+      <div className="mb-2 w-10 shrink-0 border-t border-white/[0.07]" />
 
-      <div
-        className="mb-2 hidden shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-[var(--sidebar-text)] opacity-80 min-[1180px]:mx-2 min-[1180px]:flex"
-        aria-live="polite"
-        aria-label={`后端状态：${backendStatusMeta.label}`}
-      >
-        <span
-          className={`block h-2 w-2 shrink-0 rounded-full ${backendStatusMeta.color}`}
-        />
-        <span>{backendStatusMeta.label}</span>
-      </div>
-
-      <div className="scrollbar-thin min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden">
+      <div className="scrollbar-thin min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-1">
         {NAV_GROUPS.map((group, groupIndex) => (
           <div
             key={group.label}
             className={cn(
-              "flex w-full flex-col items-center min-[1180px]:items-stretch",
-              groupIndex > 0 && "mt-2 pt-2 min-[1180px]:mt-3 min-[1180px]:pt-3",
+              "flex w-full flex-col items-center",
+              groupIndex > 0 && "mt-3 pt-3",
             )}
           >
             {groupIndex > 0 && (
               <div
-                className="mb-2 w-8 border-t border-white/[0.07] min-[1180px]:mx-2 min-[1180px]:mb-3 min-[1180px]:w-auto"
+                className="mb-3 w-10 border-t border-white/[0.07]"
                 aria-hidden="true"
               />
             )}
-            <div className="mb-1 hidden px-2 text-[11px] tracking-[0.12em] text-[var(--sidebar-muted)] min-[1180px]:block">
-              {group.label}
-            </div>
             {group.items.map((item) => {
               const Icon = item.icon;
               return (
-                <NavLink
-                  key={item.id}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    cn(
-                      "relative flex w-[60px] flex-col items-center gap-0.5 rounded-lg py-1.5 text-[10px] leading-tight transition-colors duration-[var(--motion-fast)] min-[960px]:w-[76px] min-[1180px]:mx-2 min-[1180px]:min-h-10 min-[1180px]:w-auto min-[1180px]:flex-row min-[1180px]:gap-2 min-[1180px]:rounded-xl min-[1180px]:px-2.5 min-[1180px]:py-2 min-[1180px]:text-sm",
-                      isActive
-                        ? "bg-[var(--sidebar-active)] font-medium text-white"
-                        : "text-[var(--sidebar-text)] opacity-80 hover:bg-white/10 hover:opacity-100",
-                    )
-                  }
-                  title={item.label}
-                >
-                  {({ isActive }) => (
-                    <>
-                      <Icon
-                        className="h-[18px] w-[18px]"
-                        strokeWidth={isActive ? 2.2 : 1.8}
-                      />
-                      <span
-                        className={cn(
-                          "whitespace-nowrap",
-                          theme.monoTitles && "font-mono",
-                        )}
-                      >
-                        {item.label}
-                      </span>
-                      {isActive && (
-                        <span className="absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-r-full bg-[var(--accent-primary)]" />
-                      )}
-                      {isActive && (
+                <Tooltip key={item.id} content={item.label}>
+                  <NavLink
+                    to={item.to}
+                    aria-label={item.label}
+                    className={({ isActive }) =>
+                      cn(
+                        "relative flex min-h-14 w-16 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] leading-tight transition-colors duration-[var(--motion-fast)] min-[960px]:w-[68px]",
+                        isActive
+                          ? "bg-[var(--sidebar-active)] font-medium text-white"
+                          : "text-[var(--sidebar-text)] opacity-80 hover:bg-white/10 hover:opacity-100",
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <Icon
+                          className="h-[18px] w-[18px]"
+                          strokeWidth={isActive ? 2.2 : 1.8}
+                        />
                         <span
-                          className="absolute right-2 hidden text-xs text-[var(--accent-gold)] min-[1180px]:block"
-                          aria-hidden="true"
+                          className={cn(
+                            "whitespace-nowrap",
+                            theme.monoTitles && "font-mono",
+                          )}
                         >
-                          ✦
+                          {item.label}
                         </span>
-                      )}
-                    </>
-                  )}
-                </NavLink>
+                        {isActive && (
+                          <span className="absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-r-full bg-[var(--accent-primary)]" />
+                        )}
+                        {isActive && (
+                          <span
+                            className="absolute right-1 top-1 text-[10px] text-[var(--accent-gold)]"
+                            aria-hidden="true"
+                          >
+                            ✦
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                </Tooltip>
               );
             })}
           </div>
         ))}
       </div>
 
-      <div
-        className="mb-1 mt-2 flex shrink-0 flex-col items-center gap-1 text-[9px] text-[var(--sidebar-text)] opacity-80 min-[1180px]:hidden"
-        aria-live="polite"
-        aria-label={`后端状态：${backendStatusMeta.label}`}
-        title={`后端状态：${backendStatusMeta.label}`}
-      >
-        <span
-          className={`block h-2 w-2 rounded-full ${backendStatusMeta.color}`}
-        />
-        <span>{backendStatusMeta.label}</span>
-      </div>
+      <Tooltip content={`后端状态：${backendStatusMeta.label}`}>
+        <div
+          className="mb-1 mt-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--sidebar-text)] opacity-80"
+          aria-live="polite"
+          aria-label={`后端状态：${backendStatusMeta.label}`}
+        >
+          <span
+            className={`block h-2 w-2 rounded-full ${backendStatusMeta.color}`}
+          />
+        </div>
+      </Tooltip>
     </nav>
   );
 }

@@ -28,14 +28,15 @@ describe("NavRail groups", () => {
   });
 
   it("uses a compact readable grouped layout at the default desktop breakpoint", () => {
-    expect(navRailSource).toContain("min-[1180px]:w-[148px]");
-    expect(navRailSource).toContain("min-[1180px]:mx-2");
-    expect(navRailSource).toContain("min-[1180px]:px-2.5");
-    expect(navRailSource).toContain("min-[1180px]:h-8");
+    expect(navRailSource).toContain("min-[960px]:w-[80px]");
+    expect(navRailSource).toContain("min-h-14");
+    expect(navRailSource).toContain("min-[960px]:w-[68px]");
+    expect(navRailSource).toContain("<Tooltip key={item.id} content={item.label}>");
+    expect(navRailSource).toContain("aria-label={item.label}");
+    expect(navRailSource).toContain("absolute right-1 top-1");
+    expect(navRailSource).not.toContain("min-[1180px]:w-[148px]");
+    expect(navRailSource).not.toContain("min-[1180px]:flex-row");
     expect(navRailSource).toContain("whitespace-nowrap");
-    expect(navRailSource).toContain("absolute right-2");
-    expect(navRailSource).toContain("min-[1180px]:flex-row");
-    expect(navRailSource).toContain("min-[1180px]:block");
     expect(navRailSource).toContain("✦");
   });
 });

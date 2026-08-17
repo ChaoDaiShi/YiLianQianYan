@@ -64,7 +64,7 @@ export default function ConversationSidebar({
   };
 
   return (
-    <aside className="flex h-full min-h-0 flex-col bg-[var(--panel)]">
+    <aside className="flex h-full min-h-0 min-w-0 flex-col bg-[var(--panel)]">
       <div className="flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
         <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
         <h2 className="text-sm font-semibold">任务</h2>
@@ -125,7 +125,7 @@ export default function ConversationSidebar({
                   <button
                     type="button"
                     onClick={() => selectConversation(conversation.id)}
-                    className="min-w-0 flex-1 truncate text-left"
+                    className="min-w-0 flex-1 truncate whitespace-nowrap text-left"
                     title={
                       isCommand
                         ? `命令：${conversation.title}`

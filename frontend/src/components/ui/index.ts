@@ -9,3 +9,4 @@ export { default as PageHeader } from "./PageHeader";
 export { default as EmptyState } from "./EmptyState";
 export { default as Spinner } from "./Spinner";
 export { default as Drawer } from "./Drawer";
+export { default as Tooltip } from "./Tooltip";

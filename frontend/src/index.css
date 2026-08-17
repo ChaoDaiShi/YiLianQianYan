@@ -150,15 +150,15 @@
   }
 
   .workbench-grid[data-mode="full"] {
-    grid-template-columns: 288px minmax(0, 1fr) 312px;
+    grid-template-columns: 272px minmax(0, 1fr) 312px;
   }
 
   .workbench-grid[data-mode="full"][data-execution-collapsed="true"] {
-    grid-template-columns: 288px minmax(0, 1fr) 48px;
+    grid-template-columns: 272px minmax(0, 1fr) 48px;
   }
 
   .workbench-grid[data-mode="compact"] {
-    grid-template-columns: 288px minmax(0, 1fr);
+    grid-template-columns: 272px minmax(0, 1fr);
   }
 
   .workbench-grid[data-mode="narrow"] {
