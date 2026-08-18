@@ -141,10 +141,10 @@ Add `nav-rail-compact` to the existing list and `nav-rail-item` to each existing
   .nav-rail-list > div { margin-top: .5rem; padding-top: .5rem; }
   .nav-rail-item { min-height: 3rem; gap: .125rem; font-size: .625rem; }
 }
-@media (max-height: 700px) {
-  .nav-rail-list > div { margin-top: .25rem; padding-top: .25rem; }
-  .nav-rail-item { min-height: 2.5rem; width: 3rem; gap: 0; font-size: 0; }
-  .nav-rail-item svg { height: 1rem; width: 1rem; }
+@media (max-height: 780px) {
+  .nav-rail-list > div { margin-top: .125rem; padding-top: .125rem; }
+  .nav-rail-item { min-height: 2rem; width: 2.75rem; gap: 0; font-size: 0; }
+  .nav-rail-item svg { height: .95rem; width: .95rem; }
   .nav-rail-item span:not([aria-hidden="true"]) { display: none; }
 }
 ```

@@ -17,7 +17,7 @@ The NavRail keeps every existing item and route but adapts its presentation to a
 
 1. Comfortable height: icon-above-label navigation items with normal spacing.
 2. Compressed height: preserve icons and labels while reducing group gaps, item padding, and label line-height.
-3. Constrained height: switch to icon-first compact items and expose the full label through the existing accessible name/tooltip path.
+3. Constrained height (roughly below 780 CSS pixels): switch to icon-first compact items and expose the full label through the existing accessible name/tooltip path.
 
 The rail is divided into fixed top branding, flexible navigation, and fixed backend-status regions. The navigation region may shrink internally, but the rail does not display a visible scrollbar and does not hide or delete any real navigation item.
 
