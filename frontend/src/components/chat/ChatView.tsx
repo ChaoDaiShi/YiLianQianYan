@@ -162,12 +162,24 @@ export default function ChatView({
     setCurrentConvId(conversationId);
     loadConversation(conversationId).then((conversation) => {
       if (cancelled || !conversation?.messages) return;
-      const loadedMessages = conversation.messages as Message[];
+      const loadedMessages = (conversation.messages as unknown[]).filter(
+        (message): message is Message => {
+          if (!message || typeof message !== "object") return false;
+          const candidate = message as Partial<Message>;
+          return (
+            typeof candidate.id === "string" &&
+            typeof candidate.role === "string" &&
+            typeof candidate.content === "string" &&
+            candidate.content.trim().length > 0
+          );
+        }
+      );
       setMessages(loadedMessages);
       dispatchExecution({
         type: "hydrate_history",
         conversationId,
         toolCalls: loadedMessages.flatMap((message) => message.tool_calls || []),
+        executionHistory: conversation.execution_history,
       });
     });
 
