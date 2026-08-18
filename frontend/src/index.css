@@ -20,7 +20,7 @@
     --surface-muted: rgba(252, 249, 255, 0.30);
     --surface-elevated: rgba(255, 255, 255, 0.48);
     --surface-hover: rgba(249, 243, 252, 0.58);
-    --titlebar-bg: #FBF9FF;
+    --titlebar-bg: rgba(255, 255, 255, 0.28);
     --text-primary: #292536;
     --text-secondary: #696276;
     --text-faint: #9690A1;
@@ -43,6 +43,14 @@
     --sidebar-fg: var(--sidebar-text);
     --sidebar-muted: #aaa3ba;
     --sidebar-active: rgba(234, 145, 185, 0.17);
+    --cyrene-glow-pink: rgba(234, 145, 185, 0.22);
+    --cyrene-glow-purple: rgba(173, 155, 232, 0.18);
+    --cyrene-glow-blue: rgba(153, 207, 234, 0.14);
+    --cyrene-glass-border: rgba(255, 255, 255, 0.52);
+    --cyrene-surface-tint: rgba(255, 255, 255, 0.34);
+    --cyrene-night: #29263a;
+    --cyrene-water: rgba(153, 207, 234, 0.18);
+    --cyrene-ripple: rgba(173, 155, 232, 0.18);
     --shadow-card: 0 4px 16px rgba(54, 45, 79, 0.04);
     --shadow-float: 0 12px 36px rgba(48, 38, 76, 0.10);
     --radius-xs: 6px;
@@ -193,10 +201,11 @@
     width: 100%;
     min-width: 0;
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.01)) no-repeat,
-      color-mix(in srgb, var(--bg-app) 30%, transparent);
-    -webkit-backdrop-filter: blur(12px) saturate(118%);
-    backdrop-filter: blur(12px) saturate(118%);
+      linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.02)) no-repeat,
+      radial-gradient(circle at 54% 18%, var(--cyrene-glow-purple), transparent 42%),
+      color-mix(in srgb, var(--bg-app) 26%, transparent);
+    -webkit-backdrop-filter: blur(8px) saturate(112%);
+    backdrop-filter: blur(8px) saturate(112%);
   }
 
   .workbench-grid[data-mode="full"] {
@@ -229,11 +238,13 @@
   }
 
   .shell-ambient {
-    background-image: url("/cyrene-home-background.png");
+    background-image:
+      linear-gradient(135deg, rgba(248, 246, 253, 0.06), rgba(239, 232, 250, 0.12)),
+      url("/cyrene-home-background.png");
     background-position: center;
     background-repeat: no-repeat;
     background-size: cover;
-    opacity: 0.72;
+    opacity: 0.82;
   }
 
   .shell-ambient-strong {
@@ -242,15 +253,43 @@
 
   .shell-ambient-overlay {
     background:
-      linear-gradient(135deg, rgba(248, 246, 253, 0.18), rgba(239, 232, 250, 0.10)),
-      radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.10), transparent 58%);
+      radial-gradient(ellipse at 50% 38%, rgba(255, 255, 255, 0.22), transparent 48%),
+      linear-gradient(135deg, rgba(248, 246, 253, 0.10), rgba(239, 232, 250, 0.02));
   }
 
   .nav-rail {
     min-height: 0;
     overflow: hidden;
-    background: linear-gradient(180deg, var(--sidebar-bg), var(--sidebar-bg-2));
-    border-right-color: rgba(255, 255, 255, 0.05);
+    background:
+      radial-gradient(circle at 50% 8%, var(--cyrene-glow-purple), transparent 31%),
+      linear-gradient(180deg, var(--sidebar-bg), var(--sidebar-bg-2));
+    border-right-color: rgba(255, 255, 255, 0.10);
+    box-shadow: inset -1px 0 rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  .nav-rail-status-motif {
+    position: relative;
+    background: radial-gradient(circle, var(--cyrene-glow-pink), transparent 68%);
+  }
+
+  .nav-rail-status-motif::before,
+  .nav-rail-status-motif::after {
+    position: absolute;
+    content: "";
+    border: 1px solid var(--cyrene-ripple);
+    border-radius: 50%;
+  }
+
+  .nav-rail-status-motif::before {
+    width: 20px;
+    height: 9px;
+    transform: rotate(-18deg);
+  }
+
+  .nav-rail-status-motif::after {
+    width: 8px;
+    height: 8px;
+    border-color: var(--cyrene-glow-pink);
   }
 
   .nav-rail-list {
@@ -287,8 +326,11 @@
   }
 
   .workbench-grid .conversation-sidebar {
-    background: color-mix(in srgb, var(--surface-muted) 64%, transparent);
+    background:
+      linear-gradient(180deg, var(--cyrene-surface-tint), rgba(255, 255, 255, 0.10)),
+      color-mix(in srgb, var(--surface-muted) 74%, transparent);
     border-right: 1px solid var(--divider);
+    box-shadow: inset -1px 0 var(--cyrene-glass-border);
   }
 
   .workbench-grid .conversation-sidebar-header,
@@ -302,8 +344,9 @@
 
   .workbench-grid .conversation-create-button {
     border-color: var(--accent-border);
-    background: color-mix(in srgb, var(--surface-solid) 68%, transparent);
+    background: linear-gradient(135deg, var(--cyrene-surface-tint), rgba(234, 145, 185, 0.10));
     color: var(--text-primary);
+    box-shadow: 0 5px 18px var(--cyrene-glow-pink);
   }
 
   .workbench-grid .conversation-create-button svg {
@@ -311,7 +354,26 @@
   }
 
   .workbench-grid .conversation-sidebar input {
-    background: color-mix(in srgb, var(--input-bg) 68%, transparent);
+    background: color-mix(in srgb, var(--input-bg) 60%, transparent);
+    border-color: var(--cyrene-glass-border);
+    transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+  }
+
+  .workbench-grid .conversation-sidebar input:focus {
+    border-color: var(--accent-border);
+    box-shadow: 0 0 0 3px var(--cyrene-glow-pink);
+    outline: none;
+  }
+
+  .conversation-sidebar-motif {
+    width: 18px;
+    height: 8px;
+    margin-left: 2px;
+    border-top: 1px solid var(--accent-primary);
+    border-radius: 50%;
+    opacity: 0.72;
+    transform: rotate(-12deg);
+    box-shadow: 0 -3px 0 -2px var(--accent-purple);
   }
 
   .conversation-list {
@@ -336,9 +398,35 @@
     background: var(--surface-hover);
   }
 
+  .workbench-grid .conversation-row-active {
+    background: linear-gradient(90deg, rgba(234, 145, 185, 0.16), rgba(173, 155, 232, 0.10));
+    border-color: var(--accent-border);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  }
+
   .workbench-grid .execution-sidebar {
-    background: color-mix(in srgb, var(--bg-app) 68%, transparent);
+    background:
+      radial-gradient(circle at 82% 0%, var(--cyrene-glow-blue), transparent 34%),
+      color-mix(in srgb, var(--bg-app) 72%, transparent);
     border-left: 1px solid var(--divider);
+    box-shadow: inset 1px 0 var(--cyrene-glass-border);
+  }
+
+  .execution-header {
+    position: relative;
+  }
+
+  .execution-header-motif {
+    position: absolute;
+    left: 16px;
+    bottom: 8px;
+    width: 34px;
+    height: 5px;
+    border-top: 1px solid var(--accent-primary);
+    border-radius: 50%;
+    opacity: 0.72;
+    transform: rotate(-4deg);
+    box-shadow: 10px -2px 0 -1px var(--accent-purple);
   }
 
   .workbench-grid .execution-sidebar-content {
@@ -346,7 +434,23 @@
   }
 
   .workbench-grid .execution-sidebar-content ol > li {
-    background: color-mix(in srgb, var(--surface-solid) 52%, transparent);
+    position: relative;
+    background: linear-gradient(135deg, var(--cyrene-surface-tint), rgba(173, 155, 232, 0.08));
+    border-color: var(--cyrene-glass-border);
+    box-shadow: 0 6px 18px rgba(48, 38, 76, 0.04);
+  }
+
+  .workbench-grid .execution-sidebar-content ol > li::before {
+    position: absolute;
+    top: 13px;
+    left: -4px;
+    width: 7px;
+    height: 7px;
+    content: "";
+    border: 1px solid var(--accent-primary);
+    border-radius: 50%;
+    background: var(--surface-elevated);
+    box-shadow: 0 0 0 3px var(--cyrene-glow-pink);
   }
 
   .skills-page-body {
@@ -392,8 +496,8 @@
     background: var(--surface-elevated);
     border: 1px solid var(--border-soft);
     box-shadow: var(--shadow-card);
-    -webkit-backdrop-filter: blur(18px) saturate(125%);
-    backdrop-filter: blur(18px) saturate(125%);
+    -webkit-backdrop-filter: blur(10px) saturate(118%);
+    backdrop-filter: blur(10px) saturate(118%);
     transition:
       background-color var(--motion-fast) ease,
       border-color var(--motion-fast) ease,
@@ -401,11 +505,13 @@
   }
 
   .composer-card {
-    background: var(--surface-elevated);
-    border: 1px solid var(--border-soft);
-    box-shadow: var(--shadow-card);
-    -webkit-backdrop-filter: blur(18px) saturate(125%);
-    backdrop-filter: blur(18px) saturate(125%);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.20)),
+      var(--surface-elevated);
+    border: 1px solid var(--cyrene-glass-border);
+    box-shadow: 0 12px 30px rgba(48, 38, 76, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.62);
+    -webkit-backdrop-filter: blur(12px) saturate(122%);
+    backdrop-filter: blur(12px) saturate(122%);
     transition:
       border-color var(--motion-fast) ease,
       box-shadow var(--motion-fast) ease;
@@ -413,7 +519,12 @@
 
   .composer-card:focus-within {
     border-color: var(--accent-border);
-    box-shadow: 0 0 0 3px rgba(234, 145, 185, 0.08);
+    box-shadow: 0 0 0 3px var(--cyrene-glow-pink), 0 12px 30px rgba(48, 38, 76, 0.08);
+  }
+
+  .composer-footer {
+    border-top: 1px solid rgba(91, 76, 125, 0.08);
+    padding-top: 8px;
   }
 
   /* Local home atmosphere layered over the shell-wide artwork. */
@@ -427,11 +538,13 @@
   }
 
   .home-ambient-strong {
-    background-image: url("/cyrene-home-background.png");
+    background-image:
+      radial-gradient(ellipse at 50% 48%, rgba(255, 255, 255, 0.24), transparent 54%),
+      url("/cyrene-home-background.png");
     background-position: center;
     background-repeat: no-repeat;
     background-size: cover;
-    opacity: 0.62;
+    opacity: 0.74;
   }
 
   .home-ambient-stars {
@@ -441,6 +554,7 @@
       radial-gradient(1.5px 1.5px at 84% 48%, rgba(234, 145, 185, 0.4), transparent 100%),
       radial-gradient(1px 1px at 12% 62%, rgba(153, 207, 234, 0.5), transparent 100%),
       radial-gradient(1.5px 1.5px at 62% 82%, rgba(173, 155, 232, 0.35), transparent 100%);
+    mix-blend-mode: screen;
   }
 
   .workbench-grid .home-content {
@@ -459,21 +573,69 @@
   }
 
   .workbench-grid .home-character-image {
-    width: clamp(190px, 24vh, 250px);
-    height: clamp(190px, 24vh, 250px);
-    aspect-ratio: 1;
-    border-radius: 44%;
-    object-fit: cover;
+    position: relative;
+    z-index: 2;
+    display: block;
+    width: clamp(188px, 24vh, 244px);
+    height: auto;
+    max-height: 244px;
+    object-fit: contain;
     mix-blend-mode: multiply;
+    mask-image: radial-gradient(ellipse 66% 68% at 50% 52%, #000 42%, rgba(0, 0, 0, 0.94) 58%, transparent 78%);
+    filter: drop-shadow(0 12px 18px rgba(71, 55, 95, 0.12));
+  }
+
+  .home-character-scene {
+    isolation: isolate;
+    display: grid;
+    place-items: center;
+    min-width: clamp(214px, 28vh, 278px);
+    min-height: clamp(214px, 28vh, 278px);
+  }
+
+  .home-character-glow,
+  .home-character-ripple,
+  .home-character-petals {
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .home-character-glow {
+    inset: 8% 4%;
+    z-index: -3;
+    border-radius: 48% 52% 44% 56%;
+    background: radial-gradient(ellipse, var(--cyrene-glow-pink), transparent 68%);
+    filter: blur(6px);
+  }
+
+  .home-character-ripple {
+    inset: 18% 0;
+    z-index: -2;
+    border: 1px solid var(--cyrene-ripple);
+    border-left-color: transparent;
+    border-right-color: transparent;
+    border-radius: 50%;
+    transform: rotate(-9deg);
+    box-shadow: 0 0 0 14px rgba(234, 145, 185, 0.06), 0 0 0 28px rgba(173, 155, 232, 0.05);
+  }
+
+  .home-character-petals {
+    inset: 8% 12%;
+    z-index: -1;
+    border-radius: 54% 46% 58% 42%;
+    background:
+      radial-gradient(ellipse at 8% 28%, var(--cyrene-glow-pink) 0 4%, transparent 5%),
+      radial-gradient(ellipse at 92% 70%, var(--cyrene-glow-purple) 0 3%, transparent 4%),
+      radial-gradient(ellipse at 78% 12%, var(--cyrene-glow-blue) 0 2%, transparent 3%);
   }
 
   .workbench-grid .home-status {
     margin-top: clamp(12px, 2.2vh, 20px);
     border-color: var(--divider);
-    background: var(--surface-elevated);
-    -webkit-backdrop-filter: blur(16px) saturate(125%);
-    backdrop-filter: blur(16px) saturate(125%);
-    box-shadow: none;
+    background: linear-gradient(135deg, var(--cyrene-surface-tint), rgba(234, 145, 185, 0.08));
+    -webkit-backdrop-filter: blur(10px) saturate(118%);
+    backdrop-filter: blur(10px) saturate(118%);
+    box-shadow: 0 5px 18px rgba(48, 38, 76, 0.04);
   }
 
   .workbench-grid .home-composer {
@@ -485,8 +647,10 @@
     width: min(680px, 100%);
     border-color: var(--divider);
     border-radius: var(--radius-lg);
-    background: var(--surface-elevated);
-    box-shadow: 0 10px 28px rgba(48, 38, 76, 0.06);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.16)),
+      var(--surface-elevated);
+    box-shadow: 0 12px 30px rgba(48, 38, 76, 0.08);
     padding: 10px;
   }
 
@@ -506,27 +670,77 @@
     width: auto;
     min-height: 68px;
     border-color: var(--divider);
-    background: var(--surface);
-    -webkit-backdrop-filter: blur(16px) saturate(125%);
-    backdrop-filter: blur(16px) saturate(125%);
-    box-shadow: none;
+    background: linear-gradient(135deg, var(--cyrene-surface-tint), rgba(255, 255, 255, 0.10));
+    -webkit-backdrop-filter: blur(10px) saturate(118%);
+    backdrop-filter: blur(10px) saturate(118%);
+    box-shadow: 0 6px 18px rgba(48, 38, 76, 0.04);
   }
 
   .workbench-grid .home-quick-action:hover {
-    background: var(--surface-hover);
-    box-shadow: none;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.48), rgba(234, 145, 185, 0.12));
+    box-shadow: 0 8px 22px rgba(48, 38, 76, 0.08);
+  }
+
+  .quick-action-icon-well {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    border: 1px solid currentColor;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.24);
+  }
+
+  .quick-action-icon-well-blue {
+    color: var(--accent-blue);
+    background: var(--cyrene-glow-blue);
+  }
+
+  .quick-action-icon-well-pink {
+    color: var(--accent-primary);
+    background: var(--cyrene-glow-pink);
+  }
+
+  .quick-action-icon-well-purple {
+    color: var(--accent-purple);
+    background: var(--cyrene-glow-purple);
+  }
+
+  .quick-action-icon-well-water {
+    color: var(--accent-blue);
+    background: var(--cyrene-water);
   }
 
   .glass-surface,
   .glass-header,
   .glass-rail {
-    -webkit-backdrop-filter: blur(18px) saturate(125%);
-    backdrop-filter: blur(18px) saturate(125%);
+    -webkit-backdrop-filter: blur(10px) saturate(118%);
+    backdrop-filter: blur(10px) saturate(118%);
   }
 
   .glass-surface,
-  .glass-header {
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.46);
+  .workbench-grid .glass-header {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.34), rgba(234, 145, 185, 0.08));
+    box-shadow: inset 0 1px 0 var(--cyrene-glass-border), 0 1px 0 rgba(86, 72, 117, 0.06);
+  }
+
+  .titlebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .titlebar-brand-mark {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    border: 1px solid var(--accent-border);
+    border-radius: 8px 10px 8px 10px;
+    color: var(--accent-gold);
+    background: var(--cyrene-glow-pink);
+    font-size: 11px;
+    box-shadow: 0 0 0 3px rgba(234, 145, 185, 0.06);
   }
 
   .glass-rail {
@@ -545,7 +759,8 @@
 
     .workbench-grid .home-character-image {
       width: clamp(168px, 20vh, 210px);
-      height: clamp(168px, 20vh, 210px);
+      height: auto;
+      max-height: 210px;
     }
 
     .workbench-grid .home-status,
@@ -560,6 +775,38 @@
 
     .workbench-grid .home-quick-action {
       min-height: 60px;
+    }
+  }
+
+  @media (min-height: 781px) and (max-height: 820px) {
+    .workbench-grid .home-content {
+      padding-top: 18px;
+      padding-bottom: 18px;
+    }
+
+    .workbench-grid .home-hero {
+      gap: 8px;
+    }
+
+    .workbench-grid .home-character-scene {
+      min-width: 198px;
+      min-height: 198px;
+    }
+
+    .workbench-grid .home-character-image {
+      width: 178px;
+      max-height: 178px;
+    }
+
+    .workbench-grid .home-status,
+    .workbench-grid .home-composer,
+    .workbench-grid .home-quick-actions {
+      margin-top: 10px;
+    }
+
+    .workbench-grid .home-quick-action {
+      min-height: 60px;
+      padding: 10px;
     }
   }
 

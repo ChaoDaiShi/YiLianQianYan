@@ -136,7 +136,7 @@ export default function NavRail() {
 
       <Tooltip content={`后端状态：${backendStatusMeta.label}`}>
         <div
-          className="mb-1 mt-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--sidebar-text)] opacity-80"
+          className="nav-rail-status-motif mb-1 mt-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--sidebar-text)] opacity-80"
           aria-live="polite"
           aria-label={`后端状态：${backendStatusMeta.label}`}
         >

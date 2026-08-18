@@ -25,6 +25,7 @@ interface QuickAction {
   title: string;
   subtitle: string;
   prompt: string;
+  tone: "blue" | "pink" | "purple" | "water";
 }
 
 const QUICK_ACTIONS: QuickAction[] = [
@@ -33,24 +34,28 @@ const QUICK_ACTIONS: QuickAction[] = [
     title: "查看文件目录",
     subtitle: "整理文件",
     prompt: "列出当前目录的文件",
+    tone: "blue",
   },
   {
     icon: ListChecks,
     title: "查找 TODO",
     subtitle: "扫描代码标记",
     prompt: "搜索包含 TODO 的文件",
+    tone: "pink",
   },
   {
     icon: FileCode,
     title: "编写脚本",
     subtitle: "生成或修改脚本",
     prompt: "创建一个 Python 脚本",
+    tone: "purple",
   },
   {
     icon: Activity,
     title: "查看系统进程",
     subtitle: "分析当前运行状态",
     prompt: "查看系统进程",
+    tone: "water",
   },
 ];
 
@@ -133,11 +138,10 @@ export default function WorkbenchHome({
             </p>
           </div>
 
-          <div className="home-character relative">
-            <div
-              className="absolute -inset-6 -z-10 rounded-full bg-[radial-gradient(circle,rgba(234,145,185,0.16),rgba(234,145,185,0)_70%)]"
-              aria-hidden="true"
-            />
+          <div className="home-character home-character-scene relative">
+            <div className="home-character-glow" aria-hidden="true" />
+            <div className="home-character-ripple" aria-hidden="true" />
+            <div className="home-character-petals" aria-hidden="true" />
             <img
               src="/cyrene-home-character.png"
               alt="小昔涟"
@@ -176,7 +180,9 @@ export default function WorkbenchHome({
                 onClick={() => onHint?.(action.prompt)}
                 className="home-quick-action flex flex-col items-start gap-2 rounded-xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3 text-left transition-[background-color,border-color] duration-[var(--motion-fast)] hover:border-[var(--accent-border)]"
               >
-                <Icon className="h-4 w-4 text-[var(--accent-purple)]" />
+                <span className={`quick-action-icon-well quick-action-icon-well-${action.tone}`}>
+                  <Icon className="h-4 w-4" />
+                </span>
                 <span>
                   <span className="block text-sm font-medium text-[var(--text)]">
                     {action.title}

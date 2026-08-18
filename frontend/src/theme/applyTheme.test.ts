@@ -28,6 +28,10 @@ describe("semantic theme variables", () => {
     expect(variables["--danger-fg"]).toBe("#292536");
     expect(variables["--sidebar-text"]).toBe("#eeeaf8");
     expect(variables["--divider"]).toBe("rgba(91,76,125,0.14)");
+    expect(variables["--cyrene-glow-pink"]).toBe("rgba(234,145,185,0.22)");
+    expect(variables["--cyrene-glow-purple"]).toBe("rgba(173,155,232,0.18)");
+    expect(variables["--cyrene-glass-border"]).toBe("rgba(255,255,255,0.52)");
+    expect(variables["--cyrene-night"]).toBe("#29263a");
     expect(variables["--radius-xs"]).toBe("6px");
     expect(variables["--radius-md"]).toBe("12px");
     expect(variables["--radius-xl"]).toBe("20px");
@@ -58,6 +62,7 @@ describe("semantic theme variables", () => {
     expect(variables["--radius-lg"]).toBe("16px");
     expect(variables["--shadow-card"]).toContain("rgba");
     expect(variables["--motion-fast"]).toBe("140ms");
+    expect(variables["--cyrene-surface-tint"]).toBe("rgba(255,255,255,0.34)");
   });
 
   it("derives non-cyrene semantic variables from the active preset palette", () => {

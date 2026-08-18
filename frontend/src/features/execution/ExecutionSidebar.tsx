@@ -76,9 +76,10 @@ export default function ExecutionSidebar({
 
   return (
     <aside className="glass-rail execution-sidebar flex h-full min-h-0 flex-col bg-[var(--surface-muted)] text-[var(--text)]">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
+      <header className="execution-header flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
         <div>
           <h2 className="text-sm font-semibold">执行轨迹</h2>
+          <span className="execution-header-motif" aria-hidden="true" />
           <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
             {history.length} 个动作 · {completed} 个完成
             {failures > 0 ? ` · ${failures} 个异常` : ""}

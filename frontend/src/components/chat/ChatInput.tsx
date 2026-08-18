@@ -62,7 +62,7 @@ export default function ChatInput({
           disabled={isLoading}
           className="block min-h-[52px] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text)] outline-none placeholder:text-[var(--text-faint)] disabled:opacity-60"
         />
-        <div className="mt-2 flex items-center justify-between gap-2">
+        <div className="composer-footer mt-2 flex items-center justify-between gap-2">
           <p className="text-[10px] text-[var(--text-faint)]">
             Enter 发送 · Shift + Enter 换行
           </p>
