@@ -38,4 +38,9 @@ describe("MessageBubble render boundary", () => {
     expect(messageListSource).not.toContain("showAssistantAvatar");
     expect(messageListSource).not.toContain("ml-11");
   });
+
+  it("routes markdown web links through the external browser opener", () => {
+    expect(messageBubbleSource).toContain("openExternalUrl");
+    expect(messageBubbleSource).toContain("event.preventDefault()");
+  });
 });
