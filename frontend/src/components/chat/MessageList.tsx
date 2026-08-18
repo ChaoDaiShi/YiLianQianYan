@@ -73,14 +73,8 @@ export default function MessageList({
       className={MESSAGE_LIST_VIEWPORT_CLASS_NAME}
     >
       <div className="message-column">
-        {messages.map((message, index) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            showAssistantAvatar={
-              message.role !== "user" && messages[index - 1]?.role !== "assistant"
-            }
-          />
+        {messages.map((message) => (
+          <MessageBubble key={message.id} message={message} />
         ))}
 
         {streaming && (
@@ -88,25 +82,13 @@ export default function MessageList({
             <AgentProgressCard toolCalls={streaming.toolCalls} />
 
             {streaming.content && (
-              <div className="flex items-start gap-3">
-                <img
-                  src="/favicon.png"
-                  alt="小昔涟"
-                  className="h-8 w-8 shrink-0 rounded-xl object-cover"
-                />
-                <div className="min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
-                  <StreamingText text={streaming.content} />
-                </div>
+              <div className="min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
+                <StreamingText text={streaming.content} />
               </div>
             )}
 
             {!streaming.content && streaming.toolCalls.length === 0 && (
               <div className="flex items-center gap-3 px-1 py-3" aria-label="正在生成">
-                <img
-                  src="/favicon.png"
-                  alt="小昔涟"
-                  className="h-8 w-8 rounded-xl object-cover"
-                />
                 <span className="text-xs text-[var(--text-secondary)]">
                   正在接收小昔涟的回复…
                 </span>

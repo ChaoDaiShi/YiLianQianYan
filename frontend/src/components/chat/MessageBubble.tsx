@@ -7,7 +7,6 @@ import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
 
 export interface MessageBubbleProps {
   message: Message;
-  showAssistantAvatar?: boolean;
 }
 
 export function areMessageBubblePropsEqual(
@@ -15,22 +14,18 @@ export function areMessageBubblePropsEqual(
   next: MessageBubbleProps,
 ) {
   return (
-    previous.message === next.message &&
-    previous.showAssistantAvatar === next.showAssistantAvatar
+    previous.message === next.message
   );
 }
 
-function MessageBubble({
-  message,
-  showAssistantAvatar = true,
-}: MessageBubbleProps) {
+function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const [copied, setCopied] = useState(false);
 
   if (isTool) {
     return message.content?.startsWith("data:image/") ? (
-      <div className="mb-4 ml-11 max-w-[820px]">
+      <div className="mb-4 max-w-[820px]">
         <ToolResultContent result={message.content} />
       </div>
     ) : null;
@@ -46,21 +41,7 @@ function MessageBubble({
 
   return (
     <article className="group mb-5 animate-msg-in">
-      <div className={"flex items-start gap-3 " + (isUser ? "justify-end" : "justify-start")}>
-        {!isUser && (
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center">
-            {showAssistantAvatar ? (
-              <img
-                src="/favicon.png"
-                alt="小昔涟"
-                className="h-8 w-8 rounded-xl object-cover"
-              />
-            ) : (
-              <span className="h-2 w-2 rounded-full bg-[var(--accent-purple)]/45" aria-hidden="true" />
-            )}
-          </div>
-        )}
-
+      <div className={"flex " + (isUser ? "justify-end" : "justify-start")}>
         <div
           className={
             "relative min-w-0 text-sm leading-7 " +
@@ -97,7 +78,7 @@ function MessageBubble({
       </div>
 
       {toolCalls.length > 0 && (
-        <div className="ml-11 mt-3 max-w-[900px]">
+        <div className="mt-3 max-w-[900px]">
           {toolCalls.map((toolCall) => (
             <ToolCallCard key={toolCall.toolCallId} {...toolCall} />
           ))}
