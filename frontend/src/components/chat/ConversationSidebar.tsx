@@ -64,8 +64,8 @@ export default function ConversationSidebar({
   };
 
   return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-col bg-[var(--panel)]">
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
+    <aside className="conversation-sidebar flex h-full min-h-0 min-w-0 flex-col bg-[var(--panel)]">
+      <div className="conversation-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
         <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
         <h2 className="text-sm font-semibold">任务</h2>
         {onClose && (
@@ -80,8 +80,14 @@ export default function ConversationSidebar({
         )}
       </div>
 
-      <div className="space-y-2 border-b border-[var(--border)] p-3">
-        <Button type="button" onClick={createNew} className="h-10 w-full" size="md">
+      <div className="conversation-sidebar-actions space-y-2 border-b border-[var(--border)] p-3">
+        <Button
+          type="button"
+          onClick={createNew}
+          variant="secondary"
+          className="conversation-create-button h-10 w-full"
+          size="md"
+        >
           <Plus className="h-4 w-4" />
           新建任务
         </Button>
@@ -97,7 +103,7 @@ export default function ConversationSidebar({
         </label>
       </div>
 
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="conversation-list scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2">
         {filtered.length === 0 ? (
           <EmptyState
             title={query ? "没有匹配的任务" : "暂无任务"}
@@ -113,7 +119,7 @@ export default function ConversationSidebar({
               return (
                 <div
                   key={conversation.id}
-                  className={`group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                  className={`conversation-row group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
                     active
                       ? "border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--text)]"
                       : "border-transparent text-[var(--text-muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
