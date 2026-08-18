@@ -1896,6 +1896,182 @@
     min-width: 0;
   }
 
+  .system-logs-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .system-log-search {
+    min-width: min(18rem, 28vw);
+  }
+
+  .system-log-filter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--text-secondary);
+    font-size: 0.6875rem;
+  }
+
+  .system-log-filter select {
+    min-width: 5.5rem;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--surface-solid);
+    color: var(--text-primary);
+    padding: 0.5rem 0.6rem;
+    font-size: 0.75rem;
+    outline: none;
+  }
+
+  .system-log-filter select:focus-visible,
+  .system-log-row:focus-visible,
+  .system-log-copy:focus-visible {
+    outline: 2px solid var(--focus-ring-soft);
+    outline-offset: 2px;
+  }
+
+  .system-logs-surface {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .system-log-list {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 1px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface-solid);
+    padding: 0.35rem;
+  }
+
+  .system-log-row {
+    display: grid;
+    grid-template-columns: minmax(9.5rem, auto) 4.5rem minmax(5rem, 9rem) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.65rem;
+    min-height: 2.5rem;
+    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.55rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background-color var(--motion-fast), color var(--motion-fast);
+  }
+
+  .system-log-row:hover {
+    background: var(--surface-hover);
+  }
+
+  .system-log-time,
+  .system-log-source {
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.6875rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .system-log-message {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .system-log-copy {
+    border-radius: var(--radius-xs);
+    padding: 0.25rem;
+    color: var(--text-faint);
+    opacity: 0;
+    transition: opacity var(--motion-fast), color var(--motion-fast), background-color var(--motion-fast);
+  }
+
+  .system-log-row:hover .system-log-copy,
+  .system-log-row:focus-within .system-log-copy {
+    opacity: 1;
+  }
+
+  .system-log-copy:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+
+  .system-logs-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    border-top: 1px solid var(--border-soft);
+    padding: 0.55rem 0.25rem 0;
+    color: var(--text-secondary);
+    font-size: 0.6875rem;
+  }
+
+  .system-log-detail {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+    gap: 1.5rem;
+    overflow-y: auto;
+    padding: 1rem;
+    scrollbar-width: thin;
+  }
+
+  .system-log-detail dl {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .system-log-detail dl > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--border-soft);
+    padding-bottom: 0.65rem;
+  }
+
+  .system-log-detail dt {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+  }
+
+  .system-log-detail dd {
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.75rem;
+    text-align: right;
+  }
+
+  .system-log-detail section h3 {
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .system-log-detail pre {
+    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--surface-muted);
+    color: var(--text-primary);
+    padding: 0.75rem;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+  }
+
   @media (max-width: 900px) {
     .system-monitor-grid {
       grid-template-columns: 1fr;
@@ -1905,9 +2081,46 @@
       grid-template-columns: 1fr;
       gap: 0.75rem;
     }
+
+    .system-log-search {
+      min-width: min(16rem, 100%);
+    }
+
+    .system-log-row {
+      grid-template-columns: minmax(8rem, auto) 4.5rem minmax(4rem, 8rem) minmax(0, 1fr) auto;
+    }
   }
 
   @media (max-width: 640px) {
+    .system-logs-toolbar {
+      align-items: stretch;
+      justify-content: stretch;
+    }
+
+    .system-log-search,
+    .system-log-filter,
+    .system-log-filter select {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .system-log-row {
+      grid-template-columns: 1fr auto;
+      align-items: start;
+    }
+
+    .system-log-time,
+    .system-log-source,
+    .system-log-message {
+      grid-column: 1;
+    }
+
+    .system-log-row > .system-log-copy {
+      grid-column: 2;
+      grid-row: 1 / span 4;
+      opacity: 1;
+    }
+
     .system-disk-row,
     .system-health-row,
     .system-health-meta,
