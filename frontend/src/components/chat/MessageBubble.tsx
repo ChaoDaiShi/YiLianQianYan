@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "../../types";
 import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
+import { isExternalHttpUrl, openExternalUrl } from "./externalLink";
 
 export interface MessageBubbleProps {
   message: Message;
@@ -39,6 +40,32 @@ function MessageBubble({ message }: MessageBubbleProps) {
     window.setTimeout(() => setCopied(false), 1500);
   };
 
+  const renderMarkdownLink = ({
+    href,
+    children,
+    ...props
+  }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+    const external = Boolean(href && isExternalHttpUrl(href));
+    return (
+      <a
+        {...props}
+        href={href}
+        target={external ? "_blank" : undefined}
+        rel={external ? "noreferrer" : undefined}
+        onClick={
+          external
+            ? (event) => {
+                event.preventDefault();
+                void openExternalUrl(href!);
+              }
+            : undefined
+        }
+      >
+        {children}
+      </a>
+    );
+  };
+
   return (
     <article className="group mb-5 animate-msg-in">
       <div className={"flex " + (isUser ? "justify-end" : "justify-start")}>
@@ -54,7 +81,10 @@ function MessageBubble({ message }: MessageBubbleProps) {
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
             <div className="prose prose-sm max-w-none overflow-x-auto">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{ a: renderMarkdownLink }}
+              >
                 {message.content}
               </ReactMarkdown>
             </div>
