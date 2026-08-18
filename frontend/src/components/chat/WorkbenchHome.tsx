@@ -139,7 +139,7 @@ export default function WorkbenchHome({
               aria-hidden="true"
             />
             <img
-              src="/favicon.png"
+              src="/cyrene-home-character.png"
               alt="小昔涟"
               className="home-character-image h-[168px] w-[168px] object-contain"
             />

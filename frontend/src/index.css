@@ -367,10 +367,10 @@
 
   /* Ambient 昔涟 background for the idle workbench home. */
   .home-ambient {
-    background:
-      radial-gradient(58% 46% at 50% 34%, rgba(234, 145, 185, 0.08), transparent 72%),
-      radial-gradient(42% 34% at 26% 72%, rgba(173, 155, 232, 0.06), transparent 72%),
-      radial-gradient(42% 34% at 74% 74%, rgba(153, 207, 234, 0.05), transparent 72%);
+    background-image: url("/cyrene-home-background.png");
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
   }
 
   .home-ambient-stars {
@@ -398,9 +398,11 @@
   }
 
   .workbench-grid .home-character-image {
-    width: clamp(180px, 22vh, 220px);
-    height: clamp(180px, 22vh, 220px);
-    border-radius: 46% 46% 38% 38%;
+    width: clamp(190px, 24vh, 250px);
+    height: clamp(190px, 24vh, 250px);
+    aspect-ratio: 1;
+    border-radius: 44%;
+    object-fit: cover;
     mix-blend-mode: multiply;
   }
 
@@ -461,8 +463,8 @@
     }
 
     .workbench-grid .home-character-image {
-      width: clamp(176px, 20vh, 196px);
-      height: clamp(176px, 20vh, 196px);
+      width: clamp(168px, 20vh, 210px);
+      height: clamp(168px, 20vh, 210px);
     }
 
     .workbench-grid .home-status,

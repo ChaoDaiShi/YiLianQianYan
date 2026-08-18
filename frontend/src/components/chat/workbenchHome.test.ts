@@ -9,6 +9,7 @@ describe("workbench home responsive composition", () => {
     expect(chatInputSource).toContain("home-composer");
     expect(workbenchHomeSource).toContain("home-content");
     expect(workbenchHomeSource).toContain("home-character-image");
+    expect(workbenchHomeSource).toContain("/cyrene-home-character.png");
     expect(workbenchHomeSource).toContain("home-quick-actions");
     expect(workbenchHomeSource).toContain("home-quick-action");
   });
