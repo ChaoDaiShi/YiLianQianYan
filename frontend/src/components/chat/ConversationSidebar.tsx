@@ -64,7 +64,7 @@ export default function ConversationSidebar({
   };
 
   return (
-    <aside className="conversation-sidebar flex h-full min-h-0 min-w-0 flex-col bg-[var(--panel)]">
+    <aside className="glass-rail conversation-sidebar flex h-full min-h-0 min-w-0 flex-col bg-[var(--panel)]">
       <div className="conversation-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
         <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
         <h2 className="text-sm font-semibold">任务</h2>
