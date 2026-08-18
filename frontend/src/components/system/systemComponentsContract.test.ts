@@ -14,8 +14,10 @@ describe("system component contract", () => {
   });
 
   it("keeps the implementation token-based", () => {
+    expect(statusSource).toContain("../ui/Badge");
+    expect(metricSource).toContain("../ui/Panel");
     for (const source of [statusSource, metricSource, sectionSource, settingSource]) {
-      expect(source).toContain("var(--");
+      expect(source).not.toMatch(/#[0-9a-f]{3,8}/i);
     }
   });
 });
