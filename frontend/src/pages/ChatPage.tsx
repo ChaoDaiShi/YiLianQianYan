@@ -67,6 +67,7 @@ export default function ChatPage() {
   return (
     <div
       className={WORKBENCH_VIEWPORT_CLASS_NAME}
+      data-chat-view={conversationId ? "conversation" : "home"}
       data-mode={workspaceMode}
       data-execution-collapsed={
         workspaceMode === "full" && executionCollapsed ? "true" : "false"

@@ -149,9 +149,11 @@ export default function ToolCallCard({
   return (
     <article
       className={
-        "overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] " +
+        "conversation-tool-card tool-card-status-" + effectiveStatus +
+        " overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] " +
         (compact ? "mb-2" : "mb-3")
       }
+      data-status={effectiveStatus}
     >
       <button
         type="button"
@@ -161,7 +163,10 @@ export default function ToolCallCard({
         aria-controls={"tool-details-" + toolCallId}
         aria-label={(expanded ? "收起" : "查看") + "技术详情：" + label}
       >
-        <span className={"mt-0.5 shrink-0 " + statusTone(effectiveStatus)}>
+        <span className="tool-card-icon-well shrink-0">
+          {TOOL_ICONS[name] || <Terminal className="h-4 w-4" />}
+        </span>
+        <span className={"tool-card-status-icon mt-0.5 shrink-0 " + statusTone(effectiveStatus)}>
           {statusIcon(effectiveStatus)}
         </span>
         <span className="min-w-0 flex-1">
@@ -170,7 +175,6 @@ export default function ToolCallCard({
               {formatToolStatus(effectiveStatus)}
             </span>
             <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-              {TOOL_ICONS[name] || <Terminal className="h-3.5 w-3.5" />}
               {label}
             </span>
             {(riskLevel === "high" || riskLevel === "critical") && (
@@ -180,7 +184,7 @@ export default function ToolCallCard({
               />
             )}
           </span>
-          <span className="mt-1 block truncate text-xs text-[var(--text-secondary)]">
+          <span className="tool-card-summary mt-1 block truncate text-xs text-[var(--text-secondary)]">
             {effectiveStatus === "running"
               ? formatToolActivity(name, args)
               : effectiveStatus === "success"
@@ -203,7 +207,7 @@ export default function ToolCallCard({
       {expanded && (
         <div
           id={"tool-details-" + toolCallId}
-          className="border-t border-[var(--border-soft)] bg-[var(--surface-muted)] px-3.5 py-3"
+          className="tool-card-details border-t border-[var(--border-soft)] bg-[var(--surface-muted)] px-3.5 py-3"
         >
           <dl className="space-y-2 text-xs">
             <div>

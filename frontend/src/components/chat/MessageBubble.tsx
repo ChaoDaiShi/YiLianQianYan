@@ -8,6 +8,7 @@ import { isExternalHttpUrl, openExternalUrl } from "./externalLink";
 
 export interface MessageBubbleProps {
   message: Message;
+  showAssistantAvatar?: boolean;
 }
 
 export function areMessageBubblePropsEqual(
@@ -15,11 +16,12 @@ export function areMessageBubblePropsEqual(
   next: MessageBubbleProps,
 ) {
   return (
-    previous.message === next.message
+    previous.message === next.message &&
+    previous.showAssistantAvatar === next.showAssistantAvatar
   );
 }
 
-function MessageBubble({ message }: MessageBubbleProps) {
+function MessageBubble({ message, showAssistantAvatar = true }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const [copied, setCopied] = useState(false);
@@ -67,20 +69,38 @@ function MessageBubble({ message }: MessageBubbleProps) {
   };
 
   return (
-    <article className="group mb-5 animate-msg-in">
-      <div className={"flex " + (isUser ? "justify-end" : "justify-start")}>
+    <article className="conversation-message group mb-5 animate-msg-in">
+      <div
+        className={
+          "conversation-message-row flex items-start gap-2.5 " +
+          (isUser ? "justify-end" : "justify-start")
+        }
+      >
+        {!isUser && (
+          <span className="conversation-assistant-avatar-wrap" aria-hidden="true">
+            {showAssistantAvatar ? (
+              <img
+                src="/cyrene-home-character.png"
+                alt=""
+                className="conversation-assistant-avatar"
+              />
+            ) : (
+              <span className="conversation-assistant-avatar-placeholder" />
+            )}
+          </span>
+        )}
         <div
           className={
-            "relative min-w-0 text-sm leading-7 " +
+            "conversation-message-content relative min-w-0 text-sm leading-7 " +
             (isUser
-              ? "max-w-[720px] rounded-2xl rounded-br-md border border-[var(--accent-border)] bg-[var(--accent-soft)] px-4 py-3 text-[var(--text-primary)]"
-              : "max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-4 py-3 text-[var(--text-primary)]")
+              ? "conversation-message-user max-w-[720px] rounded-2xl rounded-br-md border border-[var(--accent-border)] bg-[var(--accent-soft)] px-4 py-3 text-[var(--text-primary)]"
+              : "conversation-message-assistant max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-4 py-3 text-[var(--text-primary)]")
           }
         >
           {isUser ? (
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
-            <div className="prose prose-sm max-w-none overflow-x-auto">
+            <div className="conversation-markdown prose prose-sm max-w-none overflow-x-auto">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{ a: renderMarkdownLink }}
@@ -108,7 +128,7 @@ function MessageBubble({ message }: MessageBubbleProps) {
       </div>
 
       {toolCalls.length > 0 && (
-        <div className="mt-3 max-w-[900px]">
+        <div className="conversation-tool-calls mt-3 max-w-[900px]">
           {toolCalls.map((toolCall) => (
             <ToolCallCard key={toolCall.toolCallId} {...toolCall} />
           ))}

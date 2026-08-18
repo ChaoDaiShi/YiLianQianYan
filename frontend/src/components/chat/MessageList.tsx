@@ -21,7 +21,7 @@ interface MessageListProps {
 function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
   return (
     <section
-      className="mb-4 rounded-[var(--radius-lg)] border border-[var(--danger-border)] bg-[var(--danger-soft)] px-4 py-3"
+      className="conversation-error-notice mb-4 rounded-[var(--radius-lg)] border border-[var(--danger-border)] bg-[var(--danger-soft)] px-4 py-3"
       aria-label="任务执行错误"
     >
       <div className="flex items-start gap-3">
@@ -70,25 +70,32 @@ export default function MessageList({
     <div
       ref={scrollContainerRef}
       onScroll={onScroll}
-      className={MESSAGE_LIST_VIEWPORT_CLASS_NAME}
+      className={`${MESSAGE_LIST_VIEWPORT_CLASS_NAME} conversation-message-list`}
     >
       <div className="message-column">
-        {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+        {messages.map((message, index) => (
+          <MessageBubble
+            key={message.id}
+            message={message}
+            showAssistantAvatar={
+              message.role === "assistant" &&
+              messages[index - 1]?.role !== "assistant"
+            }
+          />
         ))}
 
         {streaming && (
-          <div className="mb-4 animate-msg-in">
+          <div className="conversation-streaming-state mb-4 animate-msg-in">
             <AgentProgressCard toolCalls={streaming.toolCalls} />
 
             {streaming.content && (
-              <div className="min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
+              <div className="conversation-streaming-message conversation-message-assistant min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
                 <StreamingText text={streaming.content} />
               </div>
             )}
 
             {!streaming.content && streaming.toolCalls.length === 0 && (
-              <div className="flex items-center gap-3 px-1 py-3" aria-label="正在生成">
+              <div className="conversation-streaming-wait flex items-center gap-3 px-1 py-3" aria-label="正在生成">
                 <span className="text-xs text-[var(--text-secondary)]">
                   正在接收小昔涟的回复…
                 </span>

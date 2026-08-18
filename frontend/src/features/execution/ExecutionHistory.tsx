@@ -71,7 +71,9 @@ export default function ExecutionHistory({
       {records.map((record) => (
         <li
           key={record.toolCallId}
-          className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"
+          className="execution-history-item rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"
+          data-execution-status={record.executionStatus}
+          data-verification-status={record.verificationStatus}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">

@@ -68,7 +68,7 @@ export default function ApprovalCard({
   return (
     <section
       className={
-        "overflow-hidden rounded-[var(--radius-lg)] border bg-[var(--surface-solid)] " +
+        "conversation-approval-card overflow-hidden rounded-[var(--radius-lg)] border bg-[var(--surface-solid)] " +
         (isCritical
           ? "border-[var(--danger-border)]"
           : "border-[var(--warning-border)]")
@@ -77,7 +77,7 @@ export default function ApprovalCard({
     >
       <div
         className={
-          "flex items-center gap-2 border-b px-4 py-3 " +
+          "approval-card-header flex items-center gap-2 border-b px-4 py-3 " +
           (isCritical
             ? "border-[var(--danger-border)] bg-[var(--danger-soft)]"
             : "border-[var(--warning-border)] bg-[var(--warning-soft)]")
@@ -89,8 +89,9 @@ export default function ApprovalCard({
           <ShieldCheck className="h-4 w-4 text-[var(--accent-gold)]" />
         )}
         <div>
-          <p className="text-sm font-semibold text-[var(--text-primary)]">
-            小昔涟需要你的许可
+          <p className="approval-card-title text-sm font-semibold text-[var(--text-primary)]">
+            <span className="approval-card-star" aria-hidden="true">✦</span>
+            需要你的许可
           </p>
           <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
             这一步在得到确认前不会执行
@@ -106,7 +107,7 @@ export default function ApprovalCard({
         </span>
       </div>
 
-      <div className="space-y-3 px-4 py-3 text-xs">
+      <div className="approval-card-details space-y-3 px-4 py-3 text-xs">
         <div>
           <span className="text-[var(--text-faint)]">操作</span>
           <p className="mt-0.5 font-medium text-[var(--text-primary)]">
@@ -130,7 +131,7 @@ export default function ApprovalCard({
           </div>
         )}
 
-        <details className="rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
+        <details className="approval-card-technical rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
           <summary className="cursor-pointer select-none text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
             查看技术详情
           </summary>
@@ -150,7 +151,7 @@ export default function ApprovalCard({
           </dl>
         </details>
 
-        <div className="flex items-center justify-end gap-2 pt-1">
+        <div className="approval-card-actions flex items-center justify-end gap-2 pt-1">
           <Button
             size="sm"
             variant="secondary"
