@@ -15,6 +15,7 @@ describe("NavRail groups", () => {
       "/plugins",
       "/agents",
       "/capabilities",
+      "/memory",
       "/knowledge",
       "/system",
       "/logs",

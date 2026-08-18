@@ -612,6 +612,560 @@
     border-color: var(--accent-primary);
     box-shadow: 0 0 0 3px var(--focus-ring-soft);
   }
+
+  .memory-page,
+  .knowledge-page {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .memory-page-body,
+  .knowledge-page-body {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .memory-page-body {
+    background:
+      radial-gradient(46% 22% at 50% 0%, rgba(234, 145, 185, 0.045), transparent 78%),
+      var(--bg-app);
+  }
+
+  .memory-overview {
+    display: flex;
+    min-height: 190px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    overflow: hidden;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+    padding: 22px 28px;
+  }
+
+  .memory-overview-copy {
+    min-width: 220px;
+  }
+
+  .memory-overview-kicker {
+    color: var(--accent-primary-hover);
+    font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+  }
+
+  .memory-overview-copy h2 {
+    margin-top: 8px;
+    color: var(--text-primary);
+    font-size: 1.15rem;
+    font-weight: 650;
+  }
+
+  .memory-overview-copy p {
+    margin-top: 6px;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+  }
+
+  .memory-bubbles {
+    position: relative;
+    display: grid;
+    min-height: 146px;
+    min-width: min(48vw, 430px);
+    grid-template-columns: repeat(3, minmax(62px, 1fr));
+    grid-template-rows: repeat(2, minmax(54px, 1fr));
+    align-items: center;
+    justify-items: center;
+    gap: 8px;
+  }
+
+  .memory-bubble,
+  .memory-bubble-center {
+    display: flex;
+    min-width: 72px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, transform var(--motion-fast) ease;
+  }
+
+  .memory-bubble {
+    width: 100%;
+    max-width: 118px;
+    flex-direction: column;
+    gap: 1px;
+    padding: 8px 12px;
+    font-size: 0.68rem;
+  }
+
+  .memory-bubble strong,
+  .memory-bubble-center strong {
+    color: var(--text-primary);
+    font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+    font-size: 0.85rem;
+  }
+
+  .memory-bubble-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 1;
+    width: 86px;
+    height: 86px;
+    transform: translate(-50%, -50%);
+    flex-direction: column;
+    gap: 1px;
+    background: var(--accent-soft);
+    color: var(--accent-primary-hover);
+    font-size: 0.64rem;
+  }
+
+  .memory-bubble:hover,
+  .memory-bubble-center:hover {
+    border-color: var(--accent-border);
+    background: var(--surface-hover);
+    transform: translateY(-1px);
+  }
+
+  .memory-bubble-center:hover {
+    transform: translate(-50%, calc(-50% - 1px));
+  }
+
+  .memory-toolbar {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    background: var(--surface-muted);
+    padding: 10px;
+  }
+
+  .memory-search-field {
+    display: flex;
+    min-width: 180px;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--surface-solid);
+    padding: 8px 10px;
+    color: var(--text-secondary);
+  }
+
+  .memory-search-field:focus-within {
+    border-color: var(--accent-border);
+    box-shadow: 0 0 0 3px rgba(234, 145, 185, 0.08);
+  }
+
+  .memory-search-field input {
+    min-width: 0;
+    flex: 1;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    outline: none;
+  }
+
+  .memory-search-field input::placeholder {
+    color: var(--text-faint);
+  }
+
+  .memory-clear-search,
+  .memory-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-xs);
+    color: var(--text-faint);
+  }
+
+  .memory-clear-search:hover,
+  .memory-icon-button:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+
+  .memory-filter-group {
+    display: flex;
+    max-width: 48%;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+  }
+
+  .memory-filter-button,
+  .memory-source-filter {
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+
+  .memory-filter-button {
+    padding: 7px 9px;
+  }
+
+  .memory-filter-button:hover,
+  .memory-filter-button[aria-pressed="true"] {
+    border-color: var(--accent-border);
+    background: var(--accent-soft);
+    color: var(--text-primary);
+  }
+
+  .memory-source-filter {
+    min-width: 92px;
+    border-color: var(--border-soft);
+    background: var(--surface-solid);
+    padding: 7px 8px;
+    outline: none;
+  }
+
+  .memory-source-filter:focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+  }
+
+  .memory-lower-grid {
+    display: grid;
+    min-height: 360px;
+    grid-template-columns: minmax(300px, 0.85fr) minmax(360px, 1.15fr);
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  .memory-list-panel,
+  .memory-detail-panel,
+  .knowledge-capability-panel {
+    min-width: 0;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+  }
+
+  .memory-list-panel,
+  .memory-detail-panel {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .memory-panel-header {
+    display: flex;
+    min-height: 62px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--divider);
+    padding: 12px 16px;
+  }
+
+  .memory-panel-header h2 {
+    color: var(--text-primary);
+    font-size: 0.84rem;
+    font-weight: 650;
+  }
+
+  .memory-panel-header p {
+    margin-top: 3px;
+    color: var(--text-faint);
+    font-size: 0.68rem;
+  }
+
+  .memory-list-scroll {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .memory-row {
+    display: block;
+    width: 100%;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    padding: 12px;
+    color: var(--text-primary);
+    text-align: left;
+    transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease;
+  }
+
+  .memory-row:hover,
+  .memory-row-selected {
+    border-color: var(--accent-border);
+    background: var(--surface-hover);
+  }
+
+  .memory-row-content {
+    margin-top: 7px;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    line-height: 1.55;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .memory-row-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 8px;
+    color: var(--text-faint);
+    font-size: 0.66rem;
+  }
+
+  .memory-detail-content {
+    display: flex;
+    min-height: 100%;
+    flex-direction: column;
+    padding: 18px;
+  }
+
+  .memory-detail-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .memory-detail-heading h2 {
+    margin-top: 8px;
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 650;
+  }
+
+  .memory-detail-body {
+    margin-top: 18px;
+    border-radius: var(--radius-md);
+    background: var(--surface-muted);
+    padding: 16px;
+  }
+
+  .memory-detail-body p {
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    line-height: 1.75;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .memory-detail-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .memory-detail-fields div,
+  .memory-technical-details dl div {
+    min-width: 0;
+  }
+
+  .memory-detail-fields dt,
+  .memory-technical-details dt {
+    color: var(--text-faint);
+    font-size: 0.68rem;
+  }
+
+  .memory-detail-fields dd,
+  .memory-technical-details dd {
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+  }
+
+  .memory-technical-details {
+    margin-top: auto;
+    border-top: 1px solid var(--divider);
+    padding-top: 14px;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+  }
+
+  .memory-technical-details summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+  }
+
+  .memory-technical-details dl {
+    display: grid;
+    gap: 9px;
+    margin-top: 12px;
+    font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+  }
+
+  .memory-maintenance-panel {
+    margin-top: 14px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    background: var(--surface-muted);
+    padding: 12px 14px;
+    color: var(--text-secondary);
+  }
+
+  .memory-maintenance-panel summary {
+    cursor: pointer;
+    font-size: 0.74rem;
+  }
+
+  .memory-maintenance-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-top: 12px;
+  }
+
+  .knowledge-page-body {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  .knowledge-capability-panel {
+    width: min(760px, 100%);
+    padding: 20px;
+  }
+
+  .knowledge-capability-panel > .flex {
+    padding-bottom: 22px;
+    padding-top: 22px;
+  }
+
+  .knowledge-capability-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    border-top: 1px solid var(--divider);
+    border-bottom: 1px solid var(--divider);
+    padding: 16px 0;
+  }
+
+  .knowledge-capability-grid > div {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 2px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-muted);
+    padding: 12px;
+    color: var(--text-secondary);
+  }
+
+  .knowledge-capability-grid svg {
+    grid-row: span 2;
+    color: var(--accent-primary-hover);
+  }
+
+  .knowledge-capability-grid strong {
+    color: var(--text-primary);
+    font-size: 0.76rem;
+  }
+
+  .knowledge-capability-grid span {
+    color: var(--text-faint);
+    font-size: 0.7rem;
+  }
+
+  .knowledge-capability-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-top: 16px;
+  }
+
+  .knowledge-capability-action p {
+    max-width: 460px;
+    color: var(--text-faint);
+    font-size: 0.72rem;
+    line-height: 1.5;
+  }
+}
+
+@media (max-width: 980px) {
+  .memory-overview {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .memory-bubbles {
+    width: min(100%, 430px);
+    min-width: 0;
+    align-self: center;
+  }
+
+  .memory-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .memory-filter-group {
+    max-width: 100%;
+  }
+
+  .memory-source-filter {
+    width: 100%;
+  }
+
+  .memory-lower-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memory-detail-panel {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 560px) {
+  .memory-page-body,
+  .knowledge-page-body {
+    padding: 10px;
+  }
+
+  .memory-overview,
+  .knowledge-capability-panel {
+    padding: 14px;
+  }
+
+  .memory-bubbles {
+    transform: scale(0.92);
+    transform-origin: center;
+    width: 112%;
+    margin-inline: -6%;
+  }
+
+  .memory-detail-fields,
+  .knowledge-capability-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memory-maintenance-content,
+  .knowledge-capability-action {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 @media (max-width: 1200px) {
