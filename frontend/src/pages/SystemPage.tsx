@@ -1,7 +1,19 @@
-import { useState, useEffect, useCallback } from "react";
-import { Cpu, HardDrive, Monitor, Disc, AlertTriangle, RefreshCw } from "lucide-react";
-import { getSystemInfo } from "../api/client";
-import { PageHeader, Panel, Button, Spinner, EmptyState } from "../components/ui";
+import { useCallback, useEffect, useState } from "react";
+import { Activity, Cpu, Database, Disc, HardDrive, Monitor, RefreshCw, Server } from "lucide-react";
+import { getSystemInfo, healthCheck, type RuntimeHealth } from "../api/client";
+import {
+  Button,
+  ErrorState,
+  PageHeader,
+  Panel,
+  Skeleton,
+} from "../components/ui";
+import {
+  formatLogTimestamp,
+  SystemMetricCard,
+  SystemSection,
+  SystemStatusBadge,
+} from "../components/system";
 
 interface SystemData {
   hostname: string;
@@ -27,180 +39,171 @@ interface SystemData {
   gpu: { name: string; vram_gb: string; driver: string; resolution: string }[];
 }
 
-function UsageBar({ pct }: { pct: string }) {
-  const v = Math.min(100, Math.max(0, parseFloat(pct) || 0));
-  const color =
-    v > 80 ? "bg-[var(--danger)]" : v > 50 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
-  return (
-    <div className="w-full h-1.5 bg-[var(--panel-2)] rounded-full overflow-hidden border border-[var(--border)]">
-      <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${v}%` }} />
-    </div>
-  );
+function formatUptime(seconds: number) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${days > 0 ? `${days}天 ` : ""}${hours}时${minutes}分`;
+}
+
+function percent(value: string) {
+  return Math.min(100, Math.max(0, Number.parseFloat(value) || 0));
+}
+
+function SystemMetricSkeleton() {
+  return <Skeleton className="h-32 w-full" />;
 }
 
 export default function SystemPage() {
   const [data, setData] = useState<SystemData | null>(null);
+  const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
-    const res = await getSystemInfo();
-    if (res) {
-      setData(res);
+    const [systemResult, healthResult] = await Promise.all([getSystemInfo(), healthCheck()]);
+    if (systemResult) {
+      setData(systemResult as SystemData);
       setError("");
     } else {
-      setError("无法连接后端系统监控接口");
+      setError("状态暂时无法获取");
     }
+    setHealth(healthResult);
+    setLastRefresh(Date.now());
     setLoading(false);
   }, []);
 
   useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 3000);
-    return () => clearInterval(t);
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => window.clearInterval(timer);
   }, [refresh]);
 
-  const fmtUptime = (s: number) => {
-    const d = Math.floor(s / 86400);
-    const h = Math.floor((s % 86400) / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    return `${d > 0 ? `${d}天 ` : ""}${h}时${m}分`;
-  };
-
   return (
-    <div className="flex flex-col h-full">
+    <div className="system-center-page flex h-full min-h-0 flex-col">
       <PageHeader
         title="系统监控"
-        description={
-          data
-            ? `${data.hostname} · ${data.os} · 运行 ${fmtUptime(data.uptime_secs)}`
-            : "实时资源仪表"
-        }
-        actions={
-          <Button variant="secondary" size="sm" onClick={refresh}>
-            <RefreshCw className="w-3.5 h-3.5" />
+        description="查看应用、服务和资源的当前运行状态。"
+        actions={(
+          <Button variant="secondary" size="sm" onClick={() => void refresh()} aria-label="刷新系统状态">
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             刷新
           </Button>
-        }
+        )}
       />
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin">
-        {loading && !data && (
-          <div className="flex justify-center py-20">
-            <Spinner className="w-8 h-8" />
-          </div>
-        )}
-
-        {error && !data && (
-          <EmptyState
-            icon={<AlertTriangle className="w-10 h-10 text-[var(--warning)]" />}
-            title="监控不可用"
+      <div className="system-center-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 scrollbar-thin">
+        {error && !data ? (
+          <ErrorState
+            title="系统状态暂时无法加载"
             description={error}
-            action={
-              <Button variant="secondary" onClick={refresh}>
-                重试
-              </Button>
-            }
+            action={<Button variant="secondary" onClick={() => void refresh()}>重试</Button>}
           />
-        )}
+        ) : null}
 
-        {data && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Panel>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium flex items-center gap-2 font-mono text-sm">
-                    <Cpu className="w-4 h-4 text-[var(--accent)]" />
-                    CPU
-                  </h3>
-                  <span className="text-2xl font-bold font-mono text-[var(--accent)]">
-                    {data.cpu.usage_pct}%
-                  </span>
-                </div>
-                <UsageBar pct={data.cpu.usage_pct} />
-                <p className="text-xs text-[var(--text-muted)] mt-2">{data.cpu.name}</p>
-                <p className="text-xs text-[var(--text-faint)]">
-                  {data.cpu.cores} 核心 · {data.cpu.per_core.length} 线程
-                </p>
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {data.cpu.per_core.slice(0, 16).map((u, i) => (
-                    <span
-                      key={i}
-                      className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--panel-2)] border border-[var(--border)] text-[var(--text-muted)]"
-                    >
-                      {u}%
-                    </span>
+        {loading && !data ? (
+          <div className="system-monitor-stack" aria-label="正在加载系统状态">
+            <SystemSection title="系统资源">
+              <div className="system-monitor-grid">
+                <SystemMetricSkeleton />
+                <SystemMetricSkeleton />
+              </div>
+            </SystemSection>
+            <SystemSection title="服务状态">
+              <Skeleton className="h-24 w-full" />
+            </SystemSection>
+          </div>
+        ) : null}
+
+        {data ? (
+          <div className="system-monitor-stack">
+            <SystemSection title="系统资源" description="当前设备返回的实时资源数据。">
+              <div className="system-monitor-grid">
+                <SystemMetricCard
+                  label="CPU"
+                  value={`${data.cpu.usage_pct}%`}
+                  detail={`${data.cpu.name} · ${data.cpu.cores} 核心 · ${data.cpu.per_core.length} 线程`}
+                  icon={<Cpu className="h-4 w-4" />}
+                  barPercent={percent(data.cpu.usage_pct)}
+                />
+                <SystemMetricCard
+                  label="Memory"
+                  value={`${data.memory.usage_pct}%`}
+                  detail={`已用 ${data.memory.used_gb} GB / 总量 ${data.memory.total_gb} GB`}
+                  icon={<HardDrive className="h-4 w-4" />}
+                  barPercent={percent(data.memory.usage_pct)}
+                />
+              </div>
+            </SystemSection>
+
+            {data.disks.length > 0 ? (
+              <SystemSection title="磁盘">
+                <Panel className="system-disk-list">
+                  {data.disks.map((disk) => (
+                    <div key={`${disk.mount}-${disk.name}`} className="system-disk-row">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Disc className="h-4 w-4 shrink-0 text-[var(--accent-primary)]" aria-hidden="true" />
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium text-[var(--text-primary)]">{disk.mount} · {disk.name}</div>
+                          <div className="text-xs text-[var(--text-secondary)]">可用 {disk.available_gb} GB</div>
+                        </div>
+                      </div>
+                      <div className="flex min-w-[150px] items-center gap-3">
+                        <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-muted)]" aria-hidden="true">
+                          <div className="h-full rounded-full bg-[var(--accent-purple)]" style={{ width: `${percent(disk.usage_pct)}%` }} />
+                        </div>
+                        <span className="w-20 text-right text-xs text-[var(--text-secondary)]">{disk.used_gb} / {disk.total_gb} GB</span>
+                      </div>
+                    </div>
                   ))}
-                </div>
-              </Panel>
+                </Panel>
+              </SystemSection>
+            ) : null}
 
-              <Panel>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium flex items-center gap-2 font-mono text-sm">
-                    <HardDrive className="w-4 h-4 text-[var(--accent)]" />
-                    内存
-                  </h3>
-                  <span className="text-2xl font-bold font-mono text-[var(--accent)]">
-                    {data.memory.usage_pct}%
-                  </span>
-                </div>
-                <UsageBar pct={data.memory.usage_pct} />
-                <div className="flex justify-between text-xs text-[var(--text-muted)] mt-2 font-mono">
-                  <span>已用 {data.memory.used_gb} GB</span>
-                  <span>总量 {data.memory.total_gb} GB</span>
-                </div>
-              </Panel>
-            </div>
-
-            <Panel>
-              <h3 className="font-medium mb-3 flex items-center gap-2 font-mono text-sm">
-                <Monitor className="w-4 h-4 text-[var(--accent)]" />
-                GPU
-              </h3>
-              <div className="space-y-2">
-                {data.gpu.map((g, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between p-3 bg-[var(--panel-2)] rounded-lg border border-[var(--border)]"
-                  >
-                    <div>
-                      <p className="font-medium text-sm">{g.name}</p>
-                      <p className="text-xs text-[var(--text-muted)] font-mono">
-                        显存 {g.vram_gb} GB · {g.driver} · {g.resolution}
-                      </p>
+            {data.gpu.length > 0 ? (
+              <SystemSection title="GPU">
+                <Panel className="system-gpu-list">
+                  {data.gpu.map((gpu) => (
+                    <div key={`${gpu.name}-${gpu.driver}`} className="system-gpu-row">
+                      <Monitor className="h-4 w-4 shrink-0 text-[var(--accent-blue)]" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-[var(--text-primary)]">{gpu.name}</div>
+                        <div className="truncate text-xs text-[var(--text-secondary)]">显存 {gpu.vram_gb} GB · {gpu.driver} · {gpu.resolution}</div>
+                      </div>
                     </div>
-                  </div>
-                ))}
-                {data.gpu.length === 0 && (
-                  <p className="text-sm text-[var(--text-faint)]">未检测到 GPU</p>
-                )}
-              </div>
-            </Panel>
+                  ))}
+                </Panel>
+              </SystemSection>
+            ) : null}
 
-            <Panel>
-              <h3 className="font-medium mb-3 flex items-center gap-2 font-mono text-sm">
-                <Disc className="w-4 h-4 text-[var(--accent)]" />
-                磁盘
-              </h3>
-              <div className="space-y-3">
-                {data.disks.map((d, i) => (
-                  <div key={i}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium">
-                        {d.mount}{" "}
-                        <span className="text-xs text-[var(--text-faint)]">({d.name})</span>
-                      </span>
-                      <span className="text-sm font-mono text-[var(--text-muted)]">
-                        {d.used_gb} / {d.total_gb} GB
-                      </span>
-                    </div>
-                    <UsageBar pct={d.usage_pct} />
-                  </div>
-                ))}
-              </div>
-            </Panel>
-          </>
-        )}
+            <SystemSection title="服务状态" description="仅显示已有健康接口返回的状态。">
+              <Panel className="system-health-grid">
+                <div className="system-health-row">
+                  <div className="flex items-center gap-2"><Server className="h-4 w-4 text-[var(--accent-blue)]" aria-hidden="true" />Backend</div>
+                  <SystemStatusBadge status={health?.status} label="Backend" />
+                </div>
+                <div className="system-health-row">
+                  <div className="flex items-center gap-2"><Database className="h-4 w-4 text-[var(--accent-purple)]" aria-hidden="true" />Database</div>
+                  <SystemStatusBadge status={health?.database} label="Database" />
+                </div>
+                {health?.version ? <div className="system-health-meta"><span>Version</span><span>{health.version}</span></div> : null}
+                {health?.policy_version ? <div className="system-health-meta"><span>Policy</span><span>{health.policy_version}</span></div> : null}
+              </Panel>
+            </SystemSection>
+
+            <SystemSection title="详细信息">
+              <Panel className="system-detail-grid">
+                <div><span>主机</span><strong>{data.hostname}</strong></div>
+                <div><span>操作系统</span><strong>{data.os}</strong></div>
+                <div><span>内核</span><strong>{data.kernel}</strong></div>
+                <div><span>运行时间</span><strong>{formatUptime(data.uptime_secs)}</strong></div>
+                {lastRefresh ? <div><span>最近刷新</span><strong>{formatLogTimestamp(lastRefresh)}</strong></div> : null}
+                <div className="system-detail-note"><Activity className="h-4 w-4" aria-hidden="true" />数据来自现有系统接口</div>
+              </Panel>
+            </SystemSection>
+          </div>
+        ) : null}
       </div>
     </div>
   );
