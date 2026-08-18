@@ -15,11 +15,11 @@
     --bg-soft: #f4f0fc;
     --bg-subtle: var(--bg-soft);
     /* Shared translucent surfaces keep the global Cyrene artwork visible across every page. */
-    --surface: rgba(255, 255, 255, 0.62);
+    --surface: rgba(255, 255, 255, 0.38);
     --surface-solid: #ffffff;
-    --surface-muted: rgba(252, 249, 255, 0.54);
-    --surface-elevated: rgba(255, 255, 255, 0.68);
-    --surface-hover: rgba(249, 243, 252, 0.72);
+    --surface-muted: rgba(252, 249, 255, 0.30);
+    --surface-elevated: rgba(255, 255, 255, 0.48);
+    --surface-hover: rgba(249, 243, 252, 0.58);
     --titlebar-bg: #FBF9FF;
     --text-primary: #292536;
     --text-secondary: #696276;
@@ -55,13 +55,13 @@
     --bg: var(--bg-app);
     --bg-2: var(--bg-subtle);
     --panel: var(--surface);
-    --panel-2: rgba(255, 255, 255, 0.68);
+    --panel-2: rgba(255, 255, 255, 0.48);
     --panel-hover: var(--surface-hover);
     --text: var(--text-primary);
     --text-muted: var(--text-secondary);
     --border: var(--border-soft);
     --accent: var(--accent-primary);
-    --input-bg: rgba(255, 255, 255, 0.68);
+    --input-bg: rgba(255, 255, 255, 0.50);
     --success: #73b99a;
     --success-soft: rgba(115, 185, 154, 0.12);
     --success-border: rgba(115, 185, 154, 0.30);
