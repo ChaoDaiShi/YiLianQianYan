@@ -15,8 +15,10 @@ describe("Shell rail visual contracts", () => {
 
   it("defines shell-wide artwork and adaptive nav rail hooks", () => {
     expect(appShellSource).toContain('className="shell-ambient');
+    expect(appShellSource).toContain("shell-ambient-strong");
     expect(appShellSource).toContain('className="shell-ambient-overlay');
     expect(navRailSource).toContain("nav-rail-compact");
     expect(navRailSource).toContain("nav-rail-item");
+    expect(navRailSource).toContain("nav-rail-item-label");
   });
 });

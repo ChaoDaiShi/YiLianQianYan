@@ -193,7 +193,7 @@
     min-width: 0;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)) no-repeat,
-      color-mix(in srgb, var(--bg-app) 76%, transparent);
+      color-mix(in srgb, var(--bg-app) 58%, transparent);
   }
 
   .workbench-grid[data-mode="full"] {
@@ -230,13 +230,17 @@
     background-position: center;
     background-repeat: no-repeat;
     background-size: cover;
-    opacity: 0.42;
+    opacity: 0.72;
+  }
+
+  .shell-ambient-strong {
+    opacity: 0.72;
   }
 
   .shell-ambient-overlay {
     background:
-      linear-gradient(135deg, rgba(248, 246, 253, 0.78), rgba(239, 232, 250, 0.56)),
-      radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.42), transparent 58%);
+      linear-gradient(135deg, rgba(248, 246, 253, 0.46), rgba(239, 232, 250, 0.28)),
+      radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.22), transparent 58%);
   }
 
   .nav-rail {
@@ -280,7 +284,7 @@
   }
 
   .workbench-grid .conversation-sidebar {
-    background: color-mix(in srgb, var(--surface-muted) 88%, var(--bg-app) 12%);
+    background: color-mix(in srgb, var(--surface-muted) 64%, transparent);
   }
 
   .workbench-grid .conversation-sidebar-header,
@@ -325,7 +329,7 @@
   }
 
   .workbench-grid .execution-sidebar {
-    background: color-mix(in srgb, var(--bg-app) 88%, var(--accent-purple) 12%);
+    background: color-mix(in srgb, var(--bg-app) 68%, transparent);
   }
 
   .workbench-grid .execution-sidebar-content {
@@ -511,18 +515,18 @@
 
   @media (max-height: 820px) {
     .nav-rail-group-separated {
-      margin-top: 0.5rem;
-      padding-top: 0.5rem;
+      margin-top: 0.25rem;
+      padding-top: 0.25rem;
     }
 
     .nav-rail-item {
-      min-height: 3rem !important;
-      gap: 0.125rem !important;
+      min-height: 2.5rem !important;
+      gap: 0 !important;
       font-size: 0.625rem !important;
     }
   }
 
-  @media (max-height: 780px) {
+  @media (max-height: 660px) {
     .nav-rail-group-separated {
       margin-top: 0.125rem;
       padding-top: 0.125rem;
@@ -533,18 +537,18 @@
     }
 
     .nav-rail-item {
-      min-height: 2rem !important;
-      width: 2.75rem !important;
+      min-height: 2.25rem !important;
+      width: 3rem !important;
       gap: 0 !important;
       font-size: 0 !important;
     }
 
     .nav-rail-item svg {
-      width: 0.95rem;
-      height: 0.95rem;
+      width: 1.15rem;
+      height: 1.15rem;
     }
 
-    .nav-rail-item span:not([aria-hidden="true"]) {
+    .nav-rail-item-label {
       display: none;
     }
   }

@@ -107,7 +107,7 @@ export default function NavRail() {
                         />
                         <span
                           className={cn(
-                            "whitespace-nowrap",
+                            "nav-rail-item-label whitespace-nowrap",
                             theme.monoTitles && "font-mono",
                           )}
                         >
