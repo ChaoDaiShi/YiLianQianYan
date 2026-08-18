@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Link, Plus, Trash2, ToggleLeft, ToggleRight, Wrench,
-  Loader2, TestTube, AlertTriangle, RefreshCw, Eye, ChevronDown, ChevronRight,
+  Loader2, TestTube, RefreshCw, Eye, ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
   listPlugins, createMcpServer, updateMcpServer, deleteMcpServer,
@@ -31,7 +31,8 @@ import {
   type McpPromptGetResponse,
   type McpRuntimeStatus,
 } from "../api/mcpRuntime";
-import { PageHeader, Button, Badge, Modal, Input, EmptyState, Spinner, Panel } from "../components/ui";
+import { CapabilityStatusBadge } from "../components/capabilities";
+import { Badge, Button, EmptyState, ErrorState, Input, Modal, PageHeader, Panel, Skeleton, Spinner } from "../components/ui";
 
 type DetailTab = "tools" | "resources" | "prompts";
 
@@ -106,20 +107,20 @@ export default function PluginsPage() {
   } | null>(null);
 
   const load = async () => {
-    const [res, subagentRes] = await Promise.all([listPlugins(), listSubagents()]);
-    if (res) {
-      setData(res);
-      setError("");
-    } else {
-      setError("无法连接到后端");
+    setLoading(true);
+    setError("");
+    setSubagentError("");
+    try {
+      const [res, subagentRes] = await Promise.all([listPlugins(), listSubagents()]);
+      if (res) setData(res);
+      else setError("无法连接到后端");
+      if (subagentRes) setSubagents(subagentRes);
+      else setSubagentError("无法加载 Subagent metadata");
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setLoading(false);
     }
-    if (subagentRes) {
-      setSubagents(subagentRes);
-      setSubagentError("");
-    } else {
-      setSubagentError("无法加载 Subagent metadata");
-    }
-    setLoading(false);
   };
 
   useEffect(() => { load(); }, []);
@@ -284,19 +285,23 @@ export default function PluginsPage() {
 
   if (loading) {
     return (
-      <div className="flex justify-center py-20">
-        <Spinner className="w-8 h-8" />
+      <div className="capability-loading-page" aria-label="正在加载插件">
+        <Skeleton className="h-20 w-full" />
+        <div className="capability-skeleton-grid">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
       </div>
     );
   }
 
   if (error && !data) {
     return (
-      <EmptyState
-        icon={<AlertTriangle className="w-12 h-12 text-[var(--warning)]" />}
-        title="无法加载插件"
+      <ErrorState
+        title="插件暂时无法加载"
         description={error}
-        action={<Button variant="secondary" onClick={load}>重试</Button>}
+        action={<Button variant="secondary" onClick={() => void load()}>重试</Button>}
       />
     );
   }
@@ -379,9 +384,10 @@ export default function PluginsPage() {
                           ) : (
                             <Badge tone="default">已禁用</Badge>
                           )}
-                          <Badge tone={runtimeStatusTone(mcp.runtime_status || (mcp.enabled ? "disconnected" : "disabled"))}>
-                            {runtimeStatusLabel(mcp.runtime_status || (mcp.enabled ? "disconnected" : "disabled"))}
-                          </Badge>
+                          <CapabilityStatusBadge
+                            tone={runtimeStatusTone(mcp.runtime_status || (mcp.enabled ? "disconnected" : "disabled"))}
+                            label={runtimeStatusLabel(mcp.runtime_status || (mcp.enabled ? "disconnected" : "disabled"))}
+                          />
                         </div>
                         <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">
                           {mcpTransportRuntimeLabel(mcp.transport)}
@@ -409,6 +415,7 @@ export default function PluginsPage() {
                         onClick={() => handleRefresh(mcp.id)}
                         className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
                         title="刷新运行时"
+                        aria-label="刷新运行时"
                       >
                         <RefreshCw className="w-4 h-4" />
                       </button>
@@ -416,6 +423,8 @@ export default function PluginsPage() {
                         onClick={() => toggleDetail(mcp.id)}
                         className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
                         title="查看详情"
+                        aria-label={isExpanded ? "收起详情" : "查看详情"}
+                        aria-expanded={isExpanded}
                       >
                         {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                       </button>
@@ -423,6 +432,8 @@ export default function PluginsPage() {
                         onClick={() => handleToggle(mcp.id)}
                         className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
                         title={mcp.enabled ? "禁用" : "启用"}
+                        aria-label={mcp.enabled ? "禁用插件" : "启用插件"}
+                        aria-pressed={mcp.enabled}
                       >
                         {mcp.enabled ? <ToggleRight className="w-4 h-4 text-[var(--success)]" /> : <ToggleLeft className="w-4 h-4" />}
                       </button>
@@ -431,6 +442,7 @@ export default function PluginsPage() {
                         disabled={testingId === mcp.id}
                         className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
                         title="测试连接"
+                        aria-label="测试连接"
                       >
                         {testingId === mcp.id ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -442,6 +454,7 @@ export default function PluginsPage() {
                         onClick={() => openEdit(mcp)}
                         className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
                         title="编辑"
+                        aria-label="编辑插件"
                       >
                         <Wrench className="w-4 h-4" />
                       </button>
@@ -449,6 +462,7 @@ export default function PluginsPage() {
                         onClick={() => handleDelete(mcp.id, mcp.name)}
                         className="p-1.5 rounded hover:bg-[var(--danger)]/20 text-[var(--text-muted)] hover:text-[var(--danger)]"
                         title="删除"
+                        aria-label="删除插件"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -642,6 +656,7 @@ function McpDetailPanel({
           <button
             key={t.key}
             onClick={() => onSwitchTab(t.key)}
+            aria-pressed={tab === t.key}
             className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
               tab === t.key
                 ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"

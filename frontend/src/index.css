@@ -1168,6 +1168,478 @@
   }
 }
 
+@layer components {
+  .capability-page {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .capability-page-body {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .capability-page-body-stack {
+    align-items: stretch;
+  }
+
+  .capability-list-panel,
+  .capability-detail-panel,
+  .capability-card,
+  .capability-filter-surface,
+  .capability-refresh-report {
+    min-width: 0;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+  }
+
+  .capability-list-panel,
+  .capability-detail-panel {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .capability-list-toolbar {
+    border-bottom: 1px solid var(--divider);
+    padding: 14px;
+  }
+
+  .capability-list-heading,
+  .capability-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .capability-list-heading {
+    border-bottom: 1px solid var(--divider);
+    padding: 14px 16px;
+  }
+
+  .capability-list-heading h2,
+  .capability-section-heading h2 {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-primary);
+    font-size: 0.84rem;
+    font-weight: 650;
+  }
+
+  .capability-list-heading p,
+  .capability-section-heading > span {
+    margin-top: 3px;
+    color: var(--text-faint);
+    font-size: 0.68rem;
+  }
+
+  .capability-list-scroll {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .capability-row-stack,
+  .capability-skeleton-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 10px;
+  }
+
+  .capability-list-row {
+    display: block;
+    width: 100%;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    padding: 11px 12px;
+    color: var(--text-primary);
+    text-align: left;
+    transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease;
+  }
+
+  .capability-list-row:hover,
+  .capability-list-row-selected {
+    border-color: var(--accent-border);
+    background: var(--surface-hover);
+  }
+
+  .capability-list-row-heading,
+  .capability-card-heading,
+  .capability-detail-title-line {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .capability-list-row-heading strong,
+  .capability-card-heading strong {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .capability-list-row-description,
+  .capability-card-description {
+    display: block;
+    margin-top: 6px;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    line-height: 1.5;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .capability-list-row-meta,
+  .capability-card-meta,
+  .capability-list-footnote {
+    display: block;
+    margin-top: 7px;
+    color: var(--text-faint);
+    font-size: 0.66rem;
+  }
+
+  .capability-list-footnote {
+    border-top: 1px solid var(--divider);
+    margin: 0;
+    padding: 11px 14px;
+  }
+
+  .capability-detail-panel {
+    overflow: hidden;
+  }
+
+  .capability-detail-content {
+    display: flex;
+    min-height: 100%;
+    flex-direction: column;
+    gap: 16px;
+    padding: 18px;
+  }
+
+  .capability-detail-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .capability-detail-title-line h2 {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 650;
+  }
+
+  .capability-detail-title-line h2 + [role="status"] {
+    flex: 0 0 auto;
+  }
+
+  .capability-detail-description {
+    margin-top: 6px;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    line-height: 1.55;
+  }
+
+  .capability-detail-section {
+    border-top: 1px solid var(--divider);
+    padding-top: 14px;
+  }
+
+  .capability-detail-section h3,
+  .capability-detail-technical summary {
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    font-weight: 650;
+  }
+
+  .capability-detail-section-body {
+    margin-top: 10px;
+  }
+
+  .capability-detail-technical summary {
+    cursor: pointer;
+  }
+
+  .capability-meta-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 11px 16px;
+  }
+
+  .capability-meta-row {
+    min-width: 0;
+  }
+
+  .capability-meta-row dt {
+    color: var(--text-faint);
+    font-size: 0.66rem;
+  }
+
+  .capability-meta-row dd {
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+    color: var(--text-secondary);
+    font-size: 0.73rem;
+  }
+
+  .capability-content-preview {
+    max-height: 360px;
+    overflow: auto;
+    border-radius: var(--radius-sm);
+    background: var(--surface-muted);
+    padding: 12px;
+    color: var(--text-secondary);
+    font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+    font-size: 0.72rem;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .capability-token-list,
+  .capability-permission-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .capability-token-list span,
+  .capability-permission-list > div {
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-xs);
+    background: var(--surface-muted);
+    padding: 5px 8px;
+    color: var(--text-secondary);
+    font-size: 0.68rem;
+  }
+
+  .capability-permission-list > div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .capability-permission-list code {
+    color: var(--text-faint);
+    font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+    font-size: 0.64rem;
+  }
+
+  .capability-permission-list em {
+    color: var(--accent-primary-hover);
+    font-size: 0.62rem;
+    font-style: normal;
+  }
+
+  .capability-card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .capability-card {
+    min-height: 126px;
+    padding: 14px;
+    text-align: left;
+  }
+
+  .capability-card-selectable {
+    color: var(--text-primary);
+    transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, transform var(--motion-fast) ease;
+  }
+
+  .capability-card-selectable:hover,
+  .capability-card-selected {
+    border-color: var(--accent-border);
+    background: var(--surface-hover);
+  }
+
+  .capability-card-selectable:hover {
+    transform: translateY(-1px);
+  }
+
+  .capability-icon {
+    display: inline-flex;
+    height: 26px;
+    width: 26px;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    border-radius: var(--radius-xs);
+    background: var(--accent-soft);
+    color: var(--accent-primary-hover);
+  }
+
+  .capability-refresh-report {
+    padding: 10px 13px;
+    color: var(--text-secondary);
+    font-size: 0.73rem;
+  }
+
+  .capability-filter-surface {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .capability-search-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 220px;
+    flex: 1;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--surface-solid);
+    padding: 0 10px;
+  }
+
+  .capability-search-field:focus-within {
+    border-color: var(--accent-border);
+    box-shadow: 0 0 0 3px rgba(234, 145, 185, 0.08);
+  }
+
+  .capability-search-field input {
+    border: 0;
+    background: transparent;
+    padding-inline: 0;
+    box-shadow: none;
+  }
+
+  .capability-search-field input:focus {
+    border: 0;
+    box-shadow: none;
+  }
+
+  .capability-filter-select {
+    display: flex;
+    min-width: 116px;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--text-faint);
+    font-size: 0.66rem;
+  }
+
+  .capability-filter-select select {
+    min-height: 36px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--surface-solid);
+    padding: 0 9px;
+    color: var(--text-primary);
+    font-size: 0.72rem;
+    outline: none;
+  }
+
+  .capability-filter-select select:focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+  }
+
+  .capability-split-layout {
+    display: grid;
+    min-height: 420px;
+    grid-template-columns: minmax(300px, 0.9fr) minmax(360px, 1.1fr);
+    gap: 14px;
+  }
+
+  .capability-split-layout > .capability-detail-panel {
+    min-height: 420px;
+  }
+
+  .capability-loading-page {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .capability-skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .capability-detail-loading {
+    border-top: 1px solid var(--divider);
+    padding-top: 12px;
+  }
+}
+
+@media (max-width: 980px) {
+  .capability-card-grid,
+  .capability-skeleton-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .capability-split-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .capability-split-layout > .capability-detail-panel {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 640px) {
+  .capability-page-body {
+    padding: 10px;
+  }
+
+  .capability-filter-surface {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .capability-search-field {
+    min-width: 0;
+  }
+
+  .capability-filter-select {
+    min-width: 0;
+  }
+
+  .capability-card-grid,
+  .capability-skeleton-grid,
+  .capability-meta-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-height: 780px) {
+  .capability-page-body {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .capability-split-layout {
+    min-height: 320px;
+  }
+}
+
 @media (max-width: 1200px) {
   .workflow-editor-columns {
     grid-template-columns: 180px minmax(0, 1fr) 260px;
