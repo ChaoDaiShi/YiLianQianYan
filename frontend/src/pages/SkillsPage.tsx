@@ -64,10 +64,11 @@ export default function SkillsPage() {
   };
 
   return (
-    <div className="capability-page">
+    <div className="capability-page skills-page">
       <PageHeader title="技能" description="管理小昔涟可以使用的技能能力。" />
 
-      <div className="capability-page-body">
+      <div className="capability-page-body skills-page-body">
+        <div className="capability-split-layout skills-split-layout">
         <aside className="capability-list-panel" aria-label="技能列表">
           <div className="capability-list-toolbar">
             <Input aria-label="搜索技能" placeholder="搜索技能…" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -142,6 +143,7 @@ export default function SkillsPage() {
             <EmptyState icon={<Brain className="h-7 w-7" />} title="选择一个技能" description="查看真实的 SKILL.md 内容。" className="h-full min-h-[360px]" />
           )}
         </section>
+        </div>
       </div>
     </div>
   );

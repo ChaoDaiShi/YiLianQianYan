@@ -289,6 +289,45 @@
     scrollbar-color: var(--text-faint) transparent;
   }
 
+  .skills-page-body {
+    overflow: hidden;
+  }
+
+  .skills-split-layout {
+    min-height: 0;
+    flex: 1;
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .skills-page .capability-list-panel,
+  .skills-page .capability-detail-panel {
+    border-color: var(--border-soft);
+    background: color-mix(in srgb, var(--surface) 84%, var(--bg-app) 16%);
+    box-shadow: none;
+  }
+
+  .skills-page .capability-list-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .skills-page .capability-list-scroll::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  @media (max-width: 900px) {
+    .skills-page-body {
+      overflow-y: auto;
+    }
+
+    .skills-split-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   .surface-elevated {
     background: var(--surface-elevated);
     border: 1px solid var(--border-soft);
