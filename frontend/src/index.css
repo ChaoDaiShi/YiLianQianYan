@@ -452,12 +452,12 @@
 
   @media (max-height: 780px) {
     .workbench-grid .home-content {
-      padding-top: 16px;
+      padding-top: 6px;
       padding-bottom: 20px;
     }
 
     .workbench-grid .home-hero {
-      gap: 10px;
+      gap: 6px;
     }
 
     .workbench-grid .home-character-image {
@@ -468,7 +468,15 @@
     .workbench-grid .home-status,
     .workbench-grid .home-composer,
     .workbench-grid .home-quick-actions {
-      margin-top: 14px;
+      margin-top: 6px;
+    }
+
+    .workbench-grid .home-composer textarea {
+      min-height: 40px;
+    }
+
+    .workbench-grid .home-quick-action {
+      min-height: 60px;
     }
   }
 
@@ -479,6 +487,15 @@
 
     .workbench-grid[data-mode="full"][data-execution-collapsed="true"] {
       grid-template-columns: 196px minmax(0, 1fr) 48px;
+    }
+
+    .workbench-grid .home-content {
+      width: min(100%, 720px);
+    }
+
+    .workbench-grid .home-composer .composer-card,
+    .workbench-grid .home-quick-actions {
+      width: min(100%, 640px);
     }
   }
 
