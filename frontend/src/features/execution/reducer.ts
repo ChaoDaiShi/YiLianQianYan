@@ -28,7 +28,12 @@ export type ExecutionAction =
   | { type: "activate_conversation"; conversationId: string | null }
   | { type: "start_run"; conversationId: string | null }
   | { type: "agent_event"; event: AgentEvent }
-  | { type: "hydrate_history"; conversationId: string; toolCalls: unknown }
+  | {
+      type: "hydrate_history";
+      conversationId: string;
+      toolCalls: unknown;
+      executionHistory?: unknown;
+    }
   | { type: "consume_completed" };
 
 function runKey(conversationId: string | null | undefined): string {
@@ -74,6 +79,19 @@ function executionFromLegacyStatus(value: unknown): ExecutionStatus {
     default:
       return "queued";
   }
+}
+
+function asExecutionStatus(value: unknown): ExecutionStatus {
+  return value === "queued" ||
+    value === "awaiting_approval" ||
+    value === "running" ||
+    value === "interrupted" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "rejected" ||
+    value === "cancelled"
+    ? value
+    : "queued";
 }
 
 function persistedStatus(value: ExecutionStatus): ToolCallRecord["status"] {
@@ -310,6 +328,47 @@ export function hydrateToolCallRecords(raw: unknown): ExecutionRecord[] {
   });
 }
 
+export function hydratePersistedExecutionRecords(
+  raw: unknown,
+  conversationId: string
+): ExecutionRecord[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((value, index) => {
+    if (!value || typeof value !== "object") return [];
+    const source = value as Record<string, unknown>;
+    if (typeof source.toolCallId !== "string" || !source.toolCallId) return [];
+    return [
+      {
+        toolCallId: source.toolCallId,
+        conversationId,
+        approvalId:
+          typeof source.approvalId === "string" ? source.approvalId : undefined,
+        name: typeof source.name === "string" ? source.name : "unknown_tool",
+        args:
+          source.args && typeof source.args === "object" && !Array.isArray(source.args)
+            ? (source.args as Record<string, unknown>)
+            : {},
+        riskLevel: asRiskLevel(source.riskLevel),
+        reason: typeof source.reason === "string" ? source.reason : undefined,
+        executionStatus: asExecutionStatus(source.executionStatus),
+        approvalStatus: asApprovalStatus(source.approvalStatus),
+        verificationStatus: asVerificationStatus(source.verificationStatus),
+        verificationReason:
+          typeof source.verificationReason === "string"
+            ? source.verificationReason
+            : undefined,
+        result: typeof source.result === "string" ? source.result : undefined,
+        startedAt:
+          typeof source.startedAt === "number" ? source.startedAt : undefined,
+        finishedAt:
+          typeof source.finishedAt === "number" ? source.finishedAt : undefined,
+        sequence:
+          typeof source.sequence === "number" ? source.sequence : index + 1,
+      },
+    ];
+  });
+}
+
 export function toToolCallRecords(
   input: AgentRunState | ExecutionRecord[]
 ): ToolCallRecord[] {
@@ -387,11 +446,21 @@ export function reduceExecutionWorkspace(
     }
     case "hydrate_history": {
       const hydratedById = new Map<string, ExecutionRecord>();
+      const persistedRecords = hydratePersistedExecutionRecords(
+        action.executionHistory,
+        action.conversationId
+      );
+      persistedRecords.forEach((record) => {
+        hydratedById.set(record.toolCallId, record);
+      });
+      const persistedIds = new Set(persistedRecords.map((record) => record.toolCallId));
       hydrateToolCallRecords(action.toolCalls).forEach((record) => {
-        hydratedById.set(record.toolCallId, {
-          ...record,
-          conversationId: action.conversationId,
-        });
+        if (!persistedIds.has(record.toolCallId)) {
+          hydratedById.set(record.toolCallId, {
+            ...record,
+            conversationId: action.conversationId,
+          });
+        }
       });
       const hydrated = [...hydratedById.values()];
       const key = runKey(action.conversationId);

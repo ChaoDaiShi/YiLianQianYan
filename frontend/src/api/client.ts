@@ -3,7 +3,13 @@
 // ============================================================
 
 import { controlSessionHeaders } from "./controlSession";
-import type { AppConfig, LlmModel, LlmModelPayload, LlmUsageReport } from "../types";
+import type {
+  AppConfig,
+  ConversationSummary,
+  LlmModel,
+  LlmModelPayload,
+  LlmUsageReport,
+} from "../types";
 
 export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ||
@@ -43,7 +49,7 @@ export async function request<T>(
 // ── Conversations ──
 
 export async function listConversations() {
-  return request<any[]>("GET", "/api/conversations");
+  return request<ConversationSummary[]>("GET", "/api/conversations");
 }
 
 export async function createConversation(title?: string) {
@@ -480,10 +486,20 @@ export function sendMessage(
   })
     .then(async (res) => {
       if (!res.ok) {
+        let detail = "";
+        try {
+          const body = (await res.clone().json()) as {
+            error?: string;
+            message?: string;
+          };
+          detail = body.error || body.message || "";
+        } catch {
+          /* non-JSON error body */
+        }
         onEvent({
           type: "error",
           conversation_id: conversationId || "",
-          error: `HTTP ${res.status}`,
+          error: detail || `HTTP ${res.status}`,
         });
         return;
       }

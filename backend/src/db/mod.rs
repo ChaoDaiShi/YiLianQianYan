@@ -89,6 +89,31 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_messages_conv
                 ON messages(conversation_id, created_at);
 
+            CREATE TABLE IF NOT EXISTS conversation_execution_records (
+                conversation_id TEXT NOT NULL,
+                tool_call_id TEXT NOT NULL,
+                approval_id TEXT,
+                name TEXT NOT NULL,
+                args_json TEXT NOT NULL DEFAULT '{}',
+                risk_level TEXT NOT NULL DEFAULT 'unknown',
+                reason TEXT,
+                approval_status TEXT NOT NULL DEFAULT 'not_required',
+                execution_status TEXT NOT NULL DEFAULT 'queued',
+                verification_status TEXT NOT NULL DEFAULT 'not_requested',
+                verification_reason TEXT,
+                result TEXT,
+                sequence INTEGER NOT NULL,
+                started_at INTEGER,
+                finished_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (conversation_id, tool_call_id),
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_conversation_execution_records_conversation
+                ON conversation_execution_records(conversation_id, sequence);
+
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL

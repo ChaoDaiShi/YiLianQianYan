@@ -263,3 +263,39 @@ describe("reduceAgentEvent", () => {
     );
   });
 });
+describe("execution history hydration", () => {
+  it("restores persisted tool execution records when reopening a conversation", () => {
+    const initial = createInitialAgentWorkspaceState("conversation-1");
+    const hydrated = reduceExecutionWorkspace(initial, {
+      type: "hydrate_history",
+      conversationId: "conversation-1",
+      toolCalls: [],
+      executionHistory: [
+        {
+          conversationId: "conversation-1",
+          toolCallId: "call-1",
+          name: "open_notepad",
+          args: { title: "记事本" },
+          riskLevel: "low",
+          approvalStatus: "not_required",
+          executionStatus: "succeeded",
+          verificationStatus: "passed",
+          verificationReason: "窗口已出现",
+          result: "已打开记事本。",
+          sequence: 1,
+        },
+      ],
+    });
+
+    const records = selectActiveRun(hydrated).order.map(
+      (id) => selectActiveRun(hydrated).records[id]
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      toolCallId: "call-1",
+      name: "open_notepad",
+      executionStatus: "succeeded",
+      verificationStatus: "passed",
+    });
+  });
+});

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ListTodo, RefreshCw, Search, Sparkles } from "lucide-react";
+import { ListTodo, MessageSquare, RefreshCw, Search, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
+  listConversations,
   listTasks,
   listWorkspaces,
   type Task,
   type Workspace,
 } from "../api/client";
+import type { ConversationSummary } from "../types";
 import TaskDetailPanel from "../components/tasks/TaskDetailPanel";
 import {
   Badge,
@@ -38,18 +40,21 @@ const FILTERS: Array<{ id: TaskFilter; label: string }> = [
 export default function TaskCenterPage() {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [conversationError, setConversationError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setError(null);
-    const [taskResult, workspaceResult] = await Promise.all([
+    const [taskResult, workspaceResult, conversationResult] = await Promise.all([
       listTasks({ limit: 200 }),
       listWorkspaces(),
+      listConversations(),
     ]);
     if (taskResult.ok) {
       setTasks(taskResult.data);
@@ -63,6 +68,13 @@ export default function TaskCenterPage() {
     } else {
       setWorkspaceError(workspaceResult.error);
     }
+    if (conversationResult) {
+      setConversations(conversationResult);
+      setConversationError(null);
+    } else {
+      setConversations([]);
+      setConversationError("对话记录暂时无法加载");
+    }
   }, []);
 
   useEffect(() => {
@@ -73,6 +85,13 @@ export default function TaskCenterPage() {
     () => filterTasks(tasks || [], filter, query, workspaces),
     [filter, query, tasks, workspaces]
   );
+  const visibleConversations = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase();
+    if (!keyword) return conversations || [];
+    return (conversations || []).filter((conversation) =>
+      (conversation.title || "新对话").toLocaleLowerCase().includes(keyword)
+    );
+  }, [conversations, query]);
 
   useEffect(() => {
     if (!visibleTasks.some((task) => task.id === selectedId)) {
@@ -104,7 +123,7 @@ export default function TaskCenterPage() {
               aria-label="搜索任务"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索任务、描述或工作空间"
+              placeholder="搜索任务、描述、工作空间或对话"
               className="pl-9"
             />
           </label>
@@ -136,6 +155,49 @@ export default function TaskCenterPage() {
             刷新
           </Button>
         </div>
+
+        {conversationError && (
+          <p className="text-xs text-[var(--text-faint)]" role="status">
+            {conversationError}
+          </p>
+        )}
+
+        {visibleConversations.length > 0 && (
+          <Panel padding={false} className="shrink-0 overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-4 w-4 text-[var(--accent-purple)]" />
+                <div>
+                  <h2 className="text-sm font-semibold text-[var(--text)]">对话记录</h2>
+                  <p className="mt-0.5 text-xs text-[var(--text-faint)]">
+                    {visibleConversations.length} 条已保存会话
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs text-[var(--text-faint)]">点击打开</span>
+            </div>
+            <div className="grid gap-2 p-2 md:grid-cols-2">
+              {visibleConversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  onClick={() => navigate(`/chat/${conversation.id}`)}
+                  className="flex min-h-[64px] items-center gap-3 rounded-[var(--radius-md)] border border-transparent px-3 py-2.5 text-left transition-colors hover:border-[var(--border-soft)] hover:bg-[var(--surface-hover)] focus-ring-token focus-visible:outline-none"
+                >
+                  <MessageSquare className="h-4 w-4 shrink-0 text-[var(--accent-purple)]" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-[var(--text)]">
+                      {deriveTaskDisplayTitle(conversation.title || "新对话")}
+                    </span>
+                    <span className="mt-1 block text-xs text-[var(--text-faint)]">
+                      {formatTaskDate(conversation.updated_at) || "时间未知"} · 已保存
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Panel>
+        )}
 
         {error ? (
           <ErrorState
