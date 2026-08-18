@@ -4,6 +4,7 @@
 
 use axum::{
     extract::State,
+    http::StatusCode,
     response::sse::{Event, Sse},
     Json,
 };
@@ -34,8 +35,18 @@ pub struct ChatRequest {
 pub async fn chat_handler(
     State(server): State<Arc<AppServer>>,
     Json(req): Json<ChatRequest>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)>
+{
+    let message = req.message.trim().to_string();
+    if message.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "消息内容不能为空"})),
+        ));
+    }
+
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
+    let (stream_tx, mut stream_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
 
     let db = server.db.clone_connection();
     let legacy_config = server.config.read().clone();
@@ -111,7 +122,7 @@ pub async fn chat_handler(
     let mut query_embedding: Option<Vec<f32>> = None;
     if config.model.has_embedding() {
         let llm = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
-        match llm.embed(&req.message).await {
+        match llm.embed(&message).await {
             Ok(vec) => {
                 query_embedding = Some(vec);
                 memory_mode = "hybrid";
@@ -124,7 +135,7 @@ pub async fn chat_handler(
     }
 
     let retrieval_query = RetrieveQuery {
-        q: req.message.clone(),
+        q: message.clone(),
         top_k: CHAT_MEMORY_TOP_K,
         category: None,
     };
@@ -198,7 +209,7 @@ pub async fn chat_handler(
         id: uuid::Uuid::new_v4().to_string(),
         conversation_id: conv_id.clone(),
         role: "user".to_string(),
-        content: req.message.clone(),
+        content: message.clone(),
         tool_calls: None,
         tool_call_id: None,
         tool_name: None,
@@ -207,14 +218,14 @@ pub async fn chat_handler(
     });
 
     // Auto-title: use first user message (trim to 40 chars)
-    let title = truncate_chars(&req.message, 40);
+    let title = truncate_chars(&message, 40);
     let _ = db.update_conversation_title(&conv_id, &title);
 
     // Add the current user message to the LLM context exactly once.
-    agent_state.add_user_message(req.message.clone());
+    agent_state.add_user_message(message.clone());
 
     // Log chat request
-    let msg_preview = truncate_chars(&req.message, 60);
+    let msg_preview = truncate_chars(&message, 60);
     server
         .log_buffer
         .push("chat", "api", &format!("收到消息: {}", msg_preview));
@@ -261,7 +272,7 @@ pub async fn chat_handler(
             &config_clone,
             &conv_clone,
             &cancel_token,
-            &tx,
+            &event_tx,
             &log_buffer,
         )
         .await;
@@ -293,7 +304,7 @@ pub async fn chat_handler(
         match result {
             Err(ref e) => {
                 log_buffer.push("error", "agent", &format!("Agent 错误: {}", e));
-                let _ = tx
+                let _ = event_tx
                     .send(AgentEvent {
                         event_type: "error".into(),
                         conversation_id: conv_clone.clone(),
@@ -330,6 +341,19 @@ pub async fn chat_handler(
         server.active_tasks.lock().remove(&conv_clone);
     });
 
+    // Persist tool lifecycle events independently of the browser connection.
+    // This keeps the execution history recoverable even when the page is left
+    // while the agent is still running.
+    let persistence_db = db.clone_connection();
+    tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            if let Err(error) = persistence_db.apply_execution_event(&event) {
+                tracing::warn!(error = %error, "failed to persist conversation execution event");
+            }
+            let _ = stream_tx.send(event).await;
+        }
+    });
+
     // Return SSE stream
     let conv_stream = conv_id.clone();
     let stream = async_stream::stream! {
@@ -337,17 +361,17 @@ pub async fn chat_handler(
             .event("connected")
             .data(serde_json::json!({"conversation_id": conv_stream}).to_string()));
 
-        while let Some(event) = rx.recv().await {
+        while let Some(event) = stream_rx.recv().await {
             let json = serde_json::to_string(&event).unwrap_or_default();
             yield Ok(Event::default().event("agent-event").data(json));
         }
     };
 
-    Sse::new(stream).keep_alive(
+    Ok(Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(std::time::Duration::from_secs(15))
             .text("ping"),
-    )
+    ))
 }
 
 /// POST /api/chat/stop — cancel a running generation
@@ -382,6 +406,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::{
+        agent::engine::AgentEvent,
         api::build_router,
         db::MessageRow,
         safety::{ControlSession, CONTROL_SESSION_HEADER},
@@ -592,6 +617,111 @@ mod tests {
                 .count(),
             1
         );
+        mock_llm.abort();
+    }
+
+    #[tokio::test]
+    async fn blank_message_is_rejected_without_creating_a_conversation() {
+        let (base_url, _requests, mock_llm) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+
+        let response = build_router(server.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/chat")
+                    .header(CONTROL_SESSION_HEADER, token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"message": "   "}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(server.db.list_conversations().unwrap().is_empty());
+        mock_llm.abort();
+    }
+
+    #[tokio::test]
+    async fn empty_conversations_are_hidden_and_loaded_conversations_include_execution_history() {
+        let (base_url, _requests, mock_llm) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let empty = server.db.create_conversation("新对话").unwrap();
+
+        send_chat(server.clone(), &token, json!({"message": "保留这条记录"})).await;
+
+        let summaries = server.db.list_conversations().unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_ne!(summaries[0].id, empty.id);
+
+        let tool_call_id = "call-persisted";
+        for event in [
+            AgentEvent {
+                event_type: "tool_start".to_string(),
+                conversation_id: summaries[0].id.clone(),
+                token: None,
+                tool_call_id: Some(tool_call_id.to_string()),
+                tool_name: Some("open_notepad".to_string()),
+                args: Some(json!({"title": "记事本"})),
+                result: None,
+                status: None,
+                error: None,
+                message_id: None,
+                risk_level: Some("low".to_string()),
+                reason: None,
+                approval_id: None,
+                verification_success: None,
+                verification_reason: None,
+                should_replan: None,
+            },
+            AgentEvent {
+                event_type: "tool_end".to_string(),
+                conversation_id: summaries[0].id.clone(),
+                token: None,
+                tool_call_id: Some(tool_call_id.to_string()),
+                tool_name: Some("open_notepad".to_string()),
+                args: None,
+                result: Some("已打开记事本。".to_string()),
+                status: Some("success".to_string()),
+                error: None,
+                message_id: None,
+                risk_level: None,
+                reason: None,
+                approval_id: None,
+                verification_success: None,
+                verification_reason: None,
+                should_replan: None,
+            },
+            AgentEvent {
+                event_type: "verification".to_string(),
+                conversation_id: summaries[0].id.clone(),
+                token: None,
+                tool_call_id: Some(tool_call_id.to_string()),
+                tool_name: Some("open_notepad".to_string()),
+                args: None,
+                result: None,
+                status: None,
+                error: None,
+                message_id: None,
+                risk_level: None,
+                reason: None,
+                approval_id: None,
+                verification_success: Some(true),
+                verification_reason: Some("窗口已出现".to_string()),
+                should_replan: Some(false),
+            },
+        ] {
+            server.db.apply_execution_event(&event).unwrap();
+        }
+
+        let loaded = server.db.get_conversation(&summaries[0].id).unwrap();
+        let json = serde_json::to_value(loaded).unwrap();
+        assert_eq!(json["execution_history"].as_array().unwrap().len(), 1);
+        assert_eq!(json["execution_history"][0]["executionStatus"], "succeeded");
+        assert_eq!(json["execution_history"][0]["verificationStatus"], "passed");
         mock_llm.abort();
     }
 
