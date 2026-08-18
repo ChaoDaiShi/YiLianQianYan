@@ -3,7 +3,7 @@
 // ============================================================
 
 use parking_lot::{Mutex, RwLock};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -66,19 +66,22 @@ pub struct LogEntry {
 /// Thread-safe ring buffer for in-memory application logs (cloneable)
 #[derive(Clone)]
 pub struct LogBuffer {
-    entries: Arc<Mutex<Vec<LogEntry>>>,
+    entries: Arc<Mutex<VecDeque<LogEntry>>>,
     max_entries: usize,
 }
 
 impl LogBuffer {
     pub fn new(max_entries: usize) -> Self {
         Self {
-            entries: Arc::new(Mutex::new(Vec::with_capacity(max_entries))),
+            entries: Arc::new(Mutex::new(VecDeque::with_capacity(max_entries))),
             max_entries,
         }
     }
 
     pub fn push(&self, level: &str, source: &str, message: &str) {
+        if self.max_entries == 0 {
+            return;
+        }
         let entry = LogEntry {
             timestamp: chrono::Utc::now().timestamp_millis(),
             level: level.to_string(),
@@ -87,14 +90,14 @@ impl LogBuffer {
         };
         let mut entries = self.entries.lock();
         if entries.len() >= self.max_entries {
-            entries.remove(0);
+            entries.pop_front();
         }
-        entries.push(entry);
+        entries.push_back(entry);
     }
 
     pub fn drain(&self) -> Vec<LogEntry> {
         let mut entries = self.entries.lock();
-        std::mem::take(&mut *entries)
+        std::mem::take(&mut *entries).into_iter().collect()
     }
 
     pub fn recent(&self, count: usize) -> Vec<LogEntry> {
@@ -104,7 +107,7 @@ impl LogBuffer {
         } else {
             0
         };
-        entries[start..].to_vec()
+        entries.iter().skip(start).cloned().collect()
     }
 }
 
@@ -570,12 +573,18 @@ impl AppServer {
     /// Best-effort refresh of every registered MCP server (bounded by each
     /// transport's own timeouts). A dead server must not fail the app.
     pub async fn refresh_mcp_runtime(&self) {
-        for runtime in self.mcp_runtime_manager.list_servers() {
+        let manager = Arc::clone(&self.mcp_runtime_manager);
+        let refreshes = manager.list_servers().into_iter().map(|runtime| {
+            let manager = Arc::clone(&manager);
             let id = runtime.server_id.clone();
-            if let Err(error) = self.mcp_runtime_manager.refresh_server(&id).await {
-                tracing::warn!(server_id = %id, error = %error, "MCP runtime refresh failed");
+            async move {
+                if let Err(error) = manager.refresh_server(&id).await {
+                    tracing::warn!(server_id = %id, error = %error, "MCP runtime refresh failed");
+                }
             }
-        }
+        });
+
+        futures::future::join_all(refreshes).await;
     }
 
     /// Build a fresh capability registry from the current runtime sources.
@@ -760,6 +769,43 @@ fn is_valid_tool_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_buffer_retains_only_the_newest_entries_in_order() {
+        let buffer = LogBuffer::new(2);
+        buffer.push("info", "test", "first");
+        buffer.push("info", "test", "second");
+        buffer.push("info", "test", "third");
+
+        let entries = buffer.recent(10);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].message, "second");
+        assert_eq!(entries[1].message, "third");
+    }
+
+    #[test]
+    fn log_buffer_drain_returns_oldest_to_newest_and_empties_buffer() {
+        let buffer = LogBuffer::new(3);
+        buffer.push("info", "test", "first");
+        buffer.push("info", "test", "second");
+
+        let drained = buffer.drain();
+        assert_eq!(
+            drained
+                .iter()
+                .map(|entry| entry.message.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        assert!(buffer.recent(10).is_empty());
+    }
+
+    #[test]
+    fn zero_capacity_log_buffer_drops_entries_without_panicking() {
+        let buffer = LogBuffer::new(0);
+        buffer.push("info", "test", "discarded");
+        assert!(buffer.recent(1).is_empty());
+    }
 
     fn def(content: &str, dir_name: &str) -> Option<ParsedAgentDefinition> {
         parse_agent_definition(content, dir_name)

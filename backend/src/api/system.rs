@@ -67,6 +67,14 @@ fn health_response(database_healthy: bool) -> (StatusCode, HealthResponse) {
 
 /// GET /api/system — full system snapshot
 pub async fn system_info(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
+    Json(
+        tokio::task::spawn_blocking(collect_system_info)
+            .await
+            .expect("system metrics collector task failed"),
+    )
+}
+
+fn collect_system_info() -> serde_json::Value {
     let mut sys = System::new_all();
     sys.refresh_all();
 
@@ -129,7 +137,7 @@ pub async fn system_info(State(_server): State<Arc<AppServer>>) -> Json<serde_js
     let os = System::long_os_version().unwrap_or_default();
     let kernel = System::kernel_version().unwrap_or_default();
 
-    Json(serde_json::json!({
+    serde_json::json!({
         "hostname": hostname,
         "os": os,
         "kernel": kernel,
@@ -149,11 +157,19 @@ pub async fn system_info(State(_server): State<Arc<AppServer>>) -> Json<serde_js
         },
         "disks": disk_info,
         "gpu": gpu_info,
-    }))
+    })
 }
 
 /// GET /api/system/cpu — CPU only
 pub async fn cpu_info(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
+    Json(
+        tokio::task::spawn_blocking(collect_cpu_info)
+            .await
+            .expect("CPU metrics collector task failed"),
+    )
+}
+
+fn collect_cpu_info() -> serde_json::Value {
     let mut sys = System::new_all();
     sys.refresh_cpu_all();
     // Wait briefly for accurate readings
@@ -185,15 +201,23 @@ pub async fn cpu_info(State(_server): State<Arc<AppServer>>) -> Json<serde_json:
             / cores.len() as f32
     };
 
-    Json(serde_json::json!({
+    serde_json::json!({
         "cores": cores,
         "avg_usage_pct": format!("{:.1}", avg),
         "count": cores.len(),
-    }))
+    })
 }
 
 /// GET /api/system/memory — Memory only
 pub async fn memory_info(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
+    Json(
+        tokio::task::spawn_blocking(collect_memory_info)
+            .await
+            .expect("memory metrics collector task failed"),
+    )
+}
+
+fn collect_memory_info() -> serde_json::Value {
     let mut sys = System::new_all();
     sys.refresh_memory();
 
@@ -202,13 +226,13 @@ pub async fn memory_info(State(_server): State<Arc<AppServer>>) -> Json<serde_js
     let available = sys.available_memory();
     let free = sys.free_memory();
 
-    Json(serde_json::json!({
+    serde_json::json!({
         "total_gb": format!("{:.2}", total as f64 / 1_048_576.0),
         "used_gb": format!("{:.2}", used as f64 / 1_048_576.0),
         "available_gb": format!("{:.2}", available as f64 / 1_048_576.0),
         "free_gb": format!("{:.2}", free as f64 / 1_048_576.0),
         "usage_pct": format!("{:.1}", if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 }),
-    }))
+    })
 }
 
 fn get_gpu_info() -> Vec<serde_json::Value> {
@@ -246,6 +270,30 @@ fn get_gpu_info() -> Vec<serde_json::Value> {
 #[cfg(test)]
 mod health_tests {
     use super::*;
+
+    #[test]
+    fn system_collector_keeps_resource_sections() {
+        let value = collect_system_info();
+
+        assert!(value.get("cpu").is_some());
+        assert!(value.get("memory").is_some());
+        assert!(value.get("disks").is_some());
+        assert!(value.get("gpu").is_some());
+    }
+
+    #[test]
+    fn focused_collectors_keep_existing_shapes() {
+        let cpu = collect_cpu_info();
+        let memory = collect_memory_info();
+
+        assert!(cpu
+            .get("cores")
+            .and_then(serde_json::Value::as_array)
+            .is_some());
+        assert!(cpu.get("avg_usage_pct").is_some());
+        assert!(memory.get("total_gb").is_some());
+        assert!(memory.get("usage_pct").is_some());
+    }
 
     #[test]
     fn unavailable_database_degrades_health() {
