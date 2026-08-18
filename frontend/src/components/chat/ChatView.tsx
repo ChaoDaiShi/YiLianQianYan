@@ -17,14 +17,21 @@ import {
   type AgentEvent,
   type Workflow,
 } from "../../api/client";
-import { approveAction, rejectAction } from "../../api/approvals";
+import {
+  approveAction,
+  getApproval,
+  listPendingApprovals,
+  rejectAction,
+} from "../../api/approvals";
 import {
   createInitialAgentWorkspaceState,
+  hydratePersistedExecutionRecords,
   reduceExecutionWorkspace,
   selectActiveRun,
   toToolCallRecords,
 } from "../../features/execution/reducer";
 import { createDecisionGate } from "../../features/execution/decisionGate";
+import { reconcilePersistedApproval } from "../../features/execution/approvalReconciliation";
 import {
   selectPendingApprovals,
   useApprovalStore,
@@ -160,7 +167,7 @@ export default function ChatView({
     }
 
     setCurrentConvId(conversationId);
-    loadConversation(conversationId).then((conversation) => {
+    loadConversation(conversationId).then(async (conversation) => {
       if (cancelled || !conversation?.messages) return;
       const loadedMessages = (conversation.messages as unknown[]).filter(
         (message): message is Message => {
@@ -180,6 +187,47 @@ export default function ChatView({
         conversationId,
         toolCalls: loadedMessages.flatMap((message) => message.tool_calls || []),
         executionHistory: conversation.execution_history,
+      });
+
+      const persistedRecords = hydratePersistedExecutionRecords(
+        conversation.execution_history,
+        conversationId
+      );
+      const approvalRecords = persistedRecords.filter(
+        (record) => record.approvalStatus === "pending" && record.approvalId
+      );
+      const [listedApprovals, ...lookups] = await Promise.all([
+        listPendingApprovals(),
+        ...approvalRecords.map((record) =>
+          getApproval(record.approvalId!).then(
+            (approval) => ({ approval, unavailable: false }),
+            () => ({ approval: null, unavailable: true })
+          )
+        ),
+      ]);
+      if (cancelled) return;
+
+      const store = useApprovalStore.getState();
+      (listedApprovals || [])
+        .filter((approval) => approval.conversation_id === conversationId)
+        .forEach((approval) => store.add(approval));
+
+      approvalRecords.forEach((record, index) => {
+        const lookup = lookups[index] as
+          | { approval: PendingApproval | null; unavailable: boolean }
+          | undefined;
+        if (!lookup || lookup.unavailable) return;
+
+        const reconciliation = reconcilePersistedApproval(
+          record,
+          lookup.approval
+        );
+        if (reconciliation.kind === "pending") {
+          store.add(reconciliation.approval);
+        } else if (reconciliation.kind === "resolved") {
+          store.remove(record.approvalId!);
+          dispatchExecution({ type: "agent_event", event: reconciliation.event });
+        }
       });
     });
 

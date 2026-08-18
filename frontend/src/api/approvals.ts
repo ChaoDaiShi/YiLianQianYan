@@ -143,12 +143,15 @@ export async function getApproval(approvalId: string) {
     const response = await fetch(`${API_BASE}/api/approvals/${approvalId}`, {
       headers: controlSessionHeaders(),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new Error(`审批状态查询失败（HTTP ${response.status}）`);
+    }
     const data = (await response.json()) as PendingResponse;
     return data.approval || null;
   } catch (error) {
     console.error("getApproval failed:", error);
-    return null;
+    throw error;
   }
 }
 
