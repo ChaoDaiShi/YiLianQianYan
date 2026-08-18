@@ -298,12 +298,16 @@
 
   .workbench-grid .conversation-create-button {
     border-color: var(--accent-border);
-    background: var(--surface-solid);
+    background: color-mix(in srgb, var(--surface-solid) 68%, transparent);
     color: var(--text-primary);
   }
 
   .workbench-grid .conversation-create-button svg {
     color: var(--accent-primary);
+  }
+
+  .workbench-grid .conversation-sidebar input {
+    background: color-mix(in srgb, var(--input-bg) 68%, transparent);
   }
 
   .conversation-list {
@@ -334,6 +338,10 @@
 
   .workbench-grid .execution-sidebar-content {
     scrollbar-color: var(--text-faint) transparent;
+  }
+
+  .workbench-grid .execution-sidebar-content ol > li {
+    background: color-mix(in srgb, var(--surface-solid) 52%, transparent);
   }
 
   .skills-page-body {
@@ -404,6 +412,11 @@
     background: transparent;
   }
 
+  .workbench-grid .surface-elevated,
+  .workbench-grid .composer-card {
+    background: color-mix(in srgb, var(--surface-solid) 64%, transparent);
+  }
+
   .home-ambient-strong {
     background-image: url("/cyrene-home-background.png");
     background-position: center;
@@ -448,7 +461,7 @@
   .workbench-grid .home-status {
     margin-top: clamp(12px, 2.2vh, 20px);
     border-color: var(--divider);
-    background: color-mix(in srgb, var(--surface-solid) 86%, var(--accent-purple) 14%);
+    background: color-mix(in srgb, var(--surface-solid) 72%, transparent);
     box-shadow: none;
   }
 
@@ -461,7 +474,7 @@
     width: min(680px, 100%);
     border-color: var(--divider);
     border-radius: var(--radius-lg);
-    background: var(--surface-elevated);
+    background: color-mix(in srgb, var(--surface-solid) 64%, transparent);
     box-shadow: 0 10px 28px rgba(48, 38, 76, 0.06);
     padding: 10px;
   }
@@ -482,7 +495,7 @@
     width: auto;
     min-height: 68px;
     border-color: var(--divider);
-    background: color-mix(in srgb, var(--surface-solid) 78%, var(--bg-app) 22%);
+    background: color-mix(in srgb, var(--surface-solid) 52%, transparent);
     box-shadow: none;
   }
 
