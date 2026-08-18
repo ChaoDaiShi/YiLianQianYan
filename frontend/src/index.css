@@ -192,8 +192,8 @@
     width: 100%;
     min-width: 0;
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0)) no-repeat,
-      var(--bg-app);
+      linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)) no-repeat,
+      color-mix(in srgb, var(--bg-app) 76%, transparent);
   }
 
   .workbench-grid[data-mode="full"] {
@@ -222,18 +222,48 @@
   }
 
   .app-shell {
-    background: var(--bg-app);
+    background: transparent;
+  }
+
+  .shell-ambient {
+    background-image: url("/cyrene-home-background.png");
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    opacity: 0.42;
+  }
+
+  .shell-ambient-overlay {
+    background:
+      linear-gradient(135deg, rgba(248, 246, 253, 0.78), rgba(239, 232, 250, 0.56)),
+      radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.42), transparent 58%);
   }
 
   .nav-rail {
+    min-height: 0;
+    overflow: hidden;
     background: linear-gradient(180deg, var(--sidebar-bg), var(--sidebar-bg-2));
     border-right-color: rgba(255, 255, 255, 0.05);
   }
 
   .nav-rail-list {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
     scrollbar-width: none;
     -ms-overflow-style: none;
     overscroll-behavior: contain;
+  }
+
+  .nav-rail-group-separated {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+  }
+
+  .nav-rail-item {
+    min-height: 3.5rem;
   }
 
   .nav-rail-list::-webkit-scrollbar {
@@ -365,12 +395,9 @@
     box-shadow: 0 0 0 3px rgba(234, 145, 185, 0.08);
   }
 
-  /* Ambient 昔涟 background for the idle workbench home. */
+  /* Local home atmosphere layered over the shell-wide artwork. */
   .home-ambient {
-    background-image: url("/cyrene-home-background.png");
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: cover;
+    background: transparent;
   }
 
   .home-ambient-stars {
@@ -479,6 +506,46 @@
 
     .workbench-grid .home-quick-action {
       min-height: 60px;
+    }
+  }
+
+  @media (max-height: 820px) {
+    .nav-rail-group-separated {
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
+    }
+
+    .nav-rail-item {
+      min-height: 3rem !important;
+      gap: 0.125rem !important;
+      font-size: 0.625rem !important;
+    }
+  }
+
+  @media (max-height: 780px) {
+    .nav-rail-group-separated {
+      margin-top: 0.125rem;
+      padding-top: 0.125rem;
+    }
+
+    .nav-rail-group-separated > div {
+      margin-bottom: 0.25rem !important;
+    }
+
+    .nav-rail-item {
+      min-height: 2rem !important;
+      width: 2.75rem !important;
+      gap: 0 !important;
+      font-size: 0 !important;
+    }
+
+    .nav-rail-item svg {
+      width: 0.95rem;
+      height: 0.95rem;
+    }
+
+    .nav-rail-item span:not([aria-hidden="true"]) {
+      display: none;
     }
   }
 

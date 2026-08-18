@@ -68,13 +68,13 @@ export default function NavRail() {
 
       <div className="mb-2 w-10 shrink-0 border-t border-white/[0.07]" />
 
-      <div className="nav-rail-list scrollbar-thin min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-1">
+      <div className="nav-rail-list nav-rail-compact scrollbar-thin min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-1">
         {NAV_GROUPS.map((group, groupIndex) => (
           <div
             key={group.label}
             className={cn(
-              "flex w-full flex-col items-center",
-              groupIndex > 0 && "mt-3 pt-3",
+              "nav-rail-group flex w-full flex-col items-center",
+              groupIndex > 0 && "nav-rail-group-separated",
             )}
           >
             {groupIndex > 0 && (
@@ -92,7 +92,7 @@ export default function NavRail() {
                     aria-label={item.label}
                     className={({ isActive }) =>
                       cn(
-                        "relative flex min-h-14 w-16 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] leading-tight transition-colors duration-[var(--motion-fast)] min-[960px]:w-[68px]",
+                        "nav-rail-item relative flex min-h-14 w-16 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] leading-tight transition-colors duration-[var(--motion-fast)] min-[960px]:w-[68px]",
                         isActive
                           ? "bg-[var(--sidebar-active)] font-medium text-white"
                           : "text-[var(--sidebar-text)] opacity-80 hover:bg-white/10 hover:opacity-100",

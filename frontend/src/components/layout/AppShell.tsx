@@ -8,6 +8,14 @@ export default function AppShell() {
 
   return (
     <div className="app-shell relative flex h-screen w-screen overflow-hidden text-[var(--text)]">
+      <div
+        className="shell-ambient pointer-events-none absolute inset-0 z-0"
+        aria-hidden="true"
+      />
+      <div
+        className="shell-ambient-overlay pointer-events-none absolute inset-0 z-0"
+        aria-hidden="true"
+      />
       {/* Background layer */}
       <div
         className="absolute inset-0 -z-10 transition-[filter,background] duration-500"
@@ -28,7 +36,7 @@ export default function AppShell() {
       />
 
       <NavRail />
-      <main className={`${APP_CONTENT_VIEWPORT_CLASS_NAME} workspace-region`}>
+      <main className={`${APP_CONTENT_VIEWPORT_CLASS_NAME} workspace-region relative z-10`}>
         <Outlet />
       </main>
     </div>
