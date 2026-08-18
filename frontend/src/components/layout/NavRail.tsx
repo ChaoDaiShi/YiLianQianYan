@@ -49,7 +49,7 @@ export default function NavRail() {
   return (
     <nav
       aria-label="全局导航"
-      className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center gap-0.5 border-r border-[var(--border)] bg-[var(--sidebar-bg)] py-3 text-[var(--sidebar-text)] min-[960px]:w-[80px]"
+      className="nav-rail z-20 flex h-full w-[68px] shrink-0 flex-col items-center gap-0.5 border-r border-[var(--border)] bg-[var(--sidebar-bg)] py-3 text-[var(--sidebar-text)] min-[960px]:w-[80px]"
     >
       <Tooltip content="忆涟千言">
         <button

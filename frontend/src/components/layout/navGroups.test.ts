@@ -30,6 +30,9 @@ describe("NavRail groups", () => {
   });
 
   it("uses a compact readable grouped layout at the default desktop breakpoint", () => {
+    expect(navRailSource).toContain("nav-rail");
+    expect(navRailSource).toContain('aria-label="全局导航"');
+    expect(navRailSource).toContain("后端状态：");
     expect(navRailSource).toContain("min-[960px]:w-[80px]");
     expect(navRailSource).toContain("min-h-14");
     expect(navRailSource).toContain("min-[960px]:w-[68px]");

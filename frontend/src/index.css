@@ -196,15 +196,15 @@
   }
 
   .workbench-grid[data-mode="full"] {
-    grid-template-columns: 272px minmax(0, 1fr) 312px;
+    grid-template-columns: 252px minmax(0, 1fr) 296px;
   }
 
   .workbench-grid[data-mode="full"][data-execution-collapsed="true"] {
-    grid-template-columns: 272px minmax(0, 1fr) 48px;
+    grid-template-columns: 252px minmax(0, 1fr) 48px;
   }
 
   .workbench-grid[data-mode="compact"] {
-    grid-template-columns: 272px minmax(0, 1fr);
+    grid-template-columns: 252px minmax(0, 1fr);
   }
 
   .workbench-grid[data-mode="narrow"] {
@@ -218,6 +218,22 @@
 
   .message-column > * {
     min-width: 0;
+  }
+
+  .app-shell {
+    background: var(--bg-app);
+  }
+
+  .nav-rail {
+    background: linear-gradient(180deg, var(--sidebar-bg), var(--sidebar-bg-2));
+    border-right-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .workspace-region,
+  .conversation-region,
+  .execution-region {
+    min-width: 0;
+    min-height: 0;
   }
 
   .surface-elevated {

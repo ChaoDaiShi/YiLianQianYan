@@ -7,7 +7,7 @@ export default function AppShell() {
   const { theme } = useTheme();
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden text-[var(--text)]">
+    <div className="app-shell relative flex h-screen w-screen overflow-hidden text-[var(--text)]">
       {/* Background layer */}
       <div
         className="absolute inset-0 -z-10 transition-[filter,background] duration-500"
@@ -28,7 +28,7 @@ export default function AppShell() {
       />
 
       <NavRail />
-      <main className={APP_CONTENT_VIEWPORT_CLASS_NAME}>
+      <main className={`${APP_CONTENT_VIEWPORT_CLASS_NAME} workspace-region`}>
         <Outlet />
       </main>
     </div>

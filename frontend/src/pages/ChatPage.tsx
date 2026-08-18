@@ -73,7 +73,7 @@ export default function ChatPage() {
       }
     >
       {workspaceMode !== "narrow" && (
-        <div className="min-h-0 border-r border-[var(--border)]">
+        <div className="conversation-region min-h-0 border-r border-[var(--border)]">
           {conversationSidebar()}
         </div>
       )}
@@ -102,7 +102,7 @@ export default function ChatPage() {
         onToggleExecution={() => openDrawer("execution")}
         renderExecution={(controller) =>
           workspaceMode === "full" ? (
-            <div className="min-h-0 border-l border-[var(--border)]">
+            <div className="execution-region min-h-0 border-l border-[var(--border)]">
               <ExecutionSidebar
                 {...controller}
                 collapsed={executionCollapsed}
