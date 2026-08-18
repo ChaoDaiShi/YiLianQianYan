@@ -68,7 +68,7 @@ export default function NavRail() {
 
       <div className="mb-2 w-10 shrink-0 border-t border-white/[0.07]" />
 
-      <div className="scrollbar-thin min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-1">
+      <div className="nav-rail-list scrollbar-thin min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-1">
         {NAV_GROUPS.map((group, groupIndex) => (
           <div
             key={group.label}
