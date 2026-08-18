@@ -23,10 +23,12 @@ function kindSummary(definition: WorkflowGraphRecord["definition"]): string {
 export default function RuntimeWorkflowList({
   onRun,
   onEdit,
+  onCreate,
   refreshKey,
 }: {
   onRun: (graph: WorkflowGraphRecord) => void;
   onEdit: (graph: WorkflowGraphRecord) => void;
+  onCreate: () => void;
   refreshKey: number;
 }) {
   const [graphs, setGraphs] = useState<WorkflowGraphRecord[]>([]);
@@ -125,6 +127,7 @@ export default function RuntimeWorkflowList({
               icon={<span className="text-2xl">⚡</span>}
               title="还没有可执行工作流"
               description="创建一个可执行的 DAG 工作流图，然后点击运行。"
+              action={<Button size="sm" onClick={onCreate}>新建工作流</Button>}
             />
           </div>
         )}

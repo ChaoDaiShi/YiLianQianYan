@@ -26,7 +26,7 @@ const BUILTIN_ICONS: Record<string, string> = {
 type Tab = "templates" | "runtime";
 
 export default function WorkflowsPage() {
-  const [tab, setTab] = useState<Tab>("templates");
+  const [tab, setTab] = useState<Tab>("runtime");
   const [editorGraph, setEditorGraph] = useState<WorkflowGraphRecord | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -332,10 +332,30 @@ function RuntimeTab({
     }
   };
 
+  const handleCreate = () => {
+    setEditorGraph(null);
+    setActiveRunId(null);
+    setEditorOpen(true);
+  };
+
+  if (editorOpen) {
+    return (
+      <WorkflowGraphEditor
+        graph={editorGraph}
+        onRun={handleRun}
+        onSaved={(graph) => {
+          setEditorGraph(graph);
+          setRuntimeRefresh(runtimeRefresh + 1);
+        }}
+        onClose={() => setEditorOpen(false)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-end">
-        <Button size="sm" onClick={() => { setEditorGraph(null); setEditorOpen(true); }}>
+        <Button size="sm" onClick={handleCreate}>
           <Plus className="w-4 h-4" />
           新建运行工作流
         </Button>
@@ -350,6 +370,7 @@ function RuntimeTab({
       <RuntimeWorkflowList
         onRun={handleRun}
         onEdit={(graph) => { setEditorGraph(graph); setEditorOpen(true); }}
+        onCreate={handleCreate}
         refreshKey={runtimeRefresh}
       />
 
@@ -362,16 +383,6 @@ function RuntimeTab({
         refreshKey={runtimeRefresh}
       />
 
-      {editorOpen && (
-        <WorkflowGraphEditor
-          graph={editorGraph}
-          onSaved={() => {
-            setEditorOpen(false);
-            setRuntimeRefresh(runtimeRefresh + 1);
-          }}
-          onClose={() => setEditorOpen(false)}
-        />
-      )}
     </div>
   );
 }
