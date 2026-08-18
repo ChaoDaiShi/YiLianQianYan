@@ -517,6 +517,19 @@
     border-radius: var(--radius-sm);
   }
 
+  .nav-rail-list.scrollbar-thin,
+  .conversation-list.scrollbar-thin {
+    scrollbar-width: none;
+    scrollbar-color: transparent transparent;
+  }
+
+  .nav-rail-list.scrollbar-thin::-webkit-scrollbar,
+  .conversation-list.scrollbar-thin::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
   .workflow-editor-page {
     display: flex;
     min-height: min(720px, calc(100vh - 118px));
