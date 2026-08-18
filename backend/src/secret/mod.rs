@@ -17,9 +17,9 @@ pub mod store;
 pub use memory_store::InMemorySecretStore;
 pub use migration::migrate_legacy_secrets;
 pub use model::{
-    mcp_env_ref, SecretKind, SecretMigrationReport, SecretRef, SecretSource, SecretStoreError,
-    SecretStoreStatus, CHAT_KEY_REF, EMBEDDING_KEY_REF, MAX_SECRET_KEY_LEN, MAX_SECRET_VALUE_BYTES,
-    SECRET_SERVICE_NAME,
+    llm_model_key_ref, mcp_env_ref, SecretKind, SecretMigrationReport, SecretRef, SecretSource,
+    SecretStoreError, SecretStoreStatus, CHAT_KEY_REF, EMBEDDING_KEY_REF, MAX_SECRET_KEY_LEN,
+    MAX_SECRET_VALUE_BYTES, SECRET_SERVICE_NAME,
 };
 pub use os_store::OsSecretStore;
 pub use resolver::SecretResolver;

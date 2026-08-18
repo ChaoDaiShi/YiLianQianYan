@@ -19,6 +19,13 @@ pub struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<StreamOptions>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamOptions {
+    pub include_usage: bool,
 }
 
 /// A single chat message in the conversation
@@ -78,7 +85,10 @@ pub struct Usage {
 #[derive(Debug, Clone, Deserialize)]
 pub struct StreamChunk {
     pub id: Option<String>,
+    #[serde(default)]
     pub choices: Vec<StreamChoice>,
+    #[serde(default)]
+    pub usage: Option<Usage>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -124,6 +134,7 @@ pub struct DeltaToolCallFunction {
 pub struct StreamAccumulator {
     pub content: String,
     pub tool_calls: Vec<AccumulatedToolCall>,
+    pub usage: Option<Usage>,
 }
 
 #[derive(Debug, Clone, Default)]

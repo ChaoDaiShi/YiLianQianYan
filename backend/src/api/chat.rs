@@ -18,6 +18,7 @@ use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
 use crate::db::{MessageRow, RetrieveQuery};
 use crate::llm::client::LlmClient;
+use crate::llm::usage::DatabaseUsageRecorder;
 use crate::safety::SecurityExecutionGateway;
 use crate::server::{AppServer, CHAT_MEMORY_TOP_K};
 use crate::utils::text::truncate_chars;
@@ -36,8 +37,19 @@ pub async fn chat_handler(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
 
-    let config = server.config.read().clone();
     let db = server.db.clone_connection();
+    let legacy_config = server.config.read().clone();
+    let active_model = db.get_active_llm_model().ok().flatten();
+    let mut config = legacy_config.clone();
+    if let Some(model) = active_model.as_ref() {
+        let mut active_config = model.to_model_config();
+        active_config.embedding_model = legacy_config.model.embedding_model.clone();
+        active_config.embedding_base_url = legacy_config.model.embedding_base_url.clone();
+        active_config.embedding_api_key = legacy_config.model.embedding_api_key.clone();
+        active_config.embedding_api_key_env = legacy_config.model.embedding_api_key_env.clone();
+        active_config.embedding_api_key_ref = legacy_config.model.embedding_api_key_ref.clone();
+        config.model = active_config;
+    }
     // Build one MCP-aware runtime registry snapshot for this whole chat run.
     // It is used by BOTH the LLM tool definitions and the Security Gateway so
     // the LLM, evaluation, and execution all see the same tool set.
@@ -208,7 +220,20 @@ pub async fn chat_handler(
         .push("chat", "api", &format!("收到消息: {}", msg_preview));
 
     // Spawn agent loop
-    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
+    let usage_recorder = active_model.as_ref().map(|model| {
+        Arc::new(DatabaseUsageRecorder::new(
+            db.clone_connection(),
+            model.id.clone(),
+            model.provider.clone(),
+            model.model.clone(),
+            "chat",
+        )) as Arc<dyn crate::llm::client::UsageRecorder>
+    });
+    let llm_client = LlmClient::new_with_usage_recorder(
+        &config.model,
+        Arc::clone(&server.secret_resolver),
+        usage_recorder,
+    );
     let conv_clone = conv_id.clone();
     let config_clone = config.clone();
     let log_buffer = server.log_buffer.clone();

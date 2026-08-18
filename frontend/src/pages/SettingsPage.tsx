@@ -8,6 +8,7 @@ import type { PresetId } from "../theme/types";
 import { PageHeader, Button, Input, Badge } from "../components/ui";
 import { GrantEditor } from "../features/security/GrantEditor";
 import { isolationRows } from "../features/security/grantEditorModel";
+import ModelManagerPanel from "../features/llm/ModelManagerPanel";
 
 const defaultConfig: AppConfig = {
   agent: { name: "忆涟千言", system_prompt: "你是一个桌面AI助手...", workspace_root: "" },
@@ -202,6 +203,7 @@ export default function SettingsPage() {
       case "model":
         return (
           <div className="space-y-4">
+            <ModelManagerPanel />
             <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">模型配置</h3>
             {config.migration_pending ? (
               <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2">

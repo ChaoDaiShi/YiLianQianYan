@@ -108,3 +108,51 @@ export interface AppConfig {
   secret_store_status?: string;
   migration_pending?: number;
 }
+
+export interface LlmModel {
+  id: string;
+  provider: string;
+  label: string;
+  model: string;
+  base_url: string;
+  api_format: string;
+  api_key_configured: boolean;
+  api_key_source: string;
+  api_key_env: string;
+  temperature: number;
+  max_tokens: number;
+  invoke_timeout_ms: number;
+  active: boolean;
+  verified_at?: number | null;
+  last_error?: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface LlmModelPayload {
+  provider: string;
+  label: string;
+  model: string;
+  base_url: string;
+  api_format: "openai";
+  api_key?: string;
+  api_key_env?: string;
+  clear_api_key?: boolean;
+  temperature: number;
+  max_tokens: number;
+  invoke_timeout_ms: number;
+}
+
+export interface LlmUsageDay {
+  date: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface LlmUsageReport {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  days: LlmUsageDay[];
+}

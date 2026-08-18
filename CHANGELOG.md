@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- 多服务商 OpenAI 兼容模型档案：支持 OpenAI、DeepSeek、千问、GLM、自定义地址，包含连接验证、激活切换和系统凭据库保护。
+- 本地持久化 LLM Token usage：按模型/日期聚合输入、输出、总 Token，并在设置页提供模型树与柱状图。
+
 ## 0.8.0 — 2026-08-17
 
 ### Added

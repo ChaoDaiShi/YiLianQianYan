@@ -3,6 +3,7 @@
 // ============================================================
 
 mod conversations;
+mod llm_models;
 mod mcp;
 mod memories;
 mod security_audit;
@@ -12,7 +13,11 @@ mod workflow_runtime;
 mod workflows;
 mod workspace;
 
+#[cfg(test)]
+mod llm_models_tests;
+
 pub use conversations::*;
+pub use llm_models::*;
 pub use mcp::McpServer;
 pub use memories::*;
 pub use security_audit::*;
@@ -88,6 +93,48 @@ impl Database {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS llm_models (
+                id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                label TEXT NOT NULL,
+                model TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                api_format TEXT NOT NULL DEFAULT 'openai',
+                api_key_ref TEXT NOT NULL,
+                api_key_env TEXT NOT NULL DEFAULT '',
+                temperature REAL NOT NULL DEFAULT 0.0,
+                max_tokens INTEGER NOT NULL DEFAULT 16384,
+                invoke_timeout_ms INTEGER NOT NULL DEFAULT 120000,
+                active INTEGER NOT NULL DEFAULT 0,
+                verified_at INTEGER,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_llm_models_active
+                ON llm_models(active);
+            CREATE INDEX IF NOT EXISTS idx_llm_models_updated
+                ON llm_models(updated_at);
+
+            CREATE TABLE IF NOT EXISTS llm_usage_events (
+                id TEXT PRIMARY KEY,
+                model_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL,
+                completion_tokens INTEGER NOT NULL,
+                total_tokens INTEGER NOT NULL,
+                recorded_at INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'chat',
+                FOREIGN KEY (model_id) REFERENCES llm_models(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_model_time
+                ON llm_usage_events(model_id, recorded_at);
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_time
+                ON llm_usage_events(recorded_at);
 
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,

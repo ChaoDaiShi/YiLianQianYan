@@ -96,6 +96,11 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 | `POST` | `/api/chat/stop` | 取消生成 |
 | `GET` `/POST` `/DELETE` | `/api/conversations[/{id}]` | 对话 CRUD |
 | `GET` `/PUT` | `/api/settings` | 配置管理 |
+| `GET` `/POST` | `/api/llm/models` | 多服务商模型档案列表/新增 |
+| `PUT` `/DELETE` | `/api/llm/models/:id` | 编辑/删除模型档案 |
+| `POST` | `/api/llm/models/:id/verify` | 验证 OpenAI 兼容连接并记录 usage |
+| `POST` | `/api/llm/models/:id/activate` | 切换当前聊天模型 |
+| `GET` | `/api/llm/usage` | 按模型和时间范围查询 token 用量 |
 | `GET` | `/api/tools` | 工具列表 |
 | `GET` | `/api/security/audit` | 按时间、关联 ID、工具、事件、决策和风险筛选安全审计 |
 | `POST` | `/api/security/audit/export` | 导出版本化、已脱敏的 JSON 审计数据 |
@@ -109,6 +114,10 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 ```
 
 控制会话用于隔离 Agent 执行面、用户控制面和无关的本地回环请求，不宣称能够抵御已取得相同操作系统用户权限的恶意软件。默认 CORS 仅允许 Tauri Origin 与 `localhost:1420` 开发 Origin；额外 Origin 必须通过 `YILIAN_ALLOWED_ORIGINS` 显式配置。
+
+### 多模型与 Token 用量
+
+设置页的“模型”区域支持 OpenAI、DeepSeek、千问、GLM 和自定义 OpenAI 兼容服务商。新增档案后点击“验证”，验证通过的档案可激活为聊天模型；API Key 只写入 Windows Credential Manager 等系统凭据库，SQLite 和 API 响应只保留 SecretRef/配置状态。流式服务返回 usage 后，系统会把输入、输出和总 Token 持久化到本地 SQLite，并可按模型和日期筛选查看柱状图；服务商没有返回 usage 时不会伪造精确数字。模型树最多展示 32 个已验证模型枝条，避免配置数量撑破界面。
 
 ## 可用工具
 

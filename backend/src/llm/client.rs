@@ -13,6 +13,10 @@ use super::types::*;
 use crate::config::types::ModelConfig;
 use crate::secret::SecretResolver;
 
+pub trait UsageRecorder: Send + Sync {
+    fn record(&self, usage: &Usage);
+}
+
 /// Errors that can occur during LLM calls
 #[derive(Debug, thiserror::Error)]
 pub enum LlmError {
@@ -45,11 +49,20 @@ pub struct LlmClient {
     resolver: Arc<SecretResolver>,
     /// Concurrency limiter (max 3 concurrent LLM calls)
     limiter: Arc<Mutex<()>>,
+    usage_recorder: Option<Arc<dyn UsageRecorder>>,
 }
 
 impl LlmClient {
     /// Create a new LLM client from configuration + a secret resolver.
     pub fn new(config: &ModelConfig, resolver: Arc<SecretResolver>) -> Self {
+        Self::new_with_usage_recorder(config, resolver, None)
+    }
+
+    pub fn new_with_usage_recorder(
+        config: &ModelConfig,
+        resolver: Arc<SecretResolver>,
+        usage_recorder: Option<Arc<dyn UsageRecorder>>,
+    ) -> Self {
         let http = HttpClient::builder()
             .timeout(Duration::from_millis(config.invoke_timeout_ms))
             .build()
@@ -60,6 +73,13 @@ impl LlmClient {
             config: config.clone(),
             resolver,
             limiter: Arc::new(Mutex::new(())),
+            usage_recorder,
+        }
+    }
+
+    fn record_usage(&self, usage: &Usage) {
+        if let Some(recorder) = &self.usage_recorder {
+            recorder.record(usage);
         }
     }
 
@@ -113,6 +133,7 @@ impl LlmClient {
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),
             stream: false,
+            stream_options: None,
         };
 
         let api_key = self.api_key().await?;
@@ -142,6 +163,9 @@ impl LlmClient {
         }
 
         let completion: ChatCompletionResponse = response.json().await?;
+        if let Some(usage) = completion.usage.as_ref() {
+            self.record_usage(usage);
+        }
         Ok(completion)
     }
 
@@ -264,6 +288,9 @@ impl LlmClient {
             temperature: Some(self.config.temperature),
             max_tokens: Some(self.config.max_tokens),
             stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
         };
 
         let api_key = self.api_key().await?;
@@ -380,6 +407,9 @@ impl LlmClient {
         while let Some(chunk_result) = rx.recv().await {
             match chunk_result {
                 Ok(chunk) => {
+                    if chunk.usage.is_some() {
+                        accumulator.usage = chunk.usage.clone();
+                    }
                     for choice in &chunk.choices {
                         accumulator.apply_delta(&choice.delta);
 
@@ -398,6 +428,9 @@ impl LlmClient {
             }
         }
 
+        if let Some(usage) = accumulator.usage.as_ref() {
+            self.record_usage(usage);
+        }
         Ok(accumulator)
     }
 }

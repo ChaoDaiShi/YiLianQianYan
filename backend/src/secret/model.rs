@@ -21,6 +21,11 @@ pub const SECRET_SERVICE_NAME: &str = "io.yilianqianyan";
 pub const CHAT_KEY_REF: &str = "model.chat.api_key";
 pub const EMBEDDING_KEY_REF: &str = "model.embedding.api_key";
 
+/// Build a stable, non-sensitive keyring account for a saved LLM profile.
+pub fn llm_model_key_ref(model_id: &str) -> SecretRef {
+    SecretRef::new(format!("llm.model.{}", digest16(model_id.as_bytes())))
+}
+
 /// A stable, non-secret pointer to a secret. Never carries the value.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SecretRef {
@@ -75,6 +80,7 @@ fn digest16(bytes: &[u8]) -> String {
 pub enum SecretKind {
     ChatApiKey,
     EmbeddingApiKey,
+    LlmModelApiKey,
     McpEnv,
 }
 

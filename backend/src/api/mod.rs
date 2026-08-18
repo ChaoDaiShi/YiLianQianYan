@@ -21,6 +21,7 @@ mod approvals;
 mod capabilities;
 mod chat;
 mod conversations;
+mod llm_models;
 mod logs;
 mod mcp_runtime;
 mod memories;
@@ -42,6 +43,8 @@ pub use chat::chat_handler;
 pub use chat::stop_handler;
 
 #[cfg(test)]
+mod llm_models_tests;
+#[cfg(test)]
 mod tests;
 
 pub fn build_router(server: Arc<AppServer>) -> Router {
@@ -59,6 +62,19 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/skills/:name", get(skills_route::load_skill))
         .route("/api/settings", get(settings::get_handler))
         .route("/api/settings", put(settings::update_handler))
+        .route("/api/llm/models", get(llm_models::list_handler))
+        .route("/api/llm/models", post(llm_models::create_handler))
+        .route("/api/llm/models/:id", put(llm_models::update_handler))
+        .route("/api/llm/models/:id", delete(llm_models::delete_handler))
+        .route(
+            "/api/llm/models/:id/verify",
+            post(llm_models::verify_handler),
+        )
+        .route(
+            "/api/llm/models/:id/activate",
+            post(llm_models::activate_handler),
+        )
+        .route("/api/llm/usage", get(llm_models::usage_handler))
         .route("/api/tools", get(tools::list_handler))
         .route("/api/system", get(system::system_info))
         .route("/api/system/cpu", get(system::cpu_info))

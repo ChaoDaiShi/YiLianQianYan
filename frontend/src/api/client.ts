@@ -3,7 +3,7 @@
 // ============================================================
 
 import { controlSessionHeaders } from "./controlSession";
-import type { AppConfig } from "../types";
+import type { AppConfig, LlmModel, LlmModelPayload, LlmUsageReport } from "../types";
 
 export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ||
@@ -66,6 +66,34 @@ export async function getSettings() {
 
 export async function updateSettings(config: AppConfig) {
   return request<{ status?: string; error?: string }>("PUT", "/api/settings", config);
+}
+
+export async function listLlmModels() {
+  return request<LlmModel[]>("GET", "/api/llm/models");
+}
+
+export async function createLlmModel(payload: LlmModelPayload) {
+  return request<LlmModel>("POST", "/api/llm/models", payload);
+}
+
+export async function updateLlmModel(id: string, payload: LlmModelPayload) {
+  return request<LlmModel>("PUT", `/api/llm/models/${encodeURIComponent(id)}`, payload);
+}
+
+export async function deleteLlmModel(id: string) {
+  return request<Record<string, never>>("DELETE", `/api/llm/models/${encodeURIComponent(id)}`);
+}
+
+export async function verifyLlmModel(id: string) {
+  return request<{ model: LlmModel }>("POST", `/api/llm/models/${encodeURIComponent(id)}/verify`);
+}
+
+export async function activateLlmModel(id: string) {
+  return request<LlmModel>("POST", `/api/llm/models/${encodeURIComponent(id)}/activate`);
+}
+
+export async function getLlmUsage(query: string) {
+  return request<LlmUsageReport>("GET", `/api/llm/usage${query}`);
 }
 
 // ── Tools ──
