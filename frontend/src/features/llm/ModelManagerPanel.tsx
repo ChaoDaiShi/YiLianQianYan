@@ -9,7 +9,7 @@ import {
   updateLlmModel,
   verifyLlmModel,
 } from "../../api/client";
-import type { LlmModel, LlmModelPayload, LlmUsageReport } from "../../types";
+import type { AppConfig, LlmModel, LlmModelPayload, LlmUsageReport } from "../../types";
 import { Badge, Button, Input } from "../../components/ui";
 import ModelTree from "./ModelTree";
 import TokenUsageChart from "./TokenUsageChart";
@@ -35,7 +35,18 @@ function emptyForm(): LlmModelPayload {
   };
 }
 
-export default function ModelManagerPanel() {
+interface LegacyModelSettingsProps {
+  config: AppConfig;
+  updateField: (section: keyof AppConfig, key: string, value: unknown) => void;
+  clearSecret: (field: "api_key" | "embedding_api_key") => Promise<void>;
+  secretSourceLabel: (source?: string) => string;
+}
+
+interface ModelManagerPanelProps {
+  legacyModel: LegacyModelSettingsProps;
+}
+
+export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProps) {
   const [models, setModels] = useState<LlmModel[]>([]);
   const [form, setForm] = useState<LlmModelPayload>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -154,6 +165,51 @@ export default function ModelManagerPanel() {
           {activeModel ? <Badge tone="success"><Zap className="h-3 w-3" />当前：{activeModel.label}</Badge> : null}
         </div>
         {feedback ? <p className="mt-2 text-xs text-[var(--accent-primary)]" role="status">{feedback}</p> : null}
+      </div>
+
+      <div className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3 space-y-4">
+        <div>
+          <h4 className="text-sm font-medium">运行时兼容配置</h4>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">保留旧版运行参数，并与模型服务管理统一保存在当前设置中。</p>
+        </div>
+        {legacyModel.config.migration_pending ? (
+          <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2">
+            <p className="text-xs text-[var(--warning)]">检测到旧版明文密钥，系统安全凭据库当前不可用；未删除旧配置。恢复凭据库后将自动迁移。</p>
+          </div>
+        ) : null}
+        {legacyModel.config.secret_store_status === "unavailable" ? (
+          <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2">
+            <p className="text-xs text-[var(--danger)]">系统安全凭据库不可用，无法新增直接密钥；环境变量方式仍可使用。</p>
+          </div>
+        ) : null}
+        <Input label="API 地址" value={legacyModel.config.model.base_url} onChange={(event) => legacyModel.updateField("model", "base_url", event.target.value)} />
+        <Input label="模型名称" value={legacyModel.config.model.name} onChange={(event) => legacyModel.updateField("model", "name", event.target.value)} />
+        <Input label="API 密钥" type="password" value={legacyModel.config.model.api_key} onChange={(event) => legacyModel.updateField("model", "api_key", event.target.value)} placeholder={legacyModel.config.model.api_key_configured ? "输入新 key 可替换" : "sk-..."} />
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-[var(--text-muted)]">{legacyModel.secretSourceLabel(legacyModel.config.model.api_key_source)}</p>
+          {legacyModel.config.model.api_key_configured && (
+            <Button variant="secondary" size="sm" onClick={() => void legacyModel.clearSecret("api_key")}>清除密钥</Button>
+          )}
+        </div>
+        <Input label="环境变量名" value={legacyModel.config.model.api_key_env} onChange={(event) => legacyModel.updateField("model", "api_key_env", event.target.value)} />
+        <div className="border-t border-[var(--border)] pt-4 space-y-4">
+          <h5 className="font-semibold text-sm text-[var(--text-muted)]">Embedding 配置</h5>
+          <Input label="Embedding API 地址" value={legacyModel.config.model.embedding_base_url} onChange={(event) => legacyModel.updateField("model", "embedding_base_url", event.target.value)} placeholder="https://api.openai.com/v1" />
+          <Input label="Embedding 模型名称" value={legacyModel.config.model.embedding_model} onChange={(event) => legacyModel.updateField("model", "embedding_model", event.target.value)} placeholder="text-embedding-3-small" />
+          <Input label="Embedding API 密钥" type="password" value={legacyModel.config.model.embedding_api_key} onChange={(event) => legacyModel.updateField("model", "embedding_api_key", event.target.value)} placeholder={legacyModel.config.model.embedding_api_key_configured ? "输入新 key 可替换" : "留空表示未配置"} />
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-[var(--text-muted)]">{legacyModel.secretSourceLabel(legacyModel.config.model.embedding_api_key_source)}</p>
+            {legacyModel.config.model.embedding_api_key_configured && (
+              <Button variant="secondary" size="sm" onClick={() => void legacyModel.clearSecret("embedding_api_key")}>清除密钥</Button>
+            )}
+          </div>
+          <Input label="Embedding 环境变量名" value={legacyModel.config.model.embedding_api_key_env} onChange={(event) => legacyModel.updateField("model", "embedding_api_key_env", event.target.value)} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="温度" type="number" value={String(legacyModel.config.model.temperature)} onChange={(event) => legacyModel.updateField("model", "temperature", parseFloat(event.target.value) || 0)} />
+          <Input label="最大 Token" type="number" value={String(legacyModel.config.model.max_tokens)} onChange={(event) => legacyModel.updateField("model", "max_tokens", parseInt(event.target.value) || 0)} />
+        </div>
+        <Input label="超时 (ms)" type="number" value={String(legacyModel.config.model.invoke_timeout_ms)} onChange={(event) => legacyModel.updateField("model", "invoke_timeout_ms", parseInt(event.target.value) || 0)} />
       </div>
 
       <ModelTree models={models.filter((model) => Boolean(model.verified_at))} />
