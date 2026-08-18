@@ -404,6 +404,14 @@
     background: transparent;
   }
 
+  .home-ambient-strong {
+    background-image: url("/cyrene-home-background.png");
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    opacity: 0.62;
+  }
+
   .home-ambient-stars {
     background-image:
       radial-gradient(1.5px 1.5px at 18% 22%, rgba(234, 145, 185, 0.5), transparent 100%),

@@ -111,7 +111,7 @@ export default function WorkbenchHome({
   return (
     <div className="scrollbar-thin relative flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div
-        className="home-ambient pointer-events-none absolute inset-0"
+        className="home-ambient home-ambient-strong pointer-events-none absolute inset-0"
         aria-hidden="true"
       />
       <div
