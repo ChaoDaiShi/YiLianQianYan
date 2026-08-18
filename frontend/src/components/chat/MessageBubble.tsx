@@ -1,16 +1,26 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "../../types";
 import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
 
-interface MessageBubbleProps {
+export interface MessageBubbleProps {
   message: Message;
   showAssistantAvatar?: boolean;
 }
 
-export default function MessageBubble({
+export function areMessageBubblePropsEqual(
+  previous: MessageBubbleProps,
+  next: MessageBubbleProps,
+) {
+  return (
+    previous.message === next.message &&
+    previous.showAssistantAvatar === next.showAssistantAvatar
+  );
+}
+
+function MessageBubble({
   message,
   showAssistantAvatar = true,
 }: MessageBubbleProps) {
@@ -96,3 +106,5 @@ export default function MessageBubble({
     </article>
   );
 }
+
+export default memo(MessageBubble, areMessageBubblePropsEqual);
