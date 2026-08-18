@@ -138,12 +138,14 @@ Add this scoped CSS:
 
 ```css
 .conversation-sidebar,
+.conversation-list,
 .skills-page .capability-list-scroll {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
 .conversation-sidebar::-webkit-scrollbar,
+.conversation-list::-webkit-scrollbar,
 .skills-page .capability-list-scroll::-webkit-scrollbar {
   display: none;
   width: 0;
