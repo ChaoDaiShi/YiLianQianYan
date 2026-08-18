@@ -330,6 +330,90 @@
       radial-gradient(1.5px 1.5px at 62% 82%, rgba(173, 155, 232, 0.35), transparent 100%);
   }
 
+  .workbench-grid .home-content {
+    width: min(100%, 760px);
+    margin-inline: auto;
+    gap: 0;
+    padding: clamp(20px, 4vh, 36px) 24px 28px;
+  }
+
+  .workbench-grid .home-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(12px, 2.2vh, 20px);
+  }
+
+  .workbench-grid .home-character-image {
+    width: clamp(180px, 22vh, 220px);
+    height: clamp(180px, 22vh, 220px);
+    border-radius: 46% 46% 38% 38%;
+    mix-blend-mode: multiply;
+  }
+
+  .workbench-grid .home-status {
+    margin-top: clamp(12px, 2.2vh, 20px);
+    border-color: var(--divider);
+    background: color-mix(in srgb, var(--surface-solid) 86%, var(--accent-purple) 14%);
+    box-shadow: none;
+  }
+
+  .workbench-grid .home-composer {
+    width: 100%;
+    margin-top: clamp(18px, 3vh, 28px);
+  }
+
+  .workbench-grid .home-composer .composer-card {
+    width: min(680px, 100%);
+    border-color: var(--divider);
+    border-radius: var(--radius-lg);
+    background: var(--surface-elevated);
+    box-shadow: 0 10px 28px rgba(48, 38, 76, 0.06);
+  }
+
+  .workbench-grid .home-quick-actions {
+    display: grid;
+    width: min(100%, 680px);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: clamp(18px, 3vh, 30px);
+  }
+
+  .workbench-grid .home-quick-action {
+    width: auto;
+    min-height: 76px;
+    border-color: var(--divider);
+    background: color-mix(in srgb, var(--surface-solid) 78%, var(--bg-app) 22%);
+    box-shadow: none;
+  }
+
+  .workbench-grid .home-quick-action:hover {
+    background: var(--surface-hover);
+    box-shadow: none;
+  }
+
+  @media (max-height: 780px) {
+    .workbench-grid .home-content {
+      padding-top: 16px;
+      padding-bottom: 20px;
+    }
+
+    .workbench-grid .home-hero {
+      gap: 10px;
+    }
+
+    .workbench-grid .home-character-image {
+      width: clamp(176px, 20vh, 196px);
+      height: clamp(176px, 20vh, 196px);
+    }
+
+    .workbench-grid .home-status,
+    .workbench-grid .home-composer,
+    .workbench-grid .home-quick-actions {
+      margin-top: 14px;
+    }
+  }
+
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: var(--text-secondary) transparent;

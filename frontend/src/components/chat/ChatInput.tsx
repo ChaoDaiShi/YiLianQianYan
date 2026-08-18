@@ -50,7 +50,7 @@ export default function ChatInput({
   };
 
   return (
-    <div className="w-full">
+    <div className="home-composer w-full">
       <div className="composer-card mx-auto rounded-2xl p-3 [width:min(680px,calc(100%-48px))]">
         <textarea
           ref={textareaRef}
