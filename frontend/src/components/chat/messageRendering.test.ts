@@ -30,13 +30,23 @@ describe("MessageBubble render boundary", () => {
     ).toBe(false);
   });
 
-  it("keeps assistant messages free of avatar markup and offsets", () => {
-    expect(messageBubbleSource).not.toContain("showAssistantAvatar");
+  it("keeps assistant identity quiet and groups consecutive messages", () => {
+    expect(messageBubbleSource).toContain("showAssistantAvatar");
+    expect(messageBubbleSource).toContain("conversation-assistant-avatar");
     expect(messageBubbleSource).not.toContain("/favicon.png");
     expect(messageBubbleSource).not.toContain("ml-11");
+    expect(messageListSource).toContain("showAssistantAvatar");
     expect(messageListSource).not.toContain("/favicon.png");
-    expect(messageListSource).not.toContain("showAssistantAvatar");
     expect(messageListSource).not.toContain("ml-11");
+  });
+
+  it("rerenders when the assistant avatar group boundary changes", () => {
+    expect(
+      areMessageBubblePropsEqual(
+        { message, showAssistantAvatar: true },
+        { message, showAssistantAvatar: false },
+      ),
+    ).toBe(false);
   });
 
   it("routes markdown web links through the external browser opener", () => {

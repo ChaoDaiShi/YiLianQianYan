@@ -468,9 +468,14 @@ export default function ChatView({
     });
   }, []);
 
+  const chatModeClass =
+    conversationId || messages.length > 0 || streaming || error
+      ? "conversation-chat"
+      : "";
+
   return (
     <>
-      <div className={CHAT_COLUMN_VIEWPORT_CLASS_NAME}>
+      <div className={`${CHAT_COLUMN_VIEWPORT_CLASS_NAME} ${chatModeClass}`}>
         <ChatHeader
           title="智能工作台"
           connection={runState.connection}
@@ -510,7 +515,7 @@ export default function ChatView({
             onRetry={handleRetry}
           />
 
-          <footer className="shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
+          <footer className="conversation-composer shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
             <ChatInput
               onSend={handleSend}
               isLoading={isLoading}
