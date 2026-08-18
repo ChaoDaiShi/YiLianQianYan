@@ -32,18 +32,30 @@ const defaultConfig: AppConfig = {
   compaction: { enabled: true, context_window: 200000, trigger_threshold: 0.8, keep_recent_tokens: 20000 },
 };
 
-type SectionKey = "model" | "agent" | "permissions" | "sandbox" | "compaction" | "skills" | "subagents" | "appearance";
+type SectionKey = "model" | "agent" | "permissions" | "sandbox" | "compaction" | "skills" | "appearance";
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: "model", label: "模型" },
   { key: "agent", label: "智能体" },
-  { key: "permissions", label: "权限" },
+  { key: "permissions", label: "权限与安全" },
   { key: "sandbox", label: "沙箱" },
   { key: "compaction", label: "压缩" },
-  { key: "skills", label: "技能" },
-  { key: "subagents", label: "子智能体" },
+  { key: "skills", label: "技能与子智能体" },
   { key: "appearance", label: "外观" },
 ];
+
+function comparableConfig(config: AppConfig) {
+  return JSON.stringify({
+    ...config,
+    model: {
+      ...config.model,
+      api_key: "",
+      embedding_api_key: "",
+      clear_api_key: undefined,
+      clear_embedding_api_key: undefined,
+    },
+  });
+}
 
 function secretSourceLabel(source?: string): string {
   switch (source) {
@@ -62,6 +74,9 @@ function secretSourceLabel(source?: string): string {
 export default function SettingsPage() {
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [saved, setSaved] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState(() => comparableConfig(defaultConfig));
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("model");
   const [isolation, setIsolation] = useState<IsolationStatus | null>(null);
   const [grants, setGrants] = useState<SecurityGrant[]>([]);
@@ -70,11 +85,13 @@ export default function SettingsPage() {
   useEffect(() => {
     getSettings().then((c) => {
       if (c) {
-        setConfig({
+        const nextConfig = {
           ...defaultConfig,
           ...c,
           model: { ...defaultConfig.model, ...c.model, api_key: c.model.api_key || "", embedding_api_key: c.model.embedding_api_key || "" },
-        });
+        };
+        setConfig(nextConfig);
+        setSavedSnapshot(comparableConfig(nextConfig));
       }
     });
     getIsolationStatus().then((s) => { if (s) setIsolation(s); });
@@ -87,9 +104,18 @@ export default function SettingsPage() {
   };
 
   const handleSave = async () => {
-    await updateSettings(config);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setSaving(true);
+    setSaveError("");
+    const result = await updateSettings(config);
+    if (result && !result.error) {
+      setSavedSnapshot(comparableConfig(config));
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2500);
+    } else {
+      setSaved(false);
+      setSaveError("设置暂时无法保存");
+    }
+    setSaving(false);
   };
 
   const clearSecret = async (field: "api_key" | "embedding_api_key") => {
@@ -98,25 +124,36 @@ export default function SettingsPage() {
       ...config,
       model: { ...config.model, [clearField]: true, [field]: "" },
     };
-    await updateSettings(next);
+    const result = await updateSettings(next);
+    if (!result || result.error) {
+      setSaveError("设置暂时无法保存");
+      return;
+    }
     const fresh = await getSettings();
     if (fresh) {
-      setConfig({
+      const nextConfig = {
         ...defaultConfig,
         ...fresh,
         model: { ...defaultConfig.model, ...fresh.model, api_key: "", embedding_api_key: "" },
-      });
+      };
+      setConfig(nextConfig);
+      setSavedSnapshot(comparableConfig(nextConfig));
     }
     setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setSaveError("");
+    window.setTimeout(() => setSaved(false), 2500);
   };
 
   const updateField = (section: keyof AppConfig, key: string, value: any) => {
+    setSaveError("");
+    setSaved(false);
     setConfig((prev: any) => ({
       ...prev,
       [section]: { ...prev[section], [key]: value },
     }));
   };
+
+  const dirty = comparableConfig(config) !== savedSnapshot;
 
   // ── Appearance helpers ──
 
@@ -309,6 +346,7 @@ export default function SettingsPage() {
               <label className="text-sm">启用压缩</label>
               <input
                 type="checkbox"
+                aria-label="启用对话压缩"
                 checked={config.compaction.enabled}
                 onChange={(e) => updateField("compaction", "enabled", e.target.checked)}
                 className="w-4 h-4 rounded accent-[var(--accent)]"
@@ -338,21 +376,18 @@ export default function SettingsPage() {
               <label className="text-sm">渐进加载</label>
               <input
                 type="checkbox"
+                aria-label="启用渐进加载"
                 checked={config.skills.progressive_loading}
                 onChange={(e) => updateField("skills", "progressive_loading", e.target.checked)}
                 className="w-4 h-4 rounded accent-[var(--accent)]"
               />
             </div>
-          </div>
-        );
-
-      case "subagents":
-        return (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">子智能体配置</h3>
-            <div>
-              <label className="block text-sm font-medium mb-1">子智能体目录 (一行一个)</label>
+            <div className="border-t border-[var(--border-soft)] pt-4">
+              <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">子智能体目录</h3>
+              <label className="mt-3 block text-sm font-medium mb-1" htmlFor="subagent-directories">目录（每行一个）</label>
               <textarea
+                id="subagent-directories"
+                aria-label="子智能体目录"
                 value={config.subagents.directories.join("\n")}
                 onChange={(e) => updateField("subagents", "directories", e.target.value.split("\n").filter(Boolean))}
                 rows={4}
@@ -373,6 +408,9 @@ export default function SettingsPage() {
                 <button
                   key={p.id}
                   onClick={() => theme.setPreset(p.id as PresetId)}
+                  type="button"
+                  aria-pressed={theme.theme.presetId === p.id}
+                  aria-label={`选择主题：${p.name}`}
                   className={`text-left p-4 rounded-xl border transition-all ${
                     theme.theme.presetId === p.id
                       ? "border-[var(--accent)] bg-[var(--accent)]/10 ring-1 ring-[var(--accent)]/30"
@@ -495,27 +533,33 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="system-settings-page flex h-full min-h-0 flex-col">
       <PageHeader
         title="设置"
-        description={saved ? "设置已保存" : "配置应用参数"}
+        description={saveError ? saveError : saved ? "设置已保存" : dirty ? "有未保存修改" : "配置应用参数"}
         actions={
-          saved ? (
+          saveError ? (
+            <Badge tone="danger">保存失败</Badge>
+          ) : saved ? (
             <Badge tone="success">
               <Check className="w-3.5 h-3.5" />
               已保存
             </Badge>
-          ) : null
+          ) : dirty ? <Badge tone="warning">未保存</Badge> : null
         }
       />
 
-      <div className="flex-1 flex overflow-hidden">
+      {saveError ? <div className="mx-4 mt-3" role="alert"><p className="text-xs text-[var(--danger)]">设置暂时无法保存，请检查连接后重试。</p></div> : null}
+
+      <div className="system-settings-layout min-h-0 flex-1 overflow-hidden">
         {/* Section tabs */}
-        <div className="w-40 border-r border-[var(--border)] overflow-y-auto scrollbar-thin py-2 bg-[var(--panel)]/30">
+        <nav className="system-settings-nav overflow-y-auto scrollbar-thin" aria-label="设置分类">
           {SECTIONS.map((s) => (
             <button
               key={s.key}
+              type="button"
               onClick={() => setActiveSection(s.key)}
+              aria-current={activeSection === s.key ? "page" : undefined}
               className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
                 activeSection === s.key
                   ? "bg-[var(--accent)]/15 text-[var(--accent)] border-r-2 border-r-[var(--accent)] font-medium"
@@ -525,10 +569,10 @@ export default function SettingsPage() {
               {s.label}
             </button>
           ))}
-        </div>
+        </nav>
 
         {/* Section content */}
-        <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+        <div className="system-settings-content min-h-0 flex-1 overflow-y-auto p-6 scrollbar-thin">
           <div className="max-w-2xl">
             {renderSection()}
           </div>
@@ -536,13 +580,13 @@ export default function SettingsPage() {
       </div>
 
       {/* Save bar */}
-      <div className="border-t border-[var(--border)] px-6 py-3 bg-[var(--panel)]/60 flex items-center justify-between">
+      <div className="system-settings-savebar border-t border-[var(--border)] px-6 py-3 bg-[var(--panel)]/60 flex items-center justify-between">
         <p className="text-xs text-[var(--text-faint)]">
-          配置自动保存到数据库 (settings 表)
+          修改后点击保存设置
         </p>
-        <Button onClick={handleSave}>
+        <Button onClick={handleSave} disabled={!dirty || saving} aria-label="保存设置">
           <Check className="w-4 h-4" />
-          保存设置
+          {saving ? "保存中…" : "保存设置"}
         </Button>
       </div>
     </div>
