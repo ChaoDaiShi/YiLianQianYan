@@ -58,7 +58,7 @@ export default function ExecutionSidebar({
             : "bg-[var(--text-faint)]";
 
     return (
-      <aside className="execution-sidebar execution-sidebar-collapsed flex h-full w-12 min-h-0 flex-col items-center bg-[var(--surface-muted)] py-3 text-[var(--text)]">
+      <aside className="glass-rail execution-sidebar execution-sidebar-collapsed flex h-full w-12 min-h-0 flex-col items-center bg-[var(--surface-muted)] py-3 text-[var(--text)]">
         <button
           type="button"
           onClick={onToggleCollapse}
@@ -75,7 +75,7 @@ export default function ExecutionSidebar({
   }
 
   return (
-    <aside className="execution-sidebar flex h-full min-h-0 flex-col bg-[var(--surface-muted)] text-[var(--text)]">
+    <aside className="glass-rail execution-sidebar flex h-full min-h-0 flex-col bg-[var(--surface-muted)] text-[var(--text)]">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
         <div>
           <h2 className="text-sm font-semibold">执行轨迹</h2>

@@ -9,6 +9,9 @@ describe("semantic theme variables", () => {
     expect(variables["--bg-app"]).toBe("#F8F6FD");
     expect(variables["--bg-soft"]).toBe("#f4f0fc");
     expect(variables["--bg-subtle"]).toBe("#f4f0fc");
+    expect(variables["--surface"]).toBe("rgba(255,255,255,0.42)");
+    expect(variables["--surface-muted"]).toBe("rgba(252,249,255,0.20)");
+    expect(variables["--titlebar-bg"]).toBe("rgba(255,255,255,0.28)");
     expect(variables["--surface-solid"]).toBe("#ffffff");
     expect(variables["--text-primary"]).toBe("#292536");
     expect(variables["--text-faint"]).toBe("#9690A1");
@@ -24,7 +27,7 @@ describe("semantic theme variables", () => {
     expect(variables["--sidebar-active"]).toBe("rgba(234,145,185,0.17)");
     expect(variables["--danger-fg"]).toBe("#292536");
     expect(variables["--sidebar-text"]).toBe("#eeeaf8");
-    expect(variables["--divider"]).toBe("rgba(91,76,125,0.10)");
+    expect(variables["--divider"]).toBe("rgba(91,76,125,0.14)");
     expect(variables["--radius-xs"]).toBe("6px");
     expect(variables["--radius-md"]).toBe("12px");
     expect(variables["--radius-xl"]).toBe("20px");

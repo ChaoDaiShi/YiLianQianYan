@@ -7,8 +7,8 @@ describe("theme presets", () => {
     expect(DEFAULT_THEME.presetId).toBe("cyrene-ripple");
     expect(DEFAULT_THEME.colors.bg).toBe("#F8F6FD");
     expect(DEFAULT_THEME.colors.bg2).toBe("#f4f0fc");
-    expect(DEFAULT_THEME.colors.panel).toBe("rgba(255,255,255,0.82)");
-    expect(DEFAULT_THEME.colors.panelHover).toBe("#f9f3fc");
+    expect(DEFAULT_THEME.colors.panel).toBe("rgba(255,255,255,0.52)");
+    expect(DEFAULT_THEME.colors.panelHover).toBe("rgba(249,243,252,0.46)");
     expect(DEFAULT_THEME.colors.textMuted).toBe("#696276");
     expect(DEFAULT_THEME.colors.textFaint).toBe("#9690A1");
     expect(DEFAULT_THEME.colors.accent).toBe("#ea91b9");
@@ -73,7 +73,7 @@ describe("theme presets", () => {
       },
     });
 
-    expect(normalized.colors.panel).toBe("rgba(255,255,255,0.82)");
-    expect(normalized.colors.panelHover).toBe("#f9f3fc");
+    expect(normalized.colors.panel).toBe("rgba(255,255,255,0.52)");
+    expect(normalized.colors.panelHover).toBe("rgba(249,243,252,0.46)");
   });
 });
