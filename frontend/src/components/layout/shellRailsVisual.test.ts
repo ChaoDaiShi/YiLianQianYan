@@ -20,5 +20,8 @@ describe("Shell rail visual contracts", () => {
     expect(navRailSource).toContain("nav-rail-compact");
     expect(navRailSource).toContain("nav-rail-item");
     expect(navRailSource).toContain("nav-rail-item-label");
+    expect(navRailSource).toContain("nav-rail-status-motif");
+    expect(conversationSidebarSource).toContain("conversation-sidebar-motif");
+    expect(executionSidebarSource).toContain("execution-header-motif");
   });
 });

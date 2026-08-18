@@ -68,6 +68,7 @@ export default function ConversationSidebar({
       <div className="conversation-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
         <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
         <h2 className="text-sm font-semibold">任务</h2>
+        <span className="conversation-sidebar-motif" aria-hidden="true" />
         {onClose && (
           <button
             type="button"
@@ -119,7 +120,7 @@ export default function ConversationSidebar({
               return (
                 <div
                   key={conversation.id}
-                  className={`conversation-row group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                  className={`conversation-row ${active ? "conversation-row-active" : ""} group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
                     active
                       ? "border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--text)]"
                       : "border-transparent text-[var(--text-muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"

@@ -79,7 +79,8 @@ export default function ChatHeader({
         </button>
       )}
 
-      <div className="min-w-0">
+      <div className="titlebar-brand min-w-0">
+        <span className="titlebar-brand-mark" aria-hidden="true">✦</span>
         <h1 className="truncate text-sm font-semibold min-[960px]:text-base">
           {title}
         </h1>
