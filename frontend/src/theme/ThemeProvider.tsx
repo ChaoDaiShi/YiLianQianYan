@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { PresetId, ThemeConfig } from "./types";
+import type { ColorScheme, PresetId, ThemeConfig, ThemeMode } from "./types";
 import { STORAGE_KEY } from "./types";
 import { DEFAULT_THEME, PRESETS } from "./presets";
 import { applyThemeToDom, sanitizeCustomVars } from "./applyTheme";
@@ -16,7 +16,10 @@ import { clearBgImage, loadBgImage, saveBgImage } from "./bgImageStore";
 
 interface ThemeContextValue {
   theme: ThemeConfig;
+  mode: ThemeMode;
+  resolvedScheme: ColorScheme;
   bgImageUrl: string | null;
+  setMode: (mode: ThemeMode) => void;
   setPreset: (id: PresetId) => void;
   updateTheme: (patch: Partial<ThemeConfig>) => void;
   setBackgroundImage: (dataUrl: string | null) => Promise<void>;
@@ -27,13 +30,12 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-const LEGACY_PRESET_MAP: Partial<
-  Record<string, Exclude<PresetId, "custom">>
-> = {
-  "paper-light": "warm-local",
-  "claude-dark": "graphite-pro",
-  "terminal-green": "graphite-pro",
-};
+const LEGACY_DARK_PRESETS = new Set([
+  "graphite-pro",
+  "claude-dark",
+  "terminal-green",
+]);
+const VALID_MODES = new Set<ThemeMode>(["system", "light", "dark"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -48,27 +50,41 @@ export function normalizeStoredTheme(raw: unknown): ThemeConfig {
     };
   }
 
-  const rawPresetId =
-    typeof raw.presetId === "string" ? raw.presetId : DEFAULT_THEME.presetId;
-  const migratedPresetId = LEGACY_PRESET_MAP[rawPresetId];
-  const isKnownPreset = Object.prototype.hasOwnProperty.call(PRESETS, rawPresetId);
-  const presetId: PresetId = migratedPresetId
-    ?? (rawPresetId === "custom" || isKnownPreset
-      ? (rawPresetId as PresetId)
-      : DEFAULT_THEME.presetId);
-  const base = presetId === "custom" ? DEFAULT_THEME : PRESETS[presetId];
-  const storedColors =
-    presetId === "custom" && !migratedPresetId && isRecord(raw.colors)
-      ? raw.colors
-      : {};
+  const rawPresetId = typeof raw.presetId === "string" ? raw.presetId : "";
+  const rawMode = typeof raw.mode === "string" ? raw.mode : "";
+  const mode: ThemeMode = VALID_MODES.has(rawMode as ThemeMode)
+    ? (rawMode as ThemeMode)
+    : rawPresetId === "cyrene-ripple"
+      ? "light"
+      : LEGACY_DARK_PRESETS.has(rawPresetId)
+        ? "dark"
+        : "system";
+  const keepBackgroundImage =
+    raw.bgMode === "image" && raw.bgImageKey === "background";
 
   return {
-    ...base,
-    ...(raw as Partial<ThemeConfig>),
-    presetId,
-    colors: { ...base.colors, ...storedColors },
-    customVars: sanitizeCustomVars(raw.customVars),
+    ...DEFAULT_THEME,
+    presetId: "cyrene-ripple",
+    mode,
+    bgMode: keepBackgroundImage ? "image" : "solid",
+    bgImageKey: keepBackgroundImage ? "background" : null,
+    colors: { ...DEFAULT_THEME.colors },
+    customVars: {},
   };
+}
+
+export function resolveColorScheme(
+  mode: ThemeMode,
+  systemPrefersDark: boolean,
+): ColorScheme {
+  if (mode === "system") return systemPrefersDark ? "dark" : "light";
+  return mode;
+}
+
+function readSystemPrefersDark(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
 function loadStored(): ThemeConfig {
@@ -84,6 +100,19 @@ function loadStored(): ThemeConfig {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeConfig>(loadStored);
   const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(readSystemPrefersDark);
+  const resolvedScheme = resolveColorScheme(theme.mode, systemPrefersDark);
+
+  useEffect(() => {
+    if (theme.mode !== "system" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setSystemPrefersDark(event.matches);
+    };
+    setSystemPrefersDark(media.matches);
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, [theme.mode]);
 
   useEffect(() => {
     loadBgImage().then((url) => {
@@ -104,6 +133,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setTheme({ ...preset, colors: { ...preset.colors }, customVars: {} });
   }, []);
 
+  const setMode = useCallback((mode: ThemeMode) => {
+    setTheme((current) => ({ ...current, mode }));
+  }, []);
+
   const updateTheme = useCallback((patch: Partial<ThemeConfig>) => {
     setTheme((prev) => ({
       ...prev,
@@ -120,11 +153,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (dataUrl) {
       await saveBgImage(dataUrl);
       setBgImageUrl(dataUrl);
-      setTheme((prev) => ({ ...prev, bgMode: "image", bgImageKey: "background", presetId: "custom" }));
+      setTheme((prev) => ({ ...prev, bgMode: "image", bgImageKey: "background" }));
     } else {
       await clearBgImage();
       setBgImageUrl(null);
-      setTheme((prev) => ({ ...prev, bgMode: "solid", bgImageKey: null, presetId: "custom" }));
+      setTheme((prev) => ({ ...prev, bgMode: "solid", bgImageKey: null }));
     }
   }, []);
 
@@ -147,7 +180,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       theme,
+      mode: theme.mode,
+      resolvedScheme,
       bgImageUrl,
+      setMode,
       setPreset,
       updateTheme,
       setBackgroundImage,
@@ -155,7 +191,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       exportTheme,
       importTheme,
     }),
-    [theme, bgImageUrl, setPreset, updateTheme, setBackgroundImage, resetTheme, exportTheme, importTheme]
+    [theme, resolvedScheme, bgImageUrl, setMode, setPreset, updateTheme, setBackgroundImage, resetTheme, exportTheme, importTheme]
   );
 
   return createElement(ThemeContext.Provider, { value }, children);

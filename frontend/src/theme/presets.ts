@@ -30,6 +30,7 @@ function makeColors(
 export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
   "cyrene-ripple": {
     presetId: "cyrene-ripple",
+    mode: "system",
     bgMode: "solid",
     colors: makeColors({
       bg: "#F8F6FD",
@@ -62,6 +63,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
   },
   "warm-local": {
     presetId: "warm-local",
+    mode: "light",
     bgMode: "solid",
     colors: makeColors({
       bg: "#f6f1e8",
@@ -94,6 +96,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
   },
   "precision-neutral": {
     presetId: "precision-neutral",
+    mode: "light",
     bgMode: "solid",
     colors: makeColors({
       bg: "#f3f5f6",
@@ -126,6 +129,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
   },
   "graphite-pro": {
     presetId: "graphite-pro",
+    mode: "dark",
     bgMode: "solid",
     colors: makeColors({
       bg: "#171a1d",
@@ -158,6 +162,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
   },
   "high-contrast": {
     presetId: "high-contrast",
+    mode: "dark",
     bgMode: "solid",
     colors: makeColors({
       bg: "#000000",

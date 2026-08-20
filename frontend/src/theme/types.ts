@@ -1,4 +1,6 @@
 export type BgMode = "solid" | "gradient" | "image";
+export type ThemeMode = "system" | "light" | "dark";
+export type ColorScheme = Exclude<ThemeMode, "system">;
 
 export type PresetId =
   | "cyrene-ripple"
@@ -33,6 +35,7 @@ export interface ThemeColors {
 
 export interface ThemeConfig {
   presetId: PresetId;
+  mode: ThemeMode;
   bgMode: BgMode;
   colors: ThemeColors;
   gradientFrom?: string;
