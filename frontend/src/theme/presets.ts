@@ -335,18 +335,3 @@ export const CYRENE_SEMANTIC_TOKENS: Record<
   },
 };
 
-export const PRESET_META: {
-  id: BuiltInPresetId;
-  name: string;
-  description: string;
-}[] = [
-  {
-    id: "cyrene-ripple",
-    name: "昔涟 · 涟漪",
-    description: "轻盈、清澈的默认工作台",
-  },
-  { id: "warm-local", name: "暖色本地", description: "温和、可信的默认工作台" },
-  { id: "precision-neutral", name: "精密中性", description: "清晰克制的浅色界面" },
-  { id: "graphite-pro", name: "石墨专业", description: "低眩光的深色工作环境" },
-  { id: "high-contrast", name: "高对比", description: "强化边界与可读性" },
-];
