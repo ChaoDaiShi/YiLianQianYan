@@ -4,10 +4,13 @@ import { useTheme } from "../../theme";
 import { APP_CONTENT_VIEWPORT_CLASS_NAME } from "./workspaceLayout";
 
 export default function AppShell() {
-  const { theme } = useTheme();
+  const { theme, resolvedScheme } = useTheme();
 
   return (
-    <div className="app-shell relative flex h-screen w-screen overflow-hidden text-[var(--text)]">
+    <div
+      className="app-shell relative flex h-screen w-screen overflow-hidden text-[var(--text)]"
+      data-color-scheme={resolvedScheme}
+    >
       <div
         className="shell-ambient shell-ambient-strong pointer-events-none absolute inset-0 z-0"
         aria-hidden="true"
@@ -18,19 +21,18 @@ export default function AppShell() {
       />
       {/* Background layer */}
       <div
-        className="absolute inset-0 -z-10 transition-[filter,background] duration-500"
+        className="absolute inset-0 -z-10 transition-[background] duration-500"
         style={{
-          backgroundColor: "var(--bg)",
+          backgroundColor: "var(--bg-app)",
           backgroundImage: "var(--bg-image)",
           backgroundSize: theme.bgMode === "image" ? "cover" : undefined,
           backgroundPosition: "center",
-          filter: `blur(var(--bg-blur)) brightness(var(--bg-brightness))`,
         }}
       />
       <div
         className="pointer-events-none absolute inset-0 -z-10 transition-opacity duration-300"
         style={{
-          backgroundColor: "var(--backdrop)",
+          backgroundColor: "var(--shell-overlay)",
           opacity: theme.bgMode === "image" ? 1 : 0,
         }}
       />

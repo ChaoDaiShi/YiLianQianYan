@@ -117,15 +117,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     loadBgImage().then((url) => {
       setBgImageUrl(url);
-      applyThemeToDom(theme, url);
+      applyThemeToDom(theme, resolvedScheme, url);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    applyThemeToDom(theme, bgImageUrl);
+    applyThemeToDom(theme, resolvedScheme, bgImageUrl);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(theme));
-  }, [theme, bgImageUrl]);
+  }, [theme, resolvedScheme, bgImageUrl]);
 
   const setPreset = useCallback((id: PresetId) => {
     if (id === "custom") return;
