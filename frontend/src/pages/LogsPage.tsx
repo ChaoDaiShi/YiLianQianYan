@@ -129,7 +129,7 @@ export default function LogsPage() {
   };
 
   return (
-    <div className="system-center-page flex h-full min-h-0 flex-col">
+    <div className="system-center-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="日志"
         description={`查看系统运行记录和异常信息 · ${total} 条`}

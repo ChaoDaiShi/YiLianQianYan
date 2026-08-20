@@ -285,7 +285,7 @@ export default function PluginsPage() {
 
   if (loading) {
     return (
-      <div className="capability-loading-page" aria-label="正在加载插件">
+      <div className="capability-loading-page page-canvas" aria-label="正在加载插件">
         <Skeleton className="h-20 w-full" />
         <div className="capability-skeleton-grid">
           <Skeleton className="h-24 w-full" />
@@ -307,7 +307,7 @@ export default function PluginsPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="page-canvas flex h-full flex-col">
       <PageHeader
         title="插件管理"
         description="管理内置工具、MCP 服务器与外部工具扩展"

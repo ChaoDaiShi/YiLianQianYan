@@ -119,7 +119,7 @@ export default function MemoryPage() {
   };
 
   return (
-    <div className="memory-page">
+    <div className="memory-page page-canvas">
       <PageHeader
         title="记忆中心"
         description="小昔涟长期保留的重要信息"

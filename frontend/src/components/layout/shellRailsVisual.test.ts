@@ -17,6 +17,8 @@ describe("Shell rail visual contracts", () => {
     expect(appShellSource).toContain('className="shell-ambient');
     expect(appShellSource).toContain("shell-ambient-strong");
     expect(appShellSource).toContain('className="shell-ambient-overlay');
+    expect(appShellSource).toContain("data-color-scheme");
+    expect(appShellSource).toContain("var(--shell-overlay)");
     expect(navRailSource).toContain("nav-rail-compact");
     expect(navRailSource).toContain("nav-rail-item");
     expect(navRailSource).toContain("nav-rail-item-label");

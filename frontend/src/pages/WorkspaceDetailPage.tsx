@@ -96,7 +96,7 @@ export default function WorkspaceDetailPage() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title={workspace?.name || "工作空间"}
         description={workspace?.description || "查看任务使用的文件与上下文。"}

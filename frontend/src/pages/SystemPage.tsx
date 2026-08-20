@@ -81,7 +81,7 @@ export default function SystemPage() {
   }, [refresh]);
 
   return (
-    <div className="system-center-page flex h-full min-h-0 flex-col">
+    <div className="system-center-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="系统监控"
         description="查看应用、服务和资源的当前运行状态。"

@@ -441,7 +441,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="system-settings-page flex h-full min-h-0 flex-col">
+    <div className="system-settings-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="设置"
         description={saveError ? saveError : saved ? "设置已保存" : dirty ? "有未保存修改" : "配置应用参数"}

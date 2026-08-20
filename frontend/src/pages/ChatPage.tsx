@@ -66,7 +66,7 @@ export default function ChatPage() {
 
   return (
     <div
-      className={WORKBENCH_VIEWPORT_CLASS_NAME}
+      className={`${WORKBENCH_VIEWPORT_CLASS_NAME} page-canvas`}
       data-chat-view={conversationId ? "conversation" : "home"}
       data-mode={workspaceMode}
       data-execution-collapsed={
