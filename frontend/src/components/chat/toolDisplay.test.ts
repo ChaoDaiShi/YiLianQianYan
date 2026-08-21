@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import toolCallCardSource from "./ToolCallCard.tsx?raw";
 import {
   formatElapsed,
+  formatToolActionSummary,
   formatToolActivity,
   formatToolDisplayName,
   formatToolResultSummary,
@@ -20,6 +21,39 @@ describe("tool display helpers", () => {
   it("does not invent a tool purpose when only the tool name is observable", () => {
     expect(formatToolActivity("powershell", {})).toBe("正在调用 PowerShell");
     expect(formatToolActivity("mcp_server_tool", {})).toBe("正在调用 MCP · Tool");
+  });
+
+  it("describes observable tool actions instead of call identifiers", () => {
+    expect(
+      formatToolActionSummary("powershell", {
+        command: "Get-Process\nSelect-Object -First 5",
+      }),
+    ).toBe("执行命令：Get-Process");
+    expect(
+      formatToolActionSummary("read_file", { path: "C:\\work\\README.md" }),
+    ).toBe("读取文件：README.md");
+    expect(
+      formatToolActionSummary("write_file", { file: "/tmp/report.md" }),
+    ).toBe("写入文件：report.md");
+    expect(
+      formatToolActionSummary("http_request", {
+        url: "https://www.bilibili.com/video/1",
+      }),
+    ).toBe("请求网络资源：www.bilibili.com/video/1");
+    expect(formatToolActionSummary("screenshot", {})).toBe("截取当前屏幕");
+  });
+
+  it("falls back conservatively when an action cannot be determined", () => {
+    expect(formatToolActionSummary("powershell", {})).toBe("调用 PowerShell");
+    expect(formatToolActionSummary("mcp_server_tool", {})).toBe("调用 MCP · Tool");
+  });
+
+  it("keeps action summaries single-line and bounded", () => {
+    const summary = formatToolActionSummary("bash", {
+      command: `echo ${"x".repeat(120)}`,
+    });
+    expect(summary).not.toContain("\n");
+    expect(summary.length).toBeLessThanOrEqual(84);
   });
 
   it("keeps result summaries factual and compact", () => {
