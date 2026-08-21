@@ -249,7 +249,7 @@ function ExecutionHistoryItem({
               </button>
             </header>
             <div className="execution-history-details-scroll scrollbar-thin">
-              <dl className="space-y-3 text-xs">
+              <dl className="min-w-0 max-w-full space-y-3 text-xs">
             <div>
               <dt className="text-[var(--text-faint)]">Tool Name</dt>
               <dd className="font-mono">{record.name}</dd>
