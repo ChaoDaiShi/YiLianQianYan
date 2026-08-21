@@ -5,12 +5,18 @@ describe("Plugins capability surface", () => {
   it("keeps real MCP actions and runtime detail fields", () => {
     expect(pluginsPageSource).toContain("listPlugins");
     expect(pluginsPageSource).toContain("createMcpServer");
+    expect(pluginsPageSource).toContain("updateMcpServer");
+    expect(pluginsPageSource).toContain("deleteMcpServer");
     expect(pluginsPageSource).toContain("toggleMcpServer");
     expect(pluginsPageSource).toContain("testMcpServer");
     expect(pluginsPageSource).toContain("safe_error");
     expect(pluginsPageSource).toContain("Tools");
     expect(pluginsPageSource).toContain("Resources");
     expect(pluginsPageSource).toContain("Prompts");
+    expect(pluginsPageSource).toContain("validateMcpDraft");
+    expect(pluginsPageSource).toContain("formError");
+    expect(pluginsPageSource).toContain("编辑");
+    expect(pluginsPageSource).toContain("删除");
   });
 
   it("uses shared loading and error surfaces without marketplace or secret exposure", () => {

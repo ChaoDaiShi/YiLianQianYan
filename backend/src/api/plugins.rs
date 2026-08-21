@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 use secrecy::SecretString;
@@ -13,6 +14,47 @@ use std::sync::Arc;
 use crate::db::McpServer;
 use crate::secret::{mcp_env_ref, SecretRef, SecretStore, MAX_SECRET_VALUE_BYTES};
 use crate::server::AppServer;
+
+type ApiError = (StatusCode, String);
+
+fn bad_request(message: impl Into<String>) -> ApiError {
+    (StatusCode::BAD_REQUEST, message.into())
+}
+
+fn not_found(message: impl Into<String>) -> ApiError {
+    (StatusCode::NOT_FOUND, message.into())
+}
+
+fn internal_error(message: impl Into<String>) -> ApiError {
+    (StatusCode::INTERNAL_SERVER_ERROR, message.into())
+}
+
+fn validate_mcp_config(
+    name: &str,
+    transport: &str,
+    command: Option<&str>,
+    url: Option<&str>,
+) -> Result<(), ApiError> {
+    if name.trim().is_empty() {
+        return Err(bad_request("请输入服务名称。"));
+    }
+    match transport {
+        "stdio" if command.is_none_or(|value| value.trim().is_empty()) => {
+            Err(bad_request("Stdio 服务必须填写启动命令。"))
+        }
+        "stdio" => Ok(()),
+        "streamable_http"
+            if url.is_none_or(|value| {
+                let value = value.trim().to_ascii_lowercase();
+                !value.starts_with("http://") && !value.starts_with("https://")
+            }) =>
+        {
+            Err(bad_request("请输入有效的 HTTP 或 HTTPS MCP 地址。"))
+        }
+        "streamable_http" => Ok(()),
+        _ => Err(bad_request("不支持的 MCP 传输方式。")),
+    }
+}
 
 /// Write stdio env values into the SecretStore, reusing stable refs on rotation.
 /// Returns the persisted env name → SecretRef map.
@@ -231,13 +273,20 @@ pub async fn list_plugins(State(server): State<Arc<AppServer>>) -> Json<PluginLi
 pub async fn create_mcp(
     State(server): State<Arc<AppServer>>,
     Json(body): Json<CreateMcpRequest>,
-) -> Result<Json<PublicMcpServer>, String> {
+) -> Result<Json<PublicMcpServer>, ApiError> {
     let now = chrono::Utc::now().timestamp_millis();
     let id = uuid::Uuid::new_v4().to_string();
     let transport = body
         .transport
         .clone()
         .unwrap_or_else(|| "stdio".to_string());
+    let name = body.name.unwrap_or_default().trim().to_string();
+    validate_mcp_config(
+        &name,
+        &transport,
+        body.command.as_deref(),
+        body.url.as_deref(),
+    )?;
 
     // stdio env values are secrets → SecretStore; streamable_http env values are
     // header → env-var-name references and stay in `env` (never secret values).
@@ -248,7 +297,8 @@ pub async fn create_mcp(
             body.env.as_ref(),
             &BTreeMap::new(),
         )
-        .await?;
+        .await
+        .map_err(bad_request)?;
         (None, refs)
     } else {
         (body.env, BTreeMap::new())
@@ -256,7 +306,7 @@ pub async fn create_mcp(
 
     let server_cfg = McpServer {
         id,
-        name: body.name.unwrap_or_else(|| "未命名 MCP".to_string()),
+        name,
         transport,
         command: body.command,
         args: body.args,
@@ -271,7 +321,7 @@ pub async fn create_mcp(
     server
         .db
         .create_mcp_server(&server_cfg)
-        .map_err(|e| format!("创建失败: {}", e))?;
+        .map_err(|e| internal_error(format!("创建失败: {}", e)))?;
 
     // Sync into the runtime manager (best-effort refresh).
     server.mcp_runtime_manager.register_server(
@@ -295,14 +345,23 @@ pub async fn update_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
     Json(body): Json<UpdateMcpRequest>,
-) -> Result<Json<PublicMcpServer>, String> {
+) -> Result<Json<PublicMcpServer>, ApiError> {
     let existing = server
         .db
         .get_mcp_server(&id)
-        .map_err(|e| format!("查询失败: {}", e))?
-        .ok_or("MCP 服务器不存在")?;
+        .map_err(|e| internal_error(format!("查询失败: {}", e)))?
+        .ok_or_else(|| not_found("MCP 服务器不存在"))?;
 
     let transport = body.transport.clone().unwrap_or(existing.transport.clone());
+    let name = body
+        .name
+        .clone()
+        .unwrap_or_else(|| existing.name.clone())
+        .trim()
+        .to_string();
+    let command = body.command.clone().or_else(|| existing.command.clone());
+    let url = body.url.clone().or_else(|| existing.url.clone());
+    validate_mcp_config(&name, &transport, command.as_deref(), url.as_deref())?;
     let now = chrono::Utc::now().timestamp_millis();
 
     // Resolve the new env + env_secret_refs based on transport.
@@ -317,7 +376,8 @@ pub async fn update_mcp(
                     Some(new_env),
                     &existing.env_secret_refs,
                 )
-                .await?;
+                .await
+                .map_err(bad_request)?;
                 // Delete removed keys' secrets (avoid orphan secrets).
                 for (name, secret_ref) in &existing.env_secret_refs {
                     if !refs.contains_key(name) {
@@ -334,11 +394,11 @@ pub async fn update_mcp(
 
     let updated = McpServer {
         id: existing.id.clone(),
-        name: body.name.unwrap_or(existing.name),
+        name,
         transport,
-        command: body.command.or(existing.command),
+        command,
         args: body.args.or(existing.args),
-        url: body.url.or(existing.url),
+        url,
         env,
         env_secret_refs,
         enabled: body.enabled.unwrap_or(existing.enabled),
@@ -349,7 +409,7 @@ pub async fn update_mcp(
     server
         .db
         .update_mcp_server(&id, &updated)
-        .map_err(|e| format!("更新失败: {}", e))?;
+        .map_err(|e| internal_error(format!("更新失败: {}", e)))?;
 
     // Replace the runtime: shutdown/remove old, register new, refresh.
     server.mcp_runtime_manager.remove_server(&id).await;
@@ -370,19 +430,21 @@ pub async fn update_mcp(
 pub async fn delete_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     // Collect secret refs first so they can be cleaned up after the DB row is gone.
-    let existing = server.db.get_mcp_server(&id).ok().flatten();
-    let secret_refs = existing
-        .map(|s| s.env_secret_refs.clone())
-        .unwrap_or_default();
+    let existing = server
+        .db
+        .get_mcp_server(&id)
+        .map_err(|e| internal_error(format!("查询失败: {}", e)))?
+        .ok_or_else(|| not_found("MCP 服务器不存在"))?;
+    let secret_refs = existing.env_secret_refs.clone();
 
     server.mcp_runtime_manager.remove_server(&id).await;
     server.invalidate_capability_registry();
     server
         .db
         .delete_mcp_server(&id)
-        .map_err(|e| format!("删除失败: {}", e))?;
+        .map_err(|e| internal_error(format!("删除失败: {}", e)))?;
 
     // Best-effort secret cleanup (orphan secret is safer than restoring config).
     for (name, secret_ref) in &secret_refs {
@@ -398,12 +460,12 @@ pub async fn delete_mcp(
 pub async fn toggle_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-) -> Result<Json<PublicMcpServer>, String> {
+) -> Result<Json<PublicMcpServer>, ApiError> {
     let toggled = server
         .db
         .toggle_mcp_server(&id)
-        .map_err(|e| format!("切换失败: {}", e))?
-        .ok_or("MCP 服务器不存在".to_string())?;
+        .map_err(|e| internal_error(format!("切换失败: {}", e)))?
+        .ok_or_else(|| not_found("MCP 服务器不存在"))?;
     // Sync runtime state with the DB toggle result.
     if toggled.enabled {
         server.mcp_runtime_manager.register_server(
@@ -423,22 +485,18 @@ pub async fn toggle_mcp(
 pub async fn test_mcp(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-) -> Json<TestResult> {
+) -> Result<Json<TestResult>, ApiError> {
     let mcp = match server.db.get_mcp_server(&id) {
         Ok(Some(s)) => s,
-        _ => {
-            return Json(TestResult {
-                ok: false,
-                message: "MCP 服务器不存在".to_string(),
-            })
-        }
+        Ok(None) => return Err(not_found("MCP 服务器不存在")),
+        Err(error) => return Err(internal_error(format!("查询失败: {error}"))),
     };
 
     if !mcp.enabled {
-        return Json(TestResult {
+        return Ok(Json(TestResult {
             ok: false,
             message: "MCP 服务器已禁用".to_string(),
-        });
+        }));
     }
 
     // Use the managed runtime (supports stdio + streamable_http). Register the
@@ -454,23 +512,45 @@ pub async fn test_mcp(
             let (tools, resources, prompts) = runtime
                 .map(|r| (r.tools.len(), r.resources.len(), r.prompts.len()))
                 .unwrap_or((0, 0, 0));
-            Json(TestResult {
+            Ok(Json(TestResult {
                 ok: true,
                 message: format!(
                     "MCP 连接成功：tools={tools}，resources={resources}，prompts={prompts}"
                 ),
-            })
+            }))
         }
-        Err(e) => Json(TestResult {
+        Err(e) => Ok(Json(TestResult {
             ok: false,
             message: format!("MCP 连接失败: {e}"),
-        }),
+        })),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_config_validation_requires_a_real_transport_target() {
+        assert_eq!(
+            validate_mcp_config("", "stdio", Some("node"), None)
+                .unwrap_err()
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            validate_mcp_config("Local", "stdio", None, None)
+                .unwrap_err()
+                .1,
+            "Stdio 服务必须填写启动命令。"
+        );
+        assert_eq!(
+            validate_mcp_config("Remote", "streamable_http", None, Some("ftp://host"))
+                .unwrap_err()
+                .1,
+            "请输入有效的 HTTP 或 HTTPS MCP 地址。"
+        );
+    }
 
     #[test]
     fn public_mcp_metadata_redacts_environment_values() {

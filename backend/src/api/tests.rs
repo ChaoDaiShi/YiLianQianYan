@@ -132,6 +132,35 @@ fn seed_policy_event(server: &AppServer, request_id: &str, created_for: &str) {
 }
 
 #[tokio::test]
+async fn missing_mcp_mutations_return_not_found() {
+    let (_temp, server, token) = test_server();
+    let app = build_router(server);
+
+    let update = app
+        .clone()
+        .oneshot(auth_request(
+            Method::PUT,
+            "/api/plugins/mcp/missing",
+            &token,
+            Body::from(json!({"name": "Missing"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(update.status(), StatusCode::NOT_FOUND);
+
+    let delete = app
+        .oneshot(auth_request(
+            Method::DELETE,
+            "/api/plugins/mcp/missing",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(delete.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn security_audit_endpoints_filter_validate_export_and_never_delete() {
     let (_temp, server, token) = test_server();
     seed_policy_event(&server, "req-api-1", "conv-api-1");

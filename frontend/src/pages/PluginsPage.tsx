@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
-  Link, Plus, Trash2, ToggleLeft, ToggleRight, Wrench,
+  Link, Plus, Trash2, Wrench,
   Loader2, TestTube, RefreshCw, Eye, ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
@@ -33,6 +34,7 @@ import {
 } from "../api/mcpRuntime";
 import { CapabilityStatusBadge } from "../components/capabilities";
 import { Badge, Button, EmptyState, ErrorState, Input, Modal, PageHeader, Panel, Skeleton, Spinner } from "../components/ui";
+import { validateMcpDraft } from "../features/mcp/mcpForm";
 
 type DetailTab = "tools" | "resources" | "prompts";
 
@@ -63,6 +65,8 @@ function runtimeStatusLabel(status: string): string {
 }
 
 export default function PluginsPage() {
+  const [searchParams] = useSearchParams();
+  const requestedServerId = searchParams.get("server");
   const [data, setData] = useState<PluginListResponse | null>(null);
   const [subagents, setSubagents] = useState<SubagentMetadata[]>([]);
   const [subagentError, setSubagentError] = useState("");
@@ -81,6 +85,8 @@ export default function PluginsPage() {
   const [formEnv, setFormEnv] = useState("");
   const [formEnvKeyCount, setFormEnvKeyCount] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [actionError, setActionError] = useState("");
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   // Server detail (Tools / Resources / Prompts)
@@ -134,6 +140,7 @@ export default function PluginsPage() {
     setFormUrl("");
     setFormEnv("");
     setFormEnvKeyCount(0);
+    setFormError("");
     setShowModal(true);
   };
 
@@ -146,48 +153,66 @@ export default function PluginsPage() {
     setFormUrl(mcp.url || "");
     setFormEnv("");
     setFormEnvKeyCount(mcp.env && typeof mcp.env === "object" ? Object.keys(mcp.env).length : 0);
+    setFormError("");
     setShowModal(true);
   };
 
   const handleSave = async () => {
-    if (!formName.trim()) return;
-    setSaving(true);
-    const env = formEnv.trim()
-      ? (() => { try { return JSON.parse(formEnv) as Record<string, string>; } catch { return {}; } })()
-      : editingId ? undefined : {};
-    const payload: Partial<McpServer> = {
-      name: formName.trim(),
+    const validation = validateMcpDraft({
+      name: formName,
       transport: formTransport,
-      command: formTransport === "stdio" ? formCommand.trim() || null : null,
-      args: formArgs.trim() ? (() => { try { return JSON.parse(formArgs); } catch { return [formArgs.trim()]; } })() : [],
-      url: formTransport === "streamable_http" ? formUrl.trim() || null : null,
-      ...(env === undefined ? {} : { env }),
-    };
-    if (editingId) {
-      await updateMcpServer(editingId, payload);
-    } else {
-      await createMcpServer(payload);
+      command: formCommand,
+      args: formArgs,
+      url: formUrl,
+      env: formEnv,
+      editing: Boolean(editingId),
+    });
+    if (!validation.ok) {
+      setFormError(validation.error);
+      return;
+    }
+    setSaving(true);
+    setFormError("");
+    const result = editingId
+      ? await updateMcpServer(editingId, validation.value)
+      : await createMcpServer(validation.value);
+    setSaving(false);
+    if (!result.ok) {
+      setFormError(result.error);
+      return;
     }
     setShowModal(false);
-    setSaving(false);
-    load();
+    await load();
   };
 
   const handleDelete = async (id: string, name: string) => {
     if (!window.confirm(`确定删除 MCP 服务器 "${name}" 吗？`)) return;
-    await deleteMcpServer(id);
-    load();
+    setActionError("");
+    const result = await deleteMcpServer(id);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    await load();
   };
 
   const handleToggle = async (id: string) => {
-    await toggleMcpServer(id);
-    load();
+    setActionError("");
+    const result = await toggleMcpServer(id);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    await load();
   };
 
   const handleTest = async (id: string) => {
     setTestingId(id);
     const result = await testMcpServer(id);
-    if (result) setTestResults((current) => ({ ...current, [id]: result }));
+    setTestResults((current) => ({
+      ...current,
+      [id]: result.ok ? result.data : { ok: false, message: result.error },
+    }));
     setTestingId(null);
   };
 
@@ -230,6 +255,18 @@ export default function PluginsPage() {
       }));
     }
   };
+
+  useEffect(() => {
+    if (!requestedServerId || !data?.mcp.some((server) => server.id === requestedServerId)) return;
+    setExpandedId(requestedServerId);
+    setActiveTab("tools");
+    if (!detail[requestedServerId]) {
+      setDetail((current) => ({ ...current, [requestedServerId]: EMPTY_DETAIL }));
+      void loadTab(requestedServerId, "tools");
+    }
+    // Open a capability's owning MCP server once after the server list arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, requestedServerId]);
 
   const toggleDetail = (id: string) => {
     if (expandedId === id) {
@@ -320,6 +357,7 @@ export default function PluginsPage() {
       />
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
+        {actionError && <ErrorState title="MCP 操作未完成" description={actionError} />}
         <Panel className="flex items-start gap-3">
           <Wrench className="w-5 h-5 text-[var(--accent)] flex-shrink-0 mt-0.5" />
           <div>
@@ -410,62 +448,52 @@ export default function PluginsPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                      <button
+                    <div className="flex flex-wrap items-center justify-end gap-1.5 flex-shrink-0">
+                      <Button variant="secondary" size="sm"
                         onClick={() => handleRefresh(mcp.id)}
-                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                        title="刷新运行时"
                         aria-label="刷新运行时"
                       >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
-                      <button
+                        <RefreshCw className="w-3.5 h-3.5" />刷新
+                      </Button>
+                      <Button variant="secondary" size="sm"
                         onClick={() => toggleDetail(mcp.id)}
-                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                        title="查看详情"
                         aria-label={isExpanded ? "收起详情" : "查看详情"}
                         aria-expanded={isExpanded}
                       >
-                        {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                      </button>
-                      <button
+                        {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}详情
+                      </Button>
+                      <Button variant="secondary" size="sm"
                         onClick={() => handleToggle(mcp.id)}
-                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                        title={mcp.enabled ? "禁用" : "启用"}
                         aria-label={mcp.enabled ? "禁用插件" : "启用插件"}
                         aria-pressed={mcp.enabled}
                       >
-                        {mcp.enabled ? <ToggleRight className="w-4 h-4 text-[var(--success)]" /> : <ToggleLeft className="w-4 h-4" />}
-                      </button>
-                      <button
+                        {mcp.enabled ? "禁用" : "启用"}
+                      </Button>
+                      <Button variant="secondary" size="sm"
                         onClick={() => handleTest(mcp.id)}
                         disabled={testingId === mcp.id}
-                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                        title="测试连接"
                         aria-label="测试连接"
                       >
                         {testingId === mcp.id ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
-                          <TestTube className="w-4 h-4" />
+                          <TestTube className="w-3.5 h-3.5" />
                         )}
-                      </button>
-                      <button
+                        测试
+                      </Button>
+                      <Button variant="secondary" size="sm"
                         onClick={() => openEdit(mcp)}
-                        className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-                        title="编辑"
                         aria-label="编辑插件"
                       >
-                        <Wrench className="w-4 h-4" />
-                      </button>
-                      <button
+                        <Wrench className="w-3.5 h-3.5" />编辑
+                      </Button>
+                      <Button variant="ghost" size="sm"
                         onClick={() => handleDelete(mcp.id, mcp.name)}
-                        className="p-1.5 rounded hover:bg-[var(--danger)]/20 text-[var(--text-muted)] hover:text-[var(--danger)]"
-                        title="删除"
+                        className="text-[var(--danger)]"
                         aria-label="删除插件"
                       >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                        <Trash2 className="w-3.5 h-3.5" />删除
+                      </Button>
                     </div>
                   </div>
 
@@ -542,11 +570,11 @@ export default function PluginsPage() {
       {/* Add/Edit MCP Modal */}
       <Modal
         open={showModal}
-        onClose={() => setShowModal(false)}
+        onClose={() => { if (!saving) setShowModal(false); }}
         title={editingId ? "编辑 MCP 服务器" : "添加 MCP 服务器"}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowModal(false)}>取消</Button>
+            <Button variant="secondary" onClick={() => setShowModal(false)} disabled={saving}>取消</Button>
             <Button onClick={handleSave} disabled={saving}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               {editingId ? "保存" : "添加"}
@@ -555,6 +583,7 @@ export default function PluginsPage() {
         }
       >
         <div className="space-y-4">
+          {formError && <p role="alert" className="rounded-lg border border-[var(--danger)]/25 bg-[var(--danger)]/5 px-3 py-2 text-sm text-[var(--danger)]">{formError}</p>}
           <Input
             label="名称"
             value={formName}

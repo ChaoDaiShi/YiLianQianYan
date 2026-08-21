@@ -323,23 +323,23 @@ export async function listPlugins() {
 }
 
 export async function createMcpServer(data: Partial<McpServer>) {
-  return request<McpServer>("POST", "/api/plugins/mcp", data);
+  return requestResult<McpServer>("POST", "/api/plugins/mcp", data);
 }
 
 export async function updateMcpServer(id: string, data: Partial<McpServer>) {
-  return request<McpServer>("PUT", `/api/plugins/mcp/${id}`, data);
+  return requestResult<McpServer>("PUT", `/api/plugins/mcp/${id}`, data);
 }
 
 export async function deleteMcpServer(id: string) {
-  return request<{ status: string }>("DELETE", `/api/plugins/mcp/${id}`);
+  return requestResult<{ status: string }>("DELETE", `/api/plugins/mcp/${id}`);
 }
 
 export async function toggleMcpServer(id: string) {
-  return request<McpServer>("POST", `/api/plugins/mcp/${id}/toggle`);
+  return requestResult<McpServer>("POST", `/api/plugins/mcp/${id}/toggle`);
 }
 
 export async function testMcpServer(id: string) {
-  return request<{ ok: boolean; message: string }>("POST", `/api/plugins/mcp/${id}/test`);
+  return requestResult<{ ok: boolean; message: string }>("POST", `/api/plugins/mcp/${id}/test`);
 }
 
 export interface SubagentMetadata {
@@ -770,7 +770,7 @@ async function requestResult<T>(
           if (msg) error = String(msg);
         }
       } catch {
-        /* non-JSON error body */
+        if (text.trim()) error = text.trim();
       }
       return { ok: false, status: res.status, error };
     }

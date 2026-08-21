@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { API_BASE, healthCheck } from "./client";
+vi.mock("./controlSession", () => ({
+  controlSessionHeaders: () => ({ "X-Yilian-Control-Session": "a".repeat(64) }),
+}));
+
+import { API_BASE, createMcpServer, healthCheck } from "./client";
 
 const healthyResponse = {
   status: "healthy",
@@ -44,5 +48,17 @@ describe("healthCheck", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("offline"))));
 
     await expect(healthCheck()).resolves.toBeNull();
+  });
+});
+
+describe("MCP mutations", () => {
+  it("returns the backend validation message instead of silently succeeding", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Stdio 服务必须填写启动命令。", { status: 400 })));
+
+    await expect(createMcpServer({ name: "Broken", transport: "stdio" })).resolves.toEqual({
+      ok: false,
+      status: 400,
+      error: "Stdio 服务必须填写启动命令。",
+    });
   });
 });
