@@ -513,6 +513,40 @@
   }
 }
 
+.route-loading-surface {
+  background: transparent;
+}
+
+.route-loading-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1rem;
+  opacity: 0;
+  animation: route-loading-reveal 100ms ease-out both;
+  animation-delay: 120ms;
+}
+
+.route-loading-line {
+  display: block;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.route-loading-line-title {
+  width: min(10rem, 35%);
+}
+
+.route-loading-line-copy {
+  width: min(18rem, 58%);
+  opacity: 0.7;
+}
+
+@keyframes route-loading-reveal {
+  to { opacity: 0.72; }
+}
+
 .workbench-grid[data-chat-view="conversation"] .execution-history-item::before {
   position: absolute;
   top: 1rem;
@@ -574,6 +608,10 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .route-loading-placeholder {
+    animation-delay: 0ms !important;
   }
 }
 
@@ -2752,9 +2790,6 @@
   .animate-scale-in {
     animation: scale-in var(--motion-normal) ease-out;
   }
-  .animate-page-in {
-    animation: page-in var(--motion-normal) ease-out;
-  }
   .animate-msg-in {
     animation: msg-in var(--motion-normal) ease-out;
   }
@@ -2768,11 +2803,6 @@
 @keyframes scale-in {
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: scale(1); }
-}
-
-@keyframes page-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes msg-in {

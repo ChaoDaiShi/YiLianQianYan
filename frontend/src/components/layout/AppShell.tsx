@@ -1,7 +1,9 @@
+import { Suspense } from "react";
 import { Outlet } from "react-router-dom";
 import NavRail from "./NavRail";
 import { useTheme } from "../../theme";
 import { APP_CONTENT_VIEWPORT_CLASS_NAME } from "./workspaceLayout";
+import RouteLoadingSurface from "./RouteLoadingSurface";
 
 export default function AppShell() {
   const { theme, resolvedScheme } = useTheme();
@@ -39,7 +41,9 @@ export default function AppShell() {
 
       <NavRail />
       <main className={`${APP_CONTENT_VIEWPORT_CLASS_NAME} workspace-region relative z-10`}>
-        <Outlet />
+        <Suspense fallback={<RouteLoadingSurface />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

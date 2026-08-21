@@ -1,8 +1,7 @@
-import { lazy, Suspense } from "react";
+import { lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ThemeProvider } from "./theme";
 import AppShell from "./components/layout/AppShell";
-import RouteLoadingSurface from "./components/layout/RouteLoadingSurface";
 import ChatPage from "./pages/ChatPage";
 
 const TaskCenterPage = lazy(() => import("./pages/TaskCenterPage"));
@@ -23,29 +22,27 @@ export default function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <Suspense fallback={<RouteLoadingSurface />}>
-          <Routes>
-            <Route element={<AppShell />}>
-              <Route index element={<Navigate to="/chat" replace />} />
-              <Route path="chat" element={<ChatPage />} />
-              <Route path="chat/:id" element={<ChatPage />} />
-              <Route path="tasks" element={<TaskCenterPage />} />
-              <Route path="system" element={<SystemPage />} />
-              <Route path="logs" element={<LogsPage />} />
-              <Route path="skills" element={<SkillsPage />} />
-              <Route path="plugins" element={<PluginsPage />} />
-              <Route path="workflows" element={<WorkflowsPage />} />
-              <Route path="workspaces" element={<WorkspacesPage />} />
-              <Route path="workspaces/:id" element={<WorkspaceDetailPage />} />
-              <Route path="agents" element={<AgentsPage />} />
-              <Route path="capabilities" element={<CapabilitiesPage />} />
-              <Route path="memory" element={<MemoryPage />} />
-              <Route path="knowledge" element={<KnowledgePage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/chat" replace />} />
-            </Route>
-          </Routes>
-        </Suspense>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route index element={<Navigate to="/chat" replace />} />
+            <Route path="chat" element={<ChatPage />} />
+            <Route path="chat/:id" element={<ChatPage />} />
+            <Route path="tasks" element={<TaskCenterPage />} />
+            <Route path="system" element={<SystemPage />} />
+            <Route path="logs" element={<LogsPage />} />
+            <Route path="skills" element={<SkillsPage />} />
+            <Route path="plugins" element={<PluginsPage />} />
+            <Route path="workflows" element={<WorkflowsPage />} />
+            <Route path="workspaces" element={<WorkspacesPage />} />
+            <Route path="workspaces/:id" element={<WorkspaceDetailPage />} />
+            <Route path="agents" element={<AgentsPage />} />
+            <Route path="capabilities" element={<CapabilitiesPage />} />
+            <Route path="memory" element={<MemoryPage />} />
+            <Route path="knowledge" element={<KnowledgePage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/chat" replace />} />
+          </Route>
+        </Routes>
       </BrowserRouter>
     </ThemeProvider>
   );
