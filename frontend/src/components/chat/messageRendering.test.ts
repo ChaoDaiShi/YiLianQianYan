@@ -53,4 +53,11 @@ describe("MessageBubble render boundary", () => {
     expect(messageBubbleSource).toContain("openExternalUrl");
     expect(messageBubbleSource).toContain("event.preventDefault()");
   });
+
+  it("shows a readable error message and keeps raw fields in an error log", () => {
+    expect(messageListSource).toContain("presentExecutionError(error)");
+    expect(messageListSource).toContain("presentation.message");
+    expect(messageListSource).toContain("查看错误日志");
+    expect(messageListSource).toContain("presentation.technical");
+  });
 });

@@ -20,6 +20,7 @@ import {
   Terminal,
 } from "lucide-react";
 import type { ToolCallRecord } from "../../types";
+import { presentExecutionError } from "./errorDisplay";
 import {
   formatElapsed,
   formatToolActivity,
@@ -145,6 +146,10 @@ export default function ToolCallCard({
         : verificationStatus === "pending"
           ? "验证中"
           : null;
+  const errorPresentation =
+    effectiveStatus === "error" && result
+      ? presentExecutionError(result)
+      : null;
 
   return (
     <article
@@ -191,7 +196,8 @@ export default function ToolCallCard({
                 ? formatToolResultSummary(result)
                 : effectiveStatus === "blocked"
                   ? "小昔涟正在等待你的许可"
-                  : "请查看技术详情了解失败原因"}
+                  : errorPresentation?.message ||
+                    "这个操作没有成功，请展开错误日志了解原因。"}
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2 text-[var(--text-faint)]">
@@ -253,7 +259,9 @@ export default function ToolCallCard({
             )}
             {result && effectiveStatus !== "blocked" && (
               <div>
-                <dt className="text-[var(--text-faint)]">Raw Result</dt>
+                <dt className="text-[var(--text-faint)]">
+                  {effectiveStatus === "error" ? "错误日志" : "Raw Result"}
+                </dt>
                 <dd>
                   <ToolResultContent result={result} />
                 </dd>

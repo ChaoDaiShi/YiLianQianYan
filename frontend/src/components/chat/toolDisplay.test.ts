@@ -78,5 +78,9 @@ describe("tool display helpers", () => {
     expect(toolCallCardSource).toContain("aria-expanded={expanded}");
     expect(toolCallCardSource).toContain("Raw Result");
     expect(toolCallCardSource).toContain("Tool Name");
+    expect(toolCallCardSource).toContain("presentExecutionError(result)");
+    expect(toolCallCardSource).toContain(
+      'effectiveStatus === "error" ? "错误日志" : "Raw Result"',
+    );
   });
 });
