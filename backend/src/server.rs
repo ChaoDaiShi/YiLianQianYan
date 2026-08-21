@@ -555,6 +555,55 @@ impl AppServer {
         *self.capability_registry.write() = None;
     }
 
+    pub fn managed_skill_store(&self) -> Option<crate::skill_management::ManagedSkillStore> {
+        let workspace = std::path::PathBuf::from(&self.workspace_root);
+        let workspace_canonical = workspace.canonicalize().ok()?;
+        let config = self.config.read();
+        let directories = if config.skills.directories.is_empty() {
+            vec!["./skills".to_string()]
+        } else {
+            config.skills.directories.clone()
+        };
+
+        directories.into_iter().find_map(|directory| {
+            let configured = std::path::PathBuf::from(directory);
+            let candidate = if configured.is_absolute() {
+                configured
+            } else {
+                if configured
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+                {
+                    return None;
+                }
+                workspace.join(configured)
+            };
+            if candidate.exists() {
+                let canonical = candidate.canonicalize().ok()?;
+                canonical
+                    .starts_with(&workspace_canonical)
+                    .then(|| crate::skill_management::ManagedSkillStore::new(candidate))
+            } else if candidate.starts_with(&workspace) {
+                Some(crate::skill_management::ManagedSkillStore::new(candidate))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn refresh_skill_discovery(&self) {
+        let config = self.config.read();
+        let directories = if config.skills.directories.is_empty() {
+            vec!["./skills".to_string()]
+        } else {
+            config.skills.directories.clone()
+        };
+        drop(config);
+        *self.skill_discovery.write() =
+            crate::tools::skill::SkillDiscovery::discover(&directories, &self.workspace_root);
+        self.invalidate_capability_registry();
+    }
+
     /// Lazily build (and cache) the unified capability registry.
     pub async fn capability_registry(&self) -> Arc<CapabilityRegistry> {
         if let Some(registry) = self.capability_registry.read().as_ref() {

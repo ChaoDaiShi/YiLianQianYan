@@ -17,6 +17,7 @@ pub mod plugin;
 pub mod safety;
 pub mod secret;
 pub mod server;
+pub mod skill_management;
 pub mod task;
 pub mod tools;
 pub mod utils;

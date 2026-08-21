@@ -59,7 +59,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             delete(conversations::delete_handler),
         )
         .route("/api/skills", get(skills_route::list_skills))
+        .route("/api/skills", post(skills_route::create_skill))
         .route("/api/skills/:name", get(skills_route::load_skill))
+        .route("/api/skills/:name", put(skills_route::update_skill))
+        .route("/api/skills/:name", delete(skills_route::delete_skill))
         .route("/api/settings", get(settings::get_handler))
         .route("/api/settings", put(settings::update_handler))
         .route("/api/llm/models", get(llm_models::list_handler))
