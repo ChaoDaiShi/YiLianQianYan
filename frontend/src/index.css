@@ -430,8 +430,40 @@
 .workbench-grid[data-chat-view="conversation"] .execution-history-item {
   position: relative;
   margin-left: 0.55rem;
-  border-color: rgba(86, 72, 117, 0.11);
-  background: rgba(255, 255, 255, 0.5);
+  border-color: var(--border-soft);
+  background: var(--surface-elevated);
+}
+
+.execution-history-action {
+  transition: background-color var(--motion-fast) ease;
+}
+
+.execution-history-action:hover {
+  background: var(--surface-hover);
+}
+
+.execution-history-details {
+  border-top: 1px solid var(--divider);
+  background: var(--surface-muted);
+  padding: 0.75rem;
+}
+
+.execution-history-details dd {
+  margin-top: 0.2rem;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+.execution-history-technical-value {
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  padding: 0.55rem;
+  color: var(--code-text) !important;
+  font-family: "IBM Plex Mono", "Cascadia Code", monospace;
 }
 
 .workbench-grid[data-chat-view="conversation"] .execution-history-item::before {
