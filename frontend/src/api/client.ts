@@ -110,12 +110,46 @@ export async function listTools() {
 
 // ── Skills ──
 
+export interface SkillSummary {
+  name: string;
+  description: string;
+  path: string;
+  editable: boolean;
+}
+
+export interface SkillDetail extends SkillSummary {
+  content: string;
+  root_dir: string;
+}
+
 export async function listSkills() {
-  return request<any[]>("GET", "/api/skills");
+  return requestResult<SkillSummary[]>("GET", "/api/skills");
 }
 
 export async function loadSkill(name: string) {
-  return request<any>("GET", `/api/skills/${encodeURIComponent(name)}`);
+  return requestResult<SkillDetail>("GET", `/api/skills/${encodeURIComponent(name)}`);
+}
+
+export async function createSkill(data: { name: string; content: string }) {
+  return requestResult<SkillSummary>("POST", "/api/skills", data);
+}
+
+export async function updateSkill(
+  currentName: string,
+  data: { name: string; content: string }
+) {
+  return requestResult<SkillSummary>(
+    "PUT",
+    `/api/skills/${encodeURIComponent(currentName)}`,
+    data
+  );
+}
+
+export async function deleteSkill(name: string) {
+  return requestResult<{ status: string }>(
+    "DELETE",
+    `/api/skills/${encodeURIComponent(name)}`
+  );
 }
 
 // ── System ──

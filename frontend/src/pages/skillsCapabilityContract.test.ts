@@ -7,6 +7,9 @@ describe("Skills capability surface", () => {
     expect(skillsPageSource).toContain("skills-split-layout");
     expect(skillsPageSource).toContain("listSkills");
     expect(skillsPageSource).toContain("loadSkill");
+    expect(skillsPageSource).toContain("createSkill");
+    expect(skillsPageSource).toContain("updateSkill");
+    expect(skillsPageSource).toContain("deleteSkill");
     expect(skillsPageSource).toContain("PageHeader");
     expect(skillsPageSource).toContain("ErrorState");
     expect(skillsPageSource).toContain("Skeleton");
