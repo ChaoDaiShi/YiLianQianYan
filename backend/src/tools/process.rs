@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::process::Command;
 
 use super::trait_def::{RiskLevel, Tool, ToolExecutionContext, ToolResult};
+use crate::utils::process::hide_std_command_window;
 
 #[derive(Debug, Serialize)]
 struct ProcessInfo {
@@ -21,7 +22,9 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 
     if cfg!(target_os = "windows") {
         // Windows: use PowerShell
-        let output = Command::new("powershell.exe")
+        let mut command = Command::new("powershell.exe");
+        hide_std_command_window(&mut command);
+        let output = command
             .args([
                 "-NoProfile",
                 "-Command",
@@ -41,7 +44,9 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
             }
         } else {
             // Fallback: use tasklist
-            let output = Command::new("cmd.exe")
+            let mut command = Command::new("cmd.exe");
+            hide_std_command_window(&mut command);
+            let output = command
                 .args(["/c", "tasklist /FO CSV /NH"])
                 .output()
                 .map_err(|e| format!("Failed: {}", e))?;

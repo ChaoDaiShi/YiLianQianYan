@@ -23,6 +23,7 @@ use super::model::{
 use super::protocol::attach_request_metadata;
 use super::transport::McpTransport;
 use crate::secret::{SecretRef, SecretResolver};
+use crate::utils::process::hide_tokio_command_window;
 
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 
@@ -75,6 +76,7 @@ impl StdioTransport {
         &self,
     ) -> Result<(Child, ChildStdin, BufReader<tokio::process::ChildStdout>), McpRuntimeError> {
         let mut cmd = Command::new(&self.command);
+        hide_tokio_command_window(&mut cmd);
         cmd.args(&self.args);
         for (k, v) in &self.env {
             cmd.env(k, v);

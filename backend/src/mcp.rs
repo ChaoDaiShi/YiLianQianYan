@@ -22,6 +22,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 
 use crate::db::McpServer;
 use crate::tools::trait_def::ToolResult;
+use crate::utils::process::hide_tokio_command_window;
 
 /// MCP protocol version supported by this client.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
@@ -136,6 +137,7 @@ async fn probe_stdio_server_inner(server: &McpServer) -> Result<McpProbeResult, 
     let envs = resolve_env(&server.env)?;
 
     let mut cmd = tokio::process::Command::new(command);
+    hide_tokio_command_window(&mut cmd);
     cmd.args(&args);
     for (key, value) in &envs {
         cmd.env(key, value);
@@ -218,6 +220,7 @@ pub async fn call_stdio_tool(
     let envs = resolve_env(&server.env)?;
 
     let mut cmd = tokio::process::Command::new(command);
+    hide_tokio_command_window(&mut cmd);
     cmd.args(&args);
     for (key, value) in &envs {
         cmd.env(key, value);

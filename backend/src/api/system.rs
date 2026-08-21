@@ -4,10 +4,16 @@
 
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Serialize;
-use std::{panic::AssertUnwindSafe, sync::Arc};
+use std::{
+    panic::AssertUnwindSafe,
+    sync::{Arc, OnceLock},
+};
 use sysinfo::{Disks, System};
 
 use crate::server::AppServer;
+use crate::utils::process::hide_std_command_window;
+
+static GPU_INFO: OnceLock<Vec<serde_json::Value>> = OnceLock::new();
 
 #[derive(Debug, Serialize)]
 pub(super) struct HealthResponse {
@@ -236,12 +242,28 @@ fn collect_memory_info() -> serde_json::Value {
 }
 
 fn get_gpu_info() -> Vec<serde_json::Value> {
+    cached_gpu_info_with(&GPU_INFO, query_gpu_info)
+}
+
+fn cached_gpu_info_with(
+    cache: &OnceLock<Vec<serde_json::Value>>,
+    collect: impl FnOnce() -> Vec<serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    cache.get_or_init(collect).clone()
+}
+
+fn query_gpu_info() -> Vec<serde_json::Value> {
     #[cfg(target_os = "windows")]
     {
         // Try PowerShell to get GPU info
-        if let Ok(output) = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-Command",
-                "Get-CimInstance -ClassName Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution | ConvertTo-Json"])
+        let mut command = std::process::Command::new("powershell.exe");
+        hide_std_command_window(&mut command);
+        if let Ok(output) = command
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance -ClassName Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution | ConvertTo-Json",
+            ])
             .output()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -270,6 +292,7 @@ fn get_gpu_info() -> Vec<serde_json::Value> {
 #[cfg(test)]
 mod health_tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn system_collector_keeps_resource_sections() {
@@ -303,5 +326,24 @@ mod health_tests {
         assert_eq!(response.status, "degraded");
         assert_eq!(response.database, "unavailable");
         assert_eq!(response.policy_version, crate::safety::POLICY_VERSION);
+    }
+
+    #[test]
+    fn gpu_metadata_cache_collects_once() {
+        let cache = std::sync::OnceLock::new();
+        let calls = AtomicUsize::new(0);
+
+        let first = cached_gpu_info_with(&cache, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            vec![serde_json::json!({"name": "First GPU"})]
+        });
+        let second = cached_gpu_info_with(&cache, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            vec![serde_json::json!({"name": "Unexpected GPU"})]
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(first, second);
+        assert_eq!(second[0]["name"], "First GPU");
     }
 }
