@@ -64,7 +64,7 @@ export default function SkillsPage() {
   };
 
   return (
-    <div className="capability-page skills-page">
+    <div className="capability-page skills-page page-canvas">
       <PageHeader title="技能" description="管理小昔涟可以使用的技能能力。" />
 
       <div className="capability-page-body skills-page-body">

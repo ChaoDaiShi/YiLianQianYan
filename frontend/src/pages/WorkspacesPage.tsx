@@ -58,7 +58,7 @@ export default function WorkspacesPage() {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="page-canvas flex h-full flex-col">
       <PageHeader
         title="工作空间"
         description="查看任务使用的文件与上下文。"

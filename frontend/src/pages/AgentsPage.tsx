@@ -75,7 +75,7 @@ export default function AgentsPage() {
   };
 
   return (
-    <div className="capability-page">
+    <div className="capability-page page-canvas">
       <PageHeader
         title="智能体"
         description="管理承担不同角色和任务的智能体配置。"

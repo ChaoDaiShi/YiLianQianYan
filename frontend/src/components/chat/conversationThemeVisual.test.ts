@@ -46,5 +46,7 @@ describe("R1B conversation visual contracts", () => {
     expect(indexCssSource).toContain(".conversation-tool-card");
     expect(indexCssSource).toContain(".conversation-composer");
     expect(indexCssSource).toContain(".conversation-markdown");
+    expect(indexCssSource).toContain("var(--page-wash)");
+    expect(indexCssSource).toContain("var(--code-bg)");
   });
 });

@@ -33,7 +33,7 @@ export default function WorkflowsPage() {
   const [runtimeRefresh, setRuntimeRefresh] = useState(0);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="page-canvas flex h-full flex-col">
       <PageHeader
         title="工作流"
         description="模板工作流用于对话；运行工作流是可执行的 DAG 运行时"

@@ -195,6 +195,14 @@ impl DefaultVerifier {
             _ => self.verify_default(tool_result),
         }
     }
+
+    fn verify_gui_launch(&self, tool_result: &ToolResult) -> VerificationResult {
+        if tool_result.ok {
+            VerificationResult::success("结构化启动工具已确认目标窗口可见且位于桌面前台", None)
+        } else {
+            VerificationResult::failure("目标窗口未能显示在桌面前台", None)
+        }
+    }
 }
 
 #[async_trait]
@@ -210,6 +218,7 @@ impl Verifier for DefaultVerifier {
             "write_file" => self.verify_write_file(args, tool_result),
             "edit_file" => self.verify_edit_file(args, tool_result),
             "process" => self.verify_process(args, tool_result),
+            "open_url" | "open_application" => self.verify_gui_launch(tool_result),
             _ => self.verify_default(tool_result),
         }
     }
@@ -301,6 +310,20 @@ mod tests {
             .await;
         assert!(!fail.success);
         assert!(fail.should_replan);
+    }
+
+    #[tokio::test]
+    async fn structured_gui_tools_report_their_built_in_foreground_verification() {
+        let result = verifier()
+            .verify(
+                "open_application",
+                &serde_json::json!({"application": "QQ"}),
+                &ToolResult::success("QQ窗口已显示在桌面前台"),
+            )
+            .await;
+
+        assert!(result.success);
+        assert!(result.reason.contains("可见且位于桌面前台"));
     }
 
     #[tokio::test]

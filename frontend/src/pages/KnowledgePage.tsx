@@ -6,7 +6,7 @@ export default function KnowledgePage() {
   const navigate = useNavigate();
 
   return (
-    <div className="knowledge-page">
+    <div className="knowledge-page page-canvas">
       <PageHeader
         title="知识库"
         description="管理可供小昔涟查阅的外部资料"

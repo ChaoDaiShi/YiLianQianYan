@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
+// @ts-expect-error -- Node file access is test-only and not bundled.
+import { readFileSync } from "node:fs";
 import appSource from "../App.tsx?raw";
+import shellSource from "../components/layout/AppShell.tsx?raw";
+import loadingSource from "../components/layout/RouteLoadingSurface.tsx?raw";
+import workspaceLayoutSource from "../components/layout/workspaceLayout.ts?raw";
+
+const stylesSource = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 
 const lazyPages = [
   "TaskCenterPage",
@@ -27,7 +34,7 @@ describe("route loading contract", () => {
     }
   });
 
-  it("preserves route paths and provides a shared Suspense surface", () => {
+  it("preserves route paths and keeps lazy loading inside the persistent shell", () => {
     for (const path of [
       "chat",
       "chat/:id",
@@ -44,7 +51,18 @@ describe("route loading contract", () => {
       expect(appSource).toContain(`path="${path}"`);
     }
 
-    expect(appSource).toContain("Suspense");
-    expect(appSource).toContain("RouteLoadingSurface");
+    expect(appSource).not.toContain("Suspense");
+    expect(appSource).not.toContain("RouteLoadingSurface");
+    expect(shellSource).toContain("Suspense");
+    expect(shellSource).toContain("RouteLoadingSurface");
+    expect(shellSource).toContain("<Outlet />");
+  });
+
+  it("avoids a page-wide entrance flash and delays the loading placeholder", () => {
+    expect(workspaceLayoutSource).not.toContain("animate-page-in");
+    expect(loadingSource).toContain("route-loading-surface");
+    expect(loadingSource).toContain("route-loading-placeholder");
+    expect(stylesSource).toContain(".route-loading-placeholder");
+    expect(stylesSource).toContain("animation-delay: 120ms");
   });
 });

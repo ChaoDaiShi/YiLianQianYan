@@ -88,7 +88,9 @@ fn default_system_prompt() -> String {
 
 ## 工具
 
-bash（PowerShell）、read_file/write_file/edit_file、grep/glob、http_request、process、write_todos、load_skill
+bash（PowerShell）、read_file/write_file/edit_file、grep/glob、http_request、open_url、open_application、process、write_todos、load_skill
+
+打开网站必须使用 open_url；打开 QQ 等桌面 GUI 应用必须使用 open_application。不要使用 bash 打开网页或桌面应用，也不要把“进程存在”当作窗口已展示。
 "#.to_string()
 }
 
@@ -377,6 +379,15 @@ impl Default for SubagentsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_prompt_routes_gui_requests_to_structured_tools() {
+        let prompt = default_system_prompt();
+
+        assert!(prompt.contains("open_url"));
+        assert!(prompt.contains("open_application"));
+        assert!(prompt.contains("不要使用 bash 打开网页或桌面应用"));
+    }
 
     #[test]
     fn model_config_deserializes_without_embedding_fields() {

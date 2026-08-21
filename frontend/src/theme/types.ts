@@ -1,4 +1,6 @@
 export type BgMode = "solid" | "gradient" | "image";
+export type ThemeMode = "system" | "light" | "dark";
+export type ColorScheme = Exclude<ThemeMode, "system">;
 
 export type PresetId =
   | "cyrene-ripple"
@@ -33,6 +35,7 @@ export interface ThemeColors {
 
 export interface ThemeConfig {
   presetId: PresetId;
+  mode: ThemeMode;
   bgMode: BgMode;
   colors: ThemeColors;
   gradientFrom?: string;
@@ -78,6 +81,7 @@ export const PROTECTED_THEME_VAR_NAMES = [
   "--surface-muted",
   "--surface-elevated",
   "--surface-hover",
+  "--text-disabled",
   "--text-primary",
   "--accent-primary",
   "--accent-primary-hover",
@@ -91,6 +95,11 @@ export const PROTECTED_THEME_VAR_NAMES = [
   "--divider",
   "--text-secondary",
   "--border-soft",
+  "--shell-art-opacity",
+  "--shell-overlay",
+  "--page-wash",
+  "--code-bg",
+  "--code-text",
   "--success-soft",
   "--success-border",
   "--success-fg",

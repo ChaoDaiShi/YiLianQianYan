@@ -1,5 +1,6 @@
 import type { Message, ToolCallRecord } from "../../types";
 import { MESSAGE_LIST_VIEWPORT_CLASS_NAME } from "../layout/workspaceLayout";
+import { presentExecutionError } from "./errorDisplay";
 import AgentProgressCard from "./AgentProgressCard";
 import MessageBubble from "./MessageBubble";
 import StreamingText from "./StreamingText";
@@ -19,6 +20,8 @@ interface MessageListProps {
 }
 
 function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  const presentation = presentExecutionError(error);
+
   return (
     <section
       className="conversation-error-notice mb-4 rounded-[var(--radius-lg)] border border-[var(--danger-border)] bg-[var(--danger-soft)] px-4 py-3"
@@ -31,7 +34,7 @@ function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }
             任务没有成功完成
           </p>
           <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-            执行过程中遇到了问题，任务已经停止。
+            {presentation.message}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             {onRetry && (
@@ -45,10 +48,15 @@ function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }
             )}
             <details className="text-xs text-[var(--text-secondary)]">
               <summary className="cursor-pointer select-none hover:text-[var(--text-primary)]">
-                查看技术详情
+                查看错误日志
               </summary>
+              {presentation.code ? (
+                <p className="mt-2 font-mono text-[var(--text-faint)]">
+                  错误代码：{presentation.code}
+                </p>
+              ) : null}
               <pre className="mt-2 max-h-40 max-w-full overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2 font-mono text-[var(--text-secondary)]">
-                {error}
+                {presentation.technical}
               </pre>
             </details>
           </div>

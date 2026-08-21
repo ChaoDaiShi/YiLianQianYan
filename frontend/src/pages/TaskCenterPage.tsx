@@ -103,7 +103,7 @@ export default function TaskCenterPage() {
   const workspaceNames = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="任务中心"
         description="管理小昔涟执行过的任务和当前进度"

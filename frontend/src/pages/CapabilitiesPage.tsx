@@ -102,7 +102,7 @@ export default function CapabilitiesPage() {
   };
 
   return (
-    <div className="capability-page">
+    <div className="capability-page page-canvas">
       <PageHeader
         title="能力"
         description="查看当前系统可以调用的基础能力。此页面只做发现，不执行任何能力。"

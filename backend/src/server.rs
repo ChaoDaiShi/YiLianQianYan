@@ -383,6 +383,12 @@ impl AppServer {
         let config = self.config.read();
         let mut prompt = config.agent.system_prompt.clone();
 
+        if !prompt.contains("open_url") || !prompt.contains("open_application") {
+            prompt.push_str(
+                "\n\n## 可见 GUI 启动规则\n\n打开网站必须使用 open_url；打开 QQ 等桌面 GUI 应用必须使用 open_application。不要使用 bash 打开网页或桌面应用，也不要把进程存在当作窗口已展示。",
+            );
+        }
+
         let sd = self.skill_discovery.read();
         if sd.has_skills() {
             prompt.push_str("\n\n");

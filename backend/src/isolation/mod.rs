@@ -20,6 +20,7 @@ use tokio::process::Command;
 #[cfg(not(windows))]
 use tokio::time::{timeout, Duration};
 
+use crate::utils::process::{hide_std_command_window, hide_tokio_command_window};
 #[cfg(not(windows))]
 use crate::utils::text::truncate_chars;
 
@@ -128,7 +129,9 @@ pub fn build_child_env(explicit: &BTreeMap<String, String>) -> BTreeMap<String, 
 pub async fn kill_process_tree(pid: u32) {
     if cfg!(windows) {
         // taskkill /T terminates the tree; best-effort.
-        let _ = Command::new("taskkill")
+        let mut command = Command::new("taskkill");
+        hide_tokio_command_window(&mut command);
+        let _ = command
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output()
             .await;
@@ -321,7 +324,9 @@ impl ManagedProcessControl for PortableProcessControl {
     fn is_alive(&self) -> bool {
         #[cfg(windows)]
         {
-            return std::process::Command::new("tasklist")
+            let mut command = std::process::Command::new("tasklist");
+            hide_std_command_window(&mut command);
+            return command
                 .args(["/FI", &format!("PID eq {}", self.pid), "/NH"])
                 .output()
                 .map(|output| {
@@ -340,9 +345,13 @@ impl ManagedProcessControl for PortableProcessControl {
 
     fn terminate(&self) -> Result<(), String> {
         #[cfg(windows)]
-        let status = std::process::Command::new("taskkill")
-            .args(["/PID", &self.pid.to_string(), "/T", "/F"])
-            .status();
+        let status = {
+            let mut command = std::process::Command::new("taskkill");
+            hide_std_command_window(&mut command);
+            command
+                .args(["/PID", &self.pid.to_string(), "/T", "/F"])
+                .status()
+        };
         #[cfg(not(windows))]
         let status = std::process::Command::new("kill")
             .args(["-TERM", &format!("-{}", self.pid)])

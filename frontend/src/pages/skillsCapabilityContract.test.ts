@@ -3,7 +3,7 @@ import skillsPageSource from "./SkillsPage.tsx?raw";
 
 describe("Skills capability surface", () => {
   it("keeps real skill APIs while using the shared page states", () => {
-    expect(skillsPageSource).toContain('className="capability-page skills-page"');
+    expect(skillsPageSource).toContain('className="capability-page skills-page page-canvas"');
     expect(skillsPageSource).toContain("skills-split-layout");
     expect(skillsPageSource).toContain("listSkills");
     expect(skillsPageSource).toContain("loadSkill");
