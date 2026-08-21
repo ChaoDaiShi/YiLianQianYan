@@ -13,6 +13,8 @@ fn sample_args(tool_name: &str) -> serde_json::Value {
         "grep" => serde_json::json!({"pattern": "SafetyPolicy", "path": "."}),
         "glob" => serde_json::json!({"pattern": "**/*.rs", "path": "."}),
         "http_request" => serde_json::json!({"url": "https://example.com"}),
+        "open_url" => serde_json::json!({"url": "https://www.bilibili.com/"}),
+        "open_application" => serde_json::json!({"application": "QQ"}),
         "load_skill" => serde_json::json!({"name": "example"}),
         "write_todos" => serde_json::json!({"todos": []}),
         "process" => serde_json::json!({"action": "list"}),

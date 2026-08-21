@@ -1004,7 +1004,11 @@ impl SecurityExecutionGateway {
                 rbac_context.authorized_resources = context.authorized_resources;
                 Ok(PolicyDecision::Allow(rbac_context))
             }
-            other => Ok(other),
+            PolicyDecision::RequireApproval(mut rbac_context) => {
+                rbac_context.authorized_resources = context.authorized_resources;
+                Ok(PolicyDecision::RequireApproval(rbac_context))
+            }
+            PolicyDecision::Deny(rbac_context) => Ok(PolicyDecision::Deny(rbac_context)),
         }
     }
 
@@ -1118,6 +1122,11 @@ fn authorized_resource_from_evaluation(
         ResourceDescriptor::Process { pid, .. } => Some(AuthorizedResource::Process {
             pid: *pid,
             managed_only: true,
+        }),
+        ResourceDescriptor::Desktop { action, target } => Some(AuthorizedResource::Desktop {
+            action: action.clone(),
+            target: target.clone(),
+            one_shot_approval: grant_enforced,
         }),
         _ => None,
     }
@@ -1552,6 +1561,32 @@ mod tests {
             .unwrap();
 
         assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
+    }
+
+    #[test]
+    fn approval_context_preserves_exact_desktop_authorization_evidence() {
+        let gateway = SecurityExecutionGateway::new();
+        let request = request("open_application", serde_json::json!({"application": "QQ"}));
+
+        let decision = gateway
+            .evaluate_with_role(&request, BuiltInRole::Standard, RiskLevel::High)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
+        assert!(decision
+            .context()
+            .authorized_resources
+            .iter()
+            .any(|resource| {
+                matches!(
+                    resource,
+                    crate::safety::grant::AuthorizedResource::Desktop {
+                        action,
+                        target: Some(target),
+                        ..
+                    } if action == "open_application" && target == "QQ"
+                )
+            }));
     }
 
     #[test]

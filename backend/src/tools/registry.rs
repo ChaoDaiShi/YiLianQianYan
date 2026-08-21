@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use super::bash::BashTool;
 use super::fs::{EditFileTool, ReadFileTool, WriteFileTool};
+use super::gui_launch::{OpenApplicationTool, OpenUrlTool};
 use super::http_client::HttpRequestTool;
 use super::input::{KeyboardTool, MouseTool};
 use super::process::ProcessTool;
@@ -65,8 +66,10 @@ impl ToolRegistry {
         registry.register(Arc::new(GrepTool::new(workspace_root)));
         registry.register(Arc::new(GlobTool::new(workspace_root)));
 
-        // HTTP tool
+        // HTTP and visible GUI launch tools
         registry.register(Arc::new(HttpRequestTool::new()));
+        registry.register(Arc::new(OpenUrlTool::new()));
+        registry.register(Arc::new(OpenApplicationTool::new()));
 
         // Skill management
         registry.register(Arc::new(LoadSkillTool::new(workspace_root)));
@@ -190,5 +193,13 @@ mod tests {
             .expect("registered bash tool");
         assert!(!result.ok);
         assert!(result.content.contains("SecurityExecutionGateway"));
+    }
+
+    #[test]
+    fn default_registry_exposes_structured_visible_gui_tools() {
+        let registry = ToolRegistry::with_defaults(".");
+
+        assert!(registry.get("open_url").is_some());
+        assert!(registry.get("open_application").is_some());
     }
 }

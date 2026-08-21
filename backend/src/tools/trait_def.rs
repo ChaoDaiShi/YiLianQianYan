@@ -64,6 +64,20 @@ impl ToolExecutionContext {
             )
         })
     }
+
+    pub(crate) fn authorized_desktop(&self, action: &str, target: Option<&str>) -> bool {
+        self.authorized_resources.iter().any(|resource| {
+            matches!(
+                resource,
+                crate::safety::grant::AuthorizedResource::Desktop {
+                    action: evidence_action,
+                    target: evidence_target,
+                    ..
+                } if evidence_action == action
+                    && evidence_target.as_deref() == target
+            )
+        })
+    }
 }
 
 /// Risk level of a tool — used by the SafetyPolicy to decide permissions.
@@ -200,5 +214,28 @@ pub trait Tool: Send + Sync {
             risk_level: self.risk_level(),
             requires_approval: self.requires_approval(),
         }
+    }
+}
+
+#[cfg(test)]
+mod authorization_tests {
+    use super::ToolExecutionContext;
+    use crate::safety::grant::AuthorizedResource;
+
+    #[test]
+    fn desktop_authorization_requires_the_exact_action_and_target() {
+        let context = ToolExecutionContext::new_with_resources(
+            std::sync::Arc::new(crate::isolation::ManagedProcessRegistry::new()),
+            "call-gui",
+            vec![AuthorizedResource::Desktop {
+                action: "open_application".to_string(),
+                target: Some("QQ".to_string()),
+                one_shot_approval: true,
+            }],
+        );
+
+        assert!(context.authorized_desktop("open_application", Some("QQ")));
+        assert!(!context.authorized_desktop("open_application", Some("WeChat")));
+        assert!(!context.authorized_desktop("open_url", Some("QQ")));
     }
 }

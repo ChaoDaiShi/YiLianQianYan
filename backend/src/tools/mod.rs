@@ -1,5 +1,7 @@
 pub mod bash;
 pub mod fs;
+pub mod gui_launch;
+pub mod gui_window;
 pub mod http_client;
 pub mod input;
 pub mod mcp;
@@ -12,6 +14,7 @@ pub mod subagent;
 pub mod trait_def;
 pub mod upscale;
 
+pub use gui_launch::{OpenApplicationTool, OpenUrlTool};
 pub use input::{KeyboardTool, MouseTool};
 pub use mcp::{McpToolAdapter, McpToolAdapterError};
 pub use process::ProcessTool;

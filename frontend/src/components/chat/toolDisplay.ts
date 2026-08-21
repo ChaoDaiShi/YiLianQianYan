@@ -10,6 +10,8 @@ const TOOL_LABELS: Record<string, string> = {
   grep: "搜索内容",
   glob: "查找文件",
   http_request: "网络请求",
+  open_url: "打开网站",
+  open_application: "打开应用",
   load_skill: "加载技能",
   write_todos: "更新计划",
   process: "进程管理",
@@ -83,6 +85,7 @@ export function formatToolActionSummary(
   const path = stringArg(args, "path", "file", "target", "file_path");
   const url = stringArg(args, "url", "uri", "href");
   const query = stringArg(args, "query", "pattern", "text");
+  const application = stringArg(args, "application", "app");
 
   if (
     (normalizedName === "bash" || normalizedName === "powershell") &&
@@ -110,6 +113,12 @@ export function formatToolActionSummary(
     url
   ) {
     return oneLine(`请求网络资源：${displayUrl(url)}`);
+  }
+  if (normalizedName === "open_url" && url) {
+    return oneLine(`打开网站：${displayUrl(url)}`);
+  }
+  if (normalizedName === "open_application" && application) {
+    return oneLine(`打开应用：${application}`);
   }
   if (normalizedName === "process") return "管理系统进程";
   if (normalizedName === "screenshot") return "截取当前屏幕";

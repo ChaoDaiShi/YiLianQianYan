@@ -59,6 +59,52 @@ fn mutating_http_methods_are_high_risk() {
 }
 
 #[test]
+fn visible_gui_launches_bind_exact_network_and_desktop_targets() {
+    let url = describe_builtin_tool(
+        "open_url",
+        &serde_json::json!({"url": "https://www.bilibili.com/"}),
+    )
+    .unwrap();
+    assert_eq!(
+        url.requested_permissions
+            .iter()
+            .map(|requested| requested.permission)
+            .collect::<Vec<_>>(),
+        vec![PermissionId::NetworkRequest, PermissionId::DesktopInteract]
+    );
+    assert_eq!(url.default_risk, RiskLevel::High);
+    assert!(matches!(
+        url.resources.as_slice(),
+        [
+            ResourceDescriptor::Network { url, method },
+            ResourceDescriptor::Desktop { action, target: Some(target) },
+        ] if url == "https://www.bilibili.com/"
+            && method == "GET"
+            && action == "open_url"
+            && target == url
+    ));
+
+    let app = describe_builtin_tool(
+        "open_application",
+        &serde_json::json!({"application": "QQ"}),
+    )
+    .unwrap();
+    assert_eq!(
+        app.requested_permissions
+            .iter()
+            .map(|requested| requested.permission)
+            .collect::<Vec<_>>(),
+        vec![PermissionId::DesktopInteract]
+    );
+    assert_eq!(app.default_risk, RiskLevel::High);
+    assert!(matches!(
+        app.resources.as_slice(),
+        [ResourceDescriptor::Desktop { action, target: Some(target) }]
+            if action == "open_application" && target == "QQ"
+    ));
+}
+
+#[test]
 fn image_upscale_declares_file_and_network_side_effects() {
     let descriptor =
         describe_builtin_tool("upscale_image", &serde_json::json!({"path": "image.png"})).unwrap();

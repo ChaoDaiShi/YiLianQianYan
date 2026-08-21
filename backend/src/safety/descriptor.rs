@@ -238,6 +238,43 @@ fn builtin_descriptor_profile(
             }
             _ => return Err(invalid_resources()),
         },
+        "open_url" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Network { url, method }, ResourceDescriptor::Desktop {
+                action,
+                target: Some(target),
+            }] if !url.trim().is_empty()
+                && method == "GET"
+                && action == "open_url"
+                && target == url =>
+            {
+                profile(
+                    vec![
+                        permission(PermissionId::NetworkRequest, ResourceScope::NetworkTarget),
+                        permission(PermissionId::DesktopInteract, ResourceScope::DesktopTarget),
+                    ],
+                    RiskLevel::High,
+                    vec![
+                        SideEffectKind::NetworkEgress,
+                        SideEffectKind::DesktopMutation,
+                    ],
+                )
+            }
+            _ => return Err(invalid_resources()),
+        },
+        "open_application" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Desktop {
+                action,
+                target: Some(target),
+            }] if action == "open_application" && !target.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::DesktopInteract,
+                    ResourceScope::DesktopTarget,
+                )],
+                RiskLevel::High,
+                vec![SideEffectKind::DesktopMutation],
+            ),
+            _ => return Err(invalid_resources()),
+        },
         "mouse" | "keyboard" => match descriptor.resources.as_slice() {
             [ResourceDescriptor::Desktop {
                 action,
@@ -548,6 +585,44 @@ pub fn describe_builtin_tool(
                 side_effects: vec![SideEffectKind::NetworkEgress],
             }
         }
+        "open_url" => {
+            let url = required_string(tool_name, args, "url")?;
+            ToolSecurityDescriptor {
+                tool_name: tool_name.to_string(),
+                requested_permissions: vec![
+                    permission(PermissionId::NetworkRequest, ResourceScope::NetworkTarget),
+                    permission(PermissionId::DesktopInteract, ResourceScope::DesktopTarget),
+                ],
+                resources: vec![
+                    ResourceDescriptor::Network {
+                        url: url.clone(),
+                        method: "GET".to_string(),
+                    },
+                    ResourceDescriptor::Desktop {
+                        action: "open_url".to_string(),
+                        target: Some(url),
+                    },
+                ],
+                default_risk: RiskLevel::High,
+                side_effects: vec![
+                    SideEffectKind::NetworkEgress,
+                    SideEffectKind::DesktopMutation,
+                ],
+            }
+        }
+        "open_application" => ToolSecurityDescriptor {
+            tool_name: tool_name.to_string(),
+            requested_permissions: vec![permission(
+                PermissionId::DesktopInteract,
+                ResourceScope::DesktopTarget,
+            )],
+            resources: vec![ResourceDescriptor::Desktop {
+                action: "open_application".to_string(),
+                target: Some(required_string(tool_name, args, "application")?),
+            }],
+            default_risk: RiskLevel::High,
+            side_effects: vec![SideEffectKind::DesktopMutation],
+        },
         "mouse" | "keyboard" => ToolSecurityDescriptor {
             tool_name: tool_name.to_string(),
             requested_permissions: vec![permission(

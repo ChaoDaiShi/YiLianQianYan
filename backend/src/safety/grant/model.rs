@@ -153,6 +153,11 @@ pub enum AuthorizedResource {
         pid: Option<u32>,
         managed_only: bool,
     },
+    Desktop {
+        action: String,
+        target: Option<String>,
+        one_shot_approval: bool,
+    },
 }
 
 /// Scope of process control. `AllHostProcesses` is deliberately a distinct,

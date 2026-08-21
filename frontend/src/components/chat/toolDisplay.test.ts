@@ -15,6 +15,8 @@ describe("tool display helpers", () => {
     expect(formatToolDisplayName("filesystem")).toBe("文件操作");
     expect(formatToolDisplayName("mcp_server_tool")).toBe("MCP · Tool");
     expect(formatToolDisplayName("read_file")).toBe("读取文件");
+    expect(formatToolDisplayName("open_url")).toBe("打开网站");
+    expect(formatToolDisplayName("open_application")).toBe("打开应用");
     expect(formatToolDisplayName("unknown_tool_name")).toBe("Unknown Tool Name");
   });
 
@@ -41,6 +43,14 @@ describe("tool display helpers", () => {
       }),
     ).toBe("请求网络资源：www.bilibili.com/video/1");
     expect(formatToolActionSummary("screenshot", {})).toBe("截取当前屏幕");
+    expect(
+      formatToolActionSummary("open_url", {
+        url: "https://www.bilibili.com/",
+      }),
+    ).toBe("打开网站：www.bilibili.com");
+    expect(
+      formatToolActionSummary("open_application", { application: "QQ" }),
+    ).toBe("打开应用：QQ");
   });
 
   it("falls back conservatively when an action cannot be determined", () => {
