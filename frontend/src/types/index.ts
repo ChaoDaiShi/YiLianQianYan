@@ -35,9 +35,22 @@ export interface Message {
 export interface ConversationSummary {
   id: string;
   title: string;
+  run_status?: ConversationRunStatus;
+  run_error?: string | null;
+  run_started_at?: number | null;
+  run_finished_at?: number | null;
   created_at: number;
   updated_at: number;
 }
+
+export type ConversationRunStatus =
+  | "idle"
+  | "running"
+  | "waiting_approval"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
 
 // ============================================================
 // Configuration types

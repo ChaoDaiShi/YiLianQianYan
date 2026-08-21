@@ -505,6 +505,16 @@ impl Database {
         if !column_exists(&conn, "conversations", "run_finished_at")? {
             conn.execute_batch("ALTER TABLE conversations ADD COLUMN run_finished_at INTEGER")?;
         }
+        conn.execute(
+            "UPDATE conversations
+             SET run_status='completed', run_finished_at=COALESCE(run_finished_at, updated_at)
+             WHERE run_status='idle'
+               AND EXISTS (
+                   SELECT 1 FROM messages
+                   WHERE messages.conversation_id=conversations.id
+               )",
+            [],
+        )?;
 
         if !column_exists(&conn, "mcp_servers", "env_secret_refs")? {
             conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN env_secret_refs TEXT")?;

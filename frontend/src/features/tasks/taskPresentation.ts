@@ -3,6 +3,7 @@ import type {
   TaskStatus,
   Workspace,
 } from "../../api/client";
+import type { ConversationRunStatus, ConversationSummary } from "../../types";
 import { deriveTaskDisplayTitle } from "../../components/chat/taskTitle";
 
 export type TaskFilter = "all" | "running" | "completed" | "failed" | "cancelled";
@@ -77,6 +78,45 @@ export function filterTasks(
       .toLocaleLowerCase();
     return searchable.includes(keyword);
   });
+}
+
+export function conversationRunStatusToTaskStatus(
+  status: ConversationRunStatus | undefined
+): TaskStatus {
+  if (status === "running") return "running";
+  if (status === "waiting_approval") return "waiting_approval";
+  if (status === "failed" || status === "interrupted") return "failed";
+  if (status === "cancelled") return "cancelled";
+  return "completed";
+}
+
+export function filterConversations(
+  conversations: ConversationSummary[],
+  filter: TaskFilter,
+  query: string
+): ConversationSummary[] {
+  const statuses = getTaskFilterStatuses(filter);
+  const keyword = query.trim().toLocaleLowerCase();
+
+  return conversations.filter((conversation) => {
+    const status = conversationRunStatusToTaskStatus(conversation.run_status);
+    if (statuses && !statuses.includes(status)) return false;
+    if (!keyword) return true;
+    return [conversation.title || "新对话", getTaskStatusLabel(status)]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(keyword);
+  });
+}
+
+export function hasActiveBackgroundWork(
+  tasks: Task[],
+  conversations: ConversationSummary[]
+): boolean {
+  return (
+    tasks.some((task) => task.status === "running") ||
+    conversations.some((conversation) => conversation.run_status === "running")
+  );
 }
 
 export function formatTaskDate(value: number | null | undefined): string | null {

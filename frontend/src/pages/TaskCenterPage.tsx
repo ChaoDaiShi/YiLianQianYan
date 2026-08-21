@@ -21,10 +21,13 @@ import {
   Skeleton,
 } from "../components/ui";
 import {
+  conversationRunStatusToTaskStatus,
+  filterConversations,
   filterTasks,
   formatTaskDate,
   getTaskStatusLabel,
   getTaskStatusTone,
+  hasActiveBackgroundWork,
   type TaskFilter,
 } from "../features/tasks/taskPresentation";
 import { deriveTaskDisplayTitle } from "../components/chat/taskTitle";
@@ -85,13 +88,20 @@ export default function TaskCenterPage() {
     () => filterTasks(tasks || [], filter, query, workspaces),
     [filter, query, tasks, workspaces]
   );
-  const visibleConversations = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase();
-    if (!keyword) return conversations || [];
-    return (conversations || []).filter((conversation) =>
-      (conversation.title || "新对话").toLocaleLowerCase().includes(keyword)
-    );
-  }, [conversations, query]);
+  const visibleConversations = useMemo(
+    () => filterConversations(conversations || [], filter, query),
+    [conversations, filter, query]
+  );
+  const hasActiveWork = useMemo(
+    () => hasActiveBackgroundWork(tasks || [], conversations || []),
+    [conversations, tasks]
+  );
+
+  useEffect(() => {
+    if (!hasActiveWork) return;
+    const timer = window.setInterval(() => void reload(), 2_000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveWork, reload]);
 
   useEffect(() => {
     if (!visibleTasks.some((task) => task.id === selectedId)) {
@@ -168,9 +178,9 @@ export default function TaskCenterPage() {
               <div className="flex items-center gap-2">
                 <MessageSquare className="h-4 w-4 text-[var(--accent-purple)]" />
                 <div>
-                  <h2 className="text-sm font-semibold text-[var(--text)]">对话记录</h2>
+                  <h2 className="text-sm font-semibold text-[var(--text)]">后台对话任务</h2>
                   <p className="mt-0.5 text-xs text-[var(--text-faint)]">
-                    {visibleConversations.length} 条已保存会话
+                    {visibleConversations.length} 条符合当前筛选
                   </p>
                 </div>
               </div>
@@ -190,9 +200,12 @@ export default function TaskCenterPage() {
                       {deriveTaskDisplayTitle(conversation.title || "新对话")}
                     </span>
                     <span className="mt-1 block text-xs text-[var(--text-faint)]">
-                      {formatTaskDate(conversation.updated_at) || "时间未知"} · 已保存
+                      {formatTaskDate(conversation.run_finished_at || conversation.updated_at) || "时间未知"}
                     </span>
                   </span>
+                  <Badge tone={getTaskStatusTone(conversationRunStatusToTaskStatus(conversation.run_status))}>
+                    {getTaskStatusLabel(conversationRunStatusToTaskStatus(conversation.run_status))}
+                  </Badge>
                 </button>
               ))}
             </div>
@@ -211,7 +224,7 @@ export default function TaskCenterPage() {
           />
         ) : tasks === null ? (
           <TaskCenterSkeleton />
-        ) : tasks.length === 0 ? (
+        ) : tasks.length === 0 && (conversations || []).length === 0 ? (
           <Panel className="min-h-0 flex-1">
             <EmptyState
               icon={<ListTodo className="h-6 w-6" />}
@@ -225,7 +238,16 @@ export default function TaskCenterPage() {
               className="py-20"
             />
           </Panel>
-        ) : (
+        ) : visibleTasks.length === 0 && visibleConversations.length === 0 ? (
+          <Panel className="min-h-0 flex-1">
+            <EmptyState
+              icon={<Search className="h-5 w-5" />}
+              title="没有匹配的任务"
+              description="尝试更换搜索词或状态筛选。"
+              className="py-20"
+            />
+          </Panel>
+        ) : visibleTasks.length > 0 ? (
           <div className="task-center-grid min-h-0 flex-1">
             <Panel padding={false} className="min-h-0 overflow-hidden">
               <div className="flex h-full min-h-0 flex-col">
@@ -280,7 +302,7 @@ export default function TaskCenterPage() {
               )}
             </Panel>
           </div>
-        )}
+        ) : null}
 
         {workspaceError && !error && (
           <p className="text-xs text-[var(--text-faint)]" role="status">
