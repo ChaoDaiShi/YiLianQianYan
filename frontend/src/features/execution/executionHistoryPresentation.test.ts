@@ -13,6 +13,9 @@ describe("execution history presentation", () => {
 
   it("supports accessible expandable technical details", () => {
     expect(historySource).toContain("aria-expanded={expanded}");
+    expect(historySource).toContain("createPortal");
+    expect(historySource).toContain('role="dialog"');
+    expect(historySource).toContain('aria-modal="false"');
     expect(historySource).toContain("Tool Call ID");
     expect(historySource).toContain("Arguments");
     expect(historySource).toContain("错误日志");

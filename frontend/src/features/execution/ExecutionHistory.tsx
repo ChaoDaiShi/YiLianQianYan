@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { Badge } from "../../components/ui";
 import { presentExecutionError } from "../../components/chat/errorDisplay";
 import {
@@ -12,6 +13,10 @@ import type {
   ExecutionStatus,
   VerificationStatus,
 } from "./model";
+import {
+  getExecutionDetailPlacement,
+  type ExecutionDetailPlacement,
+} from "./executionHistoryPlacement";
 
 const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
   queued: "等待执行",
@@ -66,8 +71,22 @@ function formatValue(value: unknown): string {
   }
 }
 
-function ExecutionHistoryItem({ record }: { record: ExecutionRecord }) {
-  const [expanded, setExpanded] = useState(false);
+interface ExecutionHistoryItemProps {
+  record: ExecutionRecord;
+  expanded: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+}
+
+function ExecutionHistoryItem({
+  record,
+  expanded,
+  onToggle,
+  onClose,
+}: ExecutionHistoryItemProps) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [placement, setPlacement] = useState<ExecutionDetailPlacement | null>(null);
   const action = formatToolActionSummary(record.name, record.args);
   const elapsed =
     record.startedAt !== undefined
@@ -84,16 +103,67 @@ function ExecutionHistoryItem({ record }: { record: ExecutionRecord }) {
   const detailsId = `execution-details-${record.toolCallId}`;
   const hasArgs = Object.keys(record.args).length > 0;
 
+  const updatePlacement = useCallback(() => {
+    const anchor = triggerRef.current?.getBoundingClientRect();
+    if (!anchor) return;
+    setPlacement(
+      getExecutionDetailPlacement(anchor, {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }),
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    if (expanded) updatePlacement();
+  }, [expanded, updatePlacement]);
+
+  useEffect(() => {
+    if (!expanded) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+        triggerRef.current?.focus();
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        !triggerRef.current?.contains(target) &&
+        !panelRef.current?.contains(target)
+      ) {
+        onClose();
+      }
+    };
+    const handleScroll = (event: Event) => {
+      if (panelRef.current?.contains(event.target as Node)) return;
+      updatePlacement();
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [expanded, onClose, updatePlacement]);
+
   return (
     <li
-      className="execution-history-item overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]"
+      className="execution-history-item rounded-xl border border-[var(--border)] bg-[var(--panel)]"
       data-execution-status={record.executionStatus}
       data-verification-status={record.verificationStatus}
     >
       <button
+        ref={triggerRef}
         type="button"
         className="execution-history-action w-full p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring-soft)]"
-        onClick={() => setExpanded((current) => !current)}
+        onClick={onToggle}
         aria-expanded={expanded}
         aria-controls={detailsId}
         aria-label={`${expanded ? "收起" : "展开"}执行详情：${action}`}
@@ -140,9 +210,46 @@ function ExecutionHistoryItem({ record }: { record: ExecutionRecord }) {
         ) : null}
       </button>
 
-      {expanded ? (
-        <div id={detailsId} className="execution-history-details">
-          <dl className="space-y-2 text-xs">
+      {expanded && placement
+        ? createPortal(
+          <div
+            ref={panelRef}
+            id={detailsId}
+            className="execution-history-details"
+            role="dialog"
+            aria-modal="false"
+            aria-label={`执行详情：${action}`}
+            style={{
+              left: placement.left,
+              width: placement.width,
+              ...(placement.verticalEdge === "top"
+                ? { top: placement.verticalOffset }
+                : { bottom: placement.verticalOffset }),
+            }}
+          >
+            <header className="execution-history-details-header">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
+                  执行详情
+                </p>
+                <h4 className="mt-1 truncate text-sm font-semibold text-[var(--text-primary)]">
+                  {action}
+                </h4>
+              </div>
+              <button
+                type="button"
+                className="rounded-md p-1.5 text-[var(--text-faint)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                onClick={() => {
+                  onClose();
+                  triggerRef.current?.focus();
+                }}
+                aria-label="关闭执行详情"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </header>
+            <div className="execution-history-details-scroll scrollbar-thin">
+              <dl className="space-y-3 text-xs">
             <div>
               <dt className="text-[var(--text-faint)]">Tool Name</dt>
               <dd className="font-mono">{record.name}</dd>
@@ -203,9 +310,12 @@ function ExecutionHistoryItem({ record }: { record: ExecutionRecord }) {
                 </dd>
               </div>
             ) : null}
-          </dl>
-        </div>
-      ) : null}
+              </dl>
+            </div>
+          </div>,
+          document.body,
+        )
+        : null}
     </li>
   );
 }
@@ -215,6 +325,8 @@ export default function ExecutionHistory({
 }: {
   records: ExecutionRecord[];
 }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   if (records.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-[var(--border-soft)] px-4 py-6 text-center text-xs text-[var(--text-faint)]">
@@ -226,7 +338,17 @@ export default function ExecutionHistory({
   return (
     <ol className="space-y-2" aria-label="执行步骤">
       {records.map((record) => (
-        <ExecutionHistoryItem key={record.toolCallId} record={record} />
+        <ExecutionHistoryItem
+          key={record.toolCallId}
+          record={record}
+          expanded={expandedId === record.toolCallId}
+          onToggle={() =>
+            setExpandedId((current) =>
+              current === record.toolCallId ? null : record.toolCallId,
+            )
+          }
+          onClose={() => setExpandedId(null)}
+        />
       ))}
     </ol>
   );
