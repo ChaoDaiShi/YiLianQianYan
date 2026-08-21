@@ -194,7 +194,6 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
     customVars: {},
   },
 };
-
 export const DEFAULT_THEME = PRESETS["cyrene-ripple"];
 
 const CYRENE_SHARED_TOKENS = {
