@@ -69,6 +69,10 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL DEFAULT '新对话',
+                run_status TEXT NOT NULL DEFAULT 'idle',
+                run_error TEXT,
+                run_started_at INTEGER,
+                run_finished_at INTEGER,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
@@ -487,6 +491,21 @@ impl Database {
         )?;
 
         // Additive migration: older databases lack `env_secret_refs`.
+        if !column_exists(&conn, "conversations", "run_status")? {
+            conn.execute_batch(
+                "ALTER TABLE conversations ADD COLUMN run_status TEXT NOT NULL DEFAULT 'idle'",
+            )?;
+        }
+        if !column_exists(&conn, "conversations", "run_error")? {
+            conn.execute_batch("ALTER TABLE conversations ADD COLUMN run_error TEXT")?;
+        }
+        if !column_exists(&conn, "conversations", "run_started_at")? {
+            conn.execute_batch("ALTER TABLE conversations ADD COLUMN run_started_at INTEGER")?;
+        }
+        if !column_exists(&conn, "conversations", "run_finished_at")? {
+            conn.execute_batch("ALTER TABLE conversations ADD COLUMN run_finished_at INTEGER")?;
+        }
+
         if !column_exists(&conn, "mcp_servers", "env_secret_refs")? {
             conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN env_secret_refs TEXT")?;
         }

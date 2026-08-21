@@ -7,10 +7,65 @@ use serde::{Deserialize, Serialize};
 
 use super::Database;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationRunStatus {
+    #[default]
+    Idle,
+    Running,
+    WaitingApproval,
+    Completed,
+    Failed,
+    Cancelled,
+    Interrupted,
+}
+
+impl ConversationRunStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::WaitingApproval => "waiting_approval",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Interrupted => "interrupted",
+        }
+    }
+
+    fn from_stored(value: &str) -> Self {
+        match value {
+            "idle" => Self::Idle,
+            "running" => Self::Running,
+            "waiting_approval" => Self::WaitingApproval,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            "interrupted" => Self::Interrupted,
+            _ => Self::Interrupted,
+        }
+    }
+
+    fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Cancelled | Self::Interrupted
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSummary {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub run_status: ConversationRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_started_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_finished_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -71,6 +126,10 @@ impl Database {
         Ok(ConversationSummary {
             id,
             title: title.to_string(),
+            run_status: ConversationRunStatus::Idle,
+            run_error: None,
+            run_started_at: None,
+            run_finished_at: None,
             created_at: now,
             updated_at: now,
         })
@@ -80,7 +139,8 @@ impl Database {
         let conn = self.conn();
         let mut stmt = conn
             .prepare(
-                "SELECT id, title, created_at, updated_at
+                "SELECT id, title, run_status, run_error, run_started_at, run_finished_at,
+                        created_at, updated_at
                  FROM conversations
                  WHERE EXISTS (
                      SELECT 1 FROM messages
@@ -99,8 +159,12 @@ impl Database {
                 Ok(ConversationSummary {
                     id: row.get(0)?,
                     title: row.get(1)?,
-                    created_at: row.get(2)?,
-                    updated_at: row.get(3)?,
+                    run_status: ConversationRunStatus::from_stored(&row.get::<_, String>(2)?),
+                    run_error: row.get(3)?,
+                    run_started_at: row.get(4)?,
+                    run_finished_at: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -395,5 +459,128 @@ impl Database {
         )
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub fn set_conversation_run_status(
+        &self,
+        conversation_id: &str,
+        status: ConversationRunStatus,
+        error: Option<&str>,
+    ) -> Result<(), String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let terminal = status.is_terminal();
+        let conn = self.conn();
+        let changed = conn
+            .execute(
+                "UPDATE conversations
+                 SET run_status=?2,
+                     run_error=?3,
+                     run_started_at=CASE
+                         WHEN ?2='running' AND run_status='waiting_approval' THEN run_started_at
+                         WHEN ?2='running' THEN ?4
+                         ELSE run_started_at
+                     END,
+                     run_finished_at=CASE WHEN ?5 THEN ?4 ELSE NULL END,
+                     updated_at=?4
+                 WHERE id=?1",
+                params![conversation_id, status.as_str(), error, now, terminal],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed == 0 {
+            return Err("conversation not found".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn interrupt_running_conversations(&self) -> Result<usize, String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE conversations
+             SET run_status='interrupted',
+                 run_error='应用退出前任务尚未完成',
+                 run_finished_at=?1,
+                 updated_at=?1
+             WHERE run_status IN ('running', 'waiting_approval')",
+            [now],
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TempConversationDatabase {
+        path: std::path::PathBuf,
+    }
+
+    impl TempConversationDatabase {
+        fn new(label: &str) -> (Self, Database) {
+            let path = std::env::temp_dir().join(format!(
+                "yilian-conversation-{label}-{}.db",
+                uuid::Uuid::new_v4()
+            ));
+            let database = Database::new(&path).expect("temporary conversation database");
+            (Self { path }, database)
+        }
+    }
+
+    impl Drop for TempConversationDatabase {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn conversation_summary_persists_run_lifecycle() {
+        let (_temp, db) = TempConversationDatabase::new("run-lifecycle");
+        let conversation = db.create_conversation("后台任务").unwrap();
+        db.add_message(&MessageRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: conversation.id.clone(),
+            role: "user".to_string(),
+            content: "继续运行".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_result: None,
+            created_at: chrono::Utc::now().timestamp_millis(),
+        })
+        .unwrap();
+
+        db.set_conversation_run_status(&conversation.id, ConversationRunStatus::Running, None)
+            .unwrap();
+
+        let listed = db.list_conversations().unwrap();
+        assert_eq!(listed[0].run_status, ConversationRunStatus::Running);
+        assert!(listed[0].run_started_at.is_some());
+        assert!(listed[0].run_finished_at.is_none());
+    }
+
+    #[test]
+    fn stale_running_conversations_are_interrupted() {
+        let (_temp, db) = TempConversationDatabase::new("interrupt-running");
+        let conversation = db.create_conversation("后台任务").unwrap();
+        db.add_message(&MessageRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: conversation.id.clone(),
+            role: "user".to_string(),
+            content: "继续运行".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_result: None,
+            created_at: chrono::Utc::now().timestamp_millis(),
+        })
+        .unwrap();
+        db.set_conversation_run_status(&conversation.id, ConversationRunStatus::Running, None)
+            .unwrap();
+
+        assert_eq!(db.interrupt_running_conversations().unwrap(), 1);
+        let listed = db.list_conversations().unwrap();
+        assert_eq!(listed[0].run_status, ConversationRunStatus::Interrupted);
+        assert!(listed[0].run_finished_at.is_some());
     }
 }

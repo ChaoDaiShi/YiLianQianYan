@@ -200,6 +200,11 @@ impl AppServer {
                 tracing::warn!(?report, "recovered interrupted task executions on startup");
             }
         }
+        if let Ok(interrupted) = db.interrupt_running_conversations() {
+            if interrupted > 0 {
+                tracing::warn!(interrupted, "recovered interrupted conversation runs");
+            }
+        }
         let audit_recorder = AuditRecorder::new(db.clone_connection());
         let secret_resolver = Arc::new(SecretResolver::new(Arc::clone(&secret_store)));
         let config = db.get_settings().unwrap_or_default();

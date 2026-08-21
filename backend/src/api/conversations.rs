@@ -37,6 +37,10 @@ pub async fn create_handler(
             .unwrap_or_else(|_| ConversationSummary {
                 id: uuid::Uuid::new_v4().to_string(),
                 title,
+                run_status: crate::db::ConversationRunStatus::Idle,
+                run_error: None,
+                run_started_at: None,
+                run_finished_at: None,
                 created_at: chrono::Utc::now().timestamp_millis(),
                 updated_at: chrono::Utc::now().timestamp_millis(),
             }),

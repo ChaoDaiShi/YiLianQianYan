@@ -601,6 +601,11 @@ pub async fn cancel_handler(
             match server.approval_store.cancel(&approval_id, &conv_id) {
                 Ok(a) => {
                     record_approval_resolved(&server, &a);
+                    let _ = server.db.set_conversation_run_status(
+                        &a.conversation_id,
+                        crate::db::ConversationRunStatus::Cancelled,
+                        None,
+                    );
                     // Keep the conversation chain valid: record the op never ran.
                     let db = server.db.clone_connection();
                     let now = chrono::Utc::now().timestamp_millis();
@@ -938,6 +943,11 @@ async fn resume_agent(
     approval: &PendingApproval,
     tx: &Sender<AgentEvent>,
 ) {
+    let _ = db.set_conversation_run_status(
+        &approval.conversation_id,
+        crate::db::ConversationRunStatus::Running,
+        None,
+    );
     let mut agent_state = AgentState::new(system_prompt.to_string());
     if let Ok(conv) = db.get_conversation(&approval.conversation_id) {
         let msgs: Vec<ChatMessage> = conv
@@ -1019,9 +1029,19 @@ async fn resume_agent(
 
     match result {
         Ok(RunOutcome::Done { .. }) => {
+            let _ = db.set_conversation_run_status(
+                &approval.conversation_id,
+                crate::db::ConversationRunStatus::Completed,
+                None,
+            );
             log_buffer.push("info", "agent", "审批后 Agent 完成");
         }
         Ok(RunOutcome::Paused { approval_id }) => {
+            let _ = db.set_conversation_run_status(
+                &approval.conversation_id,
+                crate::db::ConversationRunStatus::WaitingApproval,
+                None,
+            );
             log_buffer.push(
                 "warn",
                 "agent",
@@ -1029,6 +1049,11 @@ async fn resume_agent(
             );
         }
         Err(e) => {
+            let _ = db.set_conversation_run_status(
+                &approval.conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&e),
+            );
             log_buffer.push("error", "agent", &format!("审批后 Agent 错误: {}", e));
             let _ = tx
                 .send(AgentEvent {

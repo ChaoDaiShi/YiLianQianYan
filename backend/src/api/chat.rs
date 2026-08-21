@@ -163,6 +163,10 @@ pub async fn chat_handler(
                 crate::db::ConversationSummary {
                     id: uuid::Uuid::new_v4().to_string(),
                     title: "新对话".to_string(),
+                    run_status: crate::db::ConversationRunStatus::Idle,
+                    run_error: None,
+                    run_started_at: None,
+                    run_finished_at: None,
                     created_at: chrono::Utc::now().timestamp_millis(),
                     updated_at: chrono::Utc::now().timestamp_millis(),
                 }
@@ -220,6 +224,8 @@ pub async fn chat_handler(
     // Auto-title: use first user message (trim to 40 chars)
     let title = truncate_chars(&message, 40);
     let _ = db.update_conversation_title(&conv_id, &title);
+    let _ =
+        db.set_conversation_run_status(&conv_id, crate::db::ConversationRunStatus::Running, None);
 
     // Add the current user message to the LLM context exactly once.
     agent_state.add_user_message(message.clone());
@@ -303,6 +309,11 @@ pub async fn chat_handler(
 
         match result {
             Err(ref e) => {
+                let _ = db_clone.set_conversation_run_status(
+                    &conv_clone,
+                    crate::db::ConversationRunStatus::Failed,
+                    Some(e),
+                );
                 log_buffer.push("error", "agent", &format!("Agent 错误: {}", e));
                 let _ = event_tx
                     .send(AgentEvent {
@@ -326,9 +337,19 @@ pub async fn chat_handler(
                     .await;
             }
             Ok(engine::RunOutcome::Done { .. }) => {
+                let _ = db_clone.set_conversation_run_status(
+                    &conv_clone,
+                    crate::db::ConversationRunStatus::Completed,
+                    None,
+                );
                 log_buffer.push("info", "agent", "Agent 完成");
             }
             Ok(engine::RunOutcome::Paused { approval_id }) => {
+                let _ = db_clone.set_conversation_run_status(
+                    &conv_clone,
+                    crate::db::ConversationRunStatus::WaitingApproval,
+                    None,
+                );
                 log_buffer.push(
                     "warn",
                     "agent",
@@ -383,6 +404,11 @@ pub async fn stop_handler(
     if !conv_id.is_empty() {
         if let Some(token) = server.active_tasks.lock().get(conv_id) {
             token.cancel();
+            let _ = server.db.set_conversation_run_status(
+                conv_id,
+                crate::db::ConversationRunStatus::Cancelled,
+                None,
+            );
             return Json(serde_json::json!({"status": "cancelled"}));
         }
     }
@@ -606,6 +632,12 @@ mod tests {
 
         let conversations = server.db.list_conversations().unwrap();
         assert_eq!(conversations.len(), 1);
+        assert_eq!(
+            conversations[0].run_status,
+            crate::db::ConversationRunStatus::Completed
+        );
+        assert!(conversations[0].run_started_at.is_some());
+        assert!(conversations[0].run_finished_at.is_some());
         let persisted = server.db.get_conversation(&conversations[0].id).unwrap();
         assert_eq!(
             persisted
