@@ -12,10 +12,13 @@ describe("Capabilities capability surface", () => {
     expect(capabilitiesPageSource).toContain("aria-selected");
   });
 
-  it("keeps capability management read-only and truthful", () => {
+  it("manages capabilities through their real source instead of inventing registry CRUD", () => {
     expect(capabilitiesPageSource).toContain("ErrorState");
     expect(capabilitiesPageSource).toContain("Skeleton");
     expect(capabilitiesPageSource).toContain("permissions");
+    expect(capabilitiesPageSource).toContain("getCapabilityManagementTarget");
+    expect(capabilitiesPageSource).toContain("新增能力来源");
+    expect(capabilitiesPageSource).toContain("管理来源");
     expect(capabilitiesPageSource).not.toContain("执行能力");
     expect(capabilitiesPageSource).not.toContain("切换启用");
   });
