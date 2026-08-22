@@ -107,7 +107,17 @@ try {
 
     $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
     $checksumPath = "$($installer.FullName).sha256"
-    Set-Content -LiteralPath $checksumPath -Value "$hash  $($installer.Name)" -Encoding Ascii
+    $checksumLine = "$hash  $($installer.Name)$([Environment]::NewLine)"
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($checksumPath, $checksumLine, $utf8WithoutBom)
+
+    $writtenChecksum = [System.IO.File]::ReadAllText(
+        $checksumPath,
+        [System.Text.Encoding]::UTF8
+    ).Trim()
+    if ($writtenChecksum -ne "$hash  $($installer.Name)") {
+        throw "Checksum file verification failed: $checksumPath"
+    }
 
     Write-Host ''
     Write-Host 'Windows release bundle created successfully.'
