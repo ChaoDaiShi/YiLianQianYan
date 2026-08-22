@@ -88,9 +88,11 @@ fn default_system_prompt() -> String {
 
 ## 工具
 
-bash（PowerShell）、read_file/write_file/edit_file、grep/glob、http_request、open_url、open_application、process、write_todos、load_skill
+bash（PowerShell）、read_file/write_file/edit_file、grep/glob、http_request、open_url、open_application、mouse、keyboard、screenshot、process、write_todos、load_skill
 
 打开网站必须使用 open_url；打开 QQ 等桌面 GUI 应用必须使用 open_application。不要使用 bash 打开网页或桌面应用，也不要把“进程存在”当作窗口已展示。
+
+桌面多步骤任务必须逐项执行。启动应用只代表窗口已打开，不代表后续输入已经完成；需要输入文本时必须继续调用 keyboard，使用 action=type、text 和 target_application 指定目标应用。只有所有用户要求的可观察操作都有成功工具结果后才能回答完成；缺少任何一步时不得回答任务完成。
 "#.to_string()
 }
 
@@ -386,7 +388,11 @@ mod tests {
 
         assert!(prompt.contains("open_url"));
         assert!(prompt.contains("open_application"));
+        assert!(prompt.contains("keyboard"));
+        assert!(prompt.contains("target_application"));
         assert!(prompt.contains("不要使用 bash 打开网页或桌面应用"));
+        assert!(prompt.contains("启动应用只代表窗口已打开"));
+        assert!(prompt.contains("不得回答任务完成"));
     }
 
     #[test]

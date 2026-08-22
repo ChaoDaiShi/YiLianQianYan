@@ -105,6 +105,37 @@ fn visible_gui_launches_bind_exact_network_and_desktop_targets() {
 }
 
 #[test]
+fn keyboard_text_input_requires_and_preserves_the_target_application() {
+    assert!(matches!(
+        describe_builtin_tool(
+            "keyboard",
+            &serde_json::json!({"action": "type", "text": "你好世界"})
+        ),
+        Err(DescriptorError::MissingArgument {
+            argument: "target_application",
+            ..
+        })
+    ));
+
+    let descriptor = describe_builtin_tool(
+        "keyboard",
+        &serde_json::json!({
+            "action": "type",
+            "text": "你好世界",
+            "target_application": "Notepad"
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(descriptor.default_risk, RiskLevel::High);
+    assert!(matches!(
+        descriptor.resources.as_slice(),
+        [ResourceDescriptor::Desktop { action, target: Some(target) }]
+            if action == "keyboard_type" && target == "Notepad"
+    ));
+}
+
+#[test]
 fn image_upscale_declares_file_and_network_side_effects() {
     let descriptor =
         describe_builtin_tool("upscale_image", &serde_json::json!({"path": "image.png"})).unwrap();

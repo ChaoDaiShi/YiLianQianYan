@@ -327,6 +327,10 @@ impl Tool for KeyboardTool {
                     "type": "string",
                     "description": "要输入的文本（action=type时使用）"
                 },
+                "target_application": {
+                    "type": "string",
+                    "description": "接收文本的目标应用名称（action=type时必须提供）"
+                },
                 "key": {
                     "type": "string",
                     "description": "按键名（action=press/key_down/key_up时使用），如 return、escape、tab、f1 等"
@@ -446,5 +450,23 @@ impl Tool for KeyboardTool {
                 action
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_type_schema_exposes_a_target_application() {
+        let schema = KeyboardTool.parameters();
+
+        assert_eq!(
+            schema["properties"]["target_application"]["type"],
+            "string"
+        );
+        assert!(schema["properties"]["target_application"]["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("目标应用")));
     }
 }

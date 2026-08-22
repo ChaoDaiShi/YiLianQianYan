@@ -275,7 +275,7 @@ fn builtin_descriptor_profile(
             ),
             _ => return Err(invalid_resources()),
         },
-        "mouse" | "keyboard" => match descriptor.resources.as_slice() {
+        "mouse" => match descriptor.resources.as_slice() {
             [ResourceDescriptor::Desktop {
                 action,
                 target: None,
@@ -287,6 +287,33 @@ fn builtin_descriptor_profile(
                 RiskLevel::High,
                 vec![SideEffectKind::DesktopMutation],
             ),
+            _ => return Err(invalid_resources()),
+        },
+        "keyboard" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Desktop {
+                action,
+                target: Some(target),
+            }] if action == "keyboard_type" && !target.trim().is_empty() => profile(
+                vec![permission(
+                    PermissionId::DesktopInteract,
+                    ResourceScope::DesktopTarget,
+                )],
+                RiskLevel::High,
+                vec![SideEffectKind::DesktopMutation],
+            ),
+            [ResourceDescriptor::Desktop {
+                action,
+                target: None,
+            }] if !action.trim().is_empty() && action != "type" && action != "keyboard_type" => {
+                profile(
+                    vec![permission(
+                        PermissionId::DesktopInteract,
+                        ResourceScope::DesktopTarget,
+                    )],
+                    RiskLevel::High,
+                    vec![SideEffectKind::DesktopMutation],
+                )
+            }
             _ => return Err(invalid_resources()),
         },
         "screenshot" | "windows_list" | "ui_inspect" | "ui_find" => {
@@ -623,7 +650,7 @@ pub fn describe_builtin_tool(
             default_risk: RiskLevel::High,
             side_effects: vec![SideEffectKind::DesktopMutation],
         },
-        "mouse" | "keyboard" => ToolSecurityDescriptor {
+        "mouse" => ToolSecurityDescriptor {
             tool_name: tool_name.to_string(),
             requested_permissions: vec![permission(
                 PermissionId::DesktopInteract,
@@ -638,6 +665,29 @@ pub fn describe_builtin_tool(
             default_risk: RiskLevel::High,
             side_effects: vec![SideEffectKind::DesktopMutation],
         },
+        "keyboard" => {
+            let action = required_string(tool_name, args, "action")?;
+            let (action, target) = if action == "type" {
+                (
+                    "keyboard_type".to_string(),
+                    Some(required_string(tool_name, args, "target_application")?),
+                )
+            } else {
+                (action, None)
+            };
+            ToolSecurityDescriptor {
+                tool_name: tool_name.to_string(),
+                requested_permissions: vec![permission(
+                    PermissionId::DesktopInteract,
+                    ResourceScope::DesktopTarget,
+                )],
+                resources: vec![ResourceDescriptor::Desktop { action, target }],
+                // Raw keyboard input mutates the interactive desktop and must
+                // remain explicitly approved even when the target is known.
+                default_risk: RiskLevel::High,
+                side_effects: vec![SideEffectKind::DesktopMutation],
+            }
+        }
         "screenshot" | "windows_list" | "ui_inspect" | "ui_find" => {
             let target = if tool_name == "ui_find" {
                 Some(
