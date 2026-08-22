@@ -1,28 +1,49 @@
+import { Suspense } from "react";
 import { Outlet } from "react-router-dom";
 import NavRail from "./NavRail";
 import { useTheme } from "../../theme";
+import { APP_CONTENT_VIEWPORT_CLASS_NAME } from "./workspaceLayout";
+import RouteLoadingSurface from "./RouteLoadingSurface";
 
 export default function AppShell() {
-  const { theme } = useTheme();
+  const { theme, resolvedScheme } = useTheme();
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden text-[var(--text)]">
+    <div
+      className="app-shell relative flex h-screen w-screen overflow-hidden text-[var(--text)]"
+      data-color-scheme={resolvedScheme}
+    >
+      <div
+        className="shell-ambient shell-ambient-strong pointer-events-none absolute inset-0 z-0"
+        aria-hidden="true"
+      />
+      <div
+        className="shell-ambient-overlay pointer-events-none absolute inset-0 z-0"
+        aria-hidden="true"
+      />
       {/* Background layer */}
       <div
-        className="absolute inset-0 -z-10 transition-[filter,background] duration-500"
+        className="absolute inset-0 -z-10 transition-[background] duration-500"
         style={{
-          backgroundColor: "var(--bg)",
+          backgroundColor: "var(--bg-app)",
           backgroundImage: "var(--bg-image)",
           backgroundSize: theme.bgMode === "image" ? "cover" : undefined,
           backgroundPosition: "center",
-          filter: `blur(var(--bg-blur)) brightness(var(--bg-brightness))`,
         }}
       />
-      <div className="absolute inset-0 -z-10 bg-[var(--bg)]/40 pointer-events-none" />
+      <div
+        className="pointer-events-none absolute inset-0 -z-10 transition-opacity duration-300"
+        style={{
+          backgroundColor: "var(--shell-overlay)",
+          opacity: theme.bgMode === "image" ? 1 : 0,
+        }}
+      />
 
       <NavRail />
-      <main className="flex-1 flex flex-col min-w-0 relative z-0 animate-page-in">
-        <Outlet />
+      <main className={`${APP_CONTENT_VIEWPORT_CLASS_NAME} workspace-region relative z-10`}>
+        <Suspense fallback={<RouteLoadingSurface />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

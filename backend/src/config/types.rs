@@ -88,7 +88,11 @@ fn default_system_prompt() -> String {
 
 ## 工具
 
-bash（PowerShell）、read_file/write_file/edit_file、grep/glob、http_request、process、write_todos、load_skill
+bash（PowerShell）、read_file/write_file/edit_file、grep/glob、http_request、open_url、open_application、mouse、keyboard、screenshot、process、write_todos、load_skill
+
+打开网站必须使用 open_url；打开 QQ 等桌面 GUI 应用必须使用 open_application。不要使用 bash 打开网页或桌面应用，也不要把“进程存在”当作窗口已展示。
+
+桌面多步骤任务必须逐项执行。启动应用只代表窗口已打开，不代表后续输入已经完成；需要输入文本时必须继续调用 keyboard，使用 action=type、text 和 target_application 指定目标应用。只有所有用户要求的可观察操作都有成功工具结果后才能回答完成；缺少任何一步时不得回答任务完成。
 "#.to_string()
 }
 
@@ -108,16 +112,43 @@ pub struct ModelConfig {
     pub name: String,
     #[serde(default = "default_base_url")]
     pub base_url: String,
-    #[serde(default)]
+    /// Direct API key. Write-only input (LEGACY MIGRATION ONLY); never persisted.
+    #[serde(default, skip_serializing)]
     pub api_key: String,
     #[serde(default = "default_api_key_env")]
     pub api_key_env: String,
+    /// Stable SecretRef for the chat API key (persisted; value lives in the
+    /// OS-backed SecretStore).
+    #[serde(default)]
+    pub api_key_ref: Option<crate::secret::SecretRef>,
+    /// Write-only request signal to clear the stored chat API key.
+    #[serde(default, skip_serializing)]
+    pub clear_api_key: bool,
     #[serde(default)]
     pub temperature: f64,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
     #[serde(default = "default_timeout_ms")]
     pub invoke_timeout_ms: u64,
+    // ── Embedding model (independent from chat) ──
+    /// Embedding model name (empty = not configured).
+    #[serde(default)]
+    pub embedding_model: String,
+    /// Base URL for the embeddings endpoint.
+    #[serde(default)]
+    pub embedding_base_url: String,
+    /// Direct embedding API key. Write-only input (LEGACY MIGRATION ONLY).
+    #[serde(default, skip_serializing)]
+    pub embedding_api_key: String,
+    /// Environment variable that holds the embedding API key.
+    #[serde(default)]
+    pub embedding_api_key_env: String,
+    /// Stable SecretRef for the embedding API key (persisted).
+    #[serde(default)]
+    pub embedding_api_key_ref: Option<crate::secret::SecretRef>,
+    /// Write-only request signal to clear the stored embedding API key.
+    #[serde(default, skip_serializing)]
+    pub clear_embedding_api_key: bool,
 }
 
 impl Default for ModelConfig {
@@ -128,9 +159,17 @@ impl Default for ModelConfig {
             base_url: default_base_url(),
             api_key: String::new(),
             api_key_env: default_api_key_env(),
+            api_key_ref: None,
+            clear_api_key: false,
             temperature: 0.0,
             max_tokens: default_max_tokens(),
             invoke_timeout_ms: default_timeout_ms(),
+            embedding_model: String::new(),
+            embedding_base_url: String::new(),
+            embedding_api_key: String::new(),
+            embedding_api_key_env: String::new(),
+            embedding_api_key_ref: None,
+            clear_embedding_api_key: false,
         }
     }
 }
@@ -146,14 +185,42 @@ impl ModelConfig {
         }
         None
     }
+
+    /// Resolve the embedding API key (independent from chat API key).
+    pub fn resolve_embedding_api_key(&self) -> Option<String> {
+        if !self.embedding_api_key.is_empty() {
+            return Some(self.embedding_api_key.clone());
+        }
+        if !self.embedding_api_key_env.is_empty() {
+            return std::env::var(&self.embedding_api_key_env).ok();
+        }
+        None
+    }
+
+    /// Whether an embedding model is configured.
+    pub fn has_embedding(&self) -> bool {
+        !self.embedding_model.is_empty() && !self.embedding_base_url.is_empty()
+    }
 }
 
-fn default_provider() -> String { "openai".to_string() }
-fn default_model_name() -> String { "deepseek-v4-flash".to_string() }
-fn default_base_url() -> String { "https://api.deepseek.com/v1".to_string() }
-fn default_api_key_env() -> String { "OPENAI_API_KEY".to_string() }
-fn default_max_tokens() -> u32 { 16384 }
-fn default_timeout_ms() -> u64 { 120000 }
+fn default_provider() -> String {
+    "openai".to_string()
+}
+fn default_model_name() -> String {
+    "deepseek-v4-flash".to_string()
+}
+fn default_base_url() -> String {
+    "https://api.deepseek.com/v1".to_string()
+}
+fn default_api_key_env() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+fn default_max_tokens() -> u32 {
+    16384
+}
+fn default_timeout_ms() -> u64 {
+    120000
+}
 
 // ── Permissions ──
 
@@ -182,7 +249,9 @@ impl Default for PermissionsConfig {
     }
 }
 
-fn default_permission_mode() -> PermissionMode { PermissionMode::Ask }
+fn default_permission_mode() -> PermissionMode {
+    PermissionMode::Ask
+}
 fn default_interrupt_on() -> Vec<String> {
     vec![
         "bash".to_string(),
@@ -232,7 +301,9 @@ impl SandboxConfig {
     }
 }
 
-fn default_profile() -> SandboxProfile { SandboxProfile::WorkspaceWrite }
+fn default_profile() -> SandboxProfile {
+    SandboxProfile::WorkspaceWrite
+}
 
 // ── Compaction ──
 
@@ -259,10 +330,18 @@ impl Default for CompactionConfig {
     }
 }
 
-fn default_true() -> bool { true }
-fn default_context_window() -> usize { 200000 }
-fn default_trigger_threshold() -> f64 { 0.8 }
-fn default_keep_recent() -> usize { 20000 }
+fn default_true() -> bool {
+    true
+}
+fn default_context_window() -> usize {
+    200000
+}
+fn default_trigger_threshold() -> f64 {
+    0.8
+}
+fn default_keep_recent() -> usize {
+    20000
+}
 
 // ── Skills ──
 
@@ -296,5 +375,101 @@ impl Default for SubagentsConfig {
         Self {
             directories: vec!["./.agents/agents".to_string()],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_prompt_routes_gui_requests_to_structured_tools() {
+        let prompt = default_system_prompt();
+
+        assert!(prompt.contains("open_url"));
+        assert!(prompt.contains("open_application"));
+        assert!(prompt.contains("keyboard"));
+        assert!(prompt.contains("target_application"));
+        assert!(prompt.contains("不要使用 bash 打开网页或桌面应用"));
+        assert!(prompt.contains("启动应用只代表窗口已打开"));
+        assert!(prompt.contains("不得回答任务完成"));
+    }
+
+    #[test]
+    fn model_config_deserializes_without_embedding_fields() {
+        let json = r#"{
+            "provider": "openai",
+            "name": "deepseek-v4-flash",
+            "base_url": "https://api.deepseek.com/v1",
+            "temperature": 0.0,
+            "max_tokens": 16384,
+            "invoke_timeout_ms": 120000
+        }"#;
+        let config: ModelConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.name, "deepseek-v4-flash");
+        assert!(config.embedding_model.is_empty());
+        assert!(config.embedding_base_url.is_empty());
+        assert!(!config.has_embedding());
+    }
+
+    #[test]
+    fn model_config_with_embedding_fields() {
+        let json = r#"{
+            "provider": "openai",
+            "name": "deepseek-v4-flash",
+            "base_url": "https://api.deepseek.com/v1",
+            "temperature": 0.0,
+            "max_tokens": 16384,
+            "invoke_timeout_ms": 120000,
+            "embedding_model": "text-embedding-3-small",
+            "embedding_base_url": "https://api.openai.com/v1",
+            "embedding_api_key": "sk-embed",
+            "embedding_api_key_env": "EMBED_KEY"
+        }"#;
+        let config: ModelConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.embedding_model, "text-embedding-3-small");
+        assert_eq!(config.embedding_base_url, "https://api.openai.com/v1");
+        assert!(config.has_embedding());
+        assert_eq!(
+            config.resolve_embedding_api_key(),
+            Some("sk-embed".to_string())
+        );
+    }
+
+    #[test]
+    fn embedding_api_key_falls_back_to_env_when_direct_is_empty() {
+        let temp_key = "test-embed-env-key-12345";
+        std::env::set_var("YILIAN_TEST_EMBED_KEY", temp_key);
+        let config = ModelConfig {
+            embedding_api_key: String::new(),
+            embedding_api_key_env: "YILIAN_TEST_EMBED_KEY".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_embedding_api_key(),
+            Some(temp_key.to_string())
+        );
+        std::env::remove_var("YILIAN_TEST_EMBED_KEY");
+    }
+
+    #[test]
+    fn embedding_api_key_env_wins_over_empty_direct() {
+        // No env var set for this one
+        let config = ModelConfig {
+            embedding_api_key: String::new(),
+            embedding_api_key_env: "EMBED_KEY_NOT_SET_XYZ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.resolve_embedding_api_key(), None);
+    }
+
+    #[test]
+    fn has_embedding_requires_both_model_and_base_url() {
+        let config = ModelConfig {
+            embedding_model: "text-embedding-3-small".to_string(),
+            embedding_base_url: String::new(),
+            ..Default::default()
+        };
+        assert!(!config.has_embedding());
     }
 }

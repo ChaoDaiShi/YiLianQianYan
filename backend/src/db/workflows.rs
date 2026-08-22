@@ -2,8 +2,8 @@
 // Workflow persistence — CRUD operations for workflows table
 // ============================================================
 
-use serde::{Deserialize, Serialize};
 use super::Database;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workflow {
@@ -19,7 +19,8 @@ pub struct Workflow {
 }
 
 fn parse_json_field(opt: Option<String>) -> Vec<String> {
-    opt.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    opt.and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 impl Database {
@@ -100,7 +101,10 @@ impl Database {
 
     pub fn delete_workflow(&self, id: &str) -> Result<(), rusqlite::Error> {
         let conn = self.conn();
-        conn.execute("DELETE FROM workflows WHERE id = ?1 AND is_builtin = 0", rusqlite::params![id])?;
+        conn.execute(
+            "DELETE FROM workflows WHERE id = ?1 AND is_builtin = 0",
+            rusqlite::params![id],
+        )?;
         Ok(())
     }
 

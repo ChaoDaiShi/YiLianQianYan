@@ -1,38 +1,132 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import ChatView from "../components/chat/ChatView";
 import ConversationSidebar from "../components/chat/ConversationSidebar";
+import {
+  getDrawerState,
+  getWorkspaceMode,
+  WORKBENCH_VIEWPORT_CLASS_NAME,
+  type WorkspaceDrawer,
+} from "../components/layout/workspaceLayout";
+import { Drawer } from "../components/ui";
+import ExecutionSidebar from "../features/execution/ExecutionSidebar";
 
 export default function ChatPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const conversationId = id || null;
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [workspaceMode, setWorkspaceMode] = useState(() =>
+    getWorkspaceMode(window.innerWidth)
+  );
+  const [conversationDrawerOpen, setConversationDrawerOpen] = useState(false);
+  const [executionDrawerOpen, setExecutionDrawerOpen] = useState(false);
+  const [executionCollapsed, setExecutionCollapsed] = useState(false);
+  const conversationToggleRef = useRef<HTMLButtonElement>(null);
+  const executionToggleRef = useRef<HTMLButtonElement>(null);
 
-  const onConversationChange = (nextId: string | null) => {
-    if (nextId) navigate(`/chat/${nextId}`);
-    else navigate("/chat");
-  };
+  useEffect(() => {
+    const updateMode = () => setWorkspaceMode(getWorkspaceMode(window.innerWidth));
+    window.addEventListener("resize", updateMode);
+    return () => window.removeEventListener("resize", updateMode);
+  }, []);
+
+  useEffect(() => {
+    if (workspaceMode === "full") {
+      setConversationDrawerOpen(false);
+      setExecutionDrawerOpen(false);
+    } else if (workspaceMode === "compact") {
+      setConversationDrawerOpen(false);
+    }
+  }, [workspaceMode]);
+
+  const onConversationChange = useCallback(
+    (nextId: string | null) => {
+      navigate(nextId ? `/chat/${nextId}` : "/chat");
+    },
+    [navigate]
+  );
+
+  const openDrawer = useCallback(
+    (target: WorkspaceDrawer) => {
+      const next = getDrawerState(workspaceMode, target);
+      setConversationDrawerOpen(next.conversationOpen);
+      setExecutionDrawerOpen(next.executionOpen);
+    },
+    [workspaceMode]
+  );
+
+  const conversationSidebar = (onClose?: () => void) => (
+    <ConversationSidebar
+      activeId={conversationId}
+      onSelect={(nextId) => onConversationChange(nextId)}
+      onNew={() => onConversationChange(null)}
+      onClose={onClose}
+    />
+  );
 
   return (
-    <div className="flex h-full">
-      {showSidebar && (
-        <div className="w-64 border-r border-[var(--border)] flex-shrink-0 bg-[var(--panel)]/50 backdrop-blur-sm">
-          <ConversationSidebar
-            activeId={conversationId}
-            onSelect={(cid) => onConversationChange(cid)}
-            onNew={() => onConversationChange(null)}
-          />
+    <div
+      className={`${WORKBENCH_VIEWPORT_CLASS_NAME} page-canvas`}
+      data-chat-view={conversationId ? "conversation" : "home"}
+      data-mode={workspaceMode}
+      data-execution-collapsed={
+        workspaceMode === "full" && executionCollapsed ? "true" : "false"
+      }
+    >
+      {workspaceMode !== "narrow" && (
+        <div className="conversation-region min-h-0 border-r border-[var(--border)]">
+          {conversationSidebar()}
         </div>
       )}
-      <div className="flex-1 flex flex-col min-w-0">
-        <ChatView
-          conversationId={conversationId}
-          onConversationChange={onConversationChange}
-          showSidebar={showSidebar}
-          onToggleSidebar={() => setShowSidebar(!showSidebar)}
-        />
-      </div>
+
+      {workspaceMode === "narrow" && (
+        <Drawer
+          open={conversationDrawerOpen}
+          side="left"
+          title="任务"
+          onClose={() => setConversationDrawerOpen(false)}
+          returnFocusRef={conversationToggleRef}
+          showHeader={false}
+        >
+          {conversationSidebar(() => setConversationDrawerOpen(false))}
+        </Drawer>
+      )}
+
+      <ChatView
+        conversationId={conversationId}
+        onConversationChange={onConversationChange}
+        showConversationToggle={workspaceMode === "narrow"}
+        showExecutionToggle={workspaceMode !== "full"}
+        conversationToggleRef={conversationToggleRef}
+        executionToggleRef={executionToggleRef}
+        onToggleConversations={() => openDrawer("conversations")}
+        onToggleExecution={() => openDrawer("execution")}
+        renderExecution={(controller) =>
+          workspaceMode === "full" ? (
+            <div className="execution-region min-h-0 border-l border-[var(--border)]">
+              <ExecutionSidebar
+                {...controller}
+                collapsed={executionCollapsed}
+                onToggleCollapse={() => setExecutionCollapsed((value) => !value)}
+              />
+            </div>
+          ) : (
+            <Drawer
+              open={executionDrawerOpen}
+              side="right"
+              title="执行轨迹"
+              onClose={() => setExecutionDrawerOpen(false)}
+              returnFocusRef={executionToggleRef}
+              showHeader={false}
+            >
+              <ExecutionSidebar
+                {...controller}
+                onClose={() => setExecutionDrawerOpen(false)}
+              />
+            </Drawer>
+          )
+        }
+      />
     </div>
   );
 }

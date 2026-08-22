@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { PresetId, ThemeConfig } from "./types";
+import type { ColorScheme, PresetId, ThemeConfig, ThemeMode } from "./types";
 import { STORAGE_KEY } from "./types";
 import { DEFAULT_THEME, PRESETS } from "./presets";
 import { applyThemeToDom, sanitizeCustomVars } from "./applyTheme";
@@ -16,7 +16,10 @@ import { clearBgImage, loadBgImage, saveBgImage } from "./bgImageStore";
 
 interface ThemeContextValue {
   theme: ThemeConfig;
+  mode: ThemeMode;
+  resolvedScheme: ColorScheme;
   bgImageUrl: string | null;
+  setMode: (mode: ThemeMode) => void;
   setPreset: (id: PresetId) => void;
   updateTheme: (patch: Partial<ThemeConfig>) => void;
   setBackgroundImage: (dataUrl: string | null) => Promise<void>;
@@ -27,42 +30,111 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+const LEGACY_DARK_PRESETS = new Set([
+  "graphite-pro",
+  "claude-dark",
+  "terminal-green",
+]);
+const VALID_MODES = new Set<ThemeMode>(["system", "light", "dark"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function normalizeStoredTheme(raw: unknown): ThemeConfig {
+  if (!isRecord(raw)) {
+    return {
+      ...DEFAULT_THEME,
+      colors: { ...DEFAULT_THEME.colors },
+      customVars: {},
+    };
+  }
+
+  const rawPresetId = typeof raw.presetId === "string" ? raw.presetId : "";
+  const rawMode = typeof raw.mode === "string" ? raw.mode : "";
+  const mode: ThemeMode = VALID_MODES.has(rawMode as ThemeMode)
+    ? (rawMode as ThemeMode)
+    : rawPresetId === "cyrene-ripple"
+      ? "light"
+      : LEGACY_DARK_PRESETS.has(rawPresetId)
+        ? "dark"
+        : "system";
+  const keepBackgroundImage =
+    raw.bgMode === "image" && raw.bgImageKey === "background";
+
+  return {
+    ...DEFAULT_THEME,
+    presetId: "cyrene-ripple",
+    mode,
+    bgMode: keepBackgroundImage ? "image" : "solid",
+    bgImageKey: keepBackgroundImage ? "background" : null,
+    colors: { ...DEFAULT_THEME.colors },
+    customVars: {},
+  };
+}
+
+export function resolveColorScheme(
+  mode: ThemeMode,
+  systemPrefersDark: boolean,
+): ColorScheme {
+  if (mode === "system") return systemPrefersDark ? "dark" : "light";
+  return mode;
+}
+
+function readSystemPrefersDark(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
 function loadStored(): ThemeConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_THEME;
-    const parsed = JSON.parse(raw) as ThemeConfig;
-    return {
-      ...DEFAULT_THEME,
-      ...parsed,
-      colors: { ...DEFAULT_THEME.colors, ...parsed.colors },
-      customVars: sanitizeCustomVars(parsed.customVars),
-    };
+    if (!raw) return normalizeStoredTheme(DEFAULT_THEME);
+    return normalizeStoredTheme(JSON.parse(raw));
   } catch {
-    return DEFAULT_THEME;
+    return normalizeStoredTheme(DEFAULT_THEME);
   }
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeConfig>(loadStored);
   const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(readSystemPrefersDark);
+  const resolvedScheme = resolveColorScheme(theme.mode, systemPrefersDark);
+
+  useEffect(() => {
+    if (theme.mode !== "system" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setSystemPrefersDark(event.matches);
+    };
+    setSystemPrefersDark(media.matches);
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, [theme.mode]);
 
   useEffect(() => {
     loadBgImage().then((url) => {
       setBgImageUrl(url);
-      applyThemeToDom(theme, url);
+      applyThemeToDom(theme, resolvedScheme, url);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    applyThemeToDom(theme, bgImageUrl);
+    applyThemeToDom(theme, resolvedScheme, bgImageUrl);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(theme));
-  }, [theme, bgImageUrl]);
+  }, [theme, resolvedScheme, bgImageUrl]);
 
   const setPreset = useCallback((id: PresetId) => {
+    if (id === "custom") return;
     const preset = PRESETS[id];
-    if (preset) setTheme({ ...preset });
+    setTheme({ ...preset, colors: { ...preset.colors }, customVars: {} });
+  }, []);
+
+  const setMode = useCallback((mode: ThemeMode) => {
+    setTheme((current) => ({ ...current, mode }));
   }, []);
 
   const updateTheme = useCallback((patch: Partial<ThemeConfig>) => {
@@ -81,16 +153,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (dataUrl) {
       await saveBgImage(dataUrl);
       setBgImageUrl(dataUrl);
-      setTheme((prev) => ({ ...prev, bgMode: "image", bgImageKey: "background", presetId: "custom" }));
+      setTheme((prev) => ({ ...prev, bgMode: "image", bgImageKey: "background" }));
     } else {
       await clearBgImage();
       setBgImageUrl(null);
-      setTheme((prev) => ({ ...prev, bgMode: "solid", bgImageKey: null, presetId: "custom" }));
+      setTheme((prev) => ({ ...prev, bgMode: "solid", bgImageKey: null }));
     }
   }, []);
 
   const resetTheme = useCallback(() => {
-    setTheme(DEFAULT_THEME);
+    setTheme(normalizeStoredTheme(DEFAULT_THEME));
     clearBgImage().then(() => setBgImageUrl(null));
   }, []);
 
@@ -98,13 +170,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const importTheme = useCallback((json: string) => {
     try {
-      const parsed = JSON.parse(json) as ThemeConfig;
-      setTheme({
-        ...DEFAULT_THEME,
-        ...parsed,
-        colors: { ...DEFAULT_THEME.colors, ...parsed.colors },
-        customVars: sanitizeCustomVars(parsed.customVars),
-      });
+      setTheme(normalizeStoredTheme(JSON.parse(json)));
       return true;
     } catch {
       return false;
@@ -114,7 +180,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       theme,
+      mode: theme.mode,
+      resolvedScheme,
       bgImageUrl,
+      setMode,
       setPreset,
       updateTheme,
       setBackgroundImage,
@@ -122,7 +191,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       exportTheme,
       importTheme,
     }),
-    [theme, bgImageUrl, setPreset, updateTheme, setBackgroundImage, resetTheme, exportTheme, importTheme]
+    [theme, resolvedScheme, bgImageUrl, setMode, setPreset, updateTheme, setBackgroundImage, resetTheme, exportTheme, importTheme]
   );
 
   return createElement(ThemeContext.Provider, { value }, children);

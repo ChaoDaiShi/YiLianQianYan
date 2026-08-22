@@ -1,69 +1,161 @@
-import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { listConversations, deleteConversation } from "../../api/client";
+import { useEffect, useMemo, useState } from "react";
+import { MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
+import { deleteConversation, listConversations } from "../../api/client";
+import type { ConversationSummary } from "../../types";
 import { Button, EmptyState } from "../ui";
+import { deriveTaskDisplayTitle, looksLikeCommand } from "./taskTitle";
 
 interface Props {
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onClose?: () => void;
 }
 
-export default function ConversationSidebar({ activeId, onSelect, onNew }: Props) {
-  const [convs, setConvs] = useState<any[]>([]);
+export default function ConversationSidebar({
+  activeId,
+  onSelect,
+  onNew,
+  onClose,
+}: Props) {
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
-    listConversations().then((c) => {
-      if (c) setConvs(c);
-    });
-    const t = setInterval(
-      () =>
-        listConversations().then((c) => {
-          if (c) setConvs(c);
-        }),
-      5000
-    );
-    return () => clearInterval(t);
+    let mounted = true;
+    const refresh = () => {
+      listConversations().then((items) => {
+        if (mounted && items) setConversations(items as ConversationSummary[]);
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
+  const filtered = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase();
+    if (!keyword) return conversations;
+    return conversations.filter((conversation) =>
+      (conversation.title || "新任务").toLocaleLowerCase().includes(keyword)
+    );
+  }, [conversations, query]);
+
+  const selectConversation = (id: string) => {
+    onSelect(id);
+    onClose?.();
+  };
+
+  const createNew = () => {
+    onNew();
+    onClose?.();
+  };
+
+  const removeConversation = async (conversation: ConversationSummary) => {
+    const deleted = await deleteConversation(conversation.id);
+    if (!deleted) return;
+    setConversations((current) =>
+      current.filter((item) => item.id !== conversation.id)
+    );
+    if (activeId === conversation.id) createNew();
+  };
+
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-3">
-        <Button onClick={onNew} className="w-full" size="md">
-          <Plus className="w-4 h-4" />
-          新对话
-        </Button>
-      </div>
-      <div className="flex-1 overflow-y-auto px-2 scrollbar-thin">
-        {convs.length === 0 ? (
-          <EmptyState title="暂无对话" description="点击上方开始新对话" className="py-10" />
-        ) : (
-          convs.map((c) => (
-            <div
-              key={c.id}
-              onClick={() => onSelect(c.id)}
-              className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer text-sm mb-0.5 transition-colors ${
-                activeId === c.id
-                  ? "bg-[var(--accent)]/15 text-[var(--accent)]"
-                  : "hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
-              }`}
-            >
-              <span className="truncate flex-1">{c.title || "新对话"}</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deleteConversation(c.id);
-                  setConvs((p) => p.filter((x) => x.id !== c.id));
-                }}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/20 text-[var(--text-faint)] hover:text-[var(--danger)]"
-                title="删除"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))
+    <aside className="glass-rail conversation-sidebar flex h-full min-h-0 min-w-0 flex-col bg-[var(--panel)]">
+      <div className="conversation-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
+        <MessageSquare className="h-4 w-4 text-[var(--accent)]" />
+        <h2 className="text-sm font-semibold">任务</h2>
+        <span className="conversation-sidebar-motif" aria-hidden="true" />
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto rounded-md p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
+            aria-label="关闭任务列表"
+          >
+            <X className="h-4 w-4" />
+          </button>
         )}
       </div>
-    </div>
+
+      <div className="conversation-sidebar-actions space-y-2 border-b border-[var(--border)] p-3">
+        <Button
+          type="button"
+          onClick={createNew}
+          variant="secondary"
+          className="conversation-create-button h-10 w-full"
+          size="md"
+        >
+          <Plus className="h-4 w-4" />
+          新建任务
+        </Button>
+        <label className="relative block">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-faint)]" />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索任务"
+            className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] py-2 pl-9 pr-3 text-xs text-[var(--text)] placeholder:text-[var(--text-faint)]"
+          />
+        </label>
+      </div>
+
+      <div className="conversation-list scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2">
+        {filtered.length === 0 ? (
+          <EmptyState
+            title={query ? "没有匹配的任务" : "暂无任务"}
+            description={query ? "尝试更换搜索词" : "从上方新建一个任务"}
+            className="py-10"
+          />
+        ) : (
+          <div className="space-y-1">
+            {filtered.map((conversation) => {
+              const active = activeId === conversation.id;
+              const displayTitle = deriveTaskDisplayTitle(conversation.title);
+              const isCommand = looksLikeCommand(conversation.title ?? "");
+              return (
+                <div
+                  key={conversation.id}
+                  className={`conversation-row ${active ? "conversation-row-active" : ""} group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                    active
+                      ? "border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--text)]"
+                      : "border-transparent text-[var(--text-muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
+                  }`}
+                >
+                  {active && (
+                    <span className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-[var(--accent)]" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => selectConversation(conversation.id)}
+                    className="min-w-0 flex-1 truncate whitespace-nowrap text-left"
+                    title={
+                      isCommand
+                        ? `命令：${conversation.title}`
+                        : conversation.title || "新任务"
+                    }
+                  >
+                    {displayTitle}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeConversation(conversation)}
+                    className="rounded p-1 text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] focus:opacity-100 group-hover:opacity-100"
+                    title="删除任务"
+                    aria-label={`删除${displayTitle}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </aside>
   );
 }

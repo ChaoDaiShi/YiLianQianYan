@@ -1,72 +1,94 @@
 import { useState } from "react";
 import {
-  Terminal,
+  BookOpen,
+  Camera,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CircleX,
+  Cog,
   FileText,
-  Pencil,
-  Search,
   FolderSearch,
   Globe,
-  BookOpen,
-  ListTodo,
-  Cog,
-  Camera,
-  MousePointer,
   Keyboard,
-  Wrench,
+  ListTodo,
+  LoaderCircle,
+  MousePointer,
+  Pencil,
+  Search,
+  ShieldAlert,
+  Terminal,
 } from "lucide-react";
-import { Badge } from "../ui";
+import type { ToolCallRecord } from "../../types";
+import { presentExecutionError } from "./errorDisplay";
+import {
+  formatElapsed,
+  formatToolActivity,
+  formatToolDisplayName,
+  formatToolResultSummary,
+  formatToolStatus,
+} from "./toolDisplay";
 
 interface ToolCallCardProps {
   toolCallId: string;
   name: string;
   args: Record<string, unknown>;
-  status: "running" | "success" | "error";
+  status: ToolCallRecord["status"];
   result?: string;
+  verificationStatus?: ToolCallRecord["verificationStatus"];
+  verificationReason?: string;
+  riskLevel?: ToolCallRecord["riskLevel"];
+  approvalStatus?: ToolCallRecord["approvalStatus"];
+  startedAt?: number;
+  finishedAt?: number;
+  compact?: boolean;
 }
 
-const TOOL_META: Record<string, { label: string; icon: React.ReactNode }> = {
-  bash: { label: "执行命令", icon: <Terminal className="w-3.5 h-3.5" /> },
-  read_file: { label: "读取文件", icon: <FileText className="w-3.5 h-3.5" /> },
-  write_file: { label: "写入文件", icon: <Pencil className="w-3.5 h-3.5" /> },
-  edit_file: { label: "编辑文件", icon: <Pencil className="w-3.5 h-3.5" /> },
-  grep: { label: "搜索内容", icon: <Search className="w-3.5 h-3.5" /> },
-  glob: { label: "查找文件", icon: <FolderSearch className="w-3.5 h-3.5" /> },
-  http_request: { label: "HTTP 请求", icon: <Globe className="w-3.5 h-3.5" /> },
-  load_skill: { label: "加载技能", icon: <BookOpen className="w-3.5 h-3.5" /> },
-  write_todos: { label: "更新计划", icon: <ListTodo className="w-3.5 h-3.5" /> },
-  process: { label: "进程管理", icon: <Cog className="w-3.5 h-3.5" /> },
-  screenshot: { label: "截图", icon: <Camera className="w-3.5 h-3.5" /> },
-  mouse: { label: "鼠标", icon: <MousePointer className="w-3.5 h-3.5" /> },
-  keyboard: { label: "键盘", icon: <Keyboard className="w-3.5 h-3.5" /> },
+const TOOL_ICONS: Record<string, React.ReactNode> = {
+  bash: <Terminal className="h-4 w-4" />,
+  powershell: <Terminal className="h-4 w-4" />,
+  read_file: <FileText className="h-4 w-4" />,
+  write_file: <Pencil className="h-4 w-4" />,
+  edit_file: <Pencil className="h-4 w-4" />,
+  grep: <Search className="h-4 w-4" />,
+  glob: <FolderSearch className="h-4 w-4" />,
+  http_request: <Globe className="h-4 w-4" />,
+  load_skill: <BookOpen className="h-4 w-4" />,
+  write_todos: <ListTodo className="h-4 w-4" />,
+  process: <Cog className="h-4 w-4" />,
+  screenshot: <Camera className="h-4 w-4" />,
+  mouse: <MousePointer className="h-4 w-4" />,
+  keyboard: <Keyboard className="h-4 w-4" />,
 };
 
-const TOOL_ARG_DISPLAY: Record<string, (args: Record<string, unknown>) => string> = {
-  bash: (args) => (args.command as string) || "",
-  read_file: (args) => (args.path as string) || "",
-  write_file: (args) => (args.path as string) || "",
-  edit_file: (args) => `${args.path}: "${args.find}" → "${args.replace}"`,
-  grep: (args) => (args.pattern as string) || "",
-  glob: (args) => (args.pattern as string) || "",
-  http_request: (args) => `${args.method || "GET"} ${args.url || ""}`,
-  screenshot: (args) => {
-    const parts: string[] = [];
-    if (args.monitor !== undefined) parts.push(`显示器${args.monitor}`);
-    if (args.x !== undefined && args.y !== undefined) {
-      parts.push(`区域(${args.x},${args.y})`);
-      if (args.width && args.height) parts.push(`${args.width}x${args.height}`);
-    }
-    return parts.length > 0 ? parts.join(" ") : "全屏";
-  },
-  mouse: (args) => (args.action as string) || "",
-  keyboard: (args) => (args.action as string) || "",
-};
+function statusTone(status: ToolCallRecord["status"]): string {
+  if (status === "success") return "text-[var(--success)]";
+  if (status === "error") return "text-[var(--danger)]";
+  if (status === "blocked") return "text-[var(--accent-gold)]";
+  return "text-[var(--accent-blue)]";
+}
+
+function statusIcon(status: ToolCallRecord["status"]) {
+  if (status === "success") return <CheckCircle2 className="h-4 w-4" />;
+  if (status === "error") return <CircleX className="h-4 w-4" />;
+  if (status === "blocked") return <ShieldAlert className="h-4 w-4" />;
+  return <LoaderCircle className="h-4 w-4 animate-pulse" />;
+}
+
+function formatValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
 
 export function ToolResultContent({ result }: { result: string }) {
-  const lines = result.split("\n");
   const imageLines: string[] = [];
   const textLines: string[] = [];
 
-  for (const line of lines) {
+  for (const line of result.split("\n")) {
     if (line.startsWith("data:image/")) imageLines.push(line);
     else textLines.push(line);
   }
@@ -74,20 +96,19 @@ export function ToolResultContent({ result }: { result: string }) {
   return (
     <div className="mt-1">
       {imageLines.length > 0 && (
-        <div className="space-y-2 mb-2">
-          {imageLines.map((uri, i) => (
+        <div className="mb-2 space-y-2">
+          {imageLines.map((uri, index) => (
             <img
-              key={i}
+              key={index}
               src={uri}
-              alt={`截图 ${i + 1}`}
-              className="max-w-full rounded border border-[var(--border)]"
-              style={{ maxHeight: "400px" }}
+              alt={`工具结果截图 ${index + 1}`}
+              className="max-h-[400px] max-w-full rounded-lg border border-[var(--border-soft)]"
             />
           ))}
         </div>
       )}
-      {textLines.length > 0 && (
-        <pre className="text-xs p-2 rounded bg-[var(--input-bg)] border border-[var(--border)] overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap font-mono text-[var(--text-muted)]">
+      {textLines.some(Boolean) && (
+        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] p-3 font-mono text-xs text-[var(--text-secondary)]">
           {textLines.join("\n")}
         </pre>
       )}
@@ -96,52 +117,164 @@ export function ToolResultContent({ result }: { result: string }) {
 }
 
 export default function ToolCallCard({
+  toolCallId,
   name,
   args,
   status,
   result,
+  verificationStatus = "not_requested",
+  verificationReason,
+  riskLevel,
+  approvalStatus,
+  startedAt,
+  finishedAt,
+  compact = false,
 }: ToolCallCardProps) {
-  const [expanded, setExpanded] = useState(name === "screenshot");
-  const meta = TOOL_META[name] || { label: name, icon: <Wrench className="w-3.5 h-3.5" /> };
-  const argDisplay = TOOL_ARG_DISPLAY[name]?.(args) || JSON.stringify(args);
+  const [expanded, setExpanded] = useState(false);
+  const label = formatToolDisplayName(name);
+  const isBlocked = status === "blocked" || approvalStatus === "pending";
+  const effectiveStatus = isBlocked ? "blocked" : status;
+  const technicalArgs = formatValue(args);
+  const elapsed = startedAt !== undefined
+    ? formatElapsed(startedAt, finishedAt ?? Date.now())
+    : null;
+  const verificationLabel =
+    verificationStatus === "passed"
+      ? "已验证"
+      : verificationStatus === "failed"
+        ? "验证失败"
+        : verificationStatus === "pending"
+          ? "验证中"
+          : null;
+  const errorPresentation =
+    effectiveStatus === "error" && result
+      ? presentExecutionError(result)
+      : null;
 
   return (
-    <div className="mb-2 ml-4 border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--panel)]/60">
+    <article
+      className={
+        "conversation-tool-card tool-card-status-" + effectiveStatus +
+        " overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] " +
+        (compact ? "mb-2" : "mb-3")
+      }
+      data-status={effectiveStatus}
+    >
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-[var(--panel-hover)] transition-colors"
+        type="button"
+        onClick={() => setExpanded((open) => !open)}
+        className="flex w-full items-start gap-3 px-3.5 py-3 text-left transition-colors duration-[var(--motion-fast)] hover:bg-[var(--surface-hover)]"
+        aria-expanded={expanded}
+        aria-controls={"tool-details-" + toolCallId}
+        aria-label={(expanded ? "收起" : "查看") + "技术详情：" + label}
       >
-        <span className="flex-shrink-0">
-          {status === "running" && (
-            <span className="inline-block w-3 h-3 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+        <span className="tool-card-icon-well shrink-0">
+          {TOOL_ICONS[name] || <Terminal className="h-4 w-4" />}
+        </span>
+        <span className={"tool-card-status-icon mt-0.5 shrink-0 " + statusTone(effectiveStatus)}>
+          {statusIcon(effectiveStatus)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-sm font-medium text-[var(--text-primary)]">
+              {formatToolStatus(effectiveStatus)}
+            </span>
+            <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+              {label}
+            </span>
+            {(riskLevel === "high" || riskLevel === "critical") && (
+              <ShieldAlert
+                className="h-3.5 w-3.5 text-[var(--accent-gold)]"
+                aria-label="高风险操作"
+              />
+            )}
+          </span>
+          <span className="tool-card-summary mt-1 block truncate text-xs text-[var(--text-secondary)]">
+            {effectiveStatus === "running"
+              ? formatToolActivity(name, args)
+              : effectiveStatus === "success"
+                ? formatToolResultSummary(result)
+                : effectiveStatus === "blocked"
+                  ? "小昔涟正在等待你的许可"
+                  : errorPresentation?.message ||
+                    "这个操作没有成功，请展开错误日志了解原因。"}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2 text-[var(--text-faint)]">
+          {elapsed && <span className="hidden text-[10px] sm:inline">{elapsed}</span>}
+          {expanded ? (
+            <ChevronUp className="h-4 w-4" />
+          ) : (
+            <ChevronDown className="h-4 w-4" />
           )}
-          {status === "success" && <Badge tone="success">✓</Badge>}
-          {status === "error" && <Badge tone="danger">✗</Badge>}
         </span>
-        <span className="text-[var(--accent)]">{meta.icon}</span>
-        <span className="font-medium font-mono text-xs">{meta.label}</span>
-        <span className="text-[var(--text-faint)] truncate flex-1 text-left text-xs font-mono">
-          {argDisplay}
-        </span>
-        <span className="text-[var(--text-faint)] text-xs">{expanded ? "收起" : "展开"}</span>
       </button>
 
       {expanded && (
-        <div className="px-3 py-2 border-t border-[var(--border)] bg-[var(--panel-2)]/50">
-          <div className="mb-2">
-            <span className="text-xs font-medium text-[var(--text-muted)]">参数</span>
-            <pre className="text-xs mt-1 p-2 rounded bg-[var(--input-bg)] border border-[var(--border)] overflow-x-auto font-mono">
-              {JSON.stringify(args, null, 2)}
-            </pre>
-          </div>
-          {result && (
+        <div
+          id={"tool-details-" + toolCallId}
+          className="tool-card-details border-t border-[var(--border-soft)] bg-[var(--surface-muted)] px-3.5 py-3"
+        >
+          <dl className="space-y-2 text-xs">
             <div>
-              <span className="text-xs font-medium text-[var(--text-muted)]">结果</span>
-              <ToolResultContent result={result} />
+              <dt className="text-[var(--text-faint)]">Tool Name</dt>
+              <dd className="mt-0.5 break-all font-mono text-[var(--text-secondary)]">
+                {name}
+              </dd>
             </div>
-          )}
+            <div>
+              <dt className="text-[var(--text-faint)]">Tool Call ID</dt>
+              <dd className="mt-0.5 break-all font-mono text-[var(--text-secondary)]">
+                {toolCallId}
+              </dd>
+            </div>
+            {typeof args.command === "string" && (
+              <div>
+                <dt className="text-[var(--text-faint)]">Command</dt>
+                <dd className="mt-0.5 overflow-x-auto whitespace-pre-wrap rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2 font-mono text-[var(--text-secondary)]">
+                  {args.command}
+                </dd>
+              </div>
+            )}
+            <div>
+              <dt className="text-[var(--text-faint)]">Arguments</dt>
+              <dd className="mt-0.5 overflow-x-auto whitespace-pre-wrap rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2 font-mono text-[var(--text-secondary)]">
+                {technicalArgs}
+              </dd>
+            </div>
+            {elapsed && (
+              <div>
+                <dt className="text-[var(--text-faint)]">执行耗时</dt>
+                <dd className="mt-0.5 text-[var(--text-secondary)]">{elapsed}</dd>
+              </div>
+            )}
+            {verificationLabel && (
+              <div>
+                <dt className="text-[var(--text-faint)]">验证状态</dt>
+                <dd className="mt-0.5 text-[var(--text-secondary)]">
+                  {verificationLabel}
+                  {verificationReason ? "：" + verificationReason : ""}
+                </dd>
+              </div>
+            )}
+            {result && effectiveStatus !== "blocked" && (
+              <div>
+                <dt className="text-[var(--text-faint)]">
+                  {effectiveStatus === "error" ? "错误日志" : "Raw Result"}
+                </dt>
+                <dd>
+                  <ToolResultContent result={result} />
+                </dd>
+              </div>
+            )}
+            {effectiveStatus === "blocked" && (
+              <div className="rounded-lg border border-[var(--warning-border)] bg-[var(--warning-soft)] px-3 py-2 text-[var(--warning-fg)]">
+                该操作等待用户确认，尚未执行。
+              </div>
+            )}
+          </dl>
         </div>
       )}
-    </div>
+    </article>
   );
 }

@@ -47,13 +47,14 @@ pub struct UpdateWorkflowRequest {
 // ── Handlers ──
 
 /// GET /api/workflows — list all workflows + active ID
-pub async fn list_workflows(
-    State(server): State<Arc<AppServer>>,
-) -> Json<WorkflowListResponse> {
+pub async fn list_workflows(State(server): State<Arc<AppServer>>) -> Json<WorkflowListResponse> {
     let workflows = server.db.list_workflows().unwrap_or_default();
     let active_id = server.db.get_active_workflow_id().unwrap_or(None);
 
-    Json(WorkflowListResponse { workflows, active_id })
+    Json(WorkflowListResponse {
+        workflows,
+        active_id,
+    })
 }
 
 /// GET /api/workflows/:id — get single workflow
@@ -61,7 +62,9 @@ pub async fn get_workflow(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<Workflow>, String> {
-    server.db.get_workflow(&id)
+    server
+        .db
+        .get_workflow(&id)
         .map_err(|e| format!("查询失败: {}", e))?
         .map(Json)
         .ok_or("工作流不存在".to_string())
@@ -85,7 +88,9 @@ pub async fn create_workflow(
         updated_at: now,
     };
 
-    server.db.create_workflow(&wf)
+    server
+        .db
+        .create_workflow(&wf)
         .map_err(|e| format!("创建失败: {}", e))?;
 
     Ok(Json(wf))
@@ -97,7 +102,9 @@ pub async fn update_workflow(
     Path(id): Path<String>,
     Json(body): Json<UpdateWorkflowRequest>,
 ) -> Result<Json<Workflow>, String> {
-    let existing = server.db.get_workflow(&id)
+    let existing = server
+        .db
+        .get_workflow(&id)
         .map_err(|e| format!("查询失败: {}", e))?
         .ok_or("工作流不存在")?;
 
@@ -108,13 +115,17 @@ pub async fn update_workflow(
         description: body.description.unwrap_or(existing.description),
         nodes: body.nodes.unwrap_or(existing.nodes),
         tags: body.tags.unwrap_or(existing.tags),
-        system_prompt_extra: body.system_prompt_extra.unwrap_or(existing.system_prompt_extra),
+        system_prompt_extra: body
+            .system_prompt_extra
+            .unwrap_or(existing.system_prompt_extra),
         is_builtin: existing.is_builtin,
         created_at: existing.created_at,
         updated_at: now,
     };
 
-    server.db.update_workflow(&id, &updated)
+    server
+        .db
+        .update_workflow(&id, &updated)
         .map_err(|e| format!("更新失败: {}", e))?;
 
     Ok(Json(updated))
@@ -125,7 +136,9 @@ pub async fn delete_workflow(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, String> {
-    let existing = server.db.get_workflow(&id)
+    let existing = server
+        .db
+        .get_workflow(&id)
         .map_err(|e| format!("查询失败: {}", e))?
         .ok_or("工作流不存在")?;
 
@@ -133,7 +146,9 @@ pub async fn delete_workflow(
         return Err("内置工作流不可删除".to_string());
     }
 
-    server.db.delete_workflow(&id)
+    server
+        .db
+        .delete_workflow(&id)
         .map_err(|e| format!("删除失败: {}", e))?;
 
     // If the deleted workflow was the active one, clear it
@@ -152,11 +167,15 @@ pub async fn activate_workflow(
     Path(id): Path<String>,
 ) -> Result<Json<ActivateResponse>, String> {
     // Verify workflow exists
-    server.db.get_workflow(&id)
+    server
+        .db
+        .get_workflow(&id)
         .map_err(|e| format!("查询失败: {}", e))?
         .ok_or("工作流不存在")?;
 
-    server.db.set_active_workflow_id(&id)
+    server
+        .db
+        .set_active_workflow_id(&id)
         .map_err(|e| format!("激活失败: {}", e))?;
 
     Ok(Json(ActivateResponse { active_id: id }))

@@ -4,7 +4,7 @@ export default function Spinner({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "w-5 h-5 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin",
+        "h-5 w-5 animate-spin rounded-full border-2 border-[var(--border-soft)] border-t-[var(--accent-primary)]",
         className
       )}
       role="status"

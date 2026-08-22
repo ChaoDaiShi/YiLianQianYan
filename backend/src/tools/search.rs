@@ -7,6 +7,7 @@ use regex::Regex;
 use std::path::Path;
 
 use super::trait_def::{Tool, ToolResult};
+use crate::utils::text::truncate_chars;
 
 // ── grep ──
 
@@ -16,17 +17,24 @@ pub struct GrepTool {
 
 impl GrepTool {
     pub fn new(workspace_root: &str) -> Self {
-        Self { workspace_root: workspace_root.to_string() }
+        Self {
+            workspace_root: workspace_root.to_string(),
+        }
     }
 
     fn should_skip_dir(name: &str) -> bool {
-        matches!(name, "node_modules" | ".git" | "target" | "dist" | ".next" | "__pycache__" | ".venv")
+        matches!(
+            name,
+            "node_modules" | ".git" | "target" | "dist" | ".next" | "__pycache__" | ".venv"
+        )
     }
 }
 
 #[async_trait]
 impl Tool for GrepTool {
-    fn name(&self) -> &str { "grep" }
+    fn name(&self) -> &str {
+        "grep"
+    }
 
     fn description(&self) -> &str {
         "在工作区内使用正则表达式搜索文件内容。自动跳过node_modules/.git/target等目录。"
@@ -130,14 +138,31 @@ impl GrepTool {
 
         for entry in entries.flatten() {
             let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+            // Never follow symlinks / junctions / reparse points: a symlink can
+            // point outside the (gateway-authorized) search root.
+            if file_type.is_symlink() {
+                continue;
+            }
             let name = path.file_name().unwrap_or_default().to_string_lossy();
 
-            if path.is_dir() {
+            if file_type.is_dir() {
                 if Self::should_skip_dir(&name) {
                     continue;
                 }
-                Self::walk_dir(&path, regex, glob_filter, results, file_count, match_count, depth + 1)?;
-            } else if path.is_file() {
+                Self::walk_dir(
+                    &path,
+                    regex,
+                    glob_filter,
+                    results,
+                    file_count,
+                    match_count,
+                    depth + 1,
+                )?;
+            } else if file_type.is_file() {
                 // Apply glob filter if specified
                 if let Some(glob) = glob_filter {
                     let path_str = path.to_string_lossy();
@@ -153,15 +178,9 @@ impl GrepTool {
                     for (line_num, line) in content.lines().enumerate() {
                         if regex.is_match(line) {
                             *match_count += 1;
-                            let relative = path
-                                .strip_prefix(Path::new(""))
-                                .unwrap_or(&path)
-                                .display();
-                            let preview = if line.len() > 200 {
-                                format!("{}...", &line[..200])
-                            } else {
-                                line.to_string()
-                            };
+                            let relative =
+                                path.strip_prefix(Path::new("")).unwrap_or(&path).display();
+                            let preview = truncate_chars(line, 200);
                             results.push(format!("{}:{}: {}", relative, line_num + 1, preview));
 
                             if results.len() >= 100 {
@@ -185,13 +204,17 @@ pub struct GlobTool {
 
 impl GlobTool {
     pub fn new(workspace_root: &str) -> Self {
-        Self { workspace_root: workspace_root.to_string() }
+        Self {
+            workspace_root: workspace_root.to_string(),
+        }
     }
 }
 
 #[async_trait]
 impl Tool for GlobTool {
-    fn name(&self) -> &str { "glob" }
+    fn name(&self) -> &str {
+        "glob"
+    }
 
     fn description(&self) -> &str {
         "使用glob模式匹配文件路径。用于查找文件名匹配特定模式的文件。"
@@ -231,7 +254,11 @@ impl Tool for GlobTool {
         };
 
         // Build full glob pattern
-        let full_pattern = format!("{}/{}", search_root.display(), pattern_str.trim_start_matches('/'));
+        let full_pattern = format!(
+            "{}/{}",
+            search_root.display(),
+            pattern_str.trim_start_matches('/')
+        );
 
         let mut results = Vec::new();
         let mut count = 0;
@@ -240,6 +267,11 @@ impl Tool for GlobTool {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("无效的glob模式: {}", e)),
         };
+
+        // Canonical containment root: every returned candidate must resolve to
+        // a real path within this root (symlink/junction escape → skip).
+        let canonical_root =
+            std::fs::canonicalize(&search_root).unwrap_or_else(|_| search_root.clone());
 
         let glob_iter = match glob::glob(&full_pattern) {
             Ok(paths) => paths,
@@ -255,6 +287,13 @@ impl Tool for GlobTool {
                     || path_str.contains("/dist/")
                 {
                     continue;
+                }
+                // Containment: resolve the real path and require it to be within
+                // the canonical search root.
+                if let Ok(real) = std::fs::canonicalize(&path) {
+                    if !crate::safety::is_within_root(&canonical_root, &real) {
+                        continue;
+                    }
                 }
                 results.push(path_str);
                 count += 1;

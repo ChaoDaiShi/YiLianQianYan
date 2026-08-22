@@ -6,7 +6,9 @@ import {
   deleteMemory,
   getMemoryStats,
   extractMemories,
+  reindexMemories,
   type MemoryRecord,
+  type MemoryReindexResult,
   type MemoryStats,
 } from "../api/client";
 
@@ -15,6 +17,8 @@ interface MemoryStore {
   stats: MemoryStats | null;
   isLoading: boolean;
   error: string | null;
+  isReindexing: boolean;
+  reindexResult: MemoryReindexResult | null;
 
   // Actions
   loadMemories: (query?: { category?: string; source?: string; q?: string }) => Promise<void>;
@@ -23,6 +27,7 @@ interface MemoryStore {
   removeMemory: (id: string) => Promise<void>;
   loadStats: () => Promise<void>;
   triggerExtraction: (conversationId?: string) => Promise<void>;
+  reindexMemoriesAction: () => Promise<void>;
 }
 
 export const useMemoryStore = create<MemoryStore>((set, get) => ({
@@ -30,6 +35,8 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
   stats: null,
   isLoading: false,
   error: null,
+  isReindexing: false,
+  reindexResult: null,
 
   loadMemories: async (query) => {
     set({ isLoading: true, error: null });
@@ -78,5 +85,20 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
     // Reload after extraction
     get().loadMemories();
     get().loadStats();
+  },
+
+  reindexMemoriesAction: async () => {
+    set({ isReindexing: true, reindexResult: null });
+    try {
+      const result = await reindexMemories();
+      set({
+        reindexResult: result ?? { ok: false, error: "reindex request failed" },
+      });
+      await Promise.all([get().loadMemories(), get().loadStats()]);
+    } catch (e) {
+      set({ reindexResult: { ok: false, error: String(e) } });
+    } finally {
+      set({ isReindexing: false });
+    }
   },
 }));

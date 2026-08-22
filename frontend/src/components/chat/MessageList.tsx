@@ -1,98 +1,120 @@
-import { Message } from "../../types";
-import { StreamingState } from "./ChatView";
+import type { Message, ToolCallRecord } from "../../types";
+import { MESSAGE_LIST_VIEWPORT_CLASS_NAME } from "../layout/workspaceLayout";
+import { presentExecutionError } from "./errorDisplay";
+import AgentProgressCard from "./AgentProgressCard";
 import MessageBubble from "./MessageBubble";
 import StreamingText from "./StreamingText";
-import ToolCallCard from "./ToolCallCard";
-import { EmptyState } from "../ui";
+
+export interface StreamingState {
+  content: string;
+  toolCalls: ToolCallRecord[];
+}
 
 interface MessageListProps {
   messages: Message[];
   streaming: StreamingState | null;
-  messagesEndRef: React.RefObject<HTMLDivElement>;
-  onHint?: (text: string) => void;
+  scrollContainerRef: React.RefObject<HTMLDivElement>;
+  onScroll?: React.UIEventHandler<HTMLDivElement>;
   error?: string | null;
+  onRetry?: () => void;
 }
 
-const HINTS = [
-  "列出当前目录的文件",
-  "创建一个 Python 脚本",
-  "搜索包含 TODO 的文件",
-  "查看系统进程",
-];
+function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  const presentation = presentExecutionError(error);
+
+  return (
+    <section
+      className="conversation-error-notice mb-4 rounded-[var(--radius-lg)] border border-[var(--danger-border)] bg-[var(--danger-soft)] px-4 py-3"
+      aria-label="任务执行错误"
+    >
+      <div className="flex items-start gap-3">
+        <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--danger)]" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-[var(--danger-fg)]">
+            任务没有成功完成
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+            {presentation.message}
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-[var(--radius-sm)] bg-[var(--danger)] px-3 py-1.5 text-xs font-medium text-[var(--danger-fg)] transition-colors hover:opacity-90"
+              >
+                重新尝试
+              </button>
+            )}
+            <details className="text-xs text-[var(--text-secondary)]">
+              <summary className="cursor-pointer select-none hover:text-[var(--text-primary)]">
+                查看错误日志
+              </summary>
+              {presentation.code ? (
+                <p className="mt-2 font-mono text-[var(--text-faint)]">
+                  错误代码：{presentation.code}
+                </p>
+              ) : null}
+              <pre className="mt-2 max-h-40 max-w-full overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2 font-mono text-[var(--text-secondary)]">
+                {presentation.technical}
+              </pre>
+            </details>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export default function MessageList({
   messages,
   streaming,
-  messagesEndRef,
-  onHint,
+  scrollContainerRef,
+  onScroll,
   error,
+  onRetry,
 }: MessageListProps) {
   return (
-    <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6">
-      {messages.length === 0 && !streaming && (
-        <EmptyState
-          icon={<img src="/favicon.png" alt="" className="w-16 h-16 rounded-2xl object-cover shadow-lg" />}
-          title="忆涟千言"
-          description="执行命令、管理文件、搜索内容、调用工具。直接告诉我你想做什么。"
-          action={
-            <div className="grid grid-cols-2 gap-2 text-xs max-w-md">
-              {HINTS.map((hint) => (
-                <button
-                  key={hint}
-                  className="px-3 py-2.5 rounded-lg border border-[var(--border)] bg-[var(--panel)]/60 hover:border-[var(--accent)]/50 hover:text-[var(--accent)] transition-colors text-left text-[var(--text-muted)]"
-                  onClick={() => onHint?.(hint)}
-                >
-                  {hint}
-                </button>
-              ))}
-            </div>
-          }
-          className="h-full"
-        />
-      )}
+    <div
+      ref={scrollContainerRef}
+      onScroll={onScroll}
+      className={`${MESSAGE_LIST_VIEWPORT_CLASS_NAME} conversation-message-list`}
+    >
+      <div className="message-column">
+        {messages.map((message, index) => (
+          <MessageBubble
+            key={message.id}
+            message={message}
+            showAssistantAvatar={
+              message.role === "assistant" &&
+              messages[index - 1]?.role !== "assistant"
+            }
+          />
+        ))}
 
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
-      ))}
+        {streaming && (
+          <div className="conversation-streaming-state mb-4 animate-msg-in">
+            <AgentProgressCard toolCalls={streaming.toolCalls} />
 
-      {streaming && (
-        <div className="mb-4 animate-msg-in">
-          {Array.from(streaming.toolCalls.entries()).map(([id, toolCall]) => (
-            <ToolCallCard
-              key={id}
-              toolCallId={id}
-              name={toolCall.name}
-              args={toolCall.args}
-              status={toolCall.status}
-              result={toolCall.result}
-            />
-          ))}
-
-          {streaming.content && (
-            <div className="p-4 rounded-2xl bg-[var(--panel)] border border-[var(--border)] text-[var(--text)]">
-              <StreamingText text={streaming.content} />
-            </div>
-          )}
-
-          {!streaming.content && streaming.toolCalls.size === 0 && (
-            <div className="flex items-center gap-2 p-4">
-              <div className="flex gap-1">
-                <span className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse-dot" style={{ animationDelay: "0s" }} />
-                <span className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse-dot" style={{ animationDelay: "0.2s" }} />
-                <span className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse-dot" style={{ animationDelay: "0.4s" }} />
+            {streaming.content && (
+              <div className="conversation-streaming-message conversation-message-assistant min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
+                <StreamingText text={streaming.content} />
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
 
-      {error && (
-        <div className="mb-4 px-4 py-3 rounded-xl border border-[var(--danger)]/40 bg-red-500/10 text-[var(--danger)] text-sm">
-          {error}
-        </div>
-      )}
+            {!streaming.content && streaming.toolCalls.length === 0 && (
+              <div className="conversation-streaming-wait flex items-center gap-3 px-1 py-3" aria-label="正在生成">
+                <span className="text-xs text-[var(--text-secondary)]">
+                  正在接收小昔涟的回复…
+                </span>
+                <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent-primary)]" />
+              </div>
+            )}
+          </div>
+        )}
 
-      <div ref={messagesEndRef} />
+        {error && <ErrorNotice error={error} onRetry={onRetry} />}
+      </div>
     </div>
   );
 }

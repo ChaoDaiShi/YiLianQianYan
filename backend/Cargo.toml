@@ -1,6 +1,6 @@
 [package]
 name = "yilian-backend"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2021"
 
 [lib]
@@ -15,18 +15,21 @@ path = "src/main.rs"
 # HTTP server
 axum = { version = "0.7", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
-tower = "0.4"
+tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 
 # Database
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # HTTP client (for LLM calls)
 reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+url = "2"
+open = { version = "5.4", features = ["shellexecute-on-windows"] }
 
 # Async utilities
 futures = "0.3"
@@ -44,6 +47,23 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
+
+# Secret storage
+keyring = "4"
+secrecy = "0.10"
+
+# Windows OS-assisted process isolation (privilege-reduced token + Job Object)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # Input simulation (mouse + keyboard)
 enigo = { version = "0.3", features = ["serde"] }

@@ -1,85 +1,141 @@
-import { useState } from "react";
-import { Copy, Check } from "lucide-react";
-import { Message } from "../../types";
+import { memo, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { Message } from "../../types";
 import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
+import { isExternalHttpUrl, openExternalUrl } from "./externalLink";
 
-interface MessageBubbleProps {
+export interface MessageBubbleProps {
   message: Message;
+  showAssistantAvatar?: boolean;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+export function areMessageBubblePropsEqual(
+  previous: MessageBubbleProps,
+  next: MessageBubbleProps,
+) {
+  return (
+    previous.message === next.message &&
+    previous.showAssistantAvatar === next.showAssistantAvatar
+  );
+}
+
+function MessageBubble({ message, showAssistantAvatar = true }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const [copied, setCopied] = useState(false);
 
   if (isTool) {
-    if (message.content?.startsWith("data:image/")) {
-      return (
-        <div className="mb-4 ml-4">
-          <ToolResultContent result={message.content} />
-        </div>
-      );
-    }
-    return null;
+    return message.content?.startsWith("data:image/") ? (
+      <div className="mb-4 max-w-[820px]">
+        <ToolResultContent result={message.content} />
+      </div>
+    ) : null;
   }
 
-  const rawToolCalls = message.tool_calls;
-  const toolCalls = Array.isArray(rawToolCalls) ? rawToolCalls : [];
+  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content || "");
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  const renderMarkdownLink = ({
+    href,
+    children,
+    ...props
+  }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+    const external = Boolean(href && isExternalHttpUrl(href));
+    return (
+      <a
+        {...props}
+        href={href}
+        target={external ? "_blank" : undefined}
+        rel={external ? "noreferrer" : undefined}
+        onClick={
+          external
+            ? (event) => {
+                event.preventDefault();
+                void openExternalUrl(href!);
+              }
+            : undefined
+        }
+      >
+        {children}
+      </a>
+    );
   };
 
   return (
-    <div className="mb-4 animate-msg-in group">
-      <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <article className="conversation-message group mb-5 animate-msg-in">
+      <div
+        className={
+          "conversation-message-row flex items-start gap-2.5 " +
+          (isUser ? "justify-end" : "justify-start")
+        }
+      >
+        {!isUser && (
+          <span className="conversation-assistant-avatar-wrap" aria-hidden="true">
+            {showAssistantAvatar ? (
+              <img
+                src="/cyrene-home-character.png"
+                alt=""
+                className="conversation-assistant-avatar"
+              />
+            ) : (
+              <span className="conversation-assistant-avatar-placeholder" />
+            )}
+          </span>
+        )}
         <div
-          className={`relative max-w-[85%] px-4 py-3 rounded-2xl ${
-            isUser
-              ? "bg-[var(--accent)] text-[var(--accent-fg)] rounded-br-md"
-              : "bg-[var(--panel)] border border-[var(--border)] text-[var(--text)] rounded-bl-md"
-          }`}
+          className={
+            "conversation-message-content relative min-w-0 text-sm leading-7 " +
+            (isUser
+              ? "conversation-message-user max-w-[720px] rounded-2xl rounded-br-md border border-[var(--accent-border)] bg-[var(--accent-soft)] px-4 py-3 text-[var(--text-primary)]"
+              : "conversation-message-assistant max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-4 py-3 text-[var(--text-primary)]")
+          }
         >
           {isUser ? (
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+            <p className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
-            <div className="prose prose-sm max-w-none overflow-x-auto">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <div className="conversation-markdown prose prose-sm max-w-none overflow-x-auto">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{ a: renderMarkdownLink }}
+              >
+                {message.content}
+              </ReactMarkdown>
             </div>
           )}
           {!isUser && message.content && (
             <button
-              onClick={copy}
-              className="absolute -bottom-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-[var(--panel-2)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]"
-              title="复制"
+              type="button"
+              onClick={() => void copy()}
+              className="absolute -bottom-2 right-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-1.5 text-[var(--text-muted)] opacity-0 transition-opacity hover:text-[var(--text-primary)] focus:opacity-100 group-hover:opacity-100"
+              title="复制回答"
+              aria-label="复制回答"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-[var(--success)]" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
             </button>
           )}
         </div>
       </div>
 
-      {toolCalls.map((tc: any) => {
-        const id = tc.toolCallId || tc.id || "";
-        const name = tc.name || tc.function?.name || "";
-        const args = tc.args || tc.function?.arguments || {};
-        const status = tc.status || "success";
-        const result = tc.result;
-        return (
-          <ToolCallCard
-            key={id}
-            toolCallId={id}
-            name={name}
-            args={typeof args === "string" ? {} : args}
-            status={status}
-            result={result}
-          />
-        );
-      })}
-    </div>
+      {toolCalls.length > 0 && (
+        <div className="conversation-tool-calls mt-3 max-w-[900px]">
+          {toolCalls.map((toolCall) => (
+            <ToolCallCard key={toolCall.toolCallId} {...toolCall} />
+          ))}
+        </div>
+      )}
+    </article>
   );
 }
+
+export default memo(MessageBubble, areMessageBubblePropsEqual);

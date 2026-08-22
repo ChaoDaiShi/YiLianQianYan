@@ -1,0 +1,148 @@
+// ============================================================
+// MCP transport configuration — stdio vs Streamable HTTP.
+//
+// Legacy `command`/`args`/`env` configs deserialize as Stdio (backward
+// compatible). Streamable HTTP uses env-var *names* (never plaintext secrets)
+// and a strict URL policy.
+// ============================================================
+
+use std::collections::BTreeMap;
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
+
+use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
+use super::model::{McpNegotiationResult, McpProtocolVersion, McpRuntimeError};
+
+/// Optional per-request transport context (HTTP-only extra headers, e.g. the
+/// `Mcp-Param-*` headers derived from `x-mcp-header`).
+#[derive(Debug, Clone, Default)]
+pub struct McpRequestOptions {
+    pub extra_headers: BTreeMap<String, String>,
+}
+
+/// A concrete MCP transport (stdio or Streamable HTTP). Implementations own
+/// their connection lifecycle and serialize requests as needed.
+#[async_trait]
+pub trait McpTransport: Send + Sync {
+    /// Connect (spawn + negotiate for stdio) and return the negotiated protocol
+    /// version + advertised capabilities. Idempotent.
+    async fn connect(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<McpNegotiationResult, McpRuntimeError>;
+    async fn send(
+        &self,
+        request: &JsonRpcRequest,
+        cancel: &CancellationToken,
+    ) -> Result<JsonRpcMessage, McpRuntimeError> {
+        self.send_with_options(request, &McpRequestOptions::default(), cancel)
+            .await
+    }
+    /// Send with transport-specific options (extra headers are ignored by stdio).
+    async fn send_with_options(
+        &self,
+        request: &JsonRpcRequest,
+        options: &McpRequestOptions,
+        cancel: &CancellationToken,
+    ) -> Result<JsonRpcMessage, McpRuntimeError>;
+    async fn shutdown(&self);
+    /// The negotiated protocol version (available after `connect`).
+    fn protocol_version(&self) -> McpProtocolVersion;
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpTransportConfig {
+    Stdio {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        /// Non-secret environment (legacy / non-secret only). Secret values are
+        /// referenced via `env_secret_refs` and resolved at spawn time.
+        #[serde(default)]
+        env: BTreeMap<String, String>,
+        /// env name → SecretRef (resolved through the SecretResolver at spawn).
+        #[serde(default)]
+        env_secret_refs: BTreeMap<String, crate::secret::SecretRef>,
+    },
+    StreamableHttp {
+        url: String,
+        /// Header name → environment variable *name* (never a literal value).
+        #[serde(default)]
+        headers_from_env: BTreeMap<String, String>,
+    },
+}
+
+/// Validate a Streamable HTTP URL: https, or http on loopback only; no
+/// embedded credentials; no fragment.
+pub fn validate_mcp_url(url: &str) -> Result<(), String> {
+    if url.contains('#') {
+        return Err("MCP URL must not contain a fragment".to_string());
+    }
+    let scheme = if let Some(rest) = url.strip_prefix("https://") {
+        ("https", rest)
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        ("http", rest)
+    } else {
+        return Err("MCP URL must be http(s)".to_string());
+    };
+    let authority = scheme.1.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        return Err("MCP URL has no host".to_string());
+    }
+    if authority.contains('@') {
+        return Err("MCP URL must not contain embedded credentials".to_string());
+    }
+    let host = extract_host(authority);
+    if scheme.0 == "http" {
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+            Ok(())
+        } else {
+            Err("remote plain HTTP MCP is not allowed".to_string())
+        }
+    } else {
+        Ok(())
+    }
+}
+
+fn extract_host(authority: &str) -> &str {
+    if authority.starts_with('[') {
+        if let Some(end) = authority.find(']') {
+            return &authority[1..end];
+        }
+    }
+    authority.split(':').next().unwrap_or("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn localhost_http_allowed() {
+        assert!(validate_mcp_url("http://localhost:8080/mcp").is_ok());
+        assert!(validate_mcp_url("http://127.0.0.1:8080/mcp").is_ok());
+    }
+
+    #[test]
+    fn remote_plain_http_rejected() {
+        assert!(validate_mcp_url("http://example.com/mcp").is_err());
+    }
+
+    #[test]
+    fn url_credentials_rejected() {
+        assert!(validate_mcp_url("https://user:pass@example.com/mcp").is_err());
+    }
+
+    #[test]
+    fn fragment_rejected() {
+        assert!(validate_mcp_url("https://example.com/mcp#frag").is_err());
+    }
+
+    #[test]
+    fn https_allowed() {
+        assert!(validate_mcp_url("https://example.com/mcp").is_ok());
+    }
+}

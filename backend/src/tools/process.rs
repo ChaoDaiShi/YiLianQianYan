@@ -3,10 +3,11 @@
 // ============================================================
 
 use async_trait::async_trait;
-use std::process::Command;
 use serde::Serialize;
+use std::process::Command;
 
-use super::trait_def::{Tool, ToolResult};
+use super::trait_def::{RiskLevel, Tool, ToolExecutionContext, ToolResult};
+use crate::utils::process::hide_std_command_window;
 
 #[derive(Debug, Serialize)]
 struct ProcessInfo {
@@ -21,7 +22,9 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 
     if cfg!(target_os = "windows") {
         // Windows: use PowerShell
-        let output = Command::new("powershell.exe")
+        let mut command = Command::new("powershell.exe");
+        hide_std_command_window(&mut command);
+        let output = command
             .args([
                 "-NoProfile",
                 "-Command",
@@ -41,7 +44,9 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
             }
         } else {
             // Fallback: use tasklist
-            let output = Command::new("cmd.exe")
+            let mut command = Command::new("cmd.exe");
+            hide_std_command_window(&mut command);
+            let output = command
                 .args(["/c", "tasklist /FO CSV /NH"])
                 .output()
                 .map_err(|e| format!("Failed: {}", e))?;
@@ -51,10 +56,22 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
                 if parts.len() >= 2 {
                     let name = parts[0].trim_matches('"');
                     let pid = parts[1].trim_matches('"').parse().unwrap_or(0);
-                    let mem = parts.get(4)
-                        .map(|s| s.trim_matches('"').replace(" K", "").replace(",", "").parse::<f64>().unwrap_or(0.0) / 1024.0)
+                    let mem = parts
+                        .get(4)
+                        .map(|s| {
+                            s.trim_matches('"')
+                                .replace(" K", "")
+                                .replace(",", "")
+                                .parse::<f64>()
+                                .unwrap_or(0.0)
+                                / 1024.0
+                        })
                         .unwrap_or(0.0);
-                    processes.push(ProcessInfo { pid, name: name.to_string(), memory_mb: mem });
+                    processes.push(ProcessInfo {
+                        pid,
+                        name: name.to_string(),
+                        memory_mb: mem,
+                    });
                 }
             }
         }
@@ -67,42 +84,39 @@ fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for (i, line) in stdout.lines().enumerate() {
-            if i == 0 { continue; } // Skip header
+            if i == 0 {
+                continue;
+            } // Skip header
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 11 {
                 let pid = parts[1].parse().unwrap_or(0);
                 let name = parts.get(10).unwrap_or(&"?").to_string();
-                let mem = parts.get(3).map(|s| s.parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0);
-                processes.push(ProcessInfo { pid, name, memory_mb: mem });
+                let mem = parts
+                    .get(3)
+                    .map(|s| s.parse::<f64>().unwrap_or(0.0))
+                    .unwrap_or(0.0);
+                processes.push(ProcessInfo {
+                    pid,
+                    name,
+                    memory_mb: mem,
+                });
             }
-            if processes.len() >= 50 { break; }
+            if processes.len() >= 50 {
+                break;
+            }
         }
     }
 
     Ok(processes)
 }
 
-/// Kill a process by PID
-fn kill_process(pid: u32) -> Result<String, String> {
-    if cfg!(target_os = "windows") {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .output()
-            .map_err(|e| format!("无法终止进程: {}", e))?;
-    } else {
-        Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .output()
-            .map_err(|e| format!("无法终止进程: {}", e))?;
-    }
-    Ok(format!("进程 {} 已终止", pid))
-}
-
 pub struct ProcessTool;
 
 #[async_trait]
 impl Tool for ProcessTool {
-    fn name(&self) -> &str { "process" }
+    fn name(&self) -> &str {
+        "process"
+    }
 
     fn description(&self) -> &str {
         "管理系统进程。可以列出正在运行的进程或终止指定进程。"
@@ -126,44 +140,100 @@ impl Tool for ProcessTool {
         })
     }
 
-    fn requires_approval(&self) -> bool { true }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::High
+    }
 
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
         let action = args["action"].as_str().unwrap_or("list");
 
         match action {
-            "list" => {
-                match list_processes() {
-                    Ok(processes) => {
-                        if processes.is_empty() {
-                            return ToolResult::success("未找到运行中的进程");
-                        }
-                        let mut output = format!("{:<8} {:<30} {:>10}\n", "PID", "进程名", "内存(MB)");
-                        output.push_str(&"-".repeat(52));
-                        output.push('\n');
-                        for p in &processes {
-                            output.push_str(&format!(
-                                "{:<8} {:<30} {:>10.1}\n",
-                                p.pid, p.name, p.memory_mb
-                            ));
-                        }
-                        output.push_str(&format!("\n共 {} 个进程", processes.len()));
-                        ToolResult::success(output)
+            "list" => match list_processes() {
+                Ok(processes) => {
+                    if processes.is_empty() {
+                        return ToolResult::success("未找到运行中的进程");
                     }
-                    Err(e) => ToolResult::error(e),
+                    let mut output = format!("{:<8} {:<30} {:>10}\n", "PID", "进程名", "内存(MB)");
+                    output.push_str(&"-".repeat(52));
+                    output.push('\n');
+                    for p in &processes {
+                        output.push_str(&format!(
+                            "{:<8} {:<30} {:>10.1}\n",
+                            p.pid, p.name, p.memory_mb
+                        ));
+                    }
+                    output.push_str(&format!("\n共 {} 个进程", processes.len()));
+                    ToolResult::success(output)
                 }
-            }
+                Err(e) => ToolResult::error(e),
+            },
             "kill" => {
-                let pid = args["pid"].as_u64().unwrap_or(0) as u32;
-                if pid == 0 {
-                    return ToolResult::error("请提供要终止的进程PID");
-                }
-                match kill_process(pid) {
-                    Ok(msg) => ToolResult::success(msg),
-                    Err(e) => ToolResult::error(e),
-                }
+                ToolResult::error("process kill requires SecurityExecutionGateway trusted context")
             }
             _ => ToolResult::error(format!("未知操作: {}，支持 list 和 kill", action)),
         }
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        context: &ToolExecutionContext,
+    ) -> ToolResult {
+        let action = args["action"].as_str().unwrap_or("list");
+        if action != "kill" {
+            return self.execute(args).await;
+        }
+        let pid = args["pid"].as_u64().unwrap_or(0) as u32;
+        if pid == 0 {
+            return ToolResult::error("请提供要终止的进程PID");
+        }
+        if pid == std::process::id() {
+            return ToolResult::error("禁止终止后端自身进程");
+        }
+        if !context.authorized_process(Some(pid)) {
+            return ToolResult::error("进程控制缺少安全网关创建的 ManagedChildren 授权证据");
+        }
+        match context.managed_process_registry.terminate_pid(pid) {
+            Ok(()) => ToolResult::success(format!("受控进程 {} 已终止", pid)),
+            Err(error) => ToolResult::error(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::isolation::ManagedProcessRegistry;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn kill_unknown_pid_and_self_pid_are_hard_denied() {
+        let tool = ProcessTool;
+        let context = ToolExecutionContext::new_with_resources(
+            Arc::new(ManagedProcessRegistry::new()),
+            "process-test",
+            vec![crate::safety::grant::AuthorizedResource::Process {
+                pid: Some(4294967294),
+                managed_only: true,
+            }],
+        );
+
+        let unknown = tool
+            .execute_with_context(
+                serde_json::json!({"action":"kill", "pid": 4294967294u64}),
+                &context,
+            )
+            .await;
+        assert!(!unknown.ok);
+        assert!(unknown.content.contains("not active"));
+
+        let self_result = tool
+            .execute_with_context(
+                serde_json::json!({"action":"kill", "pid": std::process::id()}),
+                &context,
+            )
+            .await;
+        assert!(!self_result.ok);
+        assert!(self_result.content.contains("自身"));
     }
 }

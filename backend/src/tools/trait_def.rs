@@ -5,6 +5,109 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::safety::{describe_builtin_tool, DescriptorError, ToolSecurityDescriptor};
+
+/// Context supplied only by the SecurityExecutionGateway for side-effecting
+/// tools. Direct registry callers cannot use managed process controls without
+/// this context.
+pub struct ToolExecutionContext {
+    pub(crate) managed_process_registry: crate::isolation::SharedManagedProcessRegistry,
+    pub(crate) tool_call_id: String,
+    pub(crate) authorized_resources: Vec<crate::safety::grant::AuthorizedResource>,
+}
+
+impl ToolExecutionContext {
+    pub(crate) fn new_with_resources(
+        managed_process_registry: crate::isolation::SharedManagedProcessRegistry,
+        tool_call_id: impl Into<String>,
+        authorized_resources: Vec<crate::safety::grant::AuthorizedResource>,
+    ) -> Self {
+        Self {
+            managed_process_registry,
+            tool_call_id: tool_call_id.into(),
+            authorized_resources,
+        }
+    }
+
+    pub(crate) fn authorized_network(
+        &self,
+        scheme: &str,
+        host: &str,
+        port: u16,
+        method: &str,
+    ) -> Option<&crate::safety::grant::AuthorizedResource> {
+        self.authorized_resources.iter().find(|resource| {
+            matches!(
+                resource,
+                crate::safety::grant::AuthorizedResource::Network {
+                    scheme: evidence_scheme,
+                    host: evidence_host,
+                    port: evidence_port,
+                    method: evidence_method,
+                    ..
+                } if evidence_scheme.eq_ignore_ascii_case(scheme)
+                    && evidence_host.eq_ignore_ascii_case(host)
+                    && *evidence_port == port
+                    && evidence_method.eq_ignore_ascii_case(method)
+            )
+        })
+    }
+
+    pub(crate) fn authorized_process(&self, pid: Option<u32>) -> bool {
+        self.authorized_resources.iter().any(|resource| {
+            matches!(
+                resource,
+                crate::safety::grant::AuthorizedResource::Process {
+                    pid: evidence_pid,
+                    managed_only: true,
+                } if evidence_pid == &pid
+            )
+        })
+    }
+
+    pub(crate) fn authorized_desktop(&self, action: &str, target: Option<&str>) -> bool {
+        self.authorized_resources.iter().any(|resource| {
+            matches!(
+                resource,
+                crate::safety::grant::AuthorizedResource::Desktop {
+                    action: evidence_action,
+                    target: evidence_target,
+                    ..
+                } if evidence_action == action
+                    && evidence_target.as_deref() == target
+            )
+        })
+    }
+}
+
+/// Risk level of a tool — used by the SafetyPolicy to decide permissions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl Default for RiskLevel {
+    fn default() -> Self {
+        Self::Low
+    }
+}
+
+impl std::fmt::Display for RiskLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            RiskLevel::Low => "low",
+            RiskLevel::Medium => "medium",
+            RiskLevel::High => "high",
+            RiskLevel::Critical => "critical",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 /// Result of executing a tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
@@ -39,6 +142,8 @@ pub struct ToolInfo {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+    pub risk_level: RiskLevel,
+    pub requires_approval: bool,
 }
 
 /// Core trait that every tool must implement
@@ -53,14 +158,40 @@ pub trait Tool: Send + Sync {
     /// JSON Schema describing the tool's parameters
     fn parameters(&self) -> serde_json::Value;
 
+    /// Default risk level of this tool.
+    /// The final risk is computed by SafetyPolicy as
+    /// max(tool default risk, argument-based risk).
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::Low
+    }
+
+    /// Describe the permissions, resources, risk, and side effects requested
+    /// by this concrete Tool Call. Unknown tool names fail closed.
+    fn security_descriptor(
+        &self,
+        args: &serde_json::Value,
+    ) -> Result<ToolSecurityDescriptor, DescriptorError> {
+        describe_builtin_tool(self.name(), args)
+    }
+
     /// Whether this tool requires user approval before execution
     fn requires_approval(&self) -> bool {
-        false
+        matches!(self.risk_level(), RiskLevel::High | RiskLevel::Critical)
     }
 
     /// Execute the tool with the given arguments.
     /// `args` is the parsed JSON value of the tool call's function.arguments.
     async fn execute(&self, args: serde_json::Value) -> ToolResult;
+
+    /// Execute with the trusted runtime context created by the security
+    /// gateway. Legacy tools inherit the context-free implementation.
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _context: &ToolExecutionContext,
+    ) -> ToolResult {
+        self.execute(args).await
+    }
 
     /// Convert to an OpenAI-compatible tool definition
     fn to_openai_tool(&self) -> serde_json::Value {
@@ -80,6 +211,31 @@ pub trait Tool: Send + Sync {
             name: self.name().to_string(),
             description: self.description().to_string(),
             parameters: self.parameters(),
+            risk_level: self.risk_level(),
+            requires_approval: self.requires_approval(),
         }
+    }
+}
+
+#[cfg(test)]
+mod authorization_tests {
+    use super::ToolExecutionContext;
+    use crate::safety::grant::AuthorizedResource;
+
+    #[test]
+    fn desktop_authorization_requires_the_exact_action_and_target() {
+        let context = ToolExecutionContext::new_with_resources(
+            std::sync::Arc::new(crate::isolation::ManagedProcessRegistry::new()),
+            "call-gui",
+            vec![AuthorizedResource::Desktop {
+                action: "open_application".to_string(),
+                target: Some("QQ".to_string()),
+                one_shot_approval: true,
+            }],
+        );
+
+        assert!(context.authorized_desktop("open_application", Some("QQ")));
+        assert!(!context.authorized_desktop("open_application", Some("WeChat")));
+        assert!(!context.authorized_desktop("open_url", Some("QQ")));
     }
 }

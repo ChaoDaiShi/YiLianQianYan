@@ -1,48 +1,22 @@
-import type { ThemeConfig } from "./types";
+import type { ColorScheme, ThemeConfig } from "./types";
 import { THEME_VAR_WHITELIST } from "./types";
+import { CYRENE_SEMANTIC_TOKENS } from "./presets";
 
-function withOpacity(color: string, opacity: number): string {
-  if (color.startsWith("rgba(")) {
-    return color.replace(/[\d.]+\)$/, `${opacity})`);
-  }
-  if (color.startsWith("rgb(")) {
-    return color.replace("rgb(", "rgba(").replace(")", `, ${opacity})`);
-  }
-  if (color.startsWith("#") && color.length === 7) {
-    const r = parseInt(color.slice(1, 3), 16);
-    const g = parseInt(color.slice(3, 5), 16);
-    const b = parseInt(color.slice(5, 7), 16);
-    return `rgba(${r},${g},${b},${opacity})`;
-  }
-  return color;
-}
-
-export function applyThemeToDom(theme: ThemeConfig, bgImageUrl?: string | null) {
+export function applyThemeToDom(
+  theme: ThemeConfig,
+  scheme: ColorScheme,
+  bgImageUrl?: string | null,
+) {
   const root = document.documentElement;
-  const c = theme.colors;
+  const variables = buildThemeVariables(theme, scheme);
 
-  root.style.setProperty("--bg", c.bg);
-  root.style.setProperty("--bg-2", c.bg2);
-  root.style.setProperty("--panel", withOpacity(c.panel, theme.panelOpacity));
-  root.style.setProperty("--panel-2", c.panel2);
-  root.style.setProperty("--panel-hover", c.panelHover);
-  root.style.setProperty("--text", c.text);
-  root.style.setProperty("--text-muted", c.textMuted);
-  root.style.setProperty("--text-faint", c.textFaint);
-  root.style.setProperty("--border", c.border);
-  root.style.setProperty("--accent", c.accent);
-  root.style.setProperty("--accent-fg", c.accentFg);
-  root.style.setProperty("--input-bg", c.inputBg);
-  root.style.setProperty("--success", c.success);
-  root.style.setProperty("--warning", c.warning);
-  root.style.setProperty("--danger", c.danger);
-  root.style.setProperty("--font-size-base", `${theme.fontSize}px`);
-  root.style.setProperty("--bg-blur", `${theme.blur}px`);
-  root.style.setProperty("--bg-brightness", String(theme.brightness));
+  for (const [key, value] of Object.entries(variables)) {
+    root.style.setProperty(key, value);
+  }
 
   if (theme.bgMode === "gradient") {
-    const from = theme.gradientFrom || c.bg;
-    const to = theme.gradientTo || c.bg2;
+    const from = theme.gradientFrom || theme.colors.bg;
+    const to = theme.gradientTo || theme.colors.bg2;
     root.style.setProperty("--bg-image", `linear-gradient(160deg, ${from}, ${to})`);
   } else if (theme.bgMode === "image" && bgImageUrl) {
     root.style.setProperty("--bg-image", `url(${bgImageUrl})`);
@@ -50,17 +24,47 @@ export function applyThemeToDom(theme: ThemeConfig, bgImageUrl?: string | null) 
     root.style.setProperty("--bg-image", "none");
   }
 
-  for (const [key, value] of Object.entries(theme.customVars || {})) {
-    if ((THEME_VAR_WHITELIST as readonly string[]).includes(key) && typeof value === "string") {
-      root.style.setProperty(key, value);
-    }
-  }
-
   root.classList.toggle("theme-mono", theme.monoTitles);
-  // Keep dark class for any residual dark: utilities during migration
-  const isLight = theme.presetId === "paper-light";
-  root.classList.toggle("dark", !isLight);
-  root.classList.toggle("light", isLight);
+  root.dataset.theme = "cyrene-ripple";
+  root.dataset.colorScheme = scheme;
+  root.classList.toggle("dark", scheme === "dark");
+  root.classList.toggle("light", scheme === "light");
+}
+
+export function buildThemeVariables(
+  theme: ThemeConfig,
+  scheme: ColorScheme,
+): Record<string, string> {
+  const semantic = CYRENE_SEMANTIC_TOKENS[scheme];
+  const legacyVariables: Record<string, string> = {
+    "--bg": semantic["--bg-app"],
+    "--bg-2": semantic["--bg-soft"],
+    "--panel": semantic["--surface"],
+    "--panel-2": semantic["--surface-elevated"],
+    "--panel-hover": semantic["--surface-hover"],
+    "--text": semantic["--text-primary"],
+    "--text-muted": semantic["--text-secondary"],
+    "--text-faint": semantic["--text-faint"],
+    "--border": semantic["--border-soft"],
+    "--accent": semantic["--accent-primary"],
+    "--accent-fg": semantic["--accent-contrast"],
+    "--input-bg": semantic["--surface-solid"],
+    "--success": scheme === "dark" ? "#74C09D" : "#73B99A",
+    "--warning": scheme === "dark" ? "#E2BF67" : "#D9B866",
+    "--danger": scheme === "dark" ? "#E87E9D" : "#DF7995",
+    "--nav": semantic["--sidebar-bg"],
+    "--nav-text": semantic["--sidebar-text"],
+    "--info": scheme === "dark" ? "#84C5E5" : "#84BCDC",
+    "--focus-ring": semantic["--accent-primary"],
+    "--backdrop": scheme === "dark"
+      ? "rgba(5,4,10,0.58)"
+      : "rgba(41,38,58,0.34)",
+    "--font-size-base": `${theme.fontSize}px`,
+    "--bg-blur": "0px",
+    "--bg-brightness": "1",
+  };
+
+  return { ...legacyVariables, ...semantic };
 }
 
 export function sanitizeCustomVars(raw: unknown): Record<string, string> {

@@ -49,6 +49,17 @@ impl AgentState {
         });
     }
 
+    /// Add a transient system instruction used to correct the active run.
+    pub fn add_system_message(&mut self, content: String) {
+        self.messages.push(ChatMessage {
+            role: "system".to_string(),
+            content: Some(content),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        });
+    }
+
     /// Add an assistant message to the conversation
     pub fn add_assistant_message(
         &mut self,
@@ -65,12 +76,7 @@ impl AgentState {
     }
 
     /// Add a tool result message to the conversation
-    pub fn add_tool_result(
-        &mut self,
-        tool_call_id: String,
-        tool_name: String,
-        result: String,
-    ) {
+    pub fn add_tool_result(&mut self, tool_call_id: String, tool_name: String, result: String) {
         self.messages.push(ChatMessage {
             role: "tool".to_string(),
             content: Some(result),

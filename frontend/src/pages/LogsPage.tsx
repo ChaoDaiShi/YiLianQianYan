@@ -1,218 +1,220 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import {
-  ScrollText, Pause, Play, Trash2, AlertTriangle,
-  Info, AlertCircle, Bug, Wrench, MessageSquare,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Clipboard, Pause, Play, RefreshCw, ScrollText, Trash2 } from "lucide-react";
 import { getLogs, type LogEntry } from "../api/client";
-import { PageHeader, Button } from "../components/ui";
+import { Drawer, EmptyState, ErrorState, Input, PageHeader, Skeleton, Button, Badge } from "../components/ui";
+import { formatLogLevel, formatLogTimestamp } from "../components/system";
 
-const LEVEL_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  info: { label: "信息", color: "text-sky-400", icon: <Info className="w-3.5 h-3.5" /> },
-  warn: { label: "警告", color: "text-amber-400", icon: <AlertCircle className="w-3.5 h-3.5" /> },
-  error: { label: "错误", color: "text-red-400", icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-  debug: { label: "调试", color: "text-violet-400", icon: <Bug className="w-3.5 h-3.5" /> },
-  tool: { label: "工具", color: "text-emerald-400", icon: <Wrench className="w-3.5 h-3.5" /> },
-  chat: { label: "对话", color: "text-cyan-400", icon: <MessageSquare className="w-3.5 h-3.5" /> },
-};
+function LogRow({ entry, onOpen }: { entry: LogEntry; onOpen: () => void }) {
+  const level = formatLogLevel(entry.level);
 
-const SOURCE_LABELS: Record<string, string> = {
-  api: "API",
-  agent: "Agent",
-  tool: "工具",
-  system: "系统",
-};
-
-const LEVELS = ["", "info", "warn", "error", "debug", "tool", "chat"] as const;
+  return (
+    <div
+      className="system-log-row group"
+      role="button"
+      tabIndex={0}
+      aria-label={`查看 ${level.label} 日志：${entry.message}`}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <time className="system-log-time" dateTime={new Date(entry.timestamp).toISOString()}>{formatLogTimestamp(entry.timestamp)}</time>
+      <Badge tone={level.tone}>{level.label}</Badge>
+      <span className="system-log-source">{entry.source || "—"}</span>
+      <span className="system-log-message">{entry.message}</span>
+      <button
+        type="button"
+        className="system-log-copy"
+        aria-label="复制日志内容"
+        title="复制日志内容"
+        onClick={(event) => {
+          event.stopPropagation();
+          void navigator.clipboard?.writeText(entry.message);
+        }}
+      >
+        <Clipboard className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
 
 export default function LogsPage() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [filterLevel, setFilterLevel] = useState("");
   const [filterSource, setFilterSource] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
-  const listRef = useRef<HTMLDivElement>(null);
   const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const fetchLogs = useCallback(async () => {
     if (paused) return;
-    const res = await getLogs({
+    const response = await getLogs({
       count: 500,
       level: filterLevel || undefined,
       source: filterSource || undefined,
     });
-    if (res) {
-      // Only append new entries (by timestamp + message dedup)
-      setEntries((prev) => {
-        const existingKeys = new Set(prev.map((e) => `${e.timestamp}-${e.message}`));
-        const fresh = res.entries.filter((e) => !existingKeys.has(`${e.timestamp}-${e.message}`));
-        const merged = [...prev, ...fresh].slice(-500);
-        return merged;
-      });
-      setTotal(res.total);
+    if (!response) {
+      setLoadError("日志暂时无法加载");
+      setLoading(false);
+      return;
     }
-  }, [paused, filterLevel, filterSource]);
 
-  // Initial load
+    setLoadError("");
+    setEntries((previous) => {
+      const existingKeys = new Set(previous.map((entry) => `${entry.timestamp}-${entry.message}`));
+      const fresh = response.entries.filter((entry) => !existingKeys.has(`${entry.timestamp}-${entry.message}`));
+      return [...previous, ...fresh].slice(-500);
+    });
+    setTotal(response.total);
+    setLoading(false);
+  }, [filterLevel, filterSource, paused]);
+
   useEffect(() => {
-    fetchLogs();
+    void fetchLogs();
   }, [fetchLogs]);
 
-  // Auto-refresh every 2 seconds
   useEffect(() => {
-    const t = setInterval(fetchLogs, 2000);
-    return () => clearInterval(t);
+    const timer = window.setInterval(() => void fetchLogs(), 2000);
+    return () => window.clearInterval(timer);
   }, [fetchLogs]);
 
-  // Auto-scroll
   useEffect(() => {
-    if (autoScroll && listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
-    }
+    if (autoScroll && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [entries, autoScroll]);
 
-  const clearLogs = async () => {
-    await getLogs({ drain: true });
+  const sourceOptions = useMemo(
+    () => Array.from(new Set(entries.map((entry) => entry.source).filter(Boolean))).sort(),
+    [entries],
+  );
+  const levelOptions = useMemo(
+    () => Array.from(new Set(entries.map((entry) => entry.level).filter(Boolean))).sort(),
+    [entries],
+  );
+  const visibleEntries = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return entries;
+    return entries.filter((entry) => `${entry.message} ${entry.source}`.toLowerCase().includes(query));
+  }, [entries, searchQuery]);
+
+  const handleFilterChange = (setter: (value: string) => void, value: string) => {
+    setter(value);
     setEntries([]);
     setTotal(0);
+    setLoadError("");
   };
-
-  const formatTime = (ts: number) => {
-    const d = new Date(ts);
-    return d.toLocaleTimeString("zh-CN", { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
-  };
-
-  const meta = (level: string) => LEVEL_META[level] || LEVEL_META.info;
 
   const handleScroll = () => {
     if (!listRef.current) return;
-    const el = listRef.current;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    setAutoScroll(atBottom);
+    const element = listRef.current;
+    setAutoScroll(element.scrollHeight - element.scrollTop - element.clientHeight < 40);
+  };
+
+  const clearLogs = async () => {
+    const response = await getLogs({ drain: true });
+    if (!response) {
+      setLoadError("日志暂时无法加载");
+      return;
+    }
+    setEntries([]);
+    setTotal(0);
+    setLoadError("");
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="system-center-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
-        title="运行日志"
-        description={`共 ${total} 条 · ${paused ? "已暂停" : "自动刷新中"}`}
-        actions={
-          <div className="flex items-center gap-2">
-            {/* Level filter */}
-            <select
-              value={filterLevel}
-              onChange={(e) => {
-                setFilterLevel(e.target.value);
-                setEntries([]);
-              }}
-              className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]/40"
-            >
-              <option value="">全部级别</option>
-              {LEVELS.filter(Boolean).map((l) => (
-                <option key={l} value={l}>{LEVEL_META[l]?.label || l}</option>
-              ))}
-            </select>
-
-            {/* Source filter */}
-            <select
-              value={filterSource}
-              onChange={(e) => {
-                setFilterSource(e.target.value);
-                setEntries([]);
-              }}
-              className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]/40"
-            >
-              <option value="">全部来源</option>
-              {Object.entries(SOURCE_LABELS).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
-
-            <div className="w-px h-5 bg-[var(--border)]" />
-
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setPaused(!paused)}
-              title={paused ? "恢复自动刷新" : "暂停刷新"}
-            >
-              {paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+        title="日志"
+        description={`查看系统运行记录和异常信息 · ${total} 条`}
+        actions={(
+          <div className="system-logs-toolbar">
+            <Input
+              aria-label="搜索日志"
+              placeholder="搜索消息或来源…"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              className="system-log-search"
+            />
+            <label className="system-log-filter">
+              <span>级别</span>
+              <select aria-label="按日志级别筛选" value={filterLevel} onChange={(event) => handleFilterChange(setFilterLevel, event.target.value)}>
+                <option value="">全部</option>
+                {levelOptions.map((level) => <option key={level} value={level}>{formatLogLevel(level).label}</option>)}
+              </select>
+            </label>
+            <label className="system-log-filter">
+              <span>来源</span>
+              <select aria-label="按日志来源筛选" value={filterSource} onChange={(event) => handleFilterChange(setFilterSource, event.target.value)}>
+                <option value="">全部</option>
+                {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
+              </select>
+            </label>
+            <Button variant="secondary" size="sm" onClick={() => void fetchLogs()} aria-label="刷新日志">
+              <RefreshCw className="h-3.5 w-3.5" />刷新
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setPaused((value) => !value)} aria-pressed={paused}>
+              {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
               {paused ? "继续" : "暂停"}
             </Button>
-            <Button variant="secondary" size="sm" onClick={clearLogs} title="清空日志">
-              <Trash2 className="w-3.5 h-3.5" />
-              清空
+            <Button variant="secondary" size="sm" onClick={() => void clearLogs()} aria-label="清空日志">
+              <Trash2 className="h-3.5 w-3.5" />清空
             </Button>
           </div>
-        }
+        )}
       />
 
-      {/* Log list — terminal style */}
-      <div
-        ref={listRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto scrollbar-thin bg-[var(--bg-2)] font-mono text-xs leading-5"
-      >
-        {entries.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-[var(--text-faint)] gap-3">
-            <ScrollText className="w-10 h-10" />
-            <p>暂无日志，等待事件…</p>
+      <div className="system-logs-surface min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-4">
+        {loadError ? (
+          <ErrorState
+            title="日志暂时无法加载"
+            description="请稍后重新尝试。"
+            action={<Button variant="secondary" onClick={() => void fetchLogs()}>重试</Button>}
+          />
+        ) : null}
+        {loading && entries.length === 0 ? (
+          <div className="system-log-list" aria-label="正在加载日志">
+            {Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-10 w-full" />)}
           </div>
-        ) : (
-          <div className="py-1">
-            {entries.map((e, i) => {
-              const m = meta(e.level);
-              return (
-                <div
-                  key={`${e.timestamp}-${i}`}
-                  className="flex items-start gap-2 px-3 py-0.5 hover:bg-[var(--panel-hover)]/50 transition-colors group"
-                >
-                  {/* Timestamp */}
-                  <span className="text-[var(--text-faint)] flex-shrink-0 select-none">
-                    {formatTime(e.timestamp)}
-                  </span>
-
-                  {/* Level icon */}
-                  <span className={`${m.color} flex-shrink-0 mt-px`} title={m.label}>
-                    {m.icon}
-                  </span>
-
-                  {/* Source badge */}
-                  <span className="px-1 py-px rounded text-[10px] bg-[var(--panel-2)] text-[var(--text-muted)] flex-shrink-0 select-none">
-                    {SOURCE_LABELS[e.source] || e.source}
-                  </span>
-
-                  {/* Message */}
-                  <span className="text-[var(--text)] break-all">{e.message}</span>
-
-                  {/* Copy on hover */}
-                  <button
-                    onClick={() => navigator.clipboard.writeText(e.message)}
-                    className="ml-auto opacity-0 group-hover:opacity-100 text-[var(--text-faint)] hover:text-[var(--text)] flex-shrink-0 px-1 select-none"
-                    title="复制"
-                  >
-                    ⧉
-                  </button>
-                </div>
-              );
-            })}
+        ) : null}
+        {!loading && !loadError && visibleEntries.length === 0 ? (
+          <EmptyState icon={<ScrollText className="h-8 w-8" />} title="暂时没有日志记录。" description="新的系统事件会显示在这里。" />
+        ) : null}
+        {visibleEntries.length > 0 ? (
+          <div ref={listRef} onScroll={handleScroll} className="system-log-list min-h-0 overflow-y-auto scrollbar-thin" aria-label="日志列表">
+            {visibleEntries.map((entry, index) => (
+              <LogRow key={`${entry.timestamp}-${entry.source}-${index}`} entry={entry} onOpen={() => setSelectedEntry(entry)} />
+            ))}
           </div>
-        )}
+        ) : null}
+        <div className="system-logs-footer">
+          <span>{visibleEntries.length} 条显示</span>
+          <span>{paused ? "已暂停" : "自动刷新中"}</span>
+          <span>{autoScroll ? "自动滚动" : "滚动锁定"}</span>
+        </div>
       </div>
 
-      {/* Bottom bar */}
-      <div className="flex items-center gap-3 px-4 py-1.5 border-t border-[var(--border)] bg-[var(--panel)]/60 text-xs text-[var(--text-faint)]">
-        <span className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full ${paused ? "bg-[var(--warning)]" : "bg-[var(--success)]"} ${!paused ? "animate-pulse" : ""}`} />
-          {paused ? "已暂停" : "实时"}
-        </span>
-        <span className="text-[var(--border)]">|</span>
-        <span>{entries.length} 条显示</span>
-        <span className="text-[var(--border)]">|</span>
-        <span>level={filterLevel || "all"} source={filterSource || "all"}</span>
-        <span className="ml-auto">
-          {autoScroll ? "自动滚动" : "滚动锁定"}
-        </span>
-      </div>
+      <Drawer open={selectedEntry !== null} side="right" title="日志详情" onClose={() => setSelectedEntry(null)}>
+        {selectedEntry ? (
+          <div className="system-log-detail">
+            <dl>
+              <div><dt>时间</dt><dd>{formatLogTimestamp(selectedEntry.timestamp)}</dd></div>
+              <div><dt>级别</dt><dd>{formatLogLevel(selectedEntry.level).label}</dd></div>
+              <div><dt>来源</dt><dd>{selectedEntry.source || "—"}</dd></div>
+            </dl>
+            <section aria-labelledby="log-message-title">
+              <h3 id="log-message-title">消息</h3>
+              <pre>{selectedEntry.message}</pre>
+            </section>
+          </div>
+        ) : null}
+      </Drawer>
     </div>
   );
 }

@@ -1,13 +1,14 @@
 import { cn } from "./cn";
 
-type Tone = "default" | "success" | "warning" | "danger" | "accent";
+type Tone = "default" | "success" | "warning" | "danger" | "info" | "accent";
 
 const tones: Record<Tone, string> = {
-  default: "bg-[var(--panel-2)] text-[var(--text-muted)] border-[var(--border)]",
-  success: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  warning: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-  danger: "bg-red-500/15 text-red-400 border-red-500/30",
-  accent: "bg-[var(--accent)]/15 text-[var(--accent)] border-[var(--accent)]/30",
+  default: "border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--text-secondary)]",
+  success: "border-[var(--success-border)] bg-[var(--success-soft)] text-[var(--success-fg)]",
+  warning: "border-[var(--warning-border)] bg-[var(--warning-soft)] text-[var(--warning-fg)]",
+  danger: "border-[var(--danger-border)] bg-[var(--danger-soft)] text-[var(--danger-fg)]",
+  info: "border-[var(--info-border)] bg-[var(--info-soft)] text-[var(--info-fg)]",
+  accent: "border-[var(--accent-border)] bg-[var(--accent-soft)] text-[var(--accent-soft-fg)]",
 };
 
 export default function Badge({
@@ -22,7 +23,7 @@ export default function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs border font-medium",
+        "inline-flex items-center gap-1 rounded-[var(--radius-sm)] border px-2 py-0.5 text-xs font-medium transition-colors duration-[var(--motion-fast)]",
         tones[tone],
         className
       )}

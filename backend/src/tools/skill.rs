@@ -79,10 +79,7 @@ pub struct SkillDiscovery {
 
 impl SkillDiscovery {
     /// Discover skills from configured directories
-    pub fn discover(
-        directories: &[String],
-        workspace_root: &str,
-    ) -> Self {
+    pub fn discover(directories: &[String], workspace_root: &str) -> Self {
         let mut skills = HashMap::new();
 
         for dir in directories {
@@ -113,18 +110,22 @@ impl SkillDiscovery {
         // Check if this directory itself has a SKILL.md
         let skill_md = dir.join("SKILL.md");
         if skill_md.exists() {
-            let name = dir.file_name()
+            let name = dir
+                .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
             let description = Self::extract_description(&skill_md);
-            skills.insert(name.clone(), DiscoveredSkill {
-                name,
-                description,
-                path: skill_md,
-                root_dir: dir.to_path_buf(),
-                loaded_content: None,
-            });
+            skills.insert(
+                name.clone(),
+                DiscoveredSkill {
+                    name,
+                    description,
+                    path: skill_md,
+                    root_dir: dir.to_path_buf(),
+                    loaded_content: None,
+                },
+            );
             return; // Don't recurse into skill directories
         }
 
@@ -191,11 +192,7 @@ impl SkillDiscovery {
         section.push_str("你可以使用 `load_skill` 工具按需加载以下技能的完整内容：\n\n");
 
         for skill in self.skills.values() {
-            section.push_str(&format!(
-                "- **{}**: {}\n",
-                skill.name,
-                skill.description
-            ));
+            section.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
         }
 
         section.push_str("\n使用 `load_skill(name=\"<名称>\")` 加载技能的完整指引。");
@@ -226,7 +223,9 @@ impl LoadSkillTool {
 
 #[async_trait]
 impl Tool for LoadSkillTool {
-    fn name(&self) -> &str { "load_skill" }
+    fn name(&self) -> &str {
+        "load_skill"
+    }
 
     fn description(&self) -> &str {
         "按需加载指定skill的SKILL.md完整内容。用于获取某个领域技能的详细指引。"
@@ -260,8 +259,14 @@ impl Tool for LoadSkillTool {
         // Search in multiple locations
         let search_paths = vec![
             self.skills_dir.join(name).join("SKILL.md"),
-            Path::new(&self.workspace_root).join("skills").join(name).join("SKILL.md"),
-            Path::new(&self.workspace_root).join(".agents").join(name).join("SKILL.md"),
+            Path::new(&self.workspace_root)
+                .join("skills")
+                .join(name)
+                .join("SKILL.md"),
+            Path::new(&self.workspace_root)
+                .join(".agents")
+                .join(name)
+                .join("SKILL.md"),
         ];
 
         for skill_path in &search_paths {
@@ -322,7 +327,9 @@ pub struct WriteTodosTool;
 
 #[async_trait]
 impl Tool for WriteTodosTool {
-    fn name(&self) -> &str { "write_todos" }
+    fn name(&self) -> &str {
+        "write_todos"
+    }
 
     fn description(&self) -> &str {
         "创建和更新待办事项列表。用于规划复杂、多步骤的任务。每次调用传入完整的待办列表快照（非增量）。"
@@ -407,7 +414,10 @@ impl Tool for WriteTodosTool {
         let counts: Vec<String> = ["pending", "in_progress", "completed", "cancelled"]
             .iter()
             .map(|s| {
-                let count = todos.iter().filter(|t| t["status"].as_str().unwrap_or("") == *s).count();
+                let count = todos
+                    .iter()
+                    .filter(|t| t["status"].as_str().unwrap_or("") == *s)
+                    .count();
                 format!("{} {}= {}", status_icons(s), s, count)
             })
             .filter(|s| !s.contains("= 0"))
