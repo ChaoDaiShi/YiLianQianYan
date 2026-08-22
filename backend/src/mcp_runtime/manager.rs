@@ -186,7 +186,7 @@ impl McpRuntimeManager {
         let mut params = params;
         // Modern-only `_meta` must never leak into legacy requests.
         if protocol_version == McpProtocolVersion::V2026_07_28 {
-            attach_request_metadata(&mut params, "0.8.0");
+            attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
         }
         let request = JsonRpcRequest::new(self.next_id(), method, Some(params));
         match transport.send(&request, cancel).await? {
@@ -456,7 +456,7 @@ impl McpRuntimeManager {
 
         let mut params = serde_json::json!({ "name": tool_name, "arguments": arguments });
         if runtime.protocol_version == McpProtocolVersion::V2026_07_28 {
-            attach_request_metadata(&mut params, "0.8.0");
+            attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
         }
         let request = JsonRpcRequest::new(self.next_id(), "tools/call", Some(params));
         let options = super::transport::McpRequestOptions { extra_headers };

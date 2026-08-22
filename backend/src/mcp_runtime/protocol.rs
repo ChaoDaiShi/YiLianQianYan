@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn modern_request_contains_required_meta() {
-        let meta = build_request_metadata("0.8.0");
+        let meta = build_request_metadata("0.9.0");
         assert_eq!(
             meta["io.modelcontextprotocol/protocolVersion"],
             MODERN_MCP_VERSION

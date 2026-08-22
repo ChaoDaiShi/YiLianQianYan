@@ -224,7 +224,7 @@ impl StdioTransport {
     ) -> Result<(McpProtocolVersion, McpServerCapabilities), McpRuntimeError> {
         // Try modern server/discover first.
         let mut params = serde_json::json!({});
-        attach_request_metadata(&mut params, "0.8.0");
+        attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
         let discover = JsonRpcRequest::new(*next_id, "server/discover", Some(params));
         *next_id += 1;
         self.write_request(stdin, &discover).await?;
@@ -242,7 +242,10 @@ impl StdioTransport {
                     Some(serde_json::json!({
                         "protocolVersion": "2025-11-25",
                         "capabilities": {},
-                        "clientInfo": { "name": "YiLianQianYan", "version": "0.8.0" }
+                        "clientInfo": {
+                            "name": "YiLianQianYan",
+                            "version": env!("CARGO_PKG_VERSION")
+                        }
                     })),
                 );
                 *next_id += 1;
