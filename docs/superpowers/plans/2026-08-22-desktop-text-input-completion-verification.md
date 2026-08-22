@@ -35,7 +35,7 @@ Add assertions that the system prompt lists `keyboard`, instructs `target_applic
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
-Run: `cargo test -p yilian-backend config::types::tests::default_prompt safety::descriptor::tests::keyboard -- --nocapture` (or each exact test filter separately if Cargo accepts only one filter).  
+Run: `cargo test -p yilian-backend config::types::tests::default_prompt safety::descriptor::tests::keyboard -- --nocapture` (or each exact test filter separately if Cargo accepts only one filter).
 Expected: FAIL because the prompt and descriptor do not yet expose target-bound typing.
 
 - [ ] **Step 3: Implement the minimum contract changes**
@@ -44,7 +44,7 @@ Update the prompt and keyboard JSON schema. Special-case only `action == "type"`
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 
-Run the exact tests from Step 2.  
+Run the exact tests from Step 2.
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -68,7 +68,7 @@ Cover missing authorization, target window unavailable, successful one-time inje
 
 - [ ] **Step 2: Run keyboard tests and verify RED**
 
-Run: `cargo test -p yilian-backend tools::input::tests::keyboard_type -- --nocapture`  
+Run: `cargo test -p yilian-backend tools::input::tests::keyboard_type -- --nocapture`
 Expected: FAIL because `KeyboardTool` has no target-aware constructor or execution path.
 
 - [ ] **Step 3: Implement the minimum target-aware input path**
@@ -77,7 +77,7 @@ Introduce a small `TextInjector` trait with an Enigo implementation. For `type`,
 
 - [ ] **Step 4: Register the constructed tool and run tests**
 
-Replace the unit registration with `KeyboardTool::new()`. Run the keyboard and registry tests.  
+Replace the unit registration with `KeyboardTool::new()`. Run the keyboard and registry tests.
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -102,7 +102,7 @@ Build message sequences for: Chinese Notepad launch plus typing with launch evid
 
 - [ ] **Step 2: Run completion-guard tests and verify RED**
 
-Run: `cargo test -p yilian-backend agent::completion_guard::tests -- --nocapture`  
+Run: `cargo test -p yilian-backend agent::completion_guard::tests -- --nocapture`
 Expected: FAIL because the module/function does not exist.
 
 - [ ] **Step 3: Implement the deterministic evaluator**
@@ -115,7 +115,7 @@ Before emitting `done`, evaluate completion. On missing evidence, discard the un
 
 - [ ] **Step 5: Run completion and engine tests**
 
-Run: `cargo test -p yilian-backend agent::completion_guard::tests -- --nocapture` and `cargo test -p yilian-backend agent::engine::tests -- --nocapture`.  
+Run: `cargo test -p yilian-backend agent::completion_guard::tests -- --nocapture` and `cargo test -p yilian-backend agent::engine::tests -- --nocapture`.
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -133,12 +133,12 @@ Commit: `fix(agent): require evidence before completing desktop text tasks`
 
 - [ ] **Step 1: Format and verify backend**
 
-Run: `cargo fmt`, `cargo fmt --check`, `cargo check -p yilian-backend`, `cargo test -p yilian-backend`.  
+Run: `cargo fmt`, `cargo fmt --check`, `cargo check -p yilian-backend`, `cargo test -p yilian-backend`.
 Expected: all commands exit 0.
 
 - [ ] **Step 2: Verify frontend regression**
 
-Run from `frontend`: `npm test` and `npm run build`.  
+Run from `frontend`: `npm test` and `npm run build`.
 Expected: tests and production build pass; pre-existing chunk warnings may remain but no new warnings are introduced.
 
 - [ ] **Step 3: Review the diff**
