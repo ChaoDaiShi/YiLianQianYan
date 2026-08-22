@@ -660,8 +660,8 @@ pub fn describe_builtin_tool(
                 action: required_string(tool_name, args, "action")?,
                 target: None,
             }],
-            // Coordinate and raw keyboard tools have no semantic UI target,
-            // so even Owner must explicitly approve them.
+            // Coordinate mouse interactions have no semantic UI target, so
+            // even Owner must explicitly approve them.
             default_risk: RiskLevel::High,
             side_effects: vec![SideEffectKind::DesktopMutation],
         },

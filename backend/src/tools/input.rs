@@ -128,7 +128,7 @@ impl Tool for MouseTool {
     }
 
     fn risk_level(&self) -> RiskLevel {
-        RiskLevel::High
+        RiskLevel::Medium
     }
 
     fn description(&self) -> &str {
@@ -465,7 +465,7 @@ impl Tool for KeyboardTool {
     }
 
     fn risk_level(&self) -> RiskLevel {
-        RiskLevel::Medium
+        RiskLevel::High
     }
 
     fn description(&self) -> &str {
@@ -700,6 +700,13 @@ mod tests {
         assert!(schema["properties"]["target_application"]["description"]
             .as_str()
             .is_some_and(|description| description.contains("目标应用")));
+    }
+
+    #[test]
+    fn input_tool_risk_metadata_keeps_mouse_stable_and_marks_keyboard_high() {
+        assert_eq!(MouseTool.risk_level(), RiskLevel::Medium);
+        assert_eq!(KeyboardTool::new().risk_level(), RiskLevel::High);
+        assert!(KeyboardTool::new().requires_approval());
     }
 
     #[tokio::test]
