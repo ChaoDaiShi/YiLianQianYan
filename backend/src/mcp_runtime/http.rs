@@ -268,7 +268,7 @@ impl McpTransport for HttpTransport {
         // Modern Streamable HTTP is always 2026-07-28. Discover capabilities.
         // Fail closed: a discover failure must NOT assume tools=true.
         let mut params = serde_json::json!({});
-        super::protocol::attach_request_metadata(&mut params, "0.8.0");
+        super::protocol::attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
         let discover = JsonRpcRequest::new(0, "server/discover", Some(params));
         match self
             .send_inner(
