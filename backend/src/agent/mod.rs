@@ -1,3 +1,4 @@
+pub mod completion_guard;
 pub mod engine;
 pub mod memory;
 pub mod observation;

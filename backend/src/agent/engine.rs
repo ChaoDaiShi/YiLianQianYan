@@ -8,6 +8,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
+use super::completion_guard::{evaluate_completion, CompletionCheck};
 use super::state::AgentState;
 use super::verifier::replan_message;
 use crate::config::types::AppConfig;
@@ -67,6 +68,37 @@ pub enum RunOutcome {
 
 const MAX_ITERATIONS: usize = 20;
 const MAX_CONSECUTIVE_SAME_TOOL: usize = 3;
+const MAX_COMPLETION_REPLANS: usize = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinalResponseGate {
+    Complete,
+    Replan,
+}
+
+fn gate_final_response(
+    state: &mut AgentState,
+    completion_replans: &mut usize,
+) -> Result<FinalResponseGate, String> {
+    match evaluate_completion(&state.messages) {
+        CompletionCheck::Ready => Ok(FinalResponseGate::Complete),
+        CompletionCheck::MissingDesktopTextInputEvidence => {
+            if *completion_replans >= MAX_COMPLETION_REPLANS {
+                return Err("无法确认文本已写入目标窗口，任务未完成".to_string());
+            }
+            *completion_replans += 1;
+            state.add_system_message(
+                "当前任务尚未执行已验证的目标窗口文本输入。不要声称任务完成；请调用 keyboard，使用 action=type、text 和 target_application 完成输入，或在无法执行时明确失败。"
+                    .to_string(),
+            );
+            Ok(FinalResponseGate::Replan)
+        }
+    }
+}
+
+fn should_stream_response_tokens(state: &AgentState) -> bool {
+    matches!(evaluate_completion(&state.messages), CompletionCheck::Ready)
+}
 
 enum ToolDispatchOutcome {
     Continue,
@@ -358,6 +390,7 @@ pub async fn run_react_loop_with_channel(
     let mut iteration = 0;
     let mut last_tool_name = String::new();
     let mut consecutive_same_tool = 0usize;
+    let mut completion_replans = 0usize;
 
     loop {
         if cancel_token.is_cancelled() {
@@ -370,8 +403,12 @@ pub async fn run_react_loop_with_channel(
         }
 
         // ── THINK: Call LLM with streaming ──
+        let stream_response_tokens = should_stream_response_tokens(state);
         let result = client
             .stream_with_callbacks(&state.messages, &tools_openai, |token| {
+                if !stream_response_tokens {
+                    return;
+                }
                 let _ = tx.try_send(AgentEvent {
                     event_type: "token".into(),
                     conversation_id: conversation_id.to_string(),
@@ -480,6 +517,9 @@ pub async fn run_react_loop_with_channel(
         }
 
         // ── RESPOND: Final answer ──
+        if gate_final_response(state, &mut completion_replans)? == FinalResponseGate::Replan {
+            continue;
+        }
         let output = accumulator.content.clone();
         state.add_assistant_message(Some(output.clone()), None);
         state.output = output.clone();
@@ -519,7 +559,10 @@ mod tests {
     use serde_json::json;
     use tokio::sync::mpsc;
 
-    use super::{dispatch_tool_call, AgentEvent, ToolDispatchOutcome};
+    use super::{
+        dispatch_tool_call, gate_final_response, should_stream_response_tokens, AgentEvent,
+        FinalResponseGate, ToolDispatchOutcome, MAX_COMPLETION_REPLANS,
+    };
     use crate::agent::state::AgentState;
     use crate::agent::verifier::{VerificationResult, Verifier};
     use crate::config::types::{SandboxConfig, SandboxProfile};
@@ -620,6 +663,100 @@ mod tests {
             events.push(event);
         }
         events
+    }
+
+    fn desktop_text_state() -> AgentState {
+        let mut state = AgentState::new("system".to_string());
+        state.add_user_message("打开记事本，然后在新的页面写入你好世界".to_string());
+        state.add_assistant_message(
+            None,
+            Some(vec![ToolCall {
+                id: "call-open".to_string(),
+                call_type: "function".to_string(),
+                function: ToolCallFunction {
+                    name: "open_application".to_string(),
+                    arguments: json!({"application": "Notepad"}).to_string(),
+                },
+            }]),
+        );
+        state.add_tool_result(
+            "call-open".to_string(),
+            "open_application".to_string(),
+            "记事本窗口已显示在桌面前台".to_string(),
+        );
+        state
+    }
+
+    fn verified_desktop_text_state() -> AgentState {
+        let mut state = desktop_text_state();
+        state.add_assistant_message(
+            None,
+            Some(vec![ToolCall {
+                id: "call-type".to_string(),
+                call_type: "function".to_string(),
+                function: ToolCallFunction {
+                    name: "keyboard".to_string(),
+                    arguments: json!({
+                        "action": "type",
+                        "text": "你好世界",
+                        "target_application": "Notepad"
+                    })
+                    .to_string(),
+                },
+            }]),
+        );
+        state.add_tool_result(
+            "call-type".to_string(),
+            "keyboard".to_string(),
+            format!(
+                "文本已输入目标应用 Notepad；{}",
+                crate::tools::input::VERIFIED_DESKTOP_TEXT_INPUT_MARKER
+            ),
+        );
+        state
+    }
+
+    #[test]
+    fn unverified_desktop_completion_is_replanned_then_fails_closed() {
+        let mut state = desktop_text_state();
+        let mut completion_replans = 0;
+
+        for expected_replans in 1..=MAX_COMPLETION_REPLANS {
+            assert_eq!(
+                gate_final_response(&mut state, &mut completion_replans).unwrap(),
+                FinalResponseGate::Replan
+            );
+            assert_eq!(completion_replans, expected_replans);
+            assert_eq!(state.messages.last().unwrap().role, "system");
+            assert!(state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .as_deref()
+                .is_some_and(|content| content.contains("尚未执行已验证的目标窗口文本输入")));
+        }
+
+        let error = gate_final_response(&mut state, &mut completion_replans).unwrap_err();
+        assert_eq!(error, "无法确认文本已写入目标窗口，任务未完成");
+    }
+
+    #[test]
+    fn unverified_desktop_completion_does_not_stream_a_false_success_answer() {
+        assert!(!should_stream_response_tokens(&desktop_text_state()));
+    }
+
+    #[test]
+    fn verified_desktop_completion_can_stream_and_finish() {
+        let mut state = verified_desktop_text_state();
+        let mut completion_replans = 0;
+
+        assert!(should_stream_response_tokens(&state));
+        assert_eq!(
+            gate_final_response(&mut state, &mut completion_replans).unwrap(),
+            FinalResponseGate::Complete
+        );
+        assert_eq!(completion_replans, 0);
     }
 
     #[tokio::test]
