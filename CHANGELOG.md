@@ -2,10 +2,41 @@
 
 ## Unreleased
 
+## 0.9.0 — 2026-08-22
+
 ### Added
 
+- “昔涟 · 涟漪 / Cyrene Ripple”完整桌面主题，提供白天与夜间两种外观，并以透明月光 Surface 保留全局环境背景。
+- 智能工作台首页、对话反馈、Agent Progress、Tool 详情、审批、错误提示与可折叠执行轨迹的统一交互体验。
+- Task Center、Workspace、Workflow Editor、Memory、Knowledge Base、Skill、Plugin、Agent、Capability、Monitor、Logs 与 Settings 的 v0.9 产品界面。
+- 后台对话任务生命周期与任务筛选，历史记录可持久化并恢复真实执行状态。
+- Skill 安全 CRUD、Capability Source 管理与 MCP 服务配置管理。
 - 多服务商 OpenAI 兼容模型档案：支持 OpenAI、DeepSeek、千问、GLM、自定义地址，包含连接验证、激活切换和系统凭据库保护。
 - 本地持久化 LLM Token usage：按模型/日期聚合输入、输出、总 Token，并在设置页提供模型树与柱状图。
+
+### Changed
+
+- 前端功能路由采用懒加载，减少初始 bundle 与不必要的聊天消息渲染；后端降低空闲轮询和运行时资源开销。
+- 执行历史优先展示用户可理解的动作和错误说明，原始 Tool 字段、stdout、stderr 与技术错误进入折叠详情或日志。
+- 网站与桌面应用启动只有在目标窗口真实可见并获得前台焦点后才报告成功。
+- 桌面文字输入绑定明确目标应用，并在目标窗口保持前台且输入完成得到验证后才允许 Agent 宣告任务完成。
+
+### Fixed
+
+- 修复后台命令窗口短暂闪烁、路由切换闪烁、长执行详情越界、历史审批状态丢失和聊天执行历史恢复问题。
+- 修复打开网站或应用仅检查进程却误报“已打开”的问题。
+- 修复只打开记事本但未完成文字输入时仍回答成功的问题。
+
+### Security
+
+- GUI 启动、键盘输入与 Agent 完成状态继续通过真实可观察证据验证；无法确认时 Fail Closed，不伪造成功。
+- Skill、Capability 与 MCP 管理操作保持现有 Security Gateway、审批、SecretStore 与审计边界。
+
+### Packaging
+
+- Windows x64 正式产物统一为 NSIS 安装包；默认 Tauri 构建不再混合 macOS bundle 目标。
+- 版本一致性、正式构建、SHA-256、隔离静默安装与卸载均提供可重复执行的发布脚本。
+- macOS `.app` / `.dmg` 保留独立构建入口；签名与公证不在本版本自动化范围内。
 
 ## 0.8.0 — 2026-08-17
 
