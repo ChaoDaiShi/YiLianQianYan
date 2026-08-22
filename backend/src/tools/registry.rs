@@ -82,7 +82,7 @@ impl ToolRegistry {
 
         // Input simulation tools
         registry.register(Arc::new(MouseTool));
-        registry.register(Arc::new(KeyboardTool));
+        registry.register(Arc::new(KeyboardTool::new()));
 
         // Screenshot tool
         registry.register(Arc::new(ScreenshotTool));
