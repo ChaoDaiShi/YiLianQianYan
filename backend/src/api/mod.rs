@@ -3,7 +3,7 @@
 // ============================================================
 
 use axum::{
-    extract::{Request, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -28,6 +28,7 @@ mod logs;
 mod mcp_runtime;
 mod memories;
 mod plugins;
+mod resources;
 mod secrets;
 mod security;
 mod security_grants;
@@ -55,6 +56,14 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/chat/stop", post(chat::stop_handler))
         .route("/api/events", get(events::events_handler))
         .route("/api/commands", post(commands::execute_handler))
+        .route(
+            "/api/resources/ingest",
+            post(resources::ingest_handler).layer(DefaultBodyLimit::max(
+                crate::shared::resource::DEFAULT_MAX_RESOURCE_BYTES,
+            )),
+        )
+        .route("/api/resources", get(resources::list_handler))
+        .route("/api/resources/:id", get(resources::get_handler))
         .route("/api/conversations", get(conversations::list_handler))
         .route("/api/conversations", post(conversations::create_handler))
         .route("/api/conversations/:id", get(conversations::load_handler))

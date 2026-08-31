@@ -3,3 +3,4 @@
 export * from "./legacy";
 export * from "./commands";
 export * from "./events";
+export * from "./resources";

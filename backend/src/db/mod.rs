@@ -7,6 +7,7 @@ mod llm_models;
 mod mcp;
 mod memories;
 mod migrations;
+mod resources;
 mod security_audit;
 mod settings;
 mod task;

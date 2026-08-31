@@ -48,6 +48,7 @@ use crate::safety::{
 use crate::secret::{migrate_legacy_secrets, OsSecretStore, SecretResolver, SecretStore};
 use crate::shared::command::CommandRouter;
 use crate::shared::event::EventHub;
+use crate::shared::resource::ResourceService;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
 
@@ -168,6 +169,8 @@ pub struct AppServer {
     pub event_hub: EventHub,
     /// Shared command routing only; authorization remains external.
     pub command_router: CommandRouter,
+    /// Safe app-managed resource ingestion and metadata service.
+    pub resource_service: ResourceService,
 }
 
 impl AppServer {
@@ -252,6 +255,13 @@ impl AppServer {
         let subagents = Self::discover_subagents(workspace_root, &subagent_dirs);
 
         let log_buffer = LogBuffer::new(2000);
+        let event_hub = EventHub::new(256);
+        let resource_root = db_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("resources");
+        let resource_service =
+            ResourceService::new(db.clone_connection(), resource_root, event_hub.clone());
 
         let server = Self {
             db,
@@ -274,8 +284,9 @@ impl AppServer {
             ))),
             secret_store,
             secret_resolver,
-            event_hub: EventHub::new(256),
+            event_hub,
             command_router: CommandRouter::with_foundation_handlers(),
+            resource_service,
         };
         server.seed_default_grants();
         Ok(server)
