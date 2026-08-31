@@ -49,6 +49,7 @@ use crate::secret::{migrate_legacy_secrets, OsSecretStore, SecretResolver, Secre
 use crate::shared::command::CommandRouter;
 use crate::shared::event::EventHub;
 use crate::shared::resource::ResourceService;
+use crate::shared::voice::VoiceCore;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
 
@@ -171,6 +172,8 @@ pub struct AppServer {
     pub command_router: CommandRouter,
     /// Safe app-managed resource ingestion and metadata service.
     pub resource_service: ResourceService,
+    /// Provider-neutral voice session state and layered presence.
+    pub voice_core: VoiceCore,
 }
 
 impl AppServer {
@@ -262,6 +265,19 @@ impl AppServer {
             .join("resources");
         let resource_service =
             ResourceService::new(db.clone_connection(), resource_root, event_hub.clone());
+        let voice_core = VoiceCore::deterministic(event_hub.clone());
+        let command_router = CommandRouter::with_foundation_handlers();
+        let presence_voice = voice_core.clone();
+        command_router
+            .register("presence.get", move |_| {
+                serde_json::to_value(presence_voice.presence()).map_err(|error| {
+                    crate::shared::command::CommandError::new(
+                        "presence_serialization_failed",
+                        error.to_string(),
+                    )
+                })
+            })
+            .map_err(|error| format!("register presence command: {error}"))?;
 
         let server = Self {
             db,
@@ -285,8 +301,9 @@ impl AppServer {
             secret_store,
             secret_resolver,
             event_hub,
-            command_router: CommandRouter::with_foundation_handlers(),
+            command_router,
             resource_service,
+            voice_core,
         };
         server.seed_default_grants();
         Ok(server)
