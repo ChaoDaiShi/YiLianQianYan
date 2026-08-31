@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import appSource from "../App.tsx?raw";
+import workspaceSurfaceSource from "../surfaces/workspace/WorkspaceSurface.tsx?raw";
 import memoryPageSource from "./MemoryPage.tsx?raw";
 import knowledgePageSource from "./KnowledgePage.tsx?raw";
 import { NAV_GROUPS } from "../components/layout/navGroups";
 
 describe("Memory and Knowledge page boundaries", () => {
   it("exposes Memory Center as a real memory management route", () => {
-    expect(appSource).toContain('path="memory"');
+    expect(workspaceSurfaceSource).toContain('path="memory"');
     expect(memoryPageSource).toContain("useMemoryStore");
     expect(memoryPageSource).toContain("aria-pressed");
     expect(memoryPageSource).toContain("ErrorState");

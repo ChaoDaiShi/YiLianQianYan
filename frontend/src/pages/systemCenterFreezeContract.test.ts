@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import appSource from "../App.tsx?raw";
+import workspaceSurfaceSource from "../surfaces/workspace/WorkspaceSurface.tsx?raw";
 import navRailSource from "../components/layout/NavRail.tsx?raw";
 import systemSource from "./SystemPage.tsx?raw";
 import logsSource from "./LogsPage.tsx?raw";
@@ -7,9 +7,9 @@ import settingsSource from "./SettingsPage.tsx?raw";
 
 describe("System Center freeze", () => {
   it("keeps system routes and compact NavRail sizing", () => {
-    expect(appSource).toContain('path="system"');
-    expect(appSource).toContain('path="logs"');
-    expect(appSource).toContain('path="settings"');
+    expect(workspaceSurfaceSource).toContain('path="system"');
+    expect(workspaceSurfaceSource).toContain('path="logs"');
+    expect(workspaceSurfaceSource).toContain('path="settings"');
     expect(navRailSource).toContain("min-[960px]:w-[80px]");
     expect(navRailSource).toContain("--sidebar-active");
   });

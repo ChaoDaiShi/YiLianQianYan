@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error -- Node file access is test-only and not bundled.
 import { readFileSync } from "node:fs";
-import appSource from "../App.tsx?raw";
+import workspaceSurfaceSource from "../surfaces/workspace/WorkspaceSurface.tsx?raw";
 import shellSource from "../components/layout/AppShell.tsx?raw";
 import loadingSource from "../components/layout/RouteLoadingSurface.tsx?raw";
 import workspaceLayoutSource from "../components/layout/workspaceLayout.ts?raw";
@@ -26,11 +26,11 @@ const lazyPages = [
 
 describe("route loading contract", () => {
   it("keeps ChatPage eager and loads feature pages lazily", () => {
-    expect(appSource).toContain('import ChatPage from "./pages/ChatPage"');
+    expect(workspaceSurfaceSource).toContain('import ChatPage from "../../pages/ChatPage"');
 
     for (const page of lazyPages) {
-      expect(appSource).toContain(`lazy(() => import("./pages/${page}"))`);
-      expect(appSource).not.toContain(`import ${page} from "./pages/${page}"`);
+      expect(workspaceSurfaceSource).toContain(`lazy(() => import("../../pages/${page}"))`);
+      expect(workspaceSurfaceSource).not.toContain(`import ${page} from "../../pages/${page}"`);
     }
   });
 
@@ -48,11 +48,11 @@ describe("route loading contract", () => {
       "memory",
       "knowledge",
     ]) {
-      expect(appSource).toContain(`path="${path}"`);
+      expect(workspaceSurfaceSource).toContain(`path="${path}"`);
     }
 
-    expect(appSource).not.toContain("Suspense");
-    expect(appSource).not.toContain("RouteLoadingSurface");
+    expect(workspaceSurfaceSource).not.toContain("Suspense");
+    expect(workspaceSurfaceSource).not.toContain("RouteLoadingSurface");
     expect(shellSource).toContain("Suspense");
     expect(shellSource).toContain("RouteLoadingSurface");
     expect(shellSource).toContain("<Outlet />");
