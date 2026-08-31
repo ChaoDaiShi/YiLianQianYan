@@ -5,7 +5,7 @@ vi.mock("./controlSession", () => ({
 }));
 
 import { executeCommand } from "./commands";
-import { parseProductEventData } from "./events";
+import { parseProductEventData, subscribeToEvents } from "./events";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -41,5 +41,33 @@ describe("shared spine API", () => {
       method: "POST",
       headers: expect.objectContaining({ "X-Yilian-Control-Session": "a".repeat(64) }),
     }));
+  });
+
+  it("receives a backend-formatted SSE product event", async () => {
+    const productEvent = {
+      id: "evt-sse-1",
+      namespace: "resource",
+      type: "resource.created",
+      source: "resource-core",
+      timestamp: 1,
+      schema_version: 1,
+      payload: { id: "res-sse-1" },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      `id: evt-sse-1\nevent: resource.created\ndata: ${JSON.stringify(productEvent)}\n\n`,
+      { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    )));
+
+    const received = await new Promise<string>((resolve, reject) => {
+      const controller = subscribeToEvents(
+        (event) => {
+          controller.abort();
+          resolve(event.payload.id as string);
+        },
+        reject,
+      );
+    });
+
+    expect(received).toBe("res-sse-1");
   });
 });
