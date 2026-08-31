@@ -5,3 +5,4 @@ export * from "./commands";
 export * from "./events";
 export * from "./resources";
 export * from "./voice";
+export * from "./projections";

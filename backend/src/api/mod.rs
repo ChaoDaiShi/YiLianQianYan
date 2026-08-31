@@ -28,6 +28,7 @@ mod logs;
 mod mcp_runtime;
 mod memories;
 mod plugins;
+mod projections;
 mod resources;
 mod secrets;
 mod security;
@@ -76,6 +77,14 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/voice/sessions/cancel", post(voice::cancel_handler))
         .route("/api/voice/transcribe", post(voice::transcribe_handler))
         .route("/api/voice/speak", post(voice::speak_handler))
+        .route(
+            "/api/projections/tasks",
+            get(projections::task_projections_handler),
+        )
+        .route(
+            "/api/projections/desktop-context",
+            get(projections::desktop_context_handler),
+        )
         .route("/api/conversations", get(conversations::list_handler))
         .route("/api/conversations", post(conversations::create_handler))
         .route("/api/conversations/:id", get(conversations::load_handler))
