@@ -46,6 +46,7 @@ use crate::safety::{
     AuditRecorder, ControlSession, PermissionId,
 };
 use crate::secret::{migrate_legacy_secrets, OsSecretStore, SecretResolver, SecretStore};
+use crate::shared::command::CommandRouter;
 use crate::shared::event::EventHub;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
@@ -165,6 +166,8 @@ pub struct AppServer {
     pub secret_resolver: Arc<SecretResolver>,
     /// Bounded product-event channel. High-frequency streams stay separate.
     pub event_hub: EventHub,
+    /// Shared command routing only; authorization remains external.
+    pub command_router: CommandRouter,
 }
 
 impl AppServer {
@@ -272,6 +275,7 @@ impl AppServer {
             secret_store,
             secret_resolver,
             event_hub: EventHub::new(256),
+            command_router: CommandRouter::with_foundation_handlers(),
         };
         server.seed_default_grants();
         Ok(server)

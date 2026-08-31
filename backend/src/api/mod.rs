@@ -20,6 +20,7 @@ mod agents;
 mod approvals;
 mod capabilities;
 mod chat;
+mod commands;
 mod conversations;
 mod events;
 mod llm_models;
@@ -53,6 +54,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/chat", post(chat::chat_handler))
         .route("/api/chat/stop", post(chat::stop_handler))
         .route("/api/events", get(events::events_handler))
+        .route("/api/commands", post(commands::execute_handler))
         .route("/api/conversations", get(conversations::list_handler))
         .route("/api/conversations", post(conversations::create_handler))
         .route("/api/conversations/:id", get(conversations::load_handler))
