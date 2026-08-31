@@ -6,6 +6,7 @@ mod conversations;
 mod llm_models;
 mod mcp;
 mod memories;
+mod migrations;
 mod security_audit;
 mod settings;
 mod task;
@@ -43,10 +44,12 @@ impl Database {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(path)?;
+        let adopted_v09 = migrations::table_exists(&conn, "conversations")?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
-        db.run_migrations()?;
+        db.run_v09_bootstrap()?;
+        db.run_versioned_migrations(adopted_v09)?;
         // Seed after migrations so the lock is released between calls
         db.seed_builtin_workflows()?;
         Ok(db)
@@ -63,7 +66,7 @@ impl Database {
         Ok(())
     }
 
-    fn run_migrations(&self) -> Result<(), rusqlite::Error> {
+    fn run_v09_bootstrap(&self) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS conversations (
@@ -539,6 +542,11 @@ impl Database {
         )?;
 
         Ok(())
+    }
+
+    fn run_versioned_migrations(&self, adopted_v09: bool) -> Result<(), rusqlite::Error> {
+        let mut conn = self.conn.lock().unwrap();
+        migrations::run_versioned_migrations(&mut conn, adopted_v09)
     }
 
     /// Seed built-in workflow templates if the workflows table is empty.
