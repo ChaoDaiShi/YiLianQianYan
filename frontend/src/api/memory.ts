@@ -1,0 +1,2 @@
+export { MEMORY_RETRIEVAL_MODE_LABELS, listMemories, getMemory, createMemory, updateMemory, deleteMemory, getMemoryStats, extractMemories, batchImportMemories, batchDeleteMemories, exportMemories, mergeMemories, reindexMemories, retrieveMemories } from "./legacy";
+export type { MemoryRecord, MemoryStats, MemoryReindexResult, MemoryRetrievalMode, ScoredMemory, MemoryRetrieveResponse, MemoryQuery } from "./legacy";

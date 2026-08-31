@@ -1,0 +1,2 @@
+export { listTasks, createTask, getTask, startTask, retryTask, cancelTask, listTaskExecutions, listTaskTimeline, listTaskArtifacts, listTaskDecisions, resolveTaskDecision, listAgents, createAgent, listTeams, createTeam } from "./legacy";
+export type { Task, TaskStatus, TaskPriority, TaskExecution, TaskExecutionStatus, TaskEvent, Artifact, ArtifactType, TaskDecision, TaskDecisionOption, AgentDefinition, AgentTeam } from "./legacy";
