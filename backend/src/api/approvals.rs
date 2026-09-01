@@ -1568,16 +1568,18 @@ mod tests {
         ));
     }
 
-    fn bash_graph() -> WorkflowGraphDefinition {
+    fn deterministic_read_graph() -> WorkflowGraphDefinition {
+        // This suite verifies the approval/SSE bridge, not OS process launch.
+        // Keep the real Gateway path while avoiding a platform-dependent shell.
         WorkflowGraphDefinition {
             schema_version: WORKFLOW_GRAPH_SCHEMA_VERSION,
-            entry_node_id: WorkflowNodeId::new("bash").unwrap(),
+            entry_node_id: WorkflowNodeId::new("read").unwrap(),
             nodes: vec![WorkflowNodeDefinition {
-                id: WorkflowNodeId::new("bash").unwrap(),
+                id: WorkflowNodeId::new("read").unwrap(),
                 kind: WorkflowNodeKind::Tool,
                 config: WorkflowNodeConfig::Tool {
-                    tool_name: "bash".to_string(),
-                    arguments: serde_json::json!({"command": "echo test"}),
+                    tool_name: "read_file".to_string(),
+                    arguments: serde_json::json!({"path": "Cargo.toml"}),
                 },
             }],
             edges: vec![],
@@ -1595,11 +1597,17 @@ mod tests {
             None,
             now,
         );
-        let mut run = WorkflowRun::new(WorkflowRunId::generate(), ctx, bash_graph(), now).unwrap();
-        let bash = WorkflowNodeId::new("bash").unwrap();
-        run.transition_node(&bash, NodeRunStatus::Running, now)
+        let mut run = WorkflowRun::new(
+            WorkflowRunId::generate(),
+            ctx,
+            deterministic_read_graph(),
+            now,
+        )
+        .unwrap();
+        let read = WorkflowNodeId::new("read").unwrap();
+        run.transition_node(&read, NodeRunStatus::Running, now)
             .unwrap();
-        run.transition_node(&bash, NodeRunStatus::WaitingApproval, now)
+        run.transition_node(&read, NodeRunStatus::WaitingApproval, now)
             .unwrap();
         let run_id = run.run_id.to_string();
         server.db.create_workflow_run("g1", &run).unwrap();
@@ -1608,10 +1616,10 @@ mod tests {
         let approval = server.approval_store.create_workflow(
             run.execution_context.execution_id.to_string(),
             run.run_id.to_string(),
-            "bash".to_string(),
+            "read".to_string(),
             "tool-call-1".to_string(),
-            "bash".to_string(),
-            serde_json::json!({"command": "echo test"}),
+            "read_file".to_string(),
+            serde_json::json!({"path": "Cargo.toml"}),
             RiskLevel::High,
             "high-risk".to_string(),
             "local-user".to_string(),
