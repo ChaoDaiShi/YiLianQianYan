@@ -66,9 +66,14 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 │       ├── server.rs            # AppServer 共享状态
 │       ├── api/                 # REST + SSE 路由
 │       │   ├── chat.rs          # POST /api/chat (SSE流式)
+│       │   ├── events.rs        # GET /api/events (产品事件 SSE)
+│       │   ├── commands.rs      # POST /api/commands (共享命令入口)
+│       │   ├── resources.rs     # Resource ingest/list/get
+│       │   ├── voice.rs         # Voice/Presence foundation API
 │       │   ├── conversations.rs # CRUD /api/conversations
 │       │   ├── settings.rs      # GET/PUT /api/settings
 │       │   └── tools.rs         # GET /api/tools
+│       ├── shared/              # Event/Command/Resource/Voice/Projection 契约
 │       ├── agent/               # ReAct agent 引擎
 │       ├── llm/                 # LLM 客户端 (OpenAI兼容)
 │       ├── tools/               # 内置工具系统
@@ -77,7 +82,8 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 │       └── config/              # 配置管理
 ├── frontend/                    # React 前端
 │   └── src/
-│       ├── api/client.ts        # fetch + SSE 客户端
+│       ├── api/                 # 按 chat/tasks/events/resources 等领域拆分的客户端
+│       ├── surfaces/            # WorkspaceSurface 与 Desktop host skeleton
 │       ├── components/          # UI 组件
 │       │   ├── chat/            # 聊天界面
 │       │   ├── sidebar/         # 对话列表
@@ -94,6 +100,14 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 |------|------|------|
 | `POST` | `/api/chat` | SSE 流式聊天 |
 | `POST` | `/api/chat/stop` | 取消生成 |
+| `GET` | `/api/events` | 低频 Product Event SSE |
+| `POST` | `/api/commands` | 共享命令路由；不替代授权 |
+| `POST` | `/api/resources/ingest` | 上传到应用管理存储并返回 Resource ID |
+| `GET` | `/api/resources[/:id]` | 查询 Resource 元数据 |
+| `GET` | `/api/presence` | 查询分层 Presence 快照 |
+| `POST` | `/api/voice/sessions/{start,stop,interrupt,cancel}` | Provider 中立 VoiceSession lifecycle |
+| `GET` | `/api/projections/tasks` | TaskProjection；Foundation 阶段为显式 Mock |
+| `GET` | `/api/projections/desktop-context` | DesktopContextProjection；Foundation 阶段为显式 Mock |
 | `GET` `/POST` `/DELETE` | `/api/conversations[/{id}]` | 对话 CRUD |
 | `GET` `/PUT` | `/api/settings` | 配置管理 |
 | `GET` `/POST` | `/api/llm/models` | 多服务商模型档案列表/新增 |
@@ -206,6 +220,17 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
   - Settings「权限」页面提供 Filesystem/Network/Process/Shell 授权创建、删除、风险提示与真实隔离状态；不宣传 Full Sandbox。
 
 **Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。SecretStore 只负责存取，绝不授予权限或绕过 Gateway；Grant 是 authority，不是 execution。
+
+## v1 / v2 Shared Foundation
+
+v1 Task World 与 v2 Desktop World 从同一 `shared-foundation-v1-v2` 标签并行开发。Shared 只冻结 Migration、API boundary、Surface Host、Event、Command、Resource、Voice/Presence、Context/Projection 契约；TaskGraph、DesktopSpace、App Mount、Wallpaper 与 Widget 均未在 Foundation 中实现。
+
+- 架构入口：`docs/architecture/shared-foundation.md`
+- Ownership 与并行流程：`docs/development/ownership.md`、`parallel-development.md`
+- 验收入口：`docs/development/integration-gates.md`
+- 下游交接：`docs/handoff-v1.md`、`docs/handoff-v2.md`
+
+跨域 Mock 始终返回 `simulated=true` / `provider=mock`，不伪装真实 Windows 或 Task 能力。Command request 仍不等于 Authorization，任何现实副作用必须继续经过现有安全执行路径。
 
 ## Next: v0.9
 
