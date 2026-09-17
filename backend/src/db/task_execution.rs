@@ -211,6 +211,60 @@ fn row_to_execution(
     Ok(execution)
 }
 
+pub(crate) fn update_node_execution_on(
+    conn: &rusqlite::Connection,
+    execution: &NodeExecution,
+) -> Result<(), TaskExecutionPersistenceError> {
+    execution.context.validate()?;
+    let context_json = encode_json("context_json", &execution.context)?;
+    let output_json = execution
+        .output
+        .as_ref()
+        .map(|value| encode_json("output_json", value))
+        .transpose()?;
+    let validation_json = execution
+        .validation
+        .as_ref()
+        .map(|value| encode_json("validation_json", value))
+        .transpose()?;
+    let retry_policy_json = encode_json("retry_policy_json", &execution.retry_policy)?;
+    let changed = conn.execute(
+        "UPDATE task_node_executions SET
+            graph_id=?2, node_id=?3, attempt=?4, status=?5, executor_ref=?6,
+            context_json=?7, output_json=?8, validation_json=?9, audit_ref=?10,
+            approval_ref=?11, failure_code=?12, error=?13, retry_policy_json=?14,
+            created_at=?15, updated_at=?16, started_at=?17, finished_at=?18
+         WHERE execution_id=?1",
+        params![
+            execution.id.as_str(),
+            execution.graph_id.as_str(),
+            execution.node_id.as_str(),
+            to_i64(execution.attempt, "attempt")?,
+            execution.status.to_string(),
+            execution.executor_ref.as_ref().map(ToString::to_string),
+            context_json,
+            output_json,
+            validation_json,
+            execution.audit_ref,
+            execution.approval_ref,
+            execution.failure_code,
+            execution.error,
+            retry_policy_json,
+            execution.created_at,
+            execution.updated_at,
+            execution.started_at,
+            execution.finished_at,
+        ],
+    )?;
+    if changed == 0 {
+        return Err(TaskExecutionPersistenceError::Integrity(format!(
+            "node execution {} does not exist",
+            execution.id
+        )));
+    }
+    Ok(())
+}
+
 impl Database {
     /// Install migration 1002. The method is idempotent through the shared
     /// migration registrar and is intentionally separate from Database::new
@@ -281,54 +335,20 @@ impl Database {
         &self,
         execution: &NodeExecution,
     ) -> Result<(), TaskExecutionPersistenceError> {
-        execution.context.validate()?;
-        let context_json = encode_json("context_json", &execution.context)?;
-        let output_json = execution
-            .output
-            .as_ref()
-            .map(|value| encode_json("output_json", value))
-            .transpose()?;
-        let validation_json = execution
-            .validation
-            .as_ref()
-            .map(|value| encode_json("validation_json", value))
-            .transpose()?;
-        let retry_policy_json = encode_json("retry_policy_json", &execution.retry_policy)?;
-        let conn = self.conn();
-        let changed = conn.execute(
-            "UPDATE task_node_executions SET
-                graph_id=?2, node_id=?3, attempt=?4, status=?5, executor_ref=?6,
-                context_json=?7, output_json=?8, validation_json=?9, audit_ref=?10,
-                approval_ref=?11, failure_code=?12, error=?13, retry_policy_json=?14,
-                created_at=?15, updated_at=?16, started_at=?17, finished_at=?18
-             WHERE execution_id=?1",
-            params![
-                execution.id.as_str(),
-                execution.graph_id.as_str(),
-                execution.node_id.as_str(),
-                to_i64(execution.attempt, "attempt")?,
-                execution.status.to_string(),
-                execution.executor_ref.as_ref().map(ToString::to_string),
-                context_json,
-                output_json,
-                validation_json,
-                execution.audit_ref,
-                execution.approval_ref,
-                execution.failure_code,
-                execution.error,
-                retry_policy_json,
-                execution.created_at,
-                execution.updated_at,
-                execution.started_at,
-                execution.finished_at,
-            ],
-        )?;
-        if changed == 0 {
-            return Err(TaskExecutionPersistenceError::Integrity(format!(
-                "node execution {} does not exist",
-                execution.id
-            )));
+        update_node_execution_on(&self.conn(), execution)
+    }
+
+    /// Recovery changes every affected row or none of them.
+    pub(crate) fn update_node_executions_atomically(
+        &self,
+        executions: &[NodeExecution],
+    ) -> Result<(), TaskExecutionPersistenceError> {
+        let mut conn = self.conn();
+        let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for execution in executions {
+            update_node_execution_on(&transaction, execution)?;
         }
+        transaction.commit()?;
         Ok(())
     }
 

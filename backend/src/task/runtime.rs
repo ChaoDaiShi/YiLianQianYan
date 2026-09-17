@@ -1050,9 +1050,20 @@ impl TaskWorldRuntime {
         ensure_revision(&supervisor, expected_revision)?;
         supervisor.graph().validate()?;
         let mut harnesses = self.harnesses.write();
-        let harness = harnesses
-            .get_mut(graph_id)
+        let mut candidate = harnesses
+            .get(graph_id)
+            .cloned()
             .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        let affected = candidate.rerun_from_node(node_id, now)?;
+        let changed_attempts = candidate
+            .all_attempts()
+            .into_iter()
+            .filter(|execution| affected.contains(&execution.node_id))
+            .collect::<Vec<_>>();
+        self.database
+            .update_node_executions_atomically(&changed_attempts)?;
+        harnesses.insert(graph_id.clone(), candidate);
+        drop(harnesses);
         self.publish(
             "task.rerun.started",
             json!({
@@ -1060,18 +1071,6 @@ impl TaskWorldRuntime {
                 "node_id": node_id.as_str(),
             }),
         );
-        let affected = harness.rerun_from_node(node_id, now)?;
-        for execution in harness.all_attempts() {
-            if affected
-                .iter()
-                .any(|affected_id| affected_id == &execution.node_id)
-            {
-                if self.database.load_node_execution(&execution.id)?.is_some() {
-                    self.database.update_node_execution(&execution)?;
-                }
-            }
-        }
-        drop(harnesses);
         if dispatch {
             self.dispatch_ready_nodes_locked(graph_id, now)?;
         }

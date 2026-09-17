@@ -473,12 +473,19 @@ impl TaskHarness {
         let affected = self
             .scheduler
             .affected_branch(std::slice::from_ref(node_id));
+        // Reject the whole branch before invalidating any earlier result.
+        for affected_node in &affected {
+            if let Some(execution) = self.attempts.get(affected_node).and_then(|attempts| {
+                attempts
+                    .iter()
+                    .find(|execution| execution.status.is_active())
+            }) {
+                return Err(TaskHarnessError::ActiveExecution(execution.id.clone()));
+            }
+        }
         for affected_node in &affected {
             if let Some(attempts) = self.attempts.get_mut(affected_node) {
                 for execution in attempts {
-                    if execution.status.is_active() {
-                        return Err(TaskHarnessError::ActiveExecution(execution.id.clone()));
-                    }
                     execution.mark_stale(now, "node selected for partial rerun");
                 }
             }

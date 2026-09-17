@@ -40,6 +40,9 @@ mod tests;
 mod world_tests;
 
 #[cfg(test)]
+mod recovery_path_tests;
+
+#[cfg(test)]
 mod supervisor_tests;
 
 pub use adapters::{
