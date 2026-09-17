@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "../ui/cn";
 import { Tooltip } from "../ui";
@@ -8,6 +8,7 @@ import { NAV_GROUPS } from "./navGroups";
 import ModuleSetup from "../system/ModuleSetup";
 import { useProductPreferences } from "../system/useProductPreferences";
 import { TRUSTED_MODULES } from "../system/productPreferences";
+import { useVisibleRefresh } from "../system/useVisibleRefresh";
 
 type BackendStatus = "connecting" | "healthy" | "unavailable";
 
@@ -31,26 +32,15 @@ export default function NavRail() {
   const [backendStatus, setBackendStatus] =
     useState<BackendStatus>("connecting");
 
-  useEffect(() => {
-    let active = true;
-
-    const refreshBackendStatus = async () => {
+  const refreshBackendStatus = useCallback(async () => {
       const health = await healthCheck();
-      if (!active) return;
       setBackendStatus(
         health?.status === "healthy" && health.database === "healthy"
           ? "healthy"
           : "unavailable",
       );
-    };
-
-    void refreshBackendStatus();
-    const interval = window.setInterval(refreshBackendStatus, 30_000);
-    return () => {
-      active = false;
-      window.clearInterval(interval);
-    };
   }, []);
+  useVisibleRefresh(refreshBackendStatus);
 
   const backendStatusMeta = BACKEND_STATUS_META[backendStatus];
 

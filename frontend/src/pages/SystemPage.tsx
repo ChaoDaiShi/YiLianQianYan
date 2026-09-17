@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import MonitoringToolbox from "../components/system/MonitoringToolbox";
+import { useVisibleRefresh } from "../components/system/useVisibleRefresh";
 import { Activity, Cpu, Database, Disc, HardDrive, Monitor, RefreshCw, Server } from "lucide-react";
 import { getSystemInfo, healthCheck, type RuntimeHealth } from "../api/client";
 import {
@@ -67,6 +69,7 @@ export default function SystemPage() {
       setData(systemResult as SystemData);
       setError("");
     } else {
+      setData(null);
       setError("状态暂时无法获取");
     }
     setHealth(healthResult);
@@ -74,11 +77,7 @@ export default function SystemPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 3000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+  useVisibleRefresh(refresh);
 
   return (
     <div className="system-center-page page-canvas flex h-full min-h-0 flex-col">
@@ -94,6 +93,7 @@ export default function SystemPage() {
       />
 
       <div className="system-center-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 scrollbar-thin">
+        <MonitoringToolbox data={data as unknown as Record<string, unknown> | null} health={health as unknown as Record<string, unknown> | null} />
         {error && !data ? (
           <ErrorState
             title="系统状态暂时无法加载"

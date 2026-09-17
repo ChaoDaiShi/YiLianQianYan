@@ -14,6 +14,9 @@ use crate::server::AppServer;
 use crate::utils::process::hide_std_command_window;
 
 static GPU_INFO: OnceLock<Vec<serde_json::Value>> = OnceLock::new();
+fn memory_gib(bytes: u64) -> String {
+    format!("{:.2}", bytes as f64 / 1_073_741_824.0)
+}
 
 #[derive(Debug, Serialize)]
 pub(super) struct HealthResponse {
@@ -99,8 +102,8 @@ fn collect_system_info() -> serde_json::Value {
         .unwrap_or_default();
 
     // ── Memory ──
-    let total_mem = sys.total_memory(); // KB
-    let used_mem = sys.used_memory(); // KB
+    let total_mem = sys.total_memory(); // bytes
+    let used_mem = sys.used_memory(); // bytes
     let mem_usage_pct = if total_mem > 0 {
         (used_mem as f64 / total_mem as f64) * 100.0
     } else {
@@ -144,6 +147,7 @@ fn collect_system_info() -> serde_json::Value {
     let kernel = System::kernel_version().unwrap_or_default();
 
     serde_json::json!({
+        "process_count": sys.processes().len(),
         "hostname": hostname,
         "os": os,
         "kernel": kernel,
@@ -155,15 +159,52 @@ fn collect_system_info() -> serde_json::Value {
             "per_core": cpu_usage.iter().map(|u| format!("{:.1}", u)).collect::<Vec<_>>(),
         },
         "memory": {
-            "total_gb": format!("{:.2}", total_mem as f64 / 1_048_576.0),
-            "used_gb": format!("{:.2}", used_mem as f64 / 1_048_576.0),
+            "total_gb": memory_gib(total_mem),
+            "used_gb": memory_gib(used_mem),
             "usage_pct": format!("{:.1}", mem_usage_pct),
-            "swap_total_gb": format!("{:.2}", total_swap as f64 / 1_048_576.0),
-            "swap_used_gb": format!("{:.2}", used_swap as f64 / 1_048_576.0),
+            "swap_total_gb": memory_gib(total_swap),
+            "swap_used_gb": memory_gib(used_swap),
         },
         "disks": disk_info,
         "gpu": gpu_info,
     })
+}
+
+pub async fn get_preferences(
+    State(server): State<Arc<AppServer>>,
+) -> Result<
+    Json<crate::capability::system_preferences::Preferences>,
+    (StatusCode, Json<serde_json::Value>),
+> {
+    crate::capability::system_preferences::load(&server.db)
+        .map(Json)
+        .map_err(|message| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"message":message})),
+            )
+        })
+}
+
+pub async fn put_preferences(
+    State(server): State<Arc<AppServer>>,
+    Json(value): Json<crate::capability::system_preferences::Preferences>,
+) -> Result<
+    Json<crate::capability::system_preferences::Preferences>,
+    (StatusCode, Json<serde_json::Value>),
+> {
+    crate::capability::system_preferences::save(&server.db, value)
+        .map(Json)
+        .map_err(|message| {
+            (
+                if message.starts_with("stale_") {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::BAD_REQUEST
+                },
+                Json(serde_json::json!({"message":message})),
+            )
+        })
 }
 
 /// GET /api/system/cpu — CPU only
@@ -233,10 +274,10 @@ fn collect_memory_info() -> serde_json::Value {
     let free = sys.free_memory();
 
     serde_json::json!({
-        "total_gb": format!("{:.2}", total as f64 / 1_048_576.0),
-        "used_gb": format!("{:.2}", used as f64 / 1_048_576.0),
-        "available_gb": format!("{:.2}", available as f64 / 1_048_576.0),
-        "free_gb": format!("{:.2}", free as f64 / 1_048_576.0),
+        "total_gb": memory_gib(total),
+        "used_gb": memory_gib(used),
+        "available_gb": memory_gib(available),
+        "free_gb": memory_gib(free),
         "usage_pct": format!("{:.1}", if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 }),
     })
 }
@@ -293,6 +334,11 @@ fn query_gpu_info() -> Vec<serde_json::Value> {
 mod health_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    #[test]
+    fn memory_bytes_are_reported_in_gibibytes() {
+        assert_eq!(memory_gib(1_073_741_824), "1.00");
+        assert_eq!(memory_gib(16 * 1_073_741_824), "16.00");
+    }
 
     #[test]
     fn system_collector_keeps_resource_sections() {

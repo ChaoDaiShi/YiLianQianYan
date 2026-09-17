@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { defaultPreferences, safePreferences, TRUSTED_MODULES, validPreferences } from "./productPreferences";
+import { acceptPreferences, defaultPreferences, safePreferences, TRUSTED_MODULES, validPreferences } from "./productPreferences";
 
 describe("trusted system and layout preferences", () => {
+  it("does not replace a saved layout with an older delayed read", () => {
+    const saved = { ...defaultPreferences(), revision: 2, setup_completed: true };
+    expect(acceptPreferences(saved, defaultPreferences())).toEqual(saved);
+    expect(acceptPreferences(saved, { schema_version: 99 })).toEqual(saved);
+  });
   it("rejects hidden safety entries, disabled mandatory modules and duplicate routes", () => {
     const hidden = defaultPreferences(); hidden.navigation.find((item) => item.id === "settings")!.visible = false;
     expect(validPreferences(hidden)).toBe(false);

@@ -1,0 +1,7 @@
+.monitor-toolbox-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.monitor-toolbox-card { min-width: 0; overflow-wrap: anywhere; }
+@media (min-width: 960px) {
+  .monitor-toolbox-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: minmax(140px, auto); }
+  .monitor-toolbox-card { grid-column: span var(--card-w); grid-row: span var(--card-h); }
+  .monitor-toolbox-free .monitor-toolbox-card { grid-column: var(--card-x) / span var(--card-w); grid-row: var(--card-y) / span var(--card-h); }
+}

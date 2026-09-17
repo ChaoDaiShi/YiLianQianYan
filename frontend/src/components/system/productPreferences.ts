@@ -43,3 +43,4 @@ export function validPreferences(value: unknown): value is ProductPreferences {
     && card.width >= 1 && card.width <= 4 && card.height >= 1 && card.height <= 3 && card.x + card.width <= 4);
 }
 export function safePreferences(value: unknown): ProductPreferences { return validPreferences(value) ? value : defaultPreferences(); }
+export function acceptPreferences(current: ProductPreferences, incoming: unknown): ProductPreferences { return validPreferences(incoming) && incoming.revision >= current.revision ? incoming : current; }
