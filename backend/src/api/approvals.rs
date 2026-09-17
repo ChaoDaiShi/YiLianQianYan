@@ -133,24 +133,30 @@ fn consume_spoken_attested(
     if body.conversation_id.as_deref() != Some(approval.conversation_id.as_str()) {
         return Err((StatusCode::CONFLICT, "语音审批上下文不匹配".to_string()));
     }
-    server
+    let decision = if approve { "approve" } else { "reject" };
+    let result = server
         .voice_runtime
-        .consume_spoken_approval_attestation(
+        .authorize_spoken_approval(
             attestation_id,
             &approval.approval_id,
             &approval.conversation_id,
+            decision,
             chrono::Utc::now().timestamp_millis(),
+            || {
+                if approve {
+                    server.approval_store.consume_unique_expected_for_approval(
+                        &approval.conversation_id,
+                        &approval.approval_id,
+                    )
+                } else {
+                    server.approval_store.consume_unique_expected_for_rejection(
+                        &approval.conversation_id,
+                        &approval.approval_id,
+                    )
+                }
+            },
         )
         .map_err(|_| (StatusCode::CONFLICT, "语音审批凭据无效或已过期".to_string()))?;
-    let result = if approve {
-        server
-            .approval_store
-            .consume_unique_expected_for_approval(&approval.conversation_id, &approval.approval_id)
-    } else {
-        server
-            .approval_store
-            .consume_unique_expected_for_rejection(&approval.conversation_id, &approval.approval_id)
-    };
     let consumed = result.map_err(|error| (status_for(&error), error.to_string()))?;
     record_approval_resolved(server, &consumed);
     Ok(Some(consumed))
@@ -1484,6 +1490,25 @@ mod tests {
                 attestation_id: Some("not-issued".to_string()),
             },
             true,
+        )
+        .is_err());
+        assert_eq!(
+            server
+                .approval_store
+                .get(&pending.approval_id)
+                .unwrap()
+                .status,
+            crate::safety::ApprovalStatus::Pending
+        );
+
+        assert!(consume_spoken_attested(
+            &server,
+            &pending,
+            &ApprovalDecisionRequest {
+                conversation_id: Some(conversation.id.clone()),
+                attestation_id: Some(attestation.attestation_id.clone()),
+            },
+            false,
         )
         .is_err());
         assert_eq!(

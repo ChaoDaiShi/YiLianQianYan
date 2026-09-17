@@ -36,6 +36,7 @@ pub struct VoiceApprovalAttestation {
     pub displayed_at: i64,
     pub expires_at: i64,
     pub dispatched_lease_id: Option<String>,
+    pub dispatched_decision: Option<String>,
 }
 
 impl VoiceApprovalAttestation {
@@ -47,6 +48,7 @@ impl VoiceApprovalAttestation {
     ) -> bool {
         accepted.input_owner == VoiceInputOwner::PushToTalk
             && self.dispatched_lease_id.is_none()
+            && self.dispatched_decision.is_none()
             && accepted.created_at >= self.displayed_at
             && self.displayed_at <= now
             && now <= self.expires_at
@@ -146,6 +148,7 @@ struct VoiceRuntimeState {
     consumed_lease_ids: VecDeque<String>,
     last_accepted: Option<AcceptedFinalTranscript>,
     approval_attestation: Option<VoiceApprovalAttestation>,
+    revoked_display_ids: VecDeque<String>,
     presence: PresenceSnapshot,
 }
 
@@ -173,6 +176,7 @@ impl GlobalVoiceSessionRuntime {
                 consumed_lease_ids: VecDeque::new(),
                 last_accepted: None,
                 approval_attestation: None,
+                revoked_display_ids: VecDeque::new(),
                 presence: PresenceSnapshot {
                     source: "global-voice-runtime".to_string(),
                     ..PresenceSnapshot::default()
@@ -208,6 +212,7 @@ impl GlobalVoiceSessionRuntime {
                     state.final_transcript = None;
                     state.last_accepted = None;
                     state.approval_attestation = None;
+                    state.revoked_display_ids.clear();
                     state.consumed_lease_ids.clear();
                     state.presence.activity = PresenceActivity::Working;
                     state.presence.interaction = PresenceInteraction::Listening;
@@ -257,6 +262,7 @@ impl GlobalVoiceSessionRuntime {
             state.final_transcript = None;
             state.last_accepted = None;
             state.approval_attestation = None;
+            state.revoked_display_ids.clear();
             state.presence.activity = PresenceActivity::Working;
             state.presence.interaction = PresenceInteraction::Listening;
             state.presence.attention = PresenceAttention::None;
@@ -325,6 +331,7 @@ impl GlobalVoiceSessionRuntime {
                 state.lease = None;
                 state.last_accepted = None;
                 state.approval_attestation = None;
+                state.revoked_display_ids.clear();
                 state.partial_transcript = None;
                 state.final_transcript = None;
                 state.presence.interaction = PresenceInteraction::Listening;
@@ -360,6 +367,15 @@ impl GlobalVoiceSessionRuntime {
             ));
         }
         let mut state = self.state.lock();
+        if state
+            .revoked_display_ids
+            .iter()
+            .any(|revoked| revoked == display_id)
+        {
+            return Err(VoiceRuntimeError::InvalidState(
+                "approval display lease has been revoked".to_string(),
+            ));
+        }
         let session = state
             .session
             .clone()
@@ -392,6 +408,7 @@ impl GlobalVoiceSessionRuntime {
             displayed_at,
             expires_at: displayed_at.saturating_add(VOICE_APPROVAL_ATTESTATION_TTL_MS),
             dispatched_lease_id: None,
+            dispatched_decision: None,
         };
         state.approval_attestation = Some(attestation.clone());
         Ok(attestation)
@@ -411,27 +428,37 @@ impl GlobalVoiceSessionRuntime {
             .cloned()
     }
 
-    pub fn revoke_displayed_approval(&self, attestation_id: &str, display_id: &str) -> bool {
+    pub fn revoke_displayed_approval(&self, display_id: &str) -> bool {
         let mut state = self.state.lock();
+        if !state
+            .revoked_display_ids
+            .iter()
+            .any(|revoked| revoked == display_id)
+        {
+            while state.revoked_display_ids.len() >= 64 {
+                state.revoked_display_ids.pop_front();
+            }
+            state.revoked_display_ids.push_back(display_id.to_string());
+        }
         let matches = state
             .approval_attestation
             .as_ref()
-            .is_some_and(|attestation| {
-                attestation.attestation_id == attestation_id && attestation.display_id == display_id
-            });
+            .is_some_and(|attestation| attestation.display_id == display_id);
         if matches {
             state.approval_attestation = None;
         }
         matches
     }
 
-    pub fn consume_spoken_approval_attestation(
+    pub fn authorize_spoken_approval<T, E>(
         &self,
         attestation_id: &str,
         approval_id: &str,
         conversation_id: &str,
+        decision: &str,
         now: i64,
-    ) -> Result<(), VoiceRuntimeError> {
+        consume: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Result<T, E>, VoiceRuntimeError> {
         let mut state = self.state.lock();
         let session = state
             .session
@@ -449,6 +476,7 @@ impl GlobalVoiceSessionRuntime {
                     && attestation.displayed_at <= now
                     && now <= attestation.expires_at
                     && attestation.dispatched_lease_id.is_some()
+                    && attestation.dispatched_decision.as_deref() == Some(decision)
                     && session
                         .conversational_anchor
                         .as_ref()
@@ -459,8 +487,11 @@ impl GlobalVoiceSessionRuntime {
                 "spoken approval attestation is missing, stale, or mismatched".to_string(),
             ));
         }
-        state.approval_attestation = None;
-        Ok(())
+        let result = consume();
+        if result.is_ok() {
+            state.approval_attestation = None;
+        }
+        Ok(result)
     }
 
     pub fn begin_processing(
@@ -669,14 +700,24 @@ impl GlobalVoiceSessionRuntime {
             // fails after beginning a side effect.
             state.last_accepted = None;
             let mut outcome = dispatch?;
-            if let Some(crate::voice::VoiceContinuation::Approval { approval_id, .. }) =
-                outcome.continuation.as_ref()
+            if let Some(crate::voice::VoiceContinuation::Approval {
+                approval_id,
+                decision,
+                ..
+            }) = outcome.continuation.as_ref()
             {
                 if let Some(attestation) = state.approval_attestation.as_mut() {
                     if attestation.approval_id == *approval_id
                         && attestation.dispatched_lease_id.is_none()
                     {
                         attestation.dispatched_lease_id = Some(accepted.lease_id.clone());
+                        attestation.dispatched_decision = Some(
+                            match decision {
+                                crate::voice::VoiceApprovalDecision::Approve => "approve",
+                                crate::voice::VoiceApprovalDecision::Reject => "reject",
+                            }
+                            .to_string(),
+                        );
                     }
                 }
             }
@@ -838,6 +879,7 @@ impl GlobalVoiceSessionRuntime {
             state.final_transcript = None;
             state.last_accepted = None;
             state.approval_attestation = None;
+            state.revoked_display_ids.clear();
             state.presence.activity = PresenceActivity::Working;
             state.presence.interaction = PresenceInteraction::Interrupted;
             state.presence.updated_at = session.updated_at;
@@ -871,6 +913,7 @@ impl GlobalVoiceSessionRuntime {
             state.final_transcript = None;
             state.last_accepted = None;
             state.approval_attestation = None;
+            state.revoked_display_ids.clear();
             state.presence.activity = PresenceActivity::Idle;
             state.presence.interaction = PresenceInteraction::None;
             state.presence.attention = PresenceAttention::None;

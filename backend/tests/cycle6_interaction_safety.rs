@@ -120,6 +120,7 @@ fn voice_approval_with_current_display_attestation_returns_one_continuation() {
                 displayed_at: 1,
                 expires_at: 60_001,
                 dispatched_lease_id: None,
+                dispatched_decision: None,
             }),
             accepted,
             session,

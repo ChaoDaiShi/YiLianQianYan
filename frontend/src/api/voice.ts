@@ -117,6 +117,7 @@ export interface VoiceContextUpdate {
 
 export interface VoiceApprovalAttestation {
   attestation_id: string;
+  display_id: string;
   approval_id: string;
   conversation_id: string;
   voice_session_id: string;
@@ -379,13 +380,12 @@ export async function attestVoiceApprovalDisplayed(
 
 export async function revokeVoiceApprovalDisplay(
   approvalId: string,
-  attestationId: string,
   displayId: string,
 ): Promise<void> {
   await fetch(`${API_BASE}/api/voice/approvals/${encodeURIComponent(approvalId)}/displayed`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json", ...controlSessionHeaders() },
-    body: JSON.stringify({ attestation_id: attestationId, display_id: displayId }),
+    body: JSON.stringify({ display_id: displayId }),
   });
 }
 

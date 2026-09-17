@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
 import {
@@ -70,7 +70,6 @@ export default function ApprovalCard({
 }: ApprovalCardProps) {
   const { session } = useGlobalVoiceContext();
   const cardRef = useRef<HTMLElement>(null);
-  const displayId = useMemo(() => crypto.randomUUID(), [approval.approval_id]);
   const [voiceProofUnavailable, setVoiceProofUnavailable] = useState(false);
   const isCritical = approval.risk_level === "critical";
   const target = targetFromArgs(approval.arguments || {});
@@ -88,40 +87,45 @@ export default function ApprovalCard({
     let active = true;
     let visible = false;
     let issuing = false;
+    let requestStarted = false;
+    let displayId = crypto.randomUUID();
     let issued: VoiceApprovalAttestation | null = null;
     const revoke = () => {
       const current = issued;
+      if (!current && !requestStarted) return;
+      const revokedDisplayId = current?.display_id ?? displayId;
       issued = null;
-      if (current) {
-        void revokeVoiceApprovalDisplay(
-          approval.approval_id,
-          current.attestation_id,
-          displayId,
-        ).catch(() => undefined);
-      }
+      requestStarted = false;
+      displayId = crypto.randomUUID();
+      void revokeVoiceApprovalDisplay(
+        approval.approval_id,
+        revokedDisplayId,
+      ).catch(() => undefined);
     };
     const attest = async () => {
       if (!active || issuing || issued || !visible || document.visibilityState !== "visible") return;
       issuing = true;
+      requestStarted = true;
+      const requestedDisplayId = displayId;
       try {
         const result = await attestVoiceApprovalDisplayed(
           approval.approval_id,
           session.voice_session_id,
           session.generation,
-          displayId,
+          requestedDisplayId,
           controller.signal,
         );
         if (!active || !visible || document.visibilityState !== "visible") {
           if (result) {
             void revokeVoiceApprovalDisplay(
               approval.approval_id,
-              result.attestation_id,
-              displayId,
+              requestedDisplayId,
             ).catch(() => undefined);
           }
           return;
         }
         issued = result;
+        requestStarted = false;
         setVoiceProofUnavailable(!result);
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -153,10 +157,8 @@ export default function ApprovalCard({
     approval.approval_id,
     approval.conversation_id,
     session?.generation,
-    session?.state,
     session?.voice_session_id,
     session?.conversational_anchor?.conversation_id,
-    displayId,
   ]);
 
   return (

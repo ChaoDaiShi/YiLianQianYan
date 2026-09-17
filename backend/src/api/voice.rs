@@ -111,7 +111,6 @@ pub async fn approval_displayed_handler(
 
 #[derive(Deserialize)]
 pub struct ApprovalDisplayRevokeRequest {
-    attestation_id: String,
     display_id: String,
 }
 
@@ -122,7 +121,7 @@ pub async fn approval_display_revoke_handler(
 ) -> Response {
     let revoked = server
         .voice_runtime
-        .revoke_displayed_approval(&request.attestation_id, &request.display_id);
+        .revoke_displayed_approval(&request.display_id);
     (StatusCode::OK, Json(json!({"revoked": revoked}))).into_response()
 }
 
