@@ -225,21 +225,26 @@ impl ArtifactService {
                     .get_task(&task_id)
                     .map_err(ArtifactError::Db)?
                     .ok_or_else(|| ArtifactError::Db("任务不存在".into()))?;
-                let artifacts = self
+                let execution = self
                     .db
-                    .list_artifacts(&crate::db::ArtifactQuery {
-                        task_id: Some(task_id.clone()),
-                        task_execution_id: Some(execution_id.clone()),
-                        workspace_id: None,
-                        limit: Some(8),
-                    })
-                    .map_err(ArtifactError::Db)?;
-                let output = artifacts
-                    .iter()
-                    .map(|artifact| artifact.summary.as_str())
-                    .filter(|text| !text.trim().is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
+                    .get_task_execution(&execution_id)
+                    .map_err(ArtifactError::Db)?
+                    .ok_or_else(|| ArtifactError::Db("执行记录不存在".into()))?;
+                let output = if let Some(run_id) = execution.workflow_run_id {
+                    self.workflow_output(&run_id, task.workflow_graph_id.as_deref())?
+                } else {
+                    let conn = self.db.conn();
+                    let mut query = conn.prepare("SELECT summary FROM artifacts WHERE task_id=?1 AND task_execution_id=?2 AND artifact_type='text' ORDER BY created_at LIMIT 8").map_err(|_|ArtifactError::Db("原始输出不可用".into()))?;
+                    let values = query
+                        .query_map(
+                            rusqlite::params![task_id.as_str(), execution_id.as_str()],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .map_err(|_| ArtifactError::Db("原始输出不可用".into()))?
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|_| ArtifactError::Db("原始输出无效".into()))?;
+                    values.join("\n\n")
+                };
                 if output.is_empty() {
                     return Err(ArtifactError::Db("此执行尚无可导出的已保存结果".into()));
                 }
@@ -270,8 +275,23 @@ impl ArtifactService {
                 let output = execution
                     .output
                     .ok_or_else(|| ArtifactError::Db("执行没有实际输出".into()))?;
+                let workflow_text = if let Some(reference) = execution
+                    .executor_ref
+                    .as_ref()
+                    .filter(|reference| reference.scheme() == "workflow")
+                {
+                    let run_id = output
+                        .get("workflow_run_id")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| ArtifactError::Db("工作流输出缺少真实运行关联".into()))?;
+                    let run_id = crate::workflow::WorkflowRunId::new(run_id)
+                        .map_err(|_| ArtifactError::Db("工作流运行标识无效".into()))?;
+                    self.workflow_output(&run_id, reference.as_str().strip_prefix("workflow://"))?
+                } else {
+                    String::new()
+                };
                 let text = format!(
-                    "```json\n{}\n```\n\n## 绑定的输入快照\n\n{}",
+                    "{workflow_text}\n\n## 执行元数据\n\n```json\n{}\n```\n\n## 绑定的输入快照\n\n{}",
                     serde_json::to_string_pretty(&output)
                         .map_err(|_| ArtifactError::Db("结果无效".into()))?,
                     execution.context.resources.join("\n\n")
@@ -287,6 +307,44 @@ impl ArtifactService {
                 ))
             }
         }
+    }
+
+    fn workflow_output(
+        &self,
+        run_id: &crate::workflow::WorkflowRunId,
+        expected_graph: Option<&str>,
+    ) -> Result<String, ArtifactError> {
+        let stored = self
+            .db
+            .get_workflow_run(run_id)
+            .map_err(ArtifactError::Db)?
+            .ok_or_else(|| ArtifactError::Db("工作流结果记录不存在".into()))?;
+        if stored.run.status != crate::workflow::WorkflowRunStatus::Completed
+            || expected_graph.is_some_and(|expected| expected != stored.workflow_graph_id)
+        {
+            return Err(ArtifactError::Db("工作流结果与已验证来源不一致".into()));
+        }
+        let mut output = String::new();
+        for node in &stored.run.node_states {
+            if node.status != crate::workflow::NodeRunStatus::Completed {
+                continue;
+            }
+            if let Some(result) = &node.result {
+                let remaining = 32_000usize.saturating_sub(output.chars().count());
+                if remaining == 0 {
+                    break;
+                }
+                output.extend(
+                    format!("### 节点 {}\n\n{}\n\n", node.node_id, result.summary)
+                        .chars()
+                        .take(remaining),
+                );
+            }
+        }
+        if output.trim().is_empty() {
+            return Err(ArtifactError::Db("工作流没有已保存的输出正文".into()));
+        }
+        Ok(output)
     }
 
     /// Validate an artifact path against a workspace root (when provided).

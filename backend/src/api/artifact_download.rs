@@ -72,14 +72,16 @@ pub async fn preview(State(server): State<Arc<AppServer>>, Path(id): Path<String
     match ArtifactService::new(server.db.clone_connection()).read_bytes(&id, &server.workspace_root)
     {
         Ok((artifact, bytes)) => {
+            let mut truncated = false;
             let text = if artifact
                 .mime_type
                 .as_deref()
                 .is_some_and(|mime| mime.starts_with("text/") || mime == "application/json")
             {
-                std::str::from_utf8(&bytes)
-                    .ok()
-                    .map(|text| text.chars().take(12_000).collect::<String>())
+                std::str::from_utf8(&bytes).ok().map(|text| {
+                    truncated = text.chars().count() > 12_000;
+                    text.chars().take(12_000).collect::<String>()
+                })
             } else {
                 None
             };
@@ -87,7 +89,7 @@ pub async fn preview(State(server): State<Arc<AppServer>>, Path(id): Path<String
                 Ok(value) => value,
                 Err(error) => return failure(error),
             };
-            Json(json!({"artifact":view(&artifact),"provenance":provenance,"text":text,"truncated":bytes.len()>12_000})).into_response()
+            Json(json!({"artifact":view(&artifact),"provenance":provenance,"text":text,"truncated":truncated})).into_response()
         }
         Err(error) => failure(error.to_string()),
     }
@@ -139,7 +141,7 @@ mod tests {
         )
         .unwrap();
         server.db.create_workspace(&workspace).unwrap();
-        server.db.create_workflow_graph(&crate::db::WorkflowGraphRecord { id: "safe-output".into(), name: "Output".into(), description: String::new(), created_at: 1, updated_at: 1, definition: serde_json::from_value(json!({"schema_version":1,"entry_node_id":"out","nodes":[{"id":"out","kind":"output","config":{"type":"output","template":"Actual workflow output"}}],"edges":[]})).unwrap() }).unwrap();
+        server.db.create_workflow_graph(&crate::db::WorkflowGraphRecord { id: "safe-output".into(), name: "Output".into(), description: String::new(), created_at: 1, updated_at: 1, definition: serde_json::from_value(json!({"schema_version":1,"entry_node_id":"out","nodes":[{"id":"out","kind":"output","config":{"type":"output","template":format!("Actual workflow output {}", "涟".repeat(5000))}}],"edges":[]})).unwrap() }).unwrap();
         let graph = TaskGraphId::new("artifact-graph").unwrap();
         let node = TaskNodeId::new("node").unwrap();
         server
@@ -212,6 +214,14 @@ mod tests {
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
         let bytes = to_bytes(response.into_body(), 100_000).await.unwrap();
         assert!(std::str::from_utf8(&bytes).unwrap().contains("safe-output"));
+        assert!(std::str::from_utf8(&bytes)
+            .unwrap()
+            .contains("Actual workflow output"));
+        let response = preview(State(server.clone()), Path(id.clone())).await;
+        let preview: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                .unwrap();
+        assert_eq!(preview["truncated"], false);
         assert_eq!(
             server.db.artifact_provenance(&id).unwrap().unwrap().version,
             1
