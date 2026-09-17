@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 1.0.0-rc.2 — 2026-09-17
+
+### Added
+
+- 首次模块选择后增加轻量 Provider 就绪引导：模型服务为 AI 功能推荐配置，语音服务保持可选。
+- Settings 增加统一的模型、STT、TTS 就绪状态与真实最小 Provider 连接检查；错误只使用安全归一化错误码。
+- 普通聊天增加真实麦克风输入到编辑框且默认不自动发送，并为 Assistant 消息提供手动 TTS 播放。
+- 全域语音增加面向用户的常驻 Pill 与展开面板，跨 v1 页面保持同一 VoiceSession，并从入口直接启用免手持打断。
+- 记录 v1.1 Optional Identity、Cloud Model Gateway、Cloud Harness 与 Web Surface 的文档路线，未启动实现。
+
+### Fixed
+
+- 修复 Settings 低分辨率下全域语音浮层可能遮挡保存操作的问题，并覆盖 1280×720、1366×768、1920×1080 三种视口。
+- 修复模型、Embedding、STT、TTS 密钥的保留、替换、显式清除和重启后持久化语义；页面与 API 不回显明文。
+- 修复 Chat、任务规划和 AI 图审查在模型未配置时缺少明确设置引导的问题。
+
+### Security
+
+- Secret 删除失败时保持 fail closed；Provider 原始响应、Authorization 和密钥不进入产品 UI、日志或测试证据。
+- Voice 继续复用既有 Interaction Router、审批、Gateway、generation 与 echo guard，不建立旁路运行时。
+
+### Release status
+
+- 这是新的候选版本，保留 `1.0.0-rc.1` 安装包、SHA 与历史证据不变；正式 v1.0.0 仍为 `HUMAN_PENDING`。
+
 ## 1.0.0-rc.1 — 2026-09-17
 
 ### Added

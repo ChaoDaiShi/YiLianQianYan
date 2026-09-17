@@ -6,15 +6,16 @@ Run this checklist only after `docs/v1-release/release-verification.md` records 
 
 Use one isolated v1 profile. Do not open or migrate the old mixed/v2 database. Do not paste a secret into screenshots or reports; provider settings should show only configured/redacted state.
 
-## H1 — real microphone, cloud STT, persisted reply and audible TTS
+## H1 — chat microphone input, cloud STT, persisted reply and audible TTS
 
 1. Start the RC installer build and open a new Conversation A.
-2. Start voice input and speak a short unique sentence.
-3. Confirm the final transcript matches the spoken meaning and is persisted in Conversation A.
-4. Wait for the assistant reply and confirm cloud TTS is audible.
-5. Confirm no raw microphone audio appears in history or local export.
+2. Use the microphone in the normal Chat composer and speak a short unique sentence.
+3. Confirm the final transcript matches the spoken meaning, appears in the composer and is not sent automatically.
+4. Edit the transcript, send it, and confirm the edited text and assistant reply persist in Conversation A.
+5. Use the Assistant message playback control and confirm cloud TTS is audible.
+6. Confirm no raw microphone audio appears in history or local export.
 
-Accept only if real microphone capture, MiniMax STT, assistant persistence and audible playback all occur. Button-only input, typed text, mock audio or historical evidence is insufficient.
+Accept only if real microphone capture, cloud STT, editable composer insertion, assistant persistence and audible playback all occur. Button-only input, typed text, mock audio or historical evidence is insufficient.
 
 ## H2 — one VoiceSession across v1 surfaces and safe anchor switching
 
@@ -25,11 +26,11 @@ Accept only if real microphone capture, MiniMax STT, assistant persistence and a
 
 ## H3 — direct-speech interruption and echo resistance
 
-1. Explicitly enable hands-free mode and start a long TTS reply.
+1. Enter “与小涟语音对话” and start a long TTS reply; hands-free listening should already be active.
 2. Speak directly while TTS is playing; do not press the interrupt button.
 3. Confirm playback stops, the new utterance reaches final STT and the replacement turn is dispatched once.
 4. Stay silent during another TTS segment and confirm the app does not transcribe its own playback as approval or a new command.
-5. Disable hands-free mode and confirm the microphone/device indicator is released.
+5. End Global Voice and confirm the microphone/device indicator is released.
 
 ## H4 — voice task status, pause, resume and retry
 
@@ -66,7 +67,7 @@ ZIP/GitHub malicious-input matrices are covered by automated security evidence a
 
 1. Verify the installer filename/version and SHA-256 against the technical report.
 2. Install into an isolated test directory and start the application normally.
-3. Confirm a visible v1 Workspace window, healthy backend `1.0.0-rc.1`, correct first-run setup and no v2 DesktopSpace startup.
+3. Confirm a visible v1 Workspace window, healthy backend `1.0.0-rc.2`, correct first-run setup and no v2 DesktopSpace startup.
 4. Exercise one permission/approval flow. Confirm rejection is recorded as the real legal terminal state defined by the existing ApprovalStore, the unauthorized action did not execute, and the corresponding Task/Execution is not incorrectly reported as succeeded.
 5. Observe the complete application process group during idle and representative work; do not report one process as total memory.
 6. Close normally, confirm the backend exits, restart and confirm tasks/layouts/history recover.
