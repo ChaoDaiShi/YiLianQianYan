@@ -13,6 +13,7 @@
 // ============================================================
 
 pub mod builtin;
+pub mod imports;
 pub mod model;
 pub mod provider;
 pub mod registry;
