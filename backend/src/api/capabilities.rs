@@ -199,35 +199,131 @@ pub struct RemoveImportRequest {
     pub revision: u64,
 }
 
-fn public_import(record: crate::capability::import_store::InstalledPackage) -> serde_json::Value {
-    serde_json::json!({"id":record.package.id,"name":record.package.name,"version":record.package.version,"kind":record.package.kind,"source":record.package.source,"permissions":record.package.permissions,"content_hash":record.package.content_hash,"revision":record.revision,"enabled":record.enabled,"installed":record.installed,"history_count":record.history.len(),"runtime_ready":false,"runtime_status": if record.enabled { "owner_integration_required" } else { "disabled" }})
+fn public_import(
+    server: &AppServer,
+    record: crate::capability::import_store::InstalledPackage,
+) -> serde_json::Value {
+    let runtime_ready = record.installed
+        && record.enabled
+        && server.managed_skill_store().is_some_and(|store| {
+            crate::capability::import_owner::is_active(&store, &record.package)
+        });
+    let runtime_status = if !record.installed {
+        "uninstalled"
+    } else if record.package.kind != "skill" {
+        "declarative_only"
+    } else if !record.enabled {
+        "disabled"
+    } else if runtime_ready {
+        "ready"
+    } else {
+        "runtime_unavailable"
+    };
+    serde_json::json!({"id":record.package.id,"name":record.package.name,"version":record.package.version,"kind":record.package.kind,"source":record.package.source,"permissions":record.package.permissions,"content_hash":record.package.content_hash,"revision":record.revision,"enabled":record.enabled,"installed":record.installed,"history_count":record.history.len(),"runtime_ready":runtime_ready,"runtime_status":runtime_status})
+}
+
+fn restore_runtime(
+    saved: Option<crate::capability::import_owner::ActivationSnapshot>,
+) -> Result<(), String> {
+    saved
+        .map(crate::capability::import_owner::restore)
+        .unwrap_or(Ok(()))
+}
+
+fn change_import_owned(
+    server: &AppServer,
+    id: &str,
+    revision: u64,
+    action: &str,
+) -> Result<crate::capability::import_store::InstalledPackage, String> {
+    use crate::capability::{import_owner, import_store};
+
+    let current = import_store::get(&server.db, id)?.ok_or("package_not_found")?;
+    if current.revision != revision {
+        return Err("stale_package_revision".into());
+    }
+
+    let saved = if action == "enable" {
+        let store = server
+            .managed_skill_store()
+            .ok_or("managed_skill_directory_unavailable")?;
+        Some(import_owner::activate(&store, &current.package)?)
+    } else if matches!(action, "disable" | "uninstall" | "rollback")
+        && current.package.kind == "skill"
+        && current.enabled
+    {
+        let store = server
+            .managed_skill_store()
+            .ok_or("managed_skill_directory_unavailable")?;
+        Some(import_owner::deactivate(&store, &current.package.id)?)
+    } else {
+        None
+    };
+
+    match import_store::change(&server.db, id, revision, action) {
+        Ok(record) => {
+            if saved.is_some() {
+                server.refresh_skill_discovery();
+            }
+            Ok(record)
+        }
+        Err(error) => {
+            restore_runtime(saved)?;
+            Err(error)
+        }
+    }
 }
 pub async fn confirm_import(
     State(server): State<Arc<AppServer>>,
     Json(request): Json<ConfirmImportRequest>,
 ) -> Result<Json<serde_json::Value>, ImportError> {
-    crate::capability::import_store::confirm(
-        &server.db,
-        &request.preview_id,
-        chrono::Utc::now().timestamp_millis(),
-    )
-    .map(public_import)
-    .map(Json)
-    .map_err(import_error)
+    use crate::capability::{import_owner, import_store};
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let preview =
+        import_store::get_preview(&server.db, &request.preview_id, now).map_err(import_error)?;
+    let current = import_store::get(&server.db, &preview.package.id).map_err(import_error)?;
+    let saved = if current
+        .as_ref()
+        .is_some_and(|record| record.enabled && record.package.kind == "skill")
+    {
+        let store = server
+            .managed_skill_store()
+            .ok_or_else(|| import_error("managed_skill_directory_unavailable".into()))?;
+        Some(import_owner::deactivate(&store, &preview.package.id).map_err(import_error)?)
+    } else {
+        None
+    };
+
+    match import_store::confirm(&server.db, &request.preview_id, now) {
+        Ok(record) => {
+            if saved.is_some() {
+                server.refresh_skill_discovery();
+            }
+            Ok(Json(public_import(&server, record)))
+        }
+        Err(error) => {
+            restore_runtime(saved).map_err(import_error)?;
+            Err(import_error(error))
+        }
+    }
 }
 pub async fn list_imports(
     State(server): State<Arc<AppServer>>,
 ) -> Result<Json<serde_json::Value>, ImportError> {
-    crate::capability::import_store::list(&server.db).map(|records| Json(serde_json::json!({"imports":records.into_iter().map(public_import).collect::<Vec<_>>()}))).map_err(import_error)
+    crate::capability::import_store::list(&server.db)
+        .map(|records| {
+            Json(serde_json::json!({"imports":records.into_iter().map(|record| public_import(&server, record)).collect::<Vec<_>>()}))
+        })
+        .map_err(import_error)
 }
 pub async fn change_import(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
     Json(request): Json<ChangeImportRequest>,
 ) -> Result<Json<serde_json::Value>, ImportError> {
-    crate::capability::import_store::change(&server.db, &id, request.revision, &request.action)
-        .map(public_import)
-        .map(Json)
+    change_import_owned(&server, &id, request.revision, &request.action)
+        .map(|record| Json(public_import(&server, record)))
         .map_err(import_error)
 }
 pub async fn remove_import(
@@ -235,8 +331,7 @@ pub async fn remove_import(
     Path(id): Path<String>,
     Json(request): Json<RemoveImportRequest>,
 ) -> Result<Json<serde_json::Value>, ImportError> {
-    crate::capability::import_store::change(&server.db, &id, request.revision, "uninstall")
-        .map(public_import)
-        .map(Json)
+    change_import_owned(&server, &id, request.revision, "uninstall")
+        .map(|record| Json(public_import(&server, record)))
         .map_err(import_error)
 }

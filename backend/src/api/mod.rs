@@ -228,6 +228,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/system", get(system::system_info))
         .route("/api/system/cpu", get(system::cpu_info))
         .route("/api/system/memory", get(system::memory_info))
+        .route(
+            "/api/system/preferences",
+            get(system::get_preferences).put(system::put_preferences),
+        )
         // Memories API
         .route("/api/memories", get(memories::list_handler))
         .route("/api/memories", post(memories::create_handler))
@@ -384,6 +388,19 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route(
             "/api/capabilities/refresh",
             post(capabilities::refresh_capabilities),
+        )
+        .route("/api/capabilities/imports", get(capabilities::list_imports))
+        .route(
+            "/api/capabilities/imports/inspect",
+            post(capabilities::inspect_import).layer(DefaultBodyLimit::max(3 * 1024 * 1024)),
+        )
+        .route(
+            "/api/capabilities/imports/confirm",
+            post(capabilities::confirm_import),
+        )
+        .route(
+            "/api/capabilities/imports/:id",
+            put(capabilities::change_import).delete(capabilities::remove_import),
         )
         .route("/api/capabilities/:id", get(capabilities::get_capability))
         // MCP runtime API (read-only; no direct tool execution)

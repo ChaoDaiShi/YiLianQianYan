@@ -291,6 +291,16 @@ pub fn change(
 pub fn list(db: &Database) -> Result<Vec<InstalledPackage>, String> {
     Ok(read_state(&db.conn())?.records.into_values().collect())
 }
+pub fn get(db: &Database, id: &str) -> Result<Option<InstalledPackage>, String> {
+    Ok(read_state(&db.conn())?.records.get(id).cloned())
+}
+pub fn get_preview(db: &Database, preview_id: &str, now: i64) -> Result<ImportPreview, String> {
+    read_state(&db.conn())?
+        .previews
+        .into_iter()
+        .find(|preview| preview.preview_id == preview_id && preview.expires_at > now)
+        .ok_or_else(|| "preview_missing_or_expired".into())
+}
 pub fn enabled_skill(db: &Database, id: &str) -> Result<Option<String>, String> {
     Ok(read_state(&db.conn())?
         .records
