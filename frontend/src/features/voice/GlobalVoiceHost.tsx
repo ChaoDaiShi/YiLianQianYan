@@ -51,8 +51,14 @@ export type GlobalVoiceContextPatch = Partial<GlobalVoiceContextSnapshot> & {
   anchor_action?: "replace";
 };
 
+export interface ConversationRefreshSignal {
+  conversation_id: string;
+  revision: number;
+}
+
 interface GlobalVoiceContextBridgeValue {
   context: GlobalVoiceContextSnapshot;
+  conversationRefresh: ConversationRefreshSignal | null;
   updateContext: (patch: GlobalVoiceContextPatch) => void;
 }
 
@@ -82,6 +88,18 @@ export function mergeVoiceContext(
   return next;
 }
 
+export function nextConversationRefresh(
+  current: ConversationRefreshSignal | null,
+  conversationId: string,
+): ConversationRefreshSignal {
+  const conversation_id = conversationId.trim();
+  if (!conversation_id) throw new Error("conversation identity must not be empty");
+  return {
+    conversation_id,
+    revision: current?.conversation_id === conversation_id ? current.revision + 1 : 1,
+  };
+}
+
 export type VoiceSurfaceHostMode = "standalone" | "desktop-skeleton";
 
 export function resolveVoiceContextForRoute(
@@ -92,7 +110,6 @@ export function resolveVoiceContextForRoute(
   if (pathname === "/chat" || pathname.startsWith("/chat/")) {
     return {
       focused_surface: "conversation",
-      active_task: null,
     };
   }
   if (
@@ -107,24 +124,20 @@ export function resolveVoiceContextForRoute(
   if (pathname === "/memory" || pathname.startsWith("/memory/")) {
     return {
       focused_surface: "memory",
-      active_task: null,
     };
   }
   if (pathname === "/capabilities" || pathname.startsWith("/capabilities/")) {
     return {
       focused_surface: "capability_center",
-      active_task: null,
     };
   }
   if (pathname === "/system" || pathname === "/logs" || pathname === "/settings") {
     return {
       focused_surface: "system",
-      active_task: null,
     };
   }
   return {
     focused_surface: "workspace",
-    active_task: null,
   };
 }
 
@@ -246,6 +259,7 @@ export default function GlobalVoiceHost({
   const [targetDescription, setTargetDescription] = useState("尚未解析");
   const [intentDescription, setIntentDescription] = useState("会话对话");
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
+  const [conversationRefresh, setConversationRefresh] = useState<ConversationRefreshSignal | null>(null);
   const captureEchoRef = useRef<CaptureEchoEvidence | null>(null);
   const captureStartEpochRef = useRef(0);
   const invalidateContextRef = useRef<() => void>(() => undefined);
@@ -358,8 +372,8 @@ export default function GlobalVoiceHost({
   ]);
 
   const contextBridge = useMemo(
-    () => ({ context: voiceContext, updateContext }),
-    [updateContext, voiceContext],
+    () => ({ context: voiceContext, conversationRefresh, updateContext }),
+    [conversationRefresh, updateContext, voiceContext],
   );
 
   const setVoiceError = useCallback((message: string) => {
@@ -442,11 +456,12 @@ export default function GlobalVoiceHost({
       );
       let narration = routed.narration ?? null;
       if (routed.continuation) {
+        const continuation = routed.continuation;
         continuationControllerRef.current?.abort();
         const continuationController = new AbortController();
         continuationControllerRef.current = continuationController;
         try {
-          const continuationResult = await runVoiceContinuation(routed.continuation, {
+          const continuationResult = await runVoiceContinuation(continuation, {
             signal: continuationController.signal,
             isCurrent: () => dispatchEpochRef.current === dispatchEpoch
               && latestSessionRef.current?.voice_session_id === result.sessionId
@@ -454,6 +469,11 @@ export default function GlobalVoiceHost({
               && latestContextRef.current.conversational_anchor?.conversation_id === current.conversational_anchor?.conversation_id,
           });
           narration = continuationResult.narration;
+          if (continuation.kind === "conversation") {
+            setConversationRefresh((previous) => (
+              nextConversationRefresh(previous, continuation.conversation_id)
+            ));
+          }
         } catch (error) {
           if (!continuationController.signal.aborted) {
             setNotice(error instanceof Error ? error.message : "语音 continuation 执行失败");

@@ -60,6 +60,8 @@ interface ChatViewProps {
   onToggleConversations: () => void;
   onToggleExecution: () => void;
   onVoiceAnchorChange?: (anchor: ConversationalAnchor | null) => void;
+  conversationRefreshRevision?: number;
+  onOpenCurrentTask: () => void;
   renderExecution?: (controller: ExecutionController) => ReactNode;
 }
 
@@ -103,6 +105,8 @@ export default function ChatView({
   onToggleConversations,
   onToggleExecution,
   onVoiceAnchorChange,
+  conversationRefreshRevision = 0,
+  onOpenCurrentTask,
   renderExecution,
 }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -249,7 +253,7 @@ export default function ChatView({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, onVoiceAnchorChange]);
+  }, [conversationId, conversationRefreshRevision, onVoiceAnchorChange]);
 
   const clearResolvingForConversation = useCallback((targetId: string) => {
     const store = useApprovalStore.getState();
@@ -518,6 +522,7 @@ export default function ChatView({
           suggestedText={suggestedText}
           onTextUsed={() => setSuggestedText("")}
           onHint={setSuggestedText}
+          onOpenCurrentTask={onOpenCurrentTask}
         />
       ) : (
         <>

@@ -202,7 +202,6 @@ describe("GlobalVoiceHost contract", () => {
     });
     expect(resolveVoiceContextForRoute("/chat/conversation-7", "standalone")).toEqual({
       focused_surface: "conversation",
-      active_task: null,
     });
     expect(resolveVoiceContextForRoute("/task-world/graph-7", "standalone")).toEqual({
       focused_surface: "task_canvas",

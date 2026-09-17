@@ -12,12 +12,14 @@ import { Drawer } from "../components/ui";
 import ExecutionSidebar from "../features/execution/ExecutionSidebar";
 import { useGlobalVoiceContext } from "../features/voice/GlobalVoiceHost";
 import type { ConversationalAnchor } from "../api/voice";
+import { getTaskGraphDetail } from "../api/taskWorld";
+import { resolveCurrentTaskDestination } from "../components/chat/currentTaskEntry";
 
 export default function ChatPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const conversationId = id || null;
-  const { context, updateContext } = useGlobalVoiceContext();
+  const { context, conversationRefresh, updateContext } = useGlobalVoiceContext();
   const [workspaceMode, setWorkspaceMode] = useState(() =>
     getWorkspaceMode(window.innerWidth)
   );
@@ -61,6 +63,10 @@ export default function ChatPage() {
     },
     [navigate]
   );
+
+  const openCurrentTask = useCallback(async () => {
+    navigate(await resolveCurrentTaskDestination(context.active_task, getTaskGraphDetail));
+  }, [context.active_task, navigate]);
 
   const openDrawer = useCallback(
     (target: WorkspaceDrawer) => {
@@ -118,6 +124,12 @@ export default function ChatPage() {
         onToggleConversations={() => openDrawer("conversations")}
         onToggleExecution={() => openDrawer("execution")}
         onVoiceAnchorChange={onVoiceAnchorChange}
+        conversationRefreshRevision={
+          conversationRefresh?.conversation_id === conversationId
+            ? conversationRefresh.revision
+            : 0
+        }
+        onOpenCurrentTask={() => void openCurrentTask()}
         renderExecution={(controller) =>
           workspaceMode === "full" ? (
             <div className="execution-region min-h-0 border-l border-[var(--border)]">
