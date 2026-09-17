@@ -6,8 +6,9 @@
 .global-voice-dock {
   position: fixed;
   z-index: 40;
-  right: 18px;
-  bottom: 18px;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
   width: min(410px, calc(100vw - 24px));
   color: var(--text-primary);
   font-size: 0.75rem;
@@ -231,8 +232,7 @@
 
 @media (max-width: 640px) {
   .global-voice-dock {
-    right: 12px;
-    bottom: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
   }
 
   .global-voice-panel {
@@ -242,6 +242,84 @@
   .global-voice-context-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.chat-voice-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.chat-voice-entry,
+.chat-voice-microphone,
+.chat-voice-cancel {
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.chat-voice-entry,
+.chat-voice-microphone {
+  padding: 6px 8px;
+}
+
+.chat-voice-cancel {
+  padding: 5px 7px;
+}
+
+.chat-voice-entry:hover,
+.chat-voice-microphone:hover:not(:disabled),
+.chat-voice-cancel:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.chat-voice-microphone:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.chat-voice-listening {
+  color: var(--accent-primary);
+  white-space: nowrap;
+}
+
+.chat-voice-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.chat-voice-meter-bar {
+  display: block;
+  width: 42px;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--border-soft);
+}
+
+.chat-voice-meter-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-purple));
+  transition: width 80ms linear;
+}
+
+.chat-voice-meter output {
+  min-width: 2.25em;
+  color: inherit;
 }
 
 @media (prefers-reduced-motion: reduce) {

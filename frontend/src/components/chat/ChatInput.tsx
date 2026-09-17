@@ -10,6 +10,8 @@ import { Paperclip, Send, Square } from "lucide-react";
 import { getResourcePreview, ingestResource } from "../../api/resources";
 import { AttachmentQueue, type Attachment } from "../../features/resources/attachmentQueue";
 import ResourceAttachments from "../../features/resources/ResourceAttachments";
+import { ChatVoiceInput, type ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
+import { appendFinalTranscriptToComposer } from "../../features/voice/chatVoice";
 import { Button } from "../ui";
 
 interface ChatInputProps {
@@ -19,6 +21,9 @@ interface ChatInputProps {
   onStop?: () => void;
   suggestedText?: string;
   onTextUsed?: () => void;
+  /** Injected by GlobalVoiceHost so chat capture cannot create a second runtime. */
+  chatVoiceControls?: ChatVoiceControls | null;
+  onRequestGlobalVoiceSession?: () => void;
 }
 
 export default function ChatInput({
@@ -28,6 +33,8 @@ export default function ChatInput({
   onStop,
   suggestedText,
   onTextUsed,
+  chatVoiceControls = null,
+  onRequestGlobalVoiceSession,
 }: ChatInputProps) {
   const [input, setInput] = useState("");
   const [resourceNotice, setResourceNotice] = useState("");
@@ -56,6 +63,14 @@ export default function ChatInput({
     onTextUsed?.();
     textareaRef.current?.focus();
   }, [onTextUsed, suggestedText]);
+
+  useEffect(() => {
+    if (!chatVoiceControls) return;
+    return chatVoiceControls.subscribeFinal((text) => {
+      setInput((current) => appendFinalTranscriptToComposer(current, text));
+      textareaRef.current?.focus();
+    });
+  }, [chatVoiceControls]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -136,6 +151,10 @@ export default function ChatInput({
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>
+            <ChatVoiceInput
+              controls={chatVoiceControls}
+              onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
+            />
             <p className="truncate text-[10px] text-[var(--text-faint)]">
               Enter 发送 · Shift + Enter 换行
             </p>

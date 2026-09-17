@@ -8,6 +8,7 @@ import {
   type GlobalVoiceSession,
   type VoiceInputLease,
 } from "../../api/voice";
+import { voiceMeterPercent } from "./chatVoice";
 
 export type CaptureStatus = "idle" | "acquiring" | "listening" | "transcribing" | "error";
 
@@ -15,6 +16,8 @@ export interface CaptureState {
   status: CaptureStatus;
   error: string | null;
   lease: VoiceInputLease | null;
+  /** Visual feedback only; transcript dispatch remains final-first. */
+  volume: number;
 }
 
 export interface FinalVoiceTranscript {
@@ -186,7 +189,7 @@ export function useVoiceCapture({
   onFinal,
   onError,
 }: UseVoiceCaptureOptions): UseVoiceCaptureResult {
-  const [state, setState] = useState<CaptureState>({ status: "idle", error: null, lease: null });
+  const [state, setState] = useState<CaptureState>({ status: "idle", error: null, lease: null, volume: 0 });
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const captureBufferRef = useRef<CaptureBuffer>({ chunks: [], bytes: 0 });
@@ -196,6 +199,8 @@ export function useVoiceCapture({
   const acquireInFlightRef = useRef(false);
   const finalInFlightRef = useRef(false);
   const captureTimerRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const volumeFrameRef = useRef<number | null>(null);
   const captureLimitReachedRef = useRef(false);
   const cancelledRef = useRef(false);
   const latestSessionRef = useRef<GlobalVoiceSession | null>(session);
@@ -209,14 +214,49 @@ export function useVoiceCapture({
     }
   }, []);
 
+  const releaseVolumeMeter = useCallback(() => {
+    if (volumeFrameRef.current !== null) {
+      cancelAnimationFrame(volumeFrameRef.current);
+      volumeFrameRef.current = null;
+    }
+    void audioContextRef.current?.close().catch(() => undefined);
+    audioContextRef.current = null;
+  }, []);
+
+  const observeCaptureVolume = useCallback((stream: MediaStream) => {
+    if (typeof AudioContext === "undefined") return;
+    try {
+      const context = new AudioContext();
+      const source = context.createMediaStreamSource(stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      const samples = new Float32Array(analyser.fftSize);
+      audioContextRef.current = context;
+      const tick = () => {
+        if (audioContextRef.current !== context) return;
+        analyser.getFloatTimeDomainData(samples);
+        const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+        setState((current) => current.status === "listening"
+          ? { ...current, volume: voiceMeterPercent(rms) }
+          : current);
+        volumeFrameRef.current = requestAnimationFrame(tick);
+      };
+      volumeFrameRef.current = requestAnimationFrame(tick);
+    } catch {
+      // A meter must not block capture if the browser declines Web Audio.
+    }
+  }, []);
+
   const releaseStream = useCallback(() => {
     clearCaptureTimer();
+    releaseVolumeMeter();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     recorderRef.current = null;
     captureBufferRef.current = { chunks: [], bytes: 0 };
     captureLimitReachedRef.current = false;
-  }, [clearCaptureTimer]);
+  }, [clearCaptureTimer, releaseVolumeMeter]);
 
   const isCurrentOperation = useCallback((operation: number, lease: VoiceInputLease): boolean => {
     return isCurrentCaptureOperation(
@@ -239,7 +279,7 @@ export function useVoiceCapture({
 
   const reset = useCallback(() => {
     leaseRef.current = null;
-    setState({ status: "idle", error: null, lease: null });
+    setState({ status: "idle", error: null, lease: null, volume: 0 });
   }, []);
 
   const fail = useCallback(
@@ -254,7 +294,7 @@ export function useVoiceCapture({
         controllerRef.current.abort();
       }
       controllerRef.current = null;
-      setState({ status: "error", error: message, lease: null });
+      setState({ status: "error", error: message, lease: null, volume: 0 });
       onError?.(message);
     },
     [onError, releaseStream],
@@ -365,7 +405,7 @@ export function useVoiceCapture({
       cancelledRef.current = false;
       captureBufferRef.current = { chunks: [], bytes: 0 };
       captureLimitReachedRef.current = false;
-      setState({ status: "acquiring", error: null, lease: null });
+      setState({ status: "acquiring", error: null, lease: null, volume: 0 });
       try {
         const lease = await acquireAfterBargeIn(onBargeIn, (interruptedSession) => {
           const leaseSession = interruptedSession ?? session;
@@ -386,7 +426,7 @@ export function useVoiceCapture({
           return;
         }
         leaseRef.current = lease;
-        setState({ status: "acquiring", error: null, lease });
+        setState({ status: "acquiring", error: null, lease, volume: 0 });
         const stream = sourceStream ? sourceStream.clone() : await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
         });
@@ -396,6 +436,7 @@ export function useVoiceCapture({
           return;
         }
         streamRef.current = stream;
+        observeCaptureVolume(stream);
         const recorder = new MediaRecorder(stream, { mimeType });
         recorderRef.current = recorder;
         captureBufferRef.current = { chunks: [], bytes: 0 };
@@ -426,7 +467,7 @@ export function useVoiceCapture({
           }
         }, MAX_CAPTURE_DURATION_MS);
         clearAcquireInFlight(operation);
-        setState({ status: "listening", error: null, lease });
+        setState({ status: "listening", error: null, lease, volume: 0 });
         return {
           ...bindCaptureOperation(() => isCurrentOperation(operation, lease), () => controlsRef.current),
           lease: { sessionId: lease.voice_session_id, generation: lease.generation, leaseId: lease.lease_id },
@@ -444,6 +485,7 @@ export function useVoiceCapture({
       isCurrentOperationId,
       isCurrentOperation,
       onBargeIn,
+      observeCaptureVolume,
       session,
       state.status,
     ],

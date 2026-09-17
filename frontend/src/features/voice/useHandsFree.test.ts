@@ -26,7 +26,7 @@ describe("hands-free effect coordination", () => {
     let finish!: (handle: CaptureOperationHandle) => void;
     const controls = { stop: vi.fn(), cancel: vi.fn() };
     const capture = {
-      state: { status: "idle" as const, lease: null, error: null },
+      state: { status: "idle" as const, lease: null, error: null, volume: 0 },
       start: vi.fn(() => new Promise<CaptureOperationHandle>((resolve) => { finish = resolve; })),
       stop: vi.fn(), cancel: vi.fn(),
     };
@@ -51,7 +51,7 @@ describe("hands-free effect coordination", () => {
     vi.mocked(openSpeechMonitor).mockImplementation(async (_signal, sample) => { samples.push(sample); return { stream: {} as MediaStream, close: vi.fn() }; });
     let finish!: () => void;
     const start = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-    const captureA = { state: { status: "idle" as const, lease: null, error: null }, start, stop: vi.fn(), cancel: vi.fn() };
+    const captureA = { state: { status: "idle" as const, lease: null, error: null, volume: 0 }, start, stop: vi.fn(), cancel: vi.fn() };
     const options = { enabled: true, sessionId: "voice", identityEpoch: 1, playing: false, capture: captureA, onError: vi.fn() };
     hooks.cursor = 0; useHandsFree(options); await Promise.resolve();
     samples[0](0, 0); samples[0](0, 500); samples[0](0.1, 600); samples[0](0.1, 740);

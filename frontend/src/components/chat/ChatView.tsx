@@ -20,6 +20,7 @@ import {
 } from "../../api/client";
 import { bindResources } from "../../api/resources";
 import type { ConversationalAnchor } from "../../api/voice";
+import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 import {
   approveAction,
   getApproval,
@@ -65,6 +66,9 @@ interface ChatViewProps {
   conversationRefreshRevision?: number;
   onOpenCurrentTask: () => void;
   renderExecution?: (controller: ExecutionController) => ReactNode;
+  /** Provided by the existing GlobalVoiceHost through the application root. */
+  chatVoiceControls?: ChatVoiceControls | null;
+  onRequestGlobalVoiceSession?: () => void;
 }
 
 export interface ExecutionController {
@@ -110,6 +114,8 @@ export default function ChatView({
   conversationRefreshRevision = 0,
   onOpenCurrentTask,
   renderExecution,
+  chatVoiceControls = null,
+  onRequestGlobalVoiceSession,
 }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -565,6 +571,8 @@ export default function ChatView({
               onStop={handleStop}
               suggestedText={suggestedText}
               onTextUsed={() => setSuggestedText("")}
+              chatVoiceControls={chatVoiceControls}
+              onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
             />
           </footer>
         </>
