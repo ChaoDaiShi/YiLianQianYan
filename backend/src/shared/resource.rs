@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use thiserror::Error;
 use uuid::Uuid;
@@ -48,6 +48,7 @@ pub struct ResourceService {
     storage_root: PathBuf,
     event_hub: EventHub,
     max_bytes: usize,
+    ingest_lock: std::sync::Arc<parking_lot::Mutex<()>>,
 }
 
 impl ResourceService {
@@ -57,6 +58,7 @@ impl ResourceService {
             storage_root,
             event_hub,
             max_bytes: DEFAULT_MAX_RESOURCE_BYTES,
+            ingest_lock: std::sync::Arc::new(parking_lot::Mutex::new(())),
         }
     }
 
@@ -72,6 +74,7 @@ impl ResourceService {
         bytes: &[u8],
         metadata: Value,
     ) -> Result<Resource, ResourceError> {
+        let _guard = self.ingest_lock.lock();
         if bytes.is_empty() {
             return Err(ResourceError::Empty);
         }
@@ -92,15 +95,24 @@ impl ResourceService {
         std::fs::create_dir_all(&self.storage_root)
             .map_err(|error| ResourceError::Storage(error.to_string()))?;
         let temporary = self.storage_root.join(format!(".{id}.tmp"));
-        let final_path = self.storage_root.join(&id);
+        let final_path = self.storage_root.join(format!("sha256-{hash}"));
         let write_result = (|| -> Result<(), std::io::Error> {
+            if final_path.exists() {
+                return verify_blob(&final_path, bytes.len(), &hash);
+            }
             let mut file = OpenOptions::new()
                 .create_new(true)
                 .write(true)
                 .open(&temporary)?;
             file.write_all(bytes)?;
             file.sync_all()?;
-            std::fs::rename(&temporary, &final_path)?;
+            if let Err(error) = std::fs::rename(&temporary, &final_path) {
+                if !final_path.exists() {
+                    return Err(error);
+                }
+                verify_blob(&final_path, bytes.len(), &hash)?;
+                std::fs::remove_file(&temporary)?;
+            }
             Ok(())
         })();
         if let Err(error) = write_result {
@@ -121,7 +133,8 @@ impl ResourceService {
             updated_at: now,
         };
         if let Err(error) = self.db.insert_resource(&resource) {
-            let _ = std::fs::remove_file(&final_path);
+            // A content-addressed blob can already belong to another upload.
+            // Leave any unreferenced blob recoverable rather than delete it.
             return Err(ResourceError::Persistence(error));
         }
 
@@ -148,6 +161,30 @@ impl ResourceService {
             .list_resources(limit, offset)
             .map_err(ResourceError::Persistence)
     }
+}
+
+fn verify_blob(
+    path: &std::path::Path,
+    expected_size: usize,
+    expected_hash: &str,
+) -> std::io::Result<()> {
+    let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() != expected_size as u64 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "stored resource size mismatch",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(expected_size as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() != expected_size || format!("{:x}", Sha256::digest(&bytes)) != expected_hash {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "stored resource hash mismatch",
+        ));
+    }
+    Ok(())
 }
 
 fn normalize_name(value: &str) -> Result<String, ResourceError> {
@@ -244,6 +281,24 @@ mod tests {
         assert!(matches!(error, ResourceError::TooLarge { .. }));
         assert!(db.list_resources(10, 0).unwrap().is_empty());
         assert!(!root.join("files").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn identical_resource_bytes_share_storage_without_merging_identities() {
+        let (root, db_path) = temp_paths("dedup");
+        let db = Database::new(&db_path).unwrap();
+        let service = ResourceService::new(db.clone(), root.join("files"), EventHub::new(4));
+        let first = service
+            .ingest("first.txt", "text/plain", b"shared bytes", json!({}))
+            .unwrap();
+        let second = service
+            .ingest("second.txt", "text/plain", b"shared bytes", json!({}))
+            .unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.storage_path, second.storage_path);
+        assert_eq!(db.list_resources(10, 0).unwrap().len(), 2);
+        assert_eq!(std::fs::read_dir(root.join("files")).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(root);
     }
 
