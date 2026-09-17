@@ -44,6 +44,13 @@ fn graph_accepts_multiple_roots_and_returns_deterministic_adjacency() {
 }
 
 #[test]
+fn graph_dto_rejects_unknown_fields_instead_of_silently_discarding_them() {
+    let mut value = serde_json::to_value(graph(vec![node("one")], vec![])).unwrap();
+    value["nodes"][0]["executor_ref"] = json!("workflow://misplaced");
+    assert!(serde_json::from_value::<TaskGraph>(value).is_err());
+}
+
+#[test]
 fn graph_rejects_duplicate_edges() {
     let result = TaskGraph::new(
         graph_id("graph-1"),

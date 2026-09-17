@@ -56,7 +56,7 @@ async fn json_body(response: axum::response::Response) -> Value {
 }
 
 #[tokio::test]
-async fn protected_execution_routes_preserve_attempt_history_and_partial_rerun() {
+async fn protected_routes_reject_unconfigured_execution_and_preserve_local_attempt_history() {
     let temp = TempRuntime::new();
     let token = "h".repeat(64);
     let server = Arc::new(
@@ -67,7 +67,7 @@ async fn protected_execution_routes_preserve_attempt_history_and_partial_rerun()
         )
         .unwrap(),
     );
-    let app = api::build_router(server);
+    let app = api::build_router(Arc::clone(&server));
 
     let unauthorized = app
         .clone()
@@ -114,14 +114,26 @@ async fn protected_execution_routes_preserve_attempt_history_and_partial_rerun()
         ))
         .await
         .unwrap();
-    assert_eq!(started.status(), StatusCode::CREATED);
-    let started = json_body(started).await;
-    assert_eq!(started["execution"]["attempt"], 1);
-    assert_eq!(started["execution"]["status"], "dispatching");
-    let execution_id = started["execution"]["execution_id"]
+    assert_eq!(started.status(), StatusCode::BAD_REQUEST);
+    assert!(json_body(started).await["message"]
         .as_str()
         .unwrap()
-        .to_string();
+        .contains("executor_ref"));
+    let graph_id = yilian_backend::task::TaskGraphId::new("harness-api").unwrap();
+    let node_id = yilian_backend::task::TaskNodeId::new("node").unwrap();
+    assert!(server
+        .task_world
+        .list_node_executions(&graph_id, &node_id)
+        .unwrap()
+        .is_empty());
+
+    // Reserve an internal state-only fixture to exercise the cancellation API.
+    // This is deliberately not presented as provider execution or success.
+    let reserved = server
+        .task_world
+        .start_execution(&graph_id, &node_id, 1, 1)
+        .unwrap();
+    let execution_id = reserved.id.to_string();
 
     let history = app
         .clone()
@@ -168,6 +180,17 @@ async fn protected_execution_routes_preserve_attempt_history_and_partial_rerun()
         ))
         .await
         .unwrap();
-    assert_eq!(rerun.status(), StatusCode::OK);
-    assert_eq!(json_body(rerun).await["affected_nodes"], json!(["node"]));
+    assert_eq!(rerun.status(), StatusCode::BAD_REQUEST);
+    assert!(json_body(rerun).await["message"]
+        .as_str()
+        .unwrap()
+        .contains("executor_ref"));
+    assert_eq!(
+        server
+            .task_world
+            .list_node_executions(&graph_id, &node_id)
+            .unwrap()
+            .len(),
+        1
+    );
 }

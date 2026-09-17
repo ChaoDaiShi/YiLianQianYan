@@ -896,6 +896,29 @@ impl TaskWorldRuntime {
         expected_revision: u64,
         now: i64,
     ) -> Result<Vec<TaskNodeId>, TaskWorldRuntimeError> {
+        self.rerun_from_node_with_dispatch(graph_id, node_id, expected_revision, now, true)
+    }
+
+    /// User recovery validates and prepares the branch. A later explicit start
+    /// selects a real provider; unrelated editable nodes are never dispatched.
+    pub fn prepare_rerun_from_node(
+        &self,
+        graph_id: &TaskGraphId,
+        node_id: &TaskNodeId,
+        expected_revision: u64,
+        now: i64,
+    ) -> Result<Vec<TaskNodeId>, TaskWorldRuntimeError> {
+        self.rerun_from_node_with_dispatch(graph_id, node_id, expected_revision, now, false)
+    }
+
+    fn rerun_from_node_with_dispatch(
+        &self,
+        graph_id: &TaskGraphId,
+        node_id: &TaskNodeId,
+        expected_revision: u64,
+        now: i64,
+        dispatch: bool,
+    ) -> Result<Vec<TaskNodeId>, TaskWorldRuntimeError> {
         let _control_dispatch_guard = self.control_dispatch_lock.lock();
         self.ensure_execution_allowed(graph_id)?;
         let expected_revision = GraphRevision::new(expected_revision)?;
@@ -906,6 +929,7 @@ impl TaskWorldRuntime {
             .cloned()
             .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
         ensure_revision(&supervisor, expected_revision)?;
+        supervisor.graph().validate()?;
         let mut harnesses = self.harnesses.write();
         let harness = harnesses
             .get_mut(graph_id)
@@ -929,7 +953,9 @@ impl TaskWorldRuntime {
             }
         }
         drop(harnesses);
-        self.dispatch_ready_nodes_locked(graph_id, now)?;
+        if dispatch {
+            self.dispatch_ready_nodes_locked(graph_id, now)?;
+        }
         for affected_node in &affected {
             self.publish(
                 "task.node.stale",
@@ -999,6 +1025,7 @@ impl TaskWorldRuntime {
         now: i64,
     ) -> Result<TaskGraph, TaskWorldRuntimeError> {
         let graph = TaskGraph::new(graph_id.clone(), GraphRevision::initial(), nodes, edges)?;
+        let harness = TaskHarness::new(graph.clone(), ExecutorResolver::new())?;
         let supervisor = TaskSupervisor::new(graph, now)?;
 
         let mut supervisors = self.supervisors.write();
@@ -1013,12 +1040,11 @@ impl TaskWorldRuntime {
         let ready = supervisor.runnable_nodes();
         supervisors.insert(graph_id.clone(), supervisor);
         drop(supervisors);
-        self.harnesses.write().insert(
-            graph_id,
-            TaskHarness::new(graph.clone(), ExecutorResolver::new())?,
-        );
+        self.harnesses.write().insert(graph_id, harness);
         let control = TaskExecutionControl::initial(graph.id.clone(), now);
-        self.save_execution_control(&control)?;
+        self.execution_controls
+            .write()
+            .insert(graph.id.clone(), control);
 
         self.publish(
             "task.created",
@@ -2167,6 +2193,45 @@ mod tests {
     };
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn graph_creation_rolls_back_when_execution_control_persistence_fails() {
+        let database = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+        database.conn().execute_batch("CREATE TRIGGER reject_control BEFORE INSERT ON task_world_execution_controls BEGIN SELECT RAISE(ABORT, 'injected persistence failure'); END;").unwrap();
+        let id = TaskGraphId::new("atomic-create").unwrap();
+        assert!(runtime.create_graph(id.clone(), vec![], vec![], 1).is_err());
+        assert!(runtime.get_graph(&id).is_none());
+        assert!(database
+            .load_task_supervisor_snapshot(&id)
+            .unwrap()
+            .is_none());
+        assert!(database.load_task_revision_history(&id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn second_graph_and_duplicate_concurrent_creation_are_persisted_once() {
+        let database = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+        runtime
+            .create_graph(TaskGraphId::new("first").unwrap(), vec![], vec![], 1)
+            .unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let results = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                barrier.wait();
+                runtime.create_graph(TaskGraphId::new("second").unwrap(), vec![], vec![], 2)
+            });
+            let second = scope.spawn(|| {
+                barrier.wait();
+                runtime.create_graph(TaskGraphId::new("second").unwrap(), vec![], vec![], 2)
+            });
+            vec![first.join().unwrap(), second.join().unwrap()]
+        });
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let reloaded = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+        assert_eq!(reloaded.list_graphs().len(), 2);
+    }
 
     #[test]
     fn runtime_create_start_reload_and_publish_facts() {

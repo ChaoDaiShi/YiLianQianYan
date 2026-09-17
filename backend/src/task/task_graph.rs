@@ -116,6 +116,7 @@ pub enum TaskNodeKind {
 /// Retry policy carried by a node definition for the later execution slice.
 /// A value of one means that the first attempt is the only allowed attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RetryPolicy {
     pub max_attempts: u32,
 }
@@ -139,6 +140,7 @@ impl RetryPolicy {
 /// supervisor keeps runtime output separately so a graph edit can invalidate
 /// only the affected results.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskNode {
     pub id: TaskNodeId,
     pub kind: TaskNodeKind,
@@ -191,6 +193,7 @@ impl TaskNode {
 
 /// A directed dependency edge.  `from` must complete before `to` can run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskEdge {
     pub from: TaskNodeId,
     pub to: TaskNodeId,
@@ -206,6 +209,7 @@ impl TaskEdge {
 /// intentionally no entry-node field: that is an executable WorkflowGraph
 /// concern, not TaskGraph presentation/organisation semantics.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskGraph {
     pub schema_version: u32,
     pub id: TaskGraphId,

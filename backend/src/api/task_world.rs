@@ -27,8 +27,10 @@ use crate::task::{
 };
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateGraphRequest {
     pub id: String,
+    pub goal: Option<String>,
     #[serde(default)]
     pub nodes: Vec<TaskNode>,
     #[serde(default)]
@@ -118,13 +120,72 @@ pub async fn create_graph(
         Ok(graph_id) => graph_id,
         Err(error) => return runtime_error(TaskWorldRuntimeError::Graph(error)),
     };
+    let (nodes, edges) = if let Some(goal) = request.goal {
+        if !request.nodes.is_empty() || !request.edges.is_empty() {
+            return planning_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_plan_request",
+                "目标规划不能同时提交手工节点。".into(),
+            );
+        }
+        if server.task_world.get_graph(&graph_id).is_some() {
+            return runtime_error(TaskWorldRuntimeError::GraphAlreadyExists(
+                graph_id.to_string(),
+            ));
+        }
+        let workflows = match server.db.list_workflow_graphs() {
+            Ok(workflows) => workflows
+                .into_iter()
+                .take(crate::task::MAX_PLANNER_CAPABILITIES)
+                .map(|workflow| crate::task::PlannerCapability {
+                    capability_id: format!("workflow.{}", workflow.id),
+                    executor_type: "workflow".into(),
+                    executor_ref: format!("workflow://{}", workflow.id),
+                    name: crate::utils::text::truncate_chars(&workflow.name, 120),
+                    description: crate::utils::text::truncate_chars(&workflow.description, 200),
+                })
+                .collect(),
+            Err(_) => {
+                return planning_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "planning_context_failed",
+                    "无法读取已有工作流，未创建任务图；请重试。".into(),
+                )
+            }
+        };
+        let model = server.config.read().model.clone();
+        let planner = crate::task::LlmTaskPlanner::new(&model, Arc::clone(&server.secret_resolver));
+        match planner.plan_graph(&graph_id, &goal, workflows).await {
+            Ok(graph) => (graph.nodes, graph.edges),
+            Err(crate::task::TaskPlannerError::Llm(message)) => {
+                return planning_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "planner_unavailable",
+                    message,
+                )
+            }
+            Err(error) => {
+                return planning_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_plan",
+                    error.to_string(),
+                )
+            }
+        }
+    } else {
+        (request.nodes, request.edges)
+    };
     match server
         .task_world
-        .create_graph(graph_id, request.nodes, request.edges, now())
+        .create_graph(graph_id, nodes, edges, now())
     {
         Ok(graph) => (StatusCode::CREATED, Json(json!({ "graph": graph }))).into_response(),
         Err(error) => runtime_error(error),
     }
+}
+
+fn planning_error(status: StatusCode, code: &str, message: String) -> Response {
+    (status, Json(json!({"error":code,"message":message}))).into_response()
 }
 
 pub async fn get_graph(
@@ -418,7 +479,9 @@ fn executor_resolver(
         TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownNode(node_id.clone()))
     })?;
     let Some(reference) = node.input.get("executor_ref").and_then(Value::as_str) else {
-        return Ok(ExecutorResolver::new());
+        return Err(TaskWorldRuntimeError::Harness(TaskHarnessError::Resolver(
+            crate::task::ExecutorResolutionError::MissingExecutorRef,
+        )));
     };
     let parsed = crate::task::ExecutorRef::new(reference).map_err(|error| {
         TaskWorldRuntimeError::Harness(TaskHarnessError::Graph(error.to_string()))
@@ -441,6 +504,9 @@ fn executor_resolver(
         }
         _ => {}
     }
+    resolver
+        .resolve_node(node)
+        .map_err(TaskHarnessError::from)?;
     Ok(resolver)
 }
 
@@ -601,7 +667,10 @@ pub async fn rerun(
         Ok(graph_id) => graph_id,
         Err(error) => return runtime_error(error),
     };
-    match server.task_world.rerun_from_node(
+    if let Err(error) = executor_resolver(&server, &graph_id, &request.node_id) {
+        return runtime_error(error);
+    }
+    match server.task_world.prepare_rerun_from_node(
         &graph_id,
         &request.node_id,
         request.expected_revision,
@@ -768,4 +837,205 @@ fn runtime_error(error: TaskWorldRuntimeError) -> Response {
 
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+#[cfg(test)]
+mod core_path_tests {
+    use super::*;
+    use crate::task::{GraphRevision, TaskGraph, TaskWorldRuntime};
+    use axum::body::to_bytes;
+
+    fn server() -> Arc<AppServer> {
+        let server = AppServer::new_with_control_session(
+            std::path::Path::new(":memory:"),
+            ".",
+            crate::safety::ControlSession::new(uuid::Uuid::new_v4().to_string().repeat(2)).unwrap(),
+        )
+        .unwrap();
+        {
+            let mut config = server.config.write();
+            config.model.api_key.clear();
+            config.model.api_key_env.clear();
+            config.model.api_key_ref = None;
+        }
+        Arc::new(server)
+    }
+
+    async fn body(response: Response) -> Value {
+        serde_json::from_slice(&to_bytes(response.into_body(), 256 * 1024).await.unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn missing_model_credentials_never_persist_a_partial_plan() {
+        let server = server();
+        let response = create_graph(
+            State(server.clone()),
+            Json(CreateGraphRequest {
+                id: "missing-model".into(),
+                goal: Some("Organize an editable plan".into()),
+                nodes: vec![],
+                edges: vec![],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body(response).await["error"], "planner_unavailable");
+        assert!(server.task_world.list_graphs().is_empty());
+    }
+
+    #[tokio::test]
+    async fn configured_llm_path_validates_before_persisting() {
+        let server = server();
+        let provider = axum::Router::new().route("/chat/completions", axum::routing::post(|Json(request): Json<Value>| async move {
+            assert!(request.get("tools").is_none());
+            let input: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let content = if input["goal"] == "malformed" { "not a graph".into() } else {
+                json!({"schema_version":1,"id":input["graph_id"],"revision":1,"nodes":[{
+                    "id":"draft","kind":"work","title":"Editable task","input":{"instruction":"Organize source material","acceptance_criteria":[]},"retry_policy":{"max_attempts":1}
+                }],"edges":[]}).to_string()
+            };
+            Json(json!({"id":"local-provider-test","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":content}}]}))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, provider).await.unwrap();
+        });
+        {
+            let mut config = server.config.write();
+            config.model.base_url = format!("http://{address}");
+            config.model.api_key = "local-test-placeholder".into();
+            config.model.invoke_timeout_ms = 2000;
+        }
+        for (id, goal, expected) in [
+            ("bad", "malformed", StatusCode::UNPROCESSABLE_ENTITY),
+            ("planned", "organize", StatusCode::CREATED),
+        ] {
+            let response = create_graph(
+                State(server.clone()),
+                Json(CreateGraphRequest {
+                    id: id.into(),
+                    goal: Some(goal.into()),
+                    nodes: vec![],
+                    edges: vec![],
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), expected);
+        }
+        let reloaded =
+            TaskWorldRuntime::new(&server.db, crate::shared::event::EventHub::new(16)).unwrap();
+        assert_eq!(reloaded.list_graphs().len(), 1);
+        assert_eq!(reloaded.list_graphs()[0].id.as_str(), "planned");
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn real_workflow_harness_edit_rerun_checkpoint_and_attempt_history() {
+        let server = server();
+        let definition = serde_json::from_value(json!({
+            "schema_version":1,"entry_node_id":"out","nodes":[{"id":"out","kind":"output","config":{"type":"output","template":null}}],"edges":[]
+        })).unwrap();
+        server
+            .db
+            .create_workflow_graph(&crate::db::WorkflowGraphRecord {
+                id: "local-output".into(),
+                name: "Local output".into(),
+                description: "Test of the actual WorkflowRunner".into(),
+                definition,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        let id = TaskGraphId::new("harness-flow").unwrap();
+        let node_id = TaskNodeId::new("run").unwrap();
+        let node = TaskNode::new(node_id.clone(), TaskNodeKind::Work, "Run workflow", json!({"executor_ref":"workflow://local-output","instruction":"Execute configured workflow"})).unwrap();
+        server
+            .task_world
+            .create_graph(
+                id.clone(),
+                vec![
+                    node.clone(),
+                    TaskNode::new(
+                        TaskNodeId::new("editable").unwrap(),
+                        TaskNodeKind::Work,
+                        "Editable only",
+                        json!({}),
+                    )
+                    .unwrap(),
+                ],
+                vec![],
+                1,
+            )
+            .unwrap();
+        let checkpoint = server.task_world.checkpoint(&id, 1, 2).unwrap();
+        let resolver = executor_resolver(&server, &id, &node_id).unwrap();
+        let first = server
+            .task_world
+            .start_execution_with_resolver(&id, &node_id, 1, resolver, 3)
+            .unwrap();
+        let completed = dispatch_execution(server.clone(), id.clone(), first.id.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            completed.status,
+            crate::task::NodeExecutionStatus::Succeeded
+        );
+        assert_eq!(
+            completed.output.as_ref().unwrap()["workflow_graph_id"],
+            "local-output"
+        );
+        let mut edited = node;
+        edited.title = "Edited workflow task".into();
+        let graph = server.task_world.update_node(&id, edited, 1, 4).unwrap();
+        assert_eq!(graph.revision, GraphRevision::new(2).unwrap());
+        assert!(server
+            .task_world
+            .rerun_from_node(&id, &node_id, 1, 5)
+            .is_err());
+        let response = rerun(
+            State(server.clone()),
+            Path(id.to_string()),
+            Json(RerunRequest {
+                expected_revision: 2,
+                node_id: node_id.clone(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(server
+            .task_world
+            .list_node_executions(&id, &TaskNodeId::new("editable").unwrap())
+            .unwrap()
+            .is_empty());
+        let second = server
+            .task_world
+            .start_execution_with_resolver(
+                &id,
+                &node_id,
+                2,
+                executor_resolver(&server, &id, &node_id).unwrap(),
+                7,
+            )
+            .unwrap();
+        assert_ne!(first.id, second.id);
+        server
+            .task_world
+            .cancel_execution(&id, &second.id, 2, 8)
+            .unwrap();
+        let reloaded =
+            TaskWorldRuntime::new(&server.db, crate::shared::event::EventHub::new(16)).unwrap();
+        let detail = reloaded.get_graph_detail(&id).unwrap();
+        assert_eq!(detail.nodes[0].execution_history.len(), 2);
+        assert_eq!(
+            detail.nodes[0].execution_history[1].status,
+            crate::task::NodeExecutionStatus::Cancelled
+        );
+        assert_eq!(
+            detail.checkpoints[0].checkpoint_id,
+            checkpoint.id.to_string()
+        );
+        let graph: TaskGraph = reloaded.get_graph(&id).unwrap();
+        assert_eq!(graph.revision.value(), 2);
+    }
 }

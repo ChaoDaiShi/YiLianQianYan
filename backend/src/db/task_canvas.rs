@@ -222,6 +222,14 @@ impl Database {
 
         let mut conn = self.conn();
         let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if change_summary == "created" {
+            // Initial control, definition and revision are one atomic creation.
+            // A duplicate identity fails before the snapshot's update path.
+            transaction.execute(
+                "INSERT INTO task_world_execution_controls (graph_id, state, generation, paused_nodes_json, updated_at) VALUES (?1, 'running', 0, '[]', ?2)",
+                params![graph.id.as_str(), updated_at],
+            )?;
+        }
         transaction.execute(
             "INSERT INTO task_world_supervisor_snapshots (
                 graph_id, graph_revision, graph_json, node_states_json, updated_at

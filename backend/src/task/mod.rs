@@ -16,6 +16,7 @@ pub mod context;
 pub mod execution;
 pub mod executor;
 pub mod executor_ref;
+pub mod graph_planner;
 pub mod harness;
 pub mod model;
 pub mod orchestrator;
