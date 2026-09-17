@@ -5,6 +5,15 @@ const file = (name = "notes.txt", size = 5, type = "text/plain") => ({ name, siz
 const options = () => ({ upload: vi.fn(async () => ({ id: "res-real" })), preview: vi.fn(async () => ({ status: "ready" })) });
 
 describe("bounded attachment queue", () => {
+  it("drains files added while an earlier upload is pending", async () => {
+    let resolve!: (value: { id: string }) => void;
+    const deps = options(); deps.upload.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const queue = new AttachmentQueue(deps); queue.add([file("first.txt")]);
+    const first = queue.process(); queue.add([file("second.txt")]); const second = queue.process();
+    resolve({ id: "first" }); await Promise.all([first, second]);
+    expect(queue.snapshot().map(item => item.state)).toEqual(["ready", "ready"]);
+    expect(deps.upload).toHaveBeenCalledTimes(2);
+  });
   it("tracks upload and parsing before allowing a resource binding", async () => {
     const states: string[] = [];
     const deps = options();

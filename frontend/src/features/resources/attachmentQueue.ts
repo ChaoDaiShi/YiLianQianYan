@@ -52,8 +52,9 @@ export class AttachmentQueue {
     return this.processing;
   }
   private async run(): Promise<void> {
-    for (const item of this.items) {
-      if (this.disposed || item.state !== "queued") continue;
+    while (!this.disposed) {
+      const item = this.items.find(item => item.state === "queued");
+      if (!item) break;
       const file = this.files.get(item.id); if (!file) continue;
       const controller = new AbortController(); this.controllers.set(item.id, controller);
       const current = () => !this.disposed && !controller.signal.aborted && item.state !== "removed";
