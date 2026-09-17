@@ -19,7 +19,14 @@ export default function ChatPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const conversationId = id || null;
-  const { context, conversationRefresh, updateContext } = useGlobalVoiceContext();
+  const {
+    context,
+    conversationRefresh,
+    updateContext,
+    chatVoiceControls,
+    requestGlobalVoiceSession,
+    speakAssistantMessage,
+  } = useGlobalVoiceContext();
   const [workspaceMode, setWorkspaceMode] = useState(() =>
     getWorkspaceMode(window.innerWidth)
   );
@@ -130,6 +137,10 @@ export default function ChatPage() {
             : 0
         }
         onOpenCurrentTask={() => void openCurrentTask()}
+        chatVoiceControls={chatVoiceControls}
+        onRequestGlobalVoiceSession={requestGlobalVoiceSession}
+        onManualSpeech={speakAssistantMessage}
+        onOpenModelSettings={() => navigate("/settings?section=model")}
         renderExecution={(controller) =>
           workspaceMode === "full" ? (
             <div className="execution-region min-h-0 border-l border-[var(--border)]">

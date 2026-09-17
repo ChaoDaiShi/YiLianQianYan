@@ -215,6 +215,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/skills/:name", delete(skills_route::delete_skill))
         .route("/api/settings", get(settings::get_handler))
         .route("/api/settings", put(settings::update_handler))
+        .route(
+            "/api/providers/:kind/verify",
+            post(settings::verify_provider_handler),
+        )
         .route("/api/llm/models", get(llm_models::list_handler))
         .route("/api/llm/models", post(llm_models::create_handler))
         .route("/api/llm/models/:id", put(llm_models::update_handler))

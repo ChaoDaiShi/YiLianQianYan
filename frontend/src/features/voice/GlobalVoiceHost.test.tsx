@@ -106,8 +106,10 @@ describe("GlobalVoiceHost contract", () => {
 
     expect(first).toContain('data-testid="voice-pill"');
     expect(second).toContain('data-testid="voice-pill"');
-    expect(first).toContain("voice-session-6");
-    expect(second).toContain("voice-session-6");
+    expect(first).toContain("与小涟语音对话");
+    expect(second).toContain("与小涟语音对话");
+    expect(first).not.toContain("voice-session-6");
+    expect(second).not.toContain("voice-session-6");
     expect(getVoiceSessionKey(snapshot)).toBe(getVoiceSessionKey(snapshot));
   });
 
@@ -120,10 +122,20 @@ describe("GlobalVoiceHost contract", () => {
 
     expect(html).toContain("Rust 练习");
     expect(html).toContain("task-42");
-    expect(html).toContain("先打开编辑器");
     expect(html).toContain("请继续 Rust 练习");
     expect(html).not.toMatch(/\b(?:hwnd|window_id|pid|process_path)\b/);
     expect(voiceStatusLabel("listening")).toBe("正在听取");
+  });
+
+  it("wires chat draft capture and manual speech through the one host runtime", () => {
+    expect(hostSource).toContain("GlobalVoiceLeaf");
+    expect(hostSource).toContain("chatVoiceControls");
+    expect(hostSource).toContain("requestGlobalVoiceSession");
+    expect(hostSource).toContain("speakAssistantMessage");
+    expect(hostSource).toContain("chatDraftCaptureRef");
+    expect(hostSource).toContain("chatFinalSubscribersRef");
+    expect(hostSource).toContain("setHandsFreeEnabled(true)");
+    expect(hostSource).not.toContain("会话 ${session.voice_session_id}");
   });
 
   it("requires an explicit user gesture before microphone capture", () => {

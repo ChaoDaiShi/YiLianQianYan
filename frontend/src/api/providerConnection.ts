@@ -1,5 +1,6 @@
 import { controlSessionHeaders } from "./controlSession";
-import { API_BASE } from "./legacy";
+import { API_BASE, getSettings } from "./legacy";
+import type { ProviderReadinessProjection } from "../types";
 
 export type ProviderConnectionKind = "model" | "stt" | "tts";
 
@@ -15,6 +16,11 @@ const NORMALIZED_ERRORS = new Set([
 export type ProviderConnectionResult =
   | { ok: true }
   | { ok: false; error: string };
+
+export async function getProviderReadiness(): Promise<ProviderReadinessProjection | null> {
+  const settings = await getSettings();
+  return settings?.provider_readiness ?? null;
+}
 
 /** Calls the protected leaf route and deliberately discards provider bodies. */
 export async function verifyProviderConnection(kind: ProviderConnectionKind): Promise<ProviderConnectionResult> {

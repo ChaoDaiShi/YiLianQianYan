@@ -151,6 +151,37 @@ async fn voice_transcribe_preflight_allows_runtime_headers() {
 }
 
 #[tokio::test]
+async fn provider_connection_route_is_protected_and_reaches_the_safe_leaf_handler() {
+    let (_temp, server, token) = test_server();
+    let app = build_router(server);
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/providers/unknown/verify")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(auth_request(
+            Method::POST,
+            "/api/providers/unknown/verify",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["error"], "INVALID_CONFIGURATION");
+}
+
+#[tokio::test]
 async fn task_world_routes_use_live_projection_and_reject_stale_revision() {
     let (_temp, server, token) = test_server();
     let app = build_router(server);

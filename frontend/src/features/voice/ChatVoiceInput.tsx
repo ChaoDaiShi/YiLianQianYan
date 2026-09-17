@@ -1,3 +1,4 @@
+import { Mic, Radio } from "lucide-react";
 import type { CaptureStatus } from "./useVoiceCapture";
 
 export interface ChatVoiceControls {
@@ -18,18 +19,20 @@ export interface ChatVoiceInputProps {
 }
 
 export function ChatVoiceInput({ controls, onRequestGlobalVoiceSession }: ChatVoiceInputProps) {
+  const globalEntry = (
+    <button
+      type="button"
+      className="chat-voice-entry"
+      onClick={onRequestGlobalVoiceSession}
+      disabled={!onRequestGlobalVoiceSession}
+      title={onRequestGlobalVoiceSession ? "与小涟语音对话" : "语音会话正在接线"}
+    >
+      <Radio className="h-3.5 w-3.5" aria-hidden="true" />
+      与小涟语音对话
+    </button>
+  );
   if (!controls) {
-    return (
-      <button
-        type="button"
-        className="chat-voice-entry"
-        onClick={onRequestGlobalVoiceSession}
-        disabled={!onRequestGlobalVoiceSession}
-        title={onRequestGlobalVoiceSession ? "与小涟语音对话" : "语音会话正在接线"}
-      >
-        与小涟语音对话
-      </button>
-    );
+    return globalEntry;
   }
 
   const listening = controls.status === "listening";
@@ -45,6 +48,7 @@ export function ChatVoiceInput({ controls, onRequestGlobalVoiceSession }: ChatVo
         aria-label="开始语音输入"
         title="开始语音输入"
       >
+        <Mic className="h-3.5 w-3.5" aria-hidden="true" />
         {listening ? "停止录音" : busy ? "正在处理" : "开始语音输入"}
       </button>
       {listening ? (
@@ -61,6 +65,7 @@ export function ChatVoiceInput({ controls, onRequestGlobalVoiceSession }: ChatVo
       {activeCapture ? (
         <button type="button" className="chat-voice-cancel" onClick={controls.cancel}>取消语音输入</button>
       ) : null}
+      {globalEntry}
     </div>
   );
 }

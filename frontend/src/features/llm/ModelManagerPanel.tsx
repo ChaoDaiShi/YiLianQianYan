@@ -144,6 +144,28 @@ export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProp
     setBusyId(null);
   };
 
+  const clearProfileSecret = async (model: LlmModel) => {
+    if (!window.confirm(`清除模型“${model.label}”保存在系统凭据库中的 API Key？`)) return;
+    setBusyId(model.id);
+    setFeedback("");
+    const result = await updateLlmModel(model.id, {
+      provider: model.provider,
+      label: model.label,
+      model: model.model,
+      base_url: model.base_url,
+      api_format: "openai",
+      api_key: "",
+      api_key_env: model.api_key_env,
+      clear_api_key: true,
+      temperature: model.temperature,
+      max_tokens: model.max_tokens,
+      invoke_timeout_ms: model.invoke_timeout_ms,
+    });
+    setFeedback(result ? `${model.label} 的密钥已清除` : `${model.label} 的密钥清除失败`);
+    if (result) await refreshModels();
+    setBusyId(null);
+  };
+
   const beginEdit = (model: LlmModel) => {
     setEditingId(model.id);
     setReplaceProfileApiKey(false);
@@ -237,9 +259,10 @@ export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProp
                 {model.last_error ? <p className="mt-1 text-xs text-[var(--danger)]">{model.last_error}</p> : null}
               </div>
               <div className="flex shrink-0 gap-1">
-                <Button variant="secondary" size="sm" onClick={() => void handleVerify(model)} disabled={busyId === model.id}><RefreshCw className={`h-3.5 w-3.5 ${busyId === model.id ? "animate-spin" : ""}`} />验证</Button>
-                {!model.active ? <Button variant="secondary" size="sm" onClick={() => void handleActivate(model)} disabled={busyId === model.id}>激活</Button> : null}
-                <Button variant="ghost" size="sm" aria-label={`编辑${model.label}`} onClick={() => beginEdit(model)}><Pencil className="h-3.5 w-3.5" /></Button>
+                 <Button variant="secondary" size="sm" onClick={() => void handleVerify(model)} disabled={busyId === model.id}><RefreshCw className={`h-3.5 w-3.5 ${busyId === model.id ? "animate-spin" : ""}`} />验证</Button>
+                 {!model.active ? <Button variant="secondary" size="sm" onClick={() => void handleActivate(model)} disabled={busyId === model.id}>激活</Button> : null}
+                 {model.api_key_source === "secret_store" ? <Button variant="secondary" size="sm" onClick={() => void clearProfileSecret(model)} disabled={busyId === model.id}>清除密钥</Button> : null}
+                 <Button variant="ghost" size="sm" aria-label={`编辑${model.label}`} onClick={() => beginEdit(model)}><Pencil className="h-3.5 w-3.5" /></Button>
                 <Button variant="danger" size="sm" aria-label={`删除${model.label}`} onClick={() => void handleDelete(model)} disabled={busyId === model.id}><Trash2 className="h-3.5 w-3.5" /></Button>
               </div>
             </div>

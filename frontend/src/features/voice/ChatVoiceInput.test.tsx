@@ -22,6 +22,7 @@ describe("ChatVoiceInput contract", () => {
     expect(html).toContain("chat-voice-meter-bar");
     expect(html).toContain("停止录音");
     expect(html).toContain("取消语音输入");
+    expect(html).toContain("与小涟语音对话");
   });
 
   it.each(["acquiring", "listening", "transcribing"] as const)(

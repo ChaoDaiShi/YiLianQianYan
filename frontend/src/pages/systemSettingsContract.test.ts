@@ -74,12 +74,16 @@ describe("Settings contract", () => {
     expect(source).toContain("provider_readiness");
     expect(source).toContain("settings-save-card");
     expect(source).not.toContain("system-settings-savebar");
+    expect(modelManagerSource).toContain("clearProfileSecret");
+    expect(modelManagerSource).toContain("clear_api_key: true");
   });
 
   it("offers a thin provider step after first-run module setup without requiring voice", () => {
-    expect(moduleSetupSource).toContain("配置 AI 模型");
-    expect(moduleSetupSource).toContain("稍后配置");
-    expect(moduleSetupSource).toContain("语音为可选项");
-    expect(moduleSetupSource).toContain("/settings");
+    expect(moduleSetupSource).toContain("开始使用忆涟");
+    expect(moduleSetupSource).toContain("getProviderReadiness");
+    expect(moduleSetupSource).toContain("模型服务");
+    expect(moduleSetupSource).toContain("语音服务（可选）");
+    expect(moduleSetupSource).toContain("去配置");
+    expect(moduleSetupSource).toContain("稍后设置");
   });
 });

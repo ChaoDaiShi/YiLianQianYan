@@ -105,6 +105,19 @@ export interface VoiceConfig {
   tts: VoiceTtsConfig;
 }
 
+export interface ProviderReadinessItem {
+  configured: boolean;
+  available: boolean;
+  provider: string;
+  model: string;
+}
+
+export interface ProviderReadinessProjection {
+  model: ProviderReadinessItem;
+  stt: ProviderReadinessItem;
+  tts: ProviderReadinessItem;
+}
+
 export interface PermissionsConfig {
   mode: string;
   interrupt_on: string[];
@@ -143,6 +156,7 @@ export interface AppConfig {
   compaction: CompactionConfig;
   secret_store_status?: string;
   migration_pending?: number;
+  provider_readiness?: ProviderReadinessProjection;
 }
 
 export interface LlmModel {

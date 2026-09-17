@@ -125,6 +125,11 @@ try {
     await finishSetup.click();
     await finishSetup.waitFor({ state: "hidden" });
   }
+  const laterSetup = page.getByRole("button", { name: "稍后设置" });
+  if (await laterSetup.isVisible()) {
+    await laterSetup.click();
+    await laterSetup.waitFor({ state: "hidden" });
+  }
   await page.getByRole("button", { name: "新建任务画布" }).click();
   await page.waitForURL(/\/task-world\/[^/]+$/);
   const firstGraphUrl = page.url();
@@ -148,12 +153,46 @@ try {
   await page.goto(`http://127.0.0.1:${frontendPort}/system`, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "系统监控" }).waitFor();
 
+  await page.goto(`http://127.0.0.1:${frontendPort}/chat`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "与小涟语音对话" }).click();
+  await page.locator('[data-testid="voice-pill"]').waitFor();
+  const checkedViewports = [];
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 1366, height: 768 },
+    { width: 1920, height: 1080 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`http://127.0.0.1:${frontendPort}/settings?section=model`, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { name: "设置" }).waitFor();
+    const settingsContent = page.locator(".system-settings-content");
+    const saveButton = page.getByRole("button", { name: "保存设置" });
+    await saveButton.scrollIntoViewIfNeeded();
+    if (!await saveButton.isVisible()) throw new Error(`Settings save is hidden at ${viewport.width}x${viewport.height}`);
+    const horizontalOverflow = await settingsContent.evaluate((element) => element.scrollWidth > element.clientWidth + 1);
+    if (horizontalOverflow) throw new Error(`Settings overflow horizontally at ${viewport.width}x${viewport.height}`);
+    const [saveBox, pillBox] = await Promise.all([
+      saveButton.boundingBox(),
+      page.locator('[data-testid="voice-pill"]').boundingBox(),
+    ]);
+    if (!saveBox || !pillBox) throw new Error(`Settings or voice pill has no layout box at ${viewport.width}x${viewport.height}`);
+    const overlaps = !(
+      saveBox.x + saveBox.width <= pillBox.x ||
+      pillBox.x + pillBox.width <= saveBox.x ||
+      saveBox.y + saveBox.height <= pillBox.y ||
+      pillBox.y + pillBox.height <= saveBox.y
+    );
+    if (overlaps) throw new Error(`Voice pill covers Settings save at ${viewport.width}x${viewport.height}`);
+    checkedViewports.push(`${viewport.width}x${viewport.height}`);
+  }
+
   if (browserErrors.length) {
     throw new Error(`Browser errors: ${browserErrors.join(" | ")}`);
   }
   process.stdout.write(JSON.stringify({
     status: "passed",
     graphs_created: 2,
+    settings_viewports: checkedViewports,
     real_backend: true,
     browser: executablePath,
   }) + "\n");

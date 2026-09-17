@@ -1,13 +1,15 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Check, Monitor, Moon, Sun, Upload, RotateCcw } from "lucide-react";
 import { getSettings, updateSettings, getIsolationStatus, listSecurityGrants, type IsolationStatus, type SecurityGrant } from "../api/client";
 import { verifyProviderConnection, type ProviderConnectionKind } from "../api/providerConnection";
 import { useTheme } from "../theme";
-import type { AppConfig } from "../types";
+import type { AppConfig, ProviderReadinessProjection } from "../types";
 import { PageHeader, Button, Input, Badge } from "../components/ui";
 import { GrantEditor } from "../features/security/GrantEditor";
 import { isolationRows } from "../features/security/grantEditorModel";
 import ModelManagerPanel from "../features/llm/ModelManagerPanel";
+import { useGlobalVoiceContext } from "../features/voice/GlobalVoiceHost";
 
 const defaultConfig: AppConfig = {
   agent: { name: "忆涟千言", system_prompt: "你是一个桌面AI助手...", workspace_root: "" },
@@ -87,22 +89,9 @@ const APPEARANCE_MODES = [
   },
 ] as const;
 
-interface ProviderReadinessItem {
-  configured: boolean;
-  available: boolean;
-  provider: string;
-  model: string;
-}
-
-interface ProviderReadiness {
-  model: ProviderReadinessItem;
-  stt: ProviderReadinessItem;
-  tts: ProviderReadinessItem;
-}
-
-function ProviderReadinessCard({ readiness, kinds, testing, results, onVerify }: { readiness: ProviderReadiness | null; kinds: ProviderConnectionKind[]; testing: ProviderConnectionKind | null; results: Partial<Record<ProviderConnectionKind, string>>; onVerify: (kind: ProviderConnectionKind) => void }) {
+function ProviderReadinessCard({ readiness, kinds, testing, results, onVerify, onPreviewTts }: { readiness: ProviderReadinessProjection | null; kinds: ProviderConnectionKind[]; testing: ProviderConnectionKind | null; results: Partial<Record<ProviderConnectionKind, string>>; onVerify: (kind: ProviderConnectionKind) => void; onPreviewTts?: () => void }) {
   if (!readiness) return null;
-  const labels: Record<keyof ProviderReadiness, string> = { model: "模型", stt: "STT", tts: "TTS" };
+  const labels: Record<keyof ProviderReadinessProjection, string> = { model: "模型", stt: "STT", tts: "TTS" };
   return (
     <section className="rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4" aria-label="Provider 就绪状态">
       <h3 className="text-sm font-semibold">Provider 就绪状态</h3>
@@ -113,7 +102,7 @@ function ProviderReadinessCard({ readiness, kinds, testing, results, onVerify }:
           return <div key={kind} className="min-w-0 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2">
             <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{labels[kind]}</span><Badge tone={item.available ? "success" : "default"}>{item.available ? "已就绪" : "未就绪"}</Badge></div>
             <p className="mt-1 truncate text-[11px] text-[var(--text-muted)]">{item.provider || "未指定 Provider"} · {item.model || "未指定模型"}</p>
-            <div className="mt-1 flex items-center justify-between gap-2"><p className="text-[11px] text-[var(--text-faint)]">凭据：{item.configured ? "已配置" : "未配置"}</p><Button variant="secondary" size="sm" disabled={testing !== null} onClick={() => onVerify(kind)}>{testing === kind ? "测试中…" : "测试连接"}</Button></div>
+            <div className="mt-1 flex items-center justify-between gap-2"><p className="text-[11px] text-[var(--text-faint)]">凭据：{item.configured ? "已配置" : "未配置"}</p><Button variant="secondary" size="sm" disabled={testing !== null} onClick={() => kind === "tts" && onPreviewTts ? onPreviewTts() : onVerify(kind)}>{testing === kind ? "测试中…" : kind === "tts" ? "试听声音" : "测试连接"}</Button></div>
             {results[kind] ? <p className="mt-1 text-[11px] text-[var(--text-muted)]" role="status">{results[kind]}</p> : null}
           </div>;
         })}
@@ -155,6 +144,7 @@ function secretSourceLabel(source?: string): string {
 }
 
 export default function SettingsPage() {
+  const [searchParams] = useSearchParams();
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [saved, setSaved] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState(() => comparableConfig(defaultConfig));
@@ -163,12 +153,20 @@ export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionKey>("model");
   const [isolation, setIsolation] = useState<IsolationStatus | null>(null);
   const [grants, setGrants] = useState<SecurityGrant[]>([]);
-  const [providerReadiness, setProviderReadiness] = useState<ProviderReadiness | null>(null);
+  const [providerReadiness, setProviderReadiness] = useState<ProviderReadinessProjection | null>(null);
   const [secretRefreshToken, setSecretRefreshToken] = useState(0);
   const [replaceVoiceKey, setReplaceVoiceKey] = useState<{ stt: boolean; tts: boolean }>({ stt: false, tts: false });
   const [testingProvider, setTestingProvider] = useState<ProviderConnectionKind | null>(null);
   const [providerTestResults, setProviderTestResults] = useState<Partial<Record<ProviderConnectionKind, string>>>({});
+  const { speakAssistantMessage } = useGlobalVoiceContext();
   const theme = useTheme();
+
+  useEffect(() => {
+    const requested = searchParams.get("section") as SectionKey | null;
+    if (requested && SECTIONS.some((section) => section.key === requested)) {
+      setActiveSection(requested);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     getSettings().then((c) => {
@@ -183,7 +181,7 @@ export default function SettingsPage() {
           },
         };
         setConfig(nextConfig);
-        setProviderReadiness((c as AppConfig & { provider_readiness?: ProviderReadiness }).provider_readiness ?? null);
+        setProviderReadiness(c.provider_readiness ?? null);
         setSavedSnapshot(comparableConfig(nextConfig));
       }
     });
@@ -220,7 +218,7 @@ export default function SettingsPage() {
             },
           };
       setConfig(nextConfig);
-      setProviderReadiness((fresh as AppConfig & { provider_readiness?: ProviderReadiness }).provider_readiness ?? null);
+      setProviderReadiness(fresh?.provider_readiness ?? nextConfig.provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
       setSecretRefreshToken((value) => value + 1);
       setReplaceVoiceKey({ stt: false, tts: false });
@@ -253,7 +251,7 @@ export default function SettingsPage() {
         model: { ...defaultConfig.model, ...fresh.model, api_key: "", embedding_api_key: "" },
       };
       setConfig(nextConfig);
-      setProviderReadiness((fresh as AppConfig & { provider_readiness?: ProviderReadiness }).provider_readiness ?? null);
+      setProviderReadiness(fresh.provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
       setSecretRefreshToken((value) => value + 1);
     }
@@ -288,7 +286,7 @@ export default function SettingsPage() {
         },
       };
       setConfig(nextConfig);
-      setProviderReadiness((fresh as AppConfig & { provider_readiness?: ProviderReadiness }).provider_readiness ?? null);
+      setProviderReadiness(fresh.provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
       setSecretRefreshToken((value) => value + 1);
       setReplaceVoiceKey((value) => ({ ...value, [side]: false }));
@@ -329,6 +327,18 @@ export default function SettingsPage() {
     setTestingProvider(null);
   };
 
+  const previewTts = async () => {
+    setTestingProvider("tts");
+    const result = await verifyProviderConnection("tts");
+    if (result.ok) {
+      speakAssistantMessage("你好，我是小涟。");
+      setProviderTestResults((current) => ({ ...current, tts: "试听已开始" }));
+    } else {
+      setProviderTestResults((current) => ({ ...current, tts: result.error }));
+    }
+    setTestingProvider(null);
+  };
+
   const dirty = comparableConfig(config) !== savedSnapshot;
 
   // ── Appearance helpers ──
@@ -360,7 +370,7 @@ export default function SettingsPage() {
       case "voice":
         return (
           <div className="space-y-6">
-            <ProviderReadinessCard readiness={providerReadiness} kinds={["stt", "tts"]} testing={testingProvider} results={providerTestResults} onVerify={(kind) => void testProvider(kind)} />
+            <ProviderReadinessCard readiness={providerReadiness} kinds={["stt", "tts"]} testing={testingProvider} results={providerTestResults} onVerify={(kind) => void testProvider(kind)} onPreviewTts={() => void previewTts()} />
             <p className="text-xs leading-5 text-[var(--text-faint)]">
               语音识别与语音合成独立配置；两个密钥均只写入系统凭据库，不会在页面中回显。
             </p>

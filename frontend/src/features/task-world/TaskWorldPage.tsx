@@ -26,6 +26,7 @@ import {
   type TaskGraphReview,
   type TaskGraphReviewSuggestion,
 } from "../../api/taskWorld";
+import { getProviderReadiness } from "../../api/providerConnection";
 import { subscribeToEvents } from "../../api/events";
 import { Button, EmptyState, ErrorState, PageHeader, Panel, Skeleton } from "../../components/ui";
 import TaskExecutionTrail from "./TaskExecutionTrail";
@@ -49,6 +50,7 @@ export default function TaskWorldPage() {
   const [review, setReview] = useState<TaskGraphReview | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  const [modelUnavailable, setModelUnavailable] = useState(false);
   const detailSequence = useRef(0);
   const viewRef = useRef<CanvasView | null>(null);
 
@@ -96,6 +98,14 @@ export default function TaskWorldPage() {
   }, [refreshDetail, refreshView]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  useEffect(() => {
+    let active = true;
+    void getProviderReadiness().then((readiness) => {
+      if (active) setModelUnavailable(!readiness?.model.available);
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!graphId) return;
@@ -215,6 +225,13 @@ export default function TaskWorldPage() {
 
   const runGraphReview = useCallback(async () => {
     if (!projection || reviewBusy) return;
+    const readiness = await getProviderReadiness();
+    if (!readiness?.model.available) {
+      setModelUnavailable(true);
+      setReviewError("还没有配置可用的模型服务。");
+      return;
+    }
+    setModelUnavailable(false);
     setReviewBusy(true);
     setReviewError("");
     const result = await reviewTaskGraph(graphId, projection.revision);
@@ -269,6 +286,7 @@ export default function TaskWorldPage() {
         actions={<div className="flex gap-2"><Button variant="ghost" size="sm" onClick={() => navigate("/tasks")}><ArrowLeft className="h-4 w-4" />任务中心</Button><Button variant="secondary" size="sm" disabled={saving || graphLocked} onClick={() => void mutate(() => addTaskNode(graphId, projection.revision, { id: crypto.randomUUID(), kind: "work", title: "新任务", input: { instruction: "", acceptance_criteria: [] }, retry_policy: { max_attempts: 1 } }))}>添加任务节点</Button><Button variant="secondary" size="sm" onClick={() => void reload()}><RefreshCw className="h-4 w-4" />刷新</Button></div>}
       />
       {eventWarning && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]" role="status">实时事件暂不可用：{eventWarning}</p>}
+      {modelUnavailable && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]">还没有配置可用的模型服务。 <button type="button" className="underline" onClick={() => navigate("/settings?section=model")}>前往模型设置</button></p>}
       {view && <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-3 py-2" aria-label="画布视图工具">
         <Button size="sm" variant="secondary" disabled={saving} onClick={() => updateLayouts(buildAutoLayout(projection))}>自动布局</Button>
         <Button size="sm" variant="secondary" disabled={saving || view.selection.filter((nodeId) => !view.groups.some((group) => group.node_ids.includes(nodeId))).length < 2} onClick={createVisualGroup}>创建分组</Button>

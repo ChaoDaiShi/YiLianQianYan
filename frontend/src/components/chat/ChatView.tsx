@@ -19,6 +19,7 @@ import {
   type Workflow,
 } from "../../api/client";
 import { bindResources } from "../../api/resources";
+import { getProviderReadiness } from "../../api/providerConnection";
 import type { ConversationalAnchor } from "../../api/voice";
 import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 import {
@@ -69,6 +70,8 @@ interface ChatViewProps {
   /** Provided by the existing GlobalVoiceHost through the application root. */
   chatVoiceControls?: ChatVoiceControls | null;
   onRequestGlobalVoiceSession?: () => void;
+  onManualSpeech?: (text: string) => void;
+  onOpenModelSettings?: () => void;
 }
 
 export interface ExecutionController {
@@ -116,6 +119,8 @@ export default function ChatView({
   renderExecution,
   chatVoiceControls = null,
   onRequestGlobalVoiceSession,
+  onManualSpeech,
+  onOpenModelSettings,
 }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -128,6 +133,7 @@ export default function ChatView({
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [allWorkflows, setAllWorkflows] = useState<Workflow[]>([]);
   const [suggestedText, setSuggestedText] = useState("");
+  const [modelUnavailable, setModelUnavailable] = useState(false);
   const [execution, dispatchExecution] = useReducer(
     reduceExecutionWorkspace,
     conversationId,
@@ -164,6 +170,14 @@ export default function ChatView({
   useEffect(() => {
     loadWorkflows();
   }, [loadWorkflows]);
+
+  useEffect(() => {
+    let active = true;
+    void getProviderReadiness().then((readiness) => {
+      if (active) setModelUnavailable(!readiness?.model.available);
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     shouldFollowMessagesRef.current = true;
@@ -439,6 +453,12 @@ export default function ChatView({
   const handleSend = useCallback(
     async (text: string, resourceIds: string[] = []) => {
       if (!text.trim() || isLoading) return false;
+      const readiness = await getProviderReadiness();
+      if (!readiness?.model.available) {
+        setModelUnavailable(true);
+        return false;
+      }
+      setModelUnavailable(false);
       let targetConversationId = currentConvId;
       if (resourceIds.length > 0) {
         if (!targetConversationId) {
@@ -538,6 +558,15 @@ export default function ChatView({
           finished={finished}
         />
 
+        {modelUnavailable ? (
+          <section className="mx-4 mt-3 rounded-[var(--radius-md)] border border-[var(--warning-border)] bg-[var(--warning-soft)] px-4 py-3 text-sm" role="status">
+            <p className="font-medium text-[var(--warning-fg)]">还没有配置可用的模型服务。</p>
+            <button type="button" className="mt-2 text-[var(--accent-primary)] underline" onClick={onOpenModelSettings}>
+              前往模型设置
+            </button>
+          </section>
+        ) : null}
+
       {messages.length === 0 && !streaming && !error ? (
         <WorkbenchHome
           connection={runState.connection}
@@ -551,6 +580,8 @@ export default function ChatView({
           onTextUsed={() => setSuggestedText("")}
           onHint={setSuggestedText}
           onOpenCurrentTask={onOpenCurrentTask}
+          chatVoiceControls={chatVoiceControls}
+          onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
         />
       ) : (
         <>
@@ -561,6 +592,7 @@ export default function ChatView({
             onScroll={handleMessageScroll}
             error={error}
             onRetry={handleRetry}
+            onSpeak={onManualSpeech}
           />
 
           <footer className="conversation-composer shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">

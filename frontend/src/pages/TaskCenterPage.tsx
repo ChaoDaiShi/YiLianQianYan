@@ -39,6 +39,7 @@ import {
   type ApiError,
   type TaskGraphSummary,
 } from "../api/taskWorld";
+import { getProviderReadiness } from "../api/providerConnection";
 
 const FILTERS: Array<{ id: TaskFilter; label: string }> = [
   { id: "all", label: "全部" },
@@ -108,6 +109,7 @@ export default function TaskCenterPage() {
   const [taskGraphError, setTaskGraphError] = useState<ApiError | null>(null);
   const taskGraphCreationInFlight = useRef(false);
   const [planningGoal, setPlanningGoal] = useState("");
+  const [modelUnavailable, setModelUnavailable] = useState(false);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -143,6 +145,14 @@ export default function TaskCenterPage() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    let active = true;
+    void getProviderReadiness().then((readiness) => {
+      if (active) setModelUnavailable(!readiness?.model.available);
+    });
+    return () => { active = false; };
+  }, []);
 
   const visibleTasks = useMemo(
     () => filterTasks(tasks || [], filter, query, workspaces),
@@ -185,14 +195,22 @@ export default function TaskCenterPage() {
     [navigate],
   );
 
-  const handlePlanTaskGraph = () => createEmptyTaskGraph({
-    createGraph: ({ id }) => planTaskGraph(id, planningGoal.trim()),
-    navigate,
-    setCreating: setCreatingTaskGraph,
-    setError: setTaskGraphError,
-    inFlight: taskGraphCreationInFlight,
-    makeGraphId: () => crypto.randomUUID(),
-  });
+  const handlePlanTaskGraph = async () => {
+    const readiness = await getProviderReadiness();
+    if (!readiness?.model.available) {
+      setModelUnavailable(true);
+      return;
+    }
+    setModelUnavailable(false);
+    await createEmptyTaskGraph({
+      createGraph: ({ id }) => planTaskGraph(id, planningGoal.trim()),
+      navigate,
+      setCreating: setCreatingTaskGraph,
+      setError: setTaskGraphError,
+      inFlight: taskGraphCreationInFlight,
+      makeGraphId: () => crypto.randomUUID(),
+    });
+  };
 
   return (
     <div className="page-canvas flex h-full min-h-0 flex-col">
@@ -220,6 +238,7 @@ export default function TaskCenterPage() {
               <Button type="button" variant="secondary" disabled={creatingTaskGraph} onClick={() => void handleCreateTaskGraph()}>新建任务画布</Button>
             </div>
             <p className="text-xs text-[var(--text-faint)]">计划经校验后保存，不会自动执行。未配置模型时，可先创建空白画布。</p>
+            {modelUnavailable ? <p className="text-xs text-[var(--warning-fg)]">还没有配置可用的模型服务。 <button type="button" className="underline" onClick={() => navigate("/settings?section=model")}>前往模型设置</button></p> : null}
           </div>
           {taskGraphError && (
             <p className="mx-4 mt-3 text-xs text-[var(--danger)]" role="alert">

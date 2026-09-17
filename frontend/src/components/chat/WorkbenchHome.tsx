@@ -7,6 +7,7 @@ import {
   type AgentStatus,
 } from "./agentStatus";
 import ChatInput from "./ChatInput";
+import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 
 interface WorkbenchHomeProps {
   conversationId?: string | null;
@@ -20,6 +21,8 @@ interface WorkbenchHomeProps {
   onTextUsed?: () => void;
   onHint?: (text: string) => void;
   onOpenCurrentTask: () => void;
+  chatVoiceControls?: ChatVoiceControls | null;
+  onRequestGlobalVoiceSession?: () => void;
 }
 
 interface QuickAction {
@@ -108,6 +111,8 @@ export default function WorkbenchHome({
   onTextUsed,
   onHint,
   onOpenCurrentTask,
+  chatVoiceControls,
+  onRequestGlobalVoiceSession,
 }: WorkbenchHomeProps) {
   const status = resolveAgentStatus({
     connection,
@@ -178,6 +183,8 @@ export default function WorkbenchHome({
           onStop={onStop}
           suggestedText={suggestedText}
           onTextUsed={onTextUsed}
+          chatVoiceControls={chatVoiceControls}
+          onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
         />
 
         <div className="home-quick-actions">

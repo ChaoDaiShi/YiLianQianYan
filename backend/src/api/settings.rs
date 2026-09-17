@@ -317,7 +317,7 @@ pub async fn verify_provider_handler(
                 match server.tts_provider() {
                     Ok(provider) => provider
                         .synthesize(&SpeechRequest {
-                            text: "连接测试".to_string(),
+                            text: "你好，我是小涟。".to_string(),
                             voice: config.voice.tts.voice,
                             language: Some(config.voice.tts.language),
                         })
@@ -1266,7 +1266,7 @@ mod tests {
             .iter()
             .any(|(kind, body)| kind == "stt" && body.contains("provider-connection-test.wav")));
         assert!(calls.iter().any(|(kind, body)| kind == "tts"
-            && body.contains("连接测试")
+            && body.contains("你好，我是小涟。")
             && body.contains("mock-tts")));
         task.abort();
     }
