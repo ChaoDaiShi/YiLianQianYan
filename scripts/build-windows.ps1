@@ -47,6 +47,21 @@ function Invoke-NativeStep {
     }
 }
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha256.ComputeHash($stream)
+        return -join ($bytes | ForEach-Object { $_.ToString('X2') })
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 if ($env:OS -ne 'Windows_NT') {
     throw 'The Windows NSIS release must be built on Windows.'
 }
@@ -105,7 +120,7 @@ try {
         throw "Release installer is empty: $($installer.FullName)"
     }
 
-    $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+    $hash = Get-Sha256Hex -Path $installer.FullName
     $checksumPath = "$($installer.FullName).sha256"
     $checksumLine = "$hash  $($installer.Name)$([Environment]::NewLine)"
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)

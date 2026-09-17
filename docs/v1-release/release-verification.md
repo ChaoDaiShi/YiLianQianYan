@@ -1,6 +1,6 @@
 # v1.0-rc.1 release verification
 
-Current status: `IMPLEMENTING`
+Current status: `HUMAN_PENDING`
 
 The candidate is not a formal v1.0 release. This report records current evidence without promoting historical results to current-SHA proof.
 
@@ -8,36 +8,40 @@ The candidate is not a formal v1.0 release. This report records current evidence
 
 - Product version: `1.0.0-rc.1`.
 - Branch: `v1/release-work` in the independent v1 release clone.
-- Latest functional checkpoint before this report: `0209a50` (`feat(task-world): add persisted groups and review suggestions`).
-- Exact final RC commit and installer SHA-256 are recorded after the remaining documentation/security scan and the one full technical gate.
+- Application source and full-gate checkpoint: `8394e4495f500f69c57388ebf8510fafcaecbabb`.
+- The later packaging/report-only commit does not change compiled application source. Its exact remote SHA is recorded after the authorized branch push.
 
-## Current focused evidence
+## Technical RC evidence
 
 | Area | Command/evidence | Result |
 | --- | --- | --- |
-| Backend compile | `cargo check -p yilian-backend -j1` | PASS; two pre-existing unused migration-helper warnings |
-| Frontend Task World | four focused Vitest files | PASS, 23 tests |
-| Frontend production build | `npm run build` | PASS; 2,085 modules; main chunk warning remains |
-| Canvas migration | focused `task_canvas_persistence` migration test | PASS; migration 1013 registered and `groups_json` present |
-| AI review boundary | focused strict review parser test | PASS; unknown nodes and executor injection reject |
-| Retry preservation | focused graph-detail projection test | PASS; existing retry policy survives accepted edits |
-| Real-backend browser E2E | `npm run test:e2e` with system Edge, isolated DB/workspace | PASS; first-run setup, two distinct graphs, node, auto-layout, Capability and System routes |
+| Frontend tests | `npm test` | PASS, 83 files / 389 tests |
+| Frontend production build | `npm run build` | PASS; 2,085 modules; non-blocking 500-kB main-chunk warning retained |
+| Rust formatting/check | `cargo fmt --all -- --check`; `cargo check --workspace --locked -j1` | PASS; backend and Tauri `1.0.0-rc.1` checked |
+| Rust/Tauri full regression | `cargo test --workspace --all-targets --locked -j1` | PASS; Tauri 5/5, backend library 880/880 and every integration target reported 0 failures |
+| Migration/recovery coverage | Full Rust gate | PASS; fresh/adopted v0.9/repeat startup, digest/collision/corrupt JSON rejection and transaction rollback tests executed |
+| Real-backend browser E2E | `npm run test:e2e` with system Edge and isolated DB/workspace | PASS; first-run setup, two distinct graphs, node, auto-layout, Capability and System routes |
 | Version consistency | `scripts/verify-release-version.ps1 -ExpectedVersion 1.0.0-rc.1` | PASS across npm, Tauri, Cargo manifests and lockfile |
+| Commit/content boundary | Foundation ancestry plus all-new-commit scans | PASS; no tracked secrets/data/audio/model/database/bundle, private absolute paths or v2 runtime implementation matches |
+| Windows RC build | `npm run build:windows -- -SkipTests -Version 1.0.0-rc.1` after the complete gate | PASS; NSIS built and checksum file verified |
+| Packaged GUI automation | `scripts/test-windows-gui.ps1` against the RC | PASS; visible 1214×838 window, healthy backend/database, normal close, released port and isolated uninstall |
 
-These are focused development checks. The final RC gate still requires the complete Rust/frontend/Tauri/migration suite on one exact commit.
+Installer artifact (unsigned RC):
+
+- Filename: `忆涟千言_1.0.0-rc.1_x64-setup.exe`
+- Size: `8,740,354` bytes
+- SHA-256: `6255EFB9D6D7EE572A295974827F3F8133ED71A5C52C912ABC03CBF0BAB7E930`
+- Local build output: `target/release/bundle/nsis/` (ignored by Git and not uploaded as a Release)
 
 ## Dependency review
 
 - `npm audit --omit=dev`: 0 critical, 0 high, 2 moderate. React Router DOM is patched within the 6.x line to 6.30.6. The remaining two records require a semver-major 7.x migration. The SSR hydration advisory is not reachable in this Vite SPA; navigation uses internal literal paths or encoded persisted IDs rather than accepting an arbitrary external destination. Keep this documented risk and re-evaluate before a later router migration.
 - Development-only audit findings are not shipped in the frontend bundle; they remain visible in the raw full audit and are not silently described as fixed.
-- Cargo audit/reachability is rerun on the frozen RC. Earlier focused review found no newly reachable parser vulnerability; `quick-xml 0.30` was non-Windows transitive build-only through `xcap/xcb`, and current product parsing uses pinned `quick-xml 0.41.0`. `rustls 0.23.42` was a stale unreachable lock entry. `pdf-extract` retains an informational unmaintained-font-parser risk for later replacement review.
+- `cargo audit --json`: 3 advisory records. Both `quick-xml 0.30` denial-of-service records are absent from the Windows dependency graph and occur only as the non-Windows `xcb` build dependency through `xcap`; Windows product/document parsing uses fixed `quick-xml 0.41.0`. `rustls 0.23.42` has no reverse dependency for workspace/all targets and is an unreachable stale lock entry. No reachable high-severity runtime advisory was found for this Windows RC.
+- Informational maintenance warnings remain in transitive build/parser trees, including `ttf-parser 0.25.1` via `pdf-extract`; replacement is deferred and not described as fixed.
 
-## Remaining technical gate
+## Remaining actions
 
-1. Scan all commits added after the public Foundation for secrets, user data, v2 implementation and private absolute paths.
-2. Run one current-commit complete frontend test/build and Rust/Tauri format/check/test gate.
-3. Re-run fresh/repeat/v0.9 upgrade, corruption refusal and transaction rollback through the complete suite.
-4. Run current lockfile dependency audits and record reachable/unreachable disposition.
-5. Build the Windows NSIS RC, hash it, execute isolated packaged GUI launch/health/normal-close/uninstall acceptance, and record the exact artifact.
-6. Push only `HEAD:refs/heads/v1/release-work`, verify the remote SHA, and do not create a tag or GitHub Release.
-7. Hand off `v1-h-checklist.md`; keep final status `HUMAN_PENDING` until the user completes physical/perceptual checks.
+1. Push only `HEAD:refs/heads/v1/release-work`, verify the remote SHA, and do not create a tag or GitHub Release.
+2. Complete `v1-h-checklist.md`. Real microphone, hearing, direct-speech interruption, representative file/artifact use and hands-on installer experience remain human evidence.
+3. Keep the release at RC/HUMAN_PENDING until all applicable V1-H rows are accepted.
