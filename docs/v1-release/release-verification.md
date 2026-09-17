@@ -11,6 +11,23 @@ The candidate is not a formal v1.0 release. This report records current evidence
 - Application source and full-gate checkpoint: `8394e4495f500f69c57388ebf8510fafcaecbabb`.
 - The later packaging/report-only commit does not change compiled application source. Its exact remote SHA is recorded after the authorized branch push.
 
+## RC freeze and local delivery
+
+```text
+RC Freeze: COMPLETE
+Local Delivery: COMPLETE
+Remote source: COMPLETE
+Remote CI trigger: BLOCKED_BY_WORKFLOW_SCOPE
+Remote CI run: NOT RUN
+Human acceptance: HUMAN_PENDING
+```
+
+- The installer was not rebuilt during freeze/delivery. `8394e4495f500f69c57388ebf8510fafcaecbabb` remains the application source checkpoint, and every later tracked change is documentation, CI history or the release hash script.
+- The existing installer file was re-read and hashed independently of the old `.sha256` file. Source and delivery-copy SHA-256 both equal `6255EFB9D6D7EE572A295974827F3F8133ED71A5C52C912ABC03CBF0BAB7E930`; size remains `8,740,354` bytes.
+- The local delivery directory contains exactly the installer, checksum, short start guide, current V1-H checklist and RC notes. It is outside Git and is not a GitHub Release asset.
+- Existing packaged launch/health/normal-close/uninstall evidence remains the current binary's evidence. The freeze task did not mechanically repeat that matrix.
+- GitHub's public Actions API reported zero runs for `head_branch=v1/release-work`; workflow existence is not treated as CI success.
+
 ## Technical RC evidence
 
 | Area | Command/evidence | Result |
@@ -42,7 +59,7 @@ Installer artifact (unsigned RC):
 
 ## Remaining actions
 
-1. The current PAT lacks GitHub `workflow` scope, so GitHub rejected the commit that added `v1/**` to the Actions push trigger. That net workflow change is removed from the uploadable branch; enabling remote v1 CI remains `BLOCKED` until an appropriately scoped credential or a maintainer workflow edit is available.
+1. The current PAT lacks GitHub `workflow` scope, so GitHub again rejected the isolated commit that added `v1/**` to the Actions push trigger. The change was reverted normally, without rewriting history; enabling remote v1 CI remains `BLOCKED` until an appropriately scoped credential or a maintainer workflow edit is available.
 2. Push only `HEAD:refs/heads/v1/release-work`, verify the remote SHA, and do not create a tag or GitHub Release.
 3. Complete `v1-h-checklist.md`. Real microphone, hearing, direct-speech interruption, representative file/artifact use and hands-on installer experience remain human evidence.
 4. Keep the release at RC; formal v1.0 requires the CI trigger blocker to be cleared and all applicable V1-H rows to be accepted.
