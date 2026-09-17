@@ -18,7 +18,7 @@ describe("chat voice transcript contract", () => {
 
   it("maps measured analyser volume to a bounded visual meter", () => {
     expect(voiceMeterPercent(0)).toBe(0);
-    expect(voiceMeterPercent(0.12)).toBeGreaterThan(0);
+    expect(voiceMeterPercent(0.12)).toBe(12);
     expect(voiceMeterPercent(10)).toBe(100);
   });
 });

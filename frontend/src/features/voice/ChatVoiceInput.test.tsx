@@ -21,8 +21,18 @@ describe("ChatVoiceInput contract", () => {
     expect(html).toContain("47%");
     expect(html).toContain("chat-voice-meter-bar");
     expect(html).toContain("停止录音");
-    expect(html).toContain("取消录音");
+    expect(html).toContain("取消语音输入");
   });
+
+  it.each(["acquiring", "listening", "transcribing"] as const)(
+    "keeps a visible cancel action while %s",
+    (status) => {
+      const html = renderToStaticMarkup(
+        <ChatVoiceInput controls={{ ...controls, status }} onRequestGlobalVoiceSession={vi.fn()} />,
+      );
+      expect(html).toContain("取消语音输入");
+    },
+  );
 
   it("uses the existing global voice session entry when capture is unavailable", () => {
     const html = renderToStaticMarkup(

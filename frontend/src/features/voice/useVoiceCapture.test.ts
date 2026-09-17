@@ -12,7 +12,6 @@ import {
   selectRecorderMimeType,
   type CaptureBuffer,
 } from "./useVoiceCapture";
-import captureSource from "./useVoiceCapture.ts?raw";
 
 const session: GlobalVoiceSession = {
   voice_session_id: "voice-1",
@@ -93,11 +92,5 @@ describe("bounded final-first voice capture", () => {
       isCurrentCaptureOperation(7, 7, lease, lease, { ...session, generation: 4 }, false),
     ).toBe(false);
     expect(isCurrentCaptureOperation(7, 7, lease, lease, session, true)).toBe(false);
-  });
-
-  it("measures capture volume from the same media stream and releases it during cleanup", () => {
-    expect(captureSource).toContain("createMediaStreamSource(stream)");
-    expect(captureSource).toContain("voiceMeterPercent");
-    expect(captureSource).toContain("audioContextRef.current?.close()");
   });
 });

@@ -17,5 +17,5 @@ export function shouldInsertFinalTranscript(
 /** Convert an analyser RMS sample to a deliberately bounded visual-only meter. */
 export function voiceMeterPercent(rms: number): number {
   if (!Number.isFinite(rms) || rms <= 0) return 0;
-  return Math.min(100, Math.round(Math.sqrt(rms) * 100));
+  return Math.min(100, Math.round(rms * 100));
 }

@@ -34,6 +34,7 @@ export function ChatVoiceInput({ controls, onRequestGlobalVoiceSession }: ChatVo
 
   const listening = controls.status === "listening";
   const busy = controls.status === "acquiring" || controls.status === "transcribing";
+  const activeCapture = listening || busy;
   return (
     <div className="chat-voice-input" aria-live="polite">
       <button
@@ -55,8 +56,10 @@ export function ChatVoiceInput({ controls, onRequestGlobalVoiceSession }: ChatVo
             </span>
             <output>{controls.volume}%</output>
           </span>
-          <button type="button" className="chat-voice-cancel" onClick={controls.cancel}>取消录音</button>
         </>
+      ) : null}
+      {activeCapture ? (
+        <button type="button" className="chat-voice-cancel" onClick={controls.cancel}>取消语音输入</button>
       ) : null}
     </div>
   );
