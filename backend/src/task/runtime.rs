@@ -1923,11 +1923,37 @@ impl TaskWorldRuntime {
         self.ensure_no_active_harness_execution(graph_id)?;
         let _restored_revision = candidate.restore(&checkpoint)?;
         candidate.graph().validate()?;
-        self.database
-            .save_task_supervisor_snapshot_with_revision(&candidate, now, "restored")?;
         let graph = candidate.graph().clone();
+        let mut harnesses = self.harnesses.write();
+        let mut restored_harness = harnesses
+            .get(graph_id)
+            .cloned()
+            .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        restored_harness.update_graph(graph.clone())?;
+        // Restoring definitions never claims prior external effects were undone.
+        // Existing attempts for restored nodes become stale, while removed-node
+        // attempts remain queryable archival evidence.
+        let restored_nodes = graph
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        restored_harness.mark_stale_nodes(&restored_nodes, now)?;
+        let changed_attempts = restored_harness
+            .all_attempts()
+            .into_iter()
+            .filter(|execution| restored_nodes.contains(&execution.node_id))
+            .collect::<Vec<_>>();
+        self.database.save_task_snapshot_with_executions(
+            &candidate,
+            now,
+            "restored",
+            &changed_attempts,
+        )?;
         let ready = candidate.runnable_nodes();
         supervisors.insert(graph_id.clone(), candidate);
+        harnesses.insert(graph_id.clone(), restored_harness);
+        drop(harnesses);
         drop(supervisors);
 
         self.publish(

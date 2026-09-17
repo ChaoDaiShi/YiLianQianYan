@@ -110,13 +110,16 @@ impl TaskHarness {
         let mut harness = Self::new(graph, resolver)?;
         for execution in attempts {
             if execution.graph_id != harness.graph.id
-                || harness.graph.node(&execution.node_id).is_none()
+                || (harness.graph.node(&execution.node_id).is_none()
+                    && !execution.status.is_terminal())
             {
                 return Err(TaskHarnessError::Graph(
                     "execution row does not belong to the harness graph".to_string(),
                 ));
             }
             execution.context.validate()?;
+            // Terminal attempts for nodes removed by semantic edits/restores
+            // remain archival history and are never considered by the scheduler.
             harness
                 .attempts
                 .entry(execution.node_id.clone())

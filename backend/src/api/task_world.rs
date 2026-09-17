@@ -1063,6 +1063,122 @@ mod core_path_tests {
     }
 
     #[tokio::test]
+    async fn review_restore_executes_restored_definitions_and_keeps_archived_attempts() {
+        let server = server();
+        for workflow in ["primary", "alternate"] {
+            server.db.create_workflow_graph(&crate::db::WorkflowGraphRecord {
+                id: workflow.into(), name: workflow.into(), description: String::new(), created_at: 1, updated_at: 1,
+                definition: serde_json::from_value(json!({"schema_version":1,"entry_node_id":"out","nodes":[{"id":"out","kind":"output","config":{"type":"output","template":null}}],"edges":[]})).unwrap(),
+            }).unwrap();
+        }
+        let id = TaskGraphId::new("restored-execution").unwrap();
+        let a = TaskNodeId::new("a").unwrap();
+        let b = TaskNodeId::new("b").unwrap();
+        let c = TaskNodeId::new("c").unwrap();
+        let nodes = [&a, &b].into_iter().map(|node_id| TaskNode::new(node_id.clone(), TaskNodeKind::Work, format!("Original {node_id}"), json!({"executor_ref":"workflow://primary", "instruction":format!("original-{node_id}")})).unwrap()).collect();
+        server
+            .task_world
+            .create_graph(id.clone(), nodes, vec![], 1)
+            .unwrap();
+        let checkpoint = server.task_world.checkpoint(&id, 1, 2).unwrap();
+        let mut view = server.task_world.get_canvas_view(&id).unwrap();
+        view.viewport.x = 42.0;
+        let view_revision = server
+            .task_world
+            .save_canvas_view(&id, view.clone(), view.view_revision, 2)
+            .unwrap()
+            .view_revision;
+        server
+            .task_world
+            .update_node(
+                &id,
+                TaskNode::new(
+                    a.clone(),
+                    TaskNodeKind::Work,
+                    "Changed",
+                    json!({"executor_ref":"workflow://alternate","instruction":"changed-A"}),
+                )
+                .unwrap(),
+                1,
+                3,
+            )
+            .unwrap();
+        server.task_world.delete_node(&id, &b, 2, 4).unwrap();
+        server
+            .task_world
+            .add_node(
+                &id,
+                TaskNode::new(
+                    c.clone(),
+                    TaskNodeKind::Work,
+                    "Archived",
+                    json!({"executor_ref":"workflow://alternate"}),
+                )
+                .unwrap(),
+                3,
+                5,
+            )
+            .unwrap();
+        let archived = server
+            .task_world
+            .start_execution_with_resolver(
+                &id,
+                &c,
+                4,
+                executor_resolver(&server, &id, &c).unwrap(),
+                6,
+            )
+            .unwrap();
+        dispatch_execution(server.clone(), id.clone(), archived.id.clone())
+            .await
+            .unwrap();
+        let restored = server
+            .task_world
+            .restore(&id, checkpoint.id.as_str(), 4, 7)
+            .unwrap();
+        assert_eq!(restored.revision.value(), 5);
+        assert!(restored.node(&c).is_none());
+        assert_eq!(
+            server
+                .task_world
+                .get_canvas_view(&id)
+                .unwrap()
+                .view_revision,
+            view_revision
+        );
+        for node in [&b, &a] {
+            let attempt = server
+                .task_world
+                .start_execution_with_resolver(
+                    &id,
+                    node,
+                    5,
+                    executor_resolver(&server, &id, node).unwrap(),
+                    8,
+                )
+                .unwrap();
+            assert_eq!(attempt.context.instructions, format!("original-{node}"));
+            assert_eq!(
+                attempt.executor_ref.as_ref().unwrap().as_str(),
+                "workflow://primary"
+            );
+            let done = dispatch_execution(server.clone(), id.clone(), attempt.id)
+                .await
+                .unwrap();
+            assert_eq!(done.status, crate::task::NodeExecutionStatus::Succeeded);
+            assert_eq!(done.output.unwrap()["workflow_graph_id"], "primary");
+        }
+        let reloaded =
+            TaskWorldRuntime::new(&server.db, crate::shared::event::EventHub::new(16)).unwrap();
+        assert_eq!(reloaded.get_graph(&id).unwrap(), restored);
+        assert_eq!(
+            reloaded.list_node_executions(&id, &c).unwrap()[0].id,
+            archived.id
+        );
+        assert_eq!(reloaded.list_node_executions(&id, &b).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
     async fn missing_model_credentials_never_persist_a_partial_plan() {
         let server = server();
         let response = create_graph(

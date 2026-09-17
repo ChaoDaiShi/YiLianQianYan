@@ -88,3 +88,44 @@ fn review_rerun_persistence_failure_rolls_back_every_attempt() {
     );
     assert!(receiver.try_recv().is_err());
 }
+
+#[test]
+fn review_restore_persistence_failure_preserves_supervisor_harness_and_rows() {
+    let (db, runtime, _, graph, a, _) = setup();
+    let checkpoint = runtime.checkpoint(&graph, 1, 2).unwrap();
+    let mut edited = runtime.get_graph(&graph).unwrap().nodes[0].clone();
+    edited.title = "Edited definition".into();
+    runtime.update_node(&graph, edited, 1, 3).unwrap();
+    let execution = runtime.start_execution(&graph, &a, 2, 4).unwrap();
+    runtime
+        .complete_execution(
+            &graph,
+            &execution.id,
+            json!({"ok":true}),
+            validation::ValidationPolicy::StructuredResult,
+            5,
+        )
+        .unwrap();
+    let before = serde_json::to_value(runtime.get_graph_detail(&graph).unwrap()).unwrap();
+    let rows = serde_json::to_value(db.load_all_node_executions().unwrap()).unwrap();
+    db.conn().execute_batch("CREATE TRIGGER fail_restore_attempt BEFORE UPDATE ON task_node_executions BEGIN SELECT RAISE(ABORT, 'injected restore write failure'); END;").unwrap();
+    assert!(runtime
+        .restore(&graph, checkpoint.id.as_str(), 2, 6)
+        .is_err());
+    assert_eq!(
+        serde_json::to_value(runtime.get_graph_detail(&graph).unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(
+        serde_json::to_value(db.load_all_node_executions().unwrap()).unwrap(),
+        rows
+    );
+    assert_eq!(
+        db.load_task_supervisor_snapshot(&graph)
+            .unwrap()
+            .unwrap()
+            .supervisor
+            .graph(),
+        &runtime.get_graph(&graph).unwrap()
+    );
+}

@@ -107,8 +107,9 @@ impl NodeContextBuilder {
         }
 
         let goal = optional_text(input, "goal")?.unwrap_or_else(|| node.title.clone());
-        let instructions =
-            optional_text(input, "instructions")?.unwrap_or_else(|| node.title.clone());
+        let instructions = optional_text(input, "instructions")?
+            .or(optional_text(input, "instruction")?)
+            .unwrap_or_else(|| node.title.clone());
         let resources = bounded_text_list(input, "resources", self.limits)?;
         let memory_references = bounded_text_list(input, "memory_references", self.limits)?;
         let capabilities = bounded_text_list(input, "capabilities", self.limits)?;

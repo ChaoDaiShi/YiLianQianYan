@@ -198,6 +198,17 @@ impl Database {
         updated_at: i64,
         change_summary: &str,
     ) -> Result<(), super::TaskWorldPersistenceError> {
+        self.save_task_snapshot_with_executions(supervisor, updated_at, change_summary, &[])
+    }
+
+    /// Keep restored semantics and invalidated attempt evidence in one commit.
+    pub(crate) fn save_task_snapshot_with_executions(
+        &self,
+        supervisor: &TaskSupervisor,
+        updated_at: i64,
+        change_summary: &str,
+        executions: &[crate::task::NodeExecution],
+    ) -> Result<(), super::TaskWorldPersistenceError> {
         let graph = supervisor.graph();
         let checkpoint = crate::task::TaskCheckpoint {
             id: crate::task::TaskCheckpointId::generate(),
@@ -273,6 +284,15 @@ impl Database {
              )",
             params![graph.id.as_str(), MAX_TASK_REVISION_HISTORY as i64],
         )?;
+        for execution in executions {
+            if execution.graph_id != graph.id {
+                return Err(super::TaskWorldPersistenceError::Integrity(
+                    "restored execution belongs to another graph".into(),
+                ));
+            }
+            super::task_execution::update_node_execution_on(&transaction, execution)
+                .map_err(|error| super::TaskWorldPersistenceError::Integrity(error.to_string()))?;
+        }
         transaction.commit()?;
         Ok(())
     }
