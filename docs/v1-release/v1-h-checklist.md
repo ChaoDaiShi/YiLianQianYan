@@ -48,12 +48,26 @@ Accept only if real microphone capture, MiniMax STT, assistant persistence and a
 5. Select and preview an existing provider voice/voice_id and adjust speech speed.
 6. Change System Monitoring between grid/free layouts, then reopen the page and confirm persistence and real/empty/unavailable data only.
 
+### Managed Capability Import
+
+7. Create or select one small, non-sensitive Markdown Skill and complete the real lifecycle: Import → Preview → Confirm.
+8. Confirm the installed record starts disabled, then explicitly enable it and verify the Skill appears through existing managed Skill discovery/load behavior.
+9. Disable it again; if a previous version exists, exercise rollback and confirm the selected version/status is reflected without executing import text as a system instruction.
+
+ZIP/GitHub malicious-input matrices are covered by automated security evidence and do not need to be manually repeated here.
+
+### Memory-to-Skill actual reuse
+
+10. Complete one authorized task with useful, non-sensitive experience and generate a Memory-to-Skill candidate.
+11. Review the candidate's Task/Node/Execution source evidence, edit it, validate it and explicitly confirm it.
+12. Confirm a managed Skill version is created and visible, then reuse that Skill in a later applicable task. Merely observing a generated `SKILL.md` file is not acceptance evidence.
+
 ## H6 — installer, startup, permissions, shutdown and resource observation
 
 1. Verify the installer filename/version and SHA-256 against the technical report.
 2. Install into an isolated test directory and start the application normally.
 3. Confirm a visible v1 Workspace window, healthy backend `1.0.0-rc.1`, correct first-run setup and no v2 DesktopSpace startup.
-4. Exercise one permission/approval flow and confirm rejection remains pending/blocked without side effects.
+4. Exercise one permission/approval flow. Confirm rejection is recorded as the real legal terminal state defined by the existing ApprovalStore, the unauthorized action did not execute, and the corresponding Task/Execution is not incorrectly reported as succeeded.
 5. Observe the complete application process group during idle and representative work; do not report one process as total memory.
 6. Close normally, confirm the backend exits, restart and confirm tasks/layouts/history recover.
 7. Uninstall and record whether user-selected data is retained or removed as documented.
@@ -66,7 +80,7 @@ Accept only if real microphone capture, MiniMax STT, assistant persistence and a
 | H2 | HUMAN_PENDING | A/B redacted IDs and observed anchor behavior |
 | H3 | HUMAN_PENDING | direct-speech interruption, echo result, device release |
 | H4 | HUMAN_PENDING | graph/execution redacted IDs and pause/resume attempt states |
-| H5 | HUMAN_PENDING | resource/artifact IDs, downloaded file hash, layout observations |
+| H5 | HUMAN_PENDING | resource/artifact IDs, downloaded hash, layout, managed import lifecycle and later Skill reuse evidence |
 | H6 | HUMAN_PENDING | installer hash, startup/close/restart/uninstall and process-group observation |
 
 Any failure remains `FAILED` or `BLOCKED` with its concrete prerequisite. Only the affected item is repeated after a fix. Formal v1.0 acceptance requires all applicable rows to become `ACCEPTED`.
