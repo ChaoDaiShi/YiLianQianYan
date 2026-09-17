@@ -65,6 +65,20 @@ const snapshot: VoiceRuntimeSnapshot = {
 };
 
 describe("GlobalVoiceHost contract", () => {
+  it.each(["false", "rejection", "stale"])("releases replay on %s acknowledgement", async (failure) => {
+    let current = true;
+    const audio = { play: vi.fn().mockResolvedValue(undefined), pause: vi.fn(), currentTime: 3, removeAttribute: vi.fn(), load: vi.fn() } as unknown as HTMLAudioElement;
+    const release = vi.fn();
+    const report = async () => {
+      if (failure === "rejection") throw new Error("offline");
+      if (failure === "stale") current = false;
+      return failure !== "false";
+    };
+    expect(await replayAudioIfCurrent(audio, () => current, report, release)).toBe(false);
+    expect(audio.pause).toHaveBeenCalledOnce();
+    expect(audio.removeAttribute).toHaveBeenCalledWith("src");
+    expect(release).toHaveBeenCalledOnce();
+  });
   it("does not report or revive playback when replay resolves after interruption", async () => {
     let resolvePlay!: () => void;
     const play = new Promise<void>((resolve) => { resolvePlay = resolve; });

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readPlaybackOverlap, type PlaybackOverlap } from "./echoEvidence";
 import {
   markVoiceSpeechFinished,
   markVoiceSpeechStarted,
@@ -70,14 +71,22 @@ export async function replayAudioIfCurrent(
   audio: HTMLAudioElement,
   isCurrent: () => boolean,
   reportStarted: () => Promise<boolean>,
+  releaseRejected: () => void = () => undefined,
 ): Promise<boolean> {
-  if (!isCurrent()) return false;
-  await audio.play();
-  if (!isCurrent()) {
-    interruptAudioElement(audio);
-    return false;
+  try {
+    if (isCurrent()) {
+      await audio.play();
+      if (isCurrent() && await reportStarted() && isCurrent()) return true;
+    }
+  } catch {
+    // An unacknowledged replay must never continue producing audio.
   }
-  return await reportStarted() && isCurrent();
+  try {
+    interruptAudioElement(audio);
+  } finally {
+    releaseRejected();
+  }
+  return false;
 }
 
 export interface VoiceCleanupOptions {
@@ -107,6 +116,7 @@ export interface UseSpeechPlaybackResult {
   replay: () => void;
   toggleMute: () => void;
   interrupt: () => void;
+  captureOverlap: () => PlaybackOverlap | null;
 }
 
 function playbackErrorMessage(error: unknown): string {
@@ -124,6 +134,7 @@ export function useSpeechPlayback({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
+  const spokenRef = useRef<{ text: string; sessionId: string; generation: number } | null>(null);
   const latestRef = useRef({ sessionId, generation });
   const [state, setState] = useState<PlaybackState>({ status: "idle", muted: false });
 
@@ -134,6 +145,7 @@ export function useSpeechPlayback({
   const releaseAudio = useCallback(() => {
     interruptAudioElement(audioRef.current);
     audioRef.current = null;
+    spokenRef.current = null;
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
@@ -238,6 +250,7 @@ export function useSpeechPlayback({
           interruptAudioElement(audio);
           return;
         }
+        spokenRef.current = { text: trimmed, sessionId, generation: requestGeneration };
         const started = await markVoiceSpeechStarted(
           sessionId,
           requestGeneration,
@@ -285,13 +298,20 @@ export function useSpeechPlayback({
       () => audioRef.current === audio && !controller?.signal.aborted
         && latestRef.current.sessionId === replaySessionId && latestRef.current.generation === replayGeneration,
       async () => Boolean(await markVoiceSpeechStarted(replaySessionId, replayGeneration, controller?.signal)),
+      () => {
+        if (audioRef.current !== audio) return;
+        releaseAudio();
+        if (latestRef.current.sessionId !== replaySessionId || latestRef.current.generation !== replayGeneration) return;
+        setState((playback) => ({ ...playback, status: "error" }));
+        onError?.("重播未获语音会话确认，已停止音频。请重试。");
+      },
     ).then((started) => {
         if (started) {
           setState((playback) => reducePlaybackState(playback, "replay"));
         }
       })
       .catch(() => undefined);
-  }, []);
+  }, [onError, releaseAudio]);
 
   const toggleMute = useCallback(() => {
     const nextMuted = !audioRef.current?.muted;
@@ -307,5 +327,9 @@ export function useSpeechPlayback({
     };
   }, [releaseAudio]);
 
-  return { state, speak, pause, replay, toggleMute, interrupt };
+  const captureOverlap = useCallback((): PlaybackOverlap | null => {
+    return readPlaybackOverlap(audioRef.current, spokenRef.current, latestRef.current, performance.now());
+  }, []);
+
+  return { state, speak, pause, replay, toggleMute, interrupt, captureOverlap };
 }
