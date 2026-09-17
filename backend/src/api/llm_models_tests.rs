@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Path, State},
     http::{header::CONTENT_TYPE, Request, StatusCode},
     routing::post,
     Json, Router,
@@ -14,7 +14,10 @@ use tower::ServiceExt;
 use crate::db::LlmModelInput;
 use crate::llm::client::LlmError;
 use crate::safety::{ControlSession, CONTROL_SESSION_HEADER};
-use crate::secret::{llm_model_key_ref, InMemorySecretStore, SecretRef, SecretStore};
+use crate::secret::{
+    llm_model_key_ref, InMemorySecretStore, SecretRef, SecretStore, SecretStoreError,
+    SecretStoreStatus,
+};
 use crate::server::AppServer;
 
 #[test]
@@ -63,6 +66,84 @@ impl Drop for TempDatabase {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
     }
+}
+
+struct DeleteFailingStore {
+    inner: InMemorySecretStore,
+}
+
+#[async_trait::async_trait]
+impl SecretStore for DeleteFailingStore {
+    async fn put(
+        &self,
+        secret_ref: &SecretRef,
+        value: SecretString,
+    ) -> Result<(), SecretStoreError> {
+        self.inner.put(secret_ref, value).await
+    }
+
+    async fn get(&self, secret_ref: &SecretRef) -> Result<Option<SecretString>, SecretStoreError> {
+        self.inner.get(secret_ref).await
+    }
+
+    async fn delete(&self, _secret_ref: &SecretRef) -> Result<(), SecretStoreError> {
+        Err(SecretStoreError::Unavailable)
+    }
+
+    async fn status(&self) -> SecretStoreStatus {
+        self.inner.status().await
+    }
+}
+
+#[tokio::test]
+async fn model_delete_fails_closed_when_secret_delete_fails() {
+    let db_path = TempDatabase::new();
+    let store = Arc::new(DeleteFailingStore {
+        inner: InMemorySecretStore::new(),
+    });
+    let model_id = "delete-fail-model";
+    let secret_ref = llm_model_key_ref(model_id);
+    store
+        .put(
+            &secret_ref,
+            SecretString::from("TEST_ONLY_SECRET".to_string()),
+        )
+        .await
+        .unwrap();
+    let server = Arc::new(
+        AppServer::new_with_control_session_and_store(
+            &db_path.0,
+            ".",
+            ControlSession::new("d".repeat(64)).unwrap(),
+            store,
+        )
+        .unwrap(),
+    );
+    server
+        .db
+        .create_llm_model(&LlmModelInput {
+            id: model_id.into(),
+            provider: "deepseek".into(),
+            label: "不可删除模型".into(),
+            model: "deepseek-chat".into(),
+            base_url: "https://api.example.invalid/v1".into(),
+            api_format: "openai".into(),
+            api_key_ref: secret_ref.key,
+            api_key_env: String::new(),
+            temperature: 0.0,
+            max_tokens: 128,
+            invoke_timeout_ms: 5_000,
+        })
+        .unwrap();
+
+    let result = crate::api::llm_models::delete_handler(
+        State(Arc::clone(&server)),
+        Path(model_id.to_string()),
+    )
+    .await;
+
+    assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
+    assert!(server.db.get_llm_model(model_id).unwrap().is_some());
 }
 
 #[tokio::test]

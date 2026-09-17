@@ -274,7 +274,27 @@ pub async fn delete_handler(
         .map_err(internal_error)?
         .ok_or_else(|| bad_request("模型不存在".to_string()))?;
     let secret_ref = SecretRef::new(row.api_key_ref);
-    let _ = server.secret_store.delete(&secret_ref).await;
+    if server.secret_store.delete(&secret_ref).await.is_err() {
+        record_secret_event(
+            &server.audit_recorder,
+            AuditEventType::SecretDeleted,
+            SecretKind::LlmModelApiKey,
+            &secret_ref,
+            "delete_model",
+            false,
+        );
+        return Err(bad_request(
+            "系统凭据库中的 API Key 删除失败，模型未删除".to_string(),
+        ));
+    }
+    record_secret_event(
+        &server.audit_recorder,
+        AuditEventType::SecretDeleted,
+        SecretKind::LlmModelApiKey,
+        &secret_ref,
+        "delete_model",
+        true,
+    );
     server.db.delete_llm_model(&id).map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
