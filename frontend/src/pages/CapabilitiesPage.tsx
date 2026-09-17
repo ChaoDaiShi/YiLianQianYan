@@ -23,6 +23,7 @@ import {
 } from "../api/client";
 import { Button, EmptyState, ErrorState, Input, Modal, PageHeader, Skeleton } from "../components/ui";
 import { getCapabilityManagementTarget } from "../features/capabilities/capabilityManagement";
+import ManagedImports from "../features/capabilities/ManagedImports";
 
 const KIND_FILTERS: Array<CapabilityKind | "all"> = ["all", "tool", "mcp_tool", "subagent", "agent", "workflow", "skill"];
 const PROVIDER_FILTERS: Array<CapabilityProviderKind | "all"> = ["all", "builtin", "mcp", "subagent", "agent_runtime", "workflow_runtime", "skill_runtime"];
@@ -114,6 +115,15 @@ export default function CapabilitiesPage() {
       />
 
       <div className="capability-page-body">
+        <div className="mb-3 flex flex-wrap gap-2" aria-label="能力分类">
+          <Button variant="secondary" size="sm" onClick={() => { setKind("skill"); setProvider("all"); }}>Skill</Button>
+          <Button variant="secondary" size="sm" onClick={() => { setKind("mcp_tool"); setProvider("mcp"); }}>MCP</Button>
+          <a href="#managed-imports" className="rounded-lg border border-[var(--border-soft)] px-3 py-2 text-xs">声明式 Plugin</a>
+          <Button variant="secondary" size="sm" onClick={() => { setKind("agent"); setProvider("all"); }}>Agent</Button>
+          <Button variant="secondary" size="sm" onClick={() => { setKind("workflow"); setProvider("all"); }}>Workflow</Button>
+          <Button variant="secondary" size="sm" onClick={() => { setKind("tool"); setProvider("builtin"); }}>内置能力</Button>
+        </div>
+        <ManagedImports />
         {report && <div className="capability-refresh-report" role="status">发现 {report.discovered} · 就绪 {report.ready} · 不可用 {report.unavailable} · 重复 {report.duplicates} · Provider 失败 {report.provider_failures}</div>}
         {error && <ErrorState title="能力信息暂时无法加载" description={error} action={<Button variant="secondary" size="sm" onClick={() => void reload()}>重试</Button>} />}
 
