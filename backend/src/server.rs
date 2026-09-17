@@ -39,7 +39,7 @@ pub(crate) fn mcp_transport_config(server: &crate::db::McpServer) -> McpTranspor
         },
     }
 }
-use crate::config::types::AppConfig;
+use crate::config::types::{AppConfig, ModelConfig};
 use crate::db::Database;
 use crate::interaction::{ApprovalVoiceAdapter, InteractionVoiceDispatch};
 use crate::isolation::{ManagedProcessRegistry, SharedManagedProcessRegistry};
@@ -349,6 +349,23 @@ impl AppServer {
         )));
         server.seed_default_grants();
         Ok(server)
+    }
+
+    /// Resolve the one model configuration used by user-facing AI features.
+    /// An explicitly activated model profile wins; legacy embedding settings
+    /// remain additive until they receive their own managed profile.
+    pub fn effective_model_config(&self) -> ModelConfig {
+        let legacy = self.config.read().model.clone();
+        let Some(active) = self.db.get_active_llm_model().ok().flatten() else {
+            return legacy;
+        };
+        let mut model = active.to_model_config();
+        model.embedding_model = legacy.embedding_model;
+        model.embedding_base_url = legacy.embedding_base_url;
+        model.embedding_api_key = legacy.embedding_api_key;
+        model.embedding_api_key_env = legacy.embedding_api_key_env;
+        model.embedding_api_key_ref = legacy.embedding_api_key_ref;
+        model
     }
 
     /// Read Voice presence and overlay live Task World facts without changing

@@ -161,7 +161,7 @@ pub async fn create_graph(
                 )
             }
         };
-        let model = server.config.read().model.clone();
+        let model = server.effective_model_config();
         let planner = crate::task::LlmTaskPlanner::new(&model, Arc::clone(&server.secret_resolver));
         match planner.plan_graph(&graph_id, &goal, workflows).await {
             Ok(graph) => (graph.nodes, graph.edges),
@@ -250,7 +250,7 @@ pub async fn review_graph(
             actual: graph.revision.value(),
         });
     }
-    let model = server.config.read().model.clone();
+    let model = server.effective_model_config();
     let planner = crate::task::LlmTaskPlanner::new(&model, Arc::clone(&server.secret_resolver));
     match planner.review_graph(&graph).await {
         Ok(review) => (
@@ -1293,6 +1293,113 @@ mod core_path_tests {
             TaskWorldRuntime::new(&server.db, crate::shared::event::EventHub::new(16)).unwrap();
         assert_eq!(reloaded.list_graphs().len(), 1);
         assert_eq!(reloaded.list_graphs()[0].id.as_str(), "planned");
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn active_model_profile_drives_planning_and_review() {
+        use crate::db::LlmModelInput;
+        use crate::secret::SecretRef;
+        use secrecy::SecretString;
+
+        let server = server();
+        let provider = axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(|Json(request): Json<Value>| async move {
+                assert!(request.get("tools").is_none());
+                let system = request["messages"][0]["content"].as_str().unwrap_or_default();
+                let content = if system.contains("TaskGraph 审查器") {
+                    json!({
+                        "summary":"图结构清晰",
+                        "suggestions":[]
+                    })
+                    .to_string()
+                } else {
+                    let input: Value = serde_json::from_str(
+                        request["messages"][1]["content"].as_str().unwrap(),
+                    )
+                    .unwrap();
+                    json!({
+                        "schema_version":1,
+                        "id":input["graph_id"],
+                        "revision":1,
+                        "nodes":[{
+                            "id":"draft",
+                            "kind":"work",
+                            "title":"Editable task",
+                            "input":{"instruction":"Use the active model profile","acceptance_criteria":[]},
+                            "retry_policy":{"max_attempts":1}
+                        }],
+                        "edges":[]
+                    })
+                    .to_string()
+                };
+                Json(json!({
+                    "id":"active-profile-test",
+                    "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":content}}]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, provider).await.unwrap();
+        });
+
+        let secret_ref = SecretRef::new("llm.rc2-active-profile");
+        server
+            .secret_store
+            .put(
+                &secret_ref,
+                SecretString::from("test-placeholder".to_string()),
+            )
+            .await
+            .unwrap();
+        server
+            .db
+            .create_llm_model(&LlmModelInput {
+                id: "rc2-active".into(),
+                provider: "custom".into(),
+                label: "RC2 active".into(),
+                model: "local-test-model".into(),
+                base_url: format!("http://{address}"),
+                api_format: "openai".into(),
+                api_key_ref: secret_ref.key.clone(),
+                api_key_env: String::new(),
+                temperature: 0.0,
+                max_tokens: 1024,
+                invoke_timeout_ms: 2_000,
+            })
+            .unwrap();
+        server
+            .db
+            .set_llm_model_verification("rc2-active", Some(1), None)
+            .unwrap();
+        server.db.activate_llm_model("rc2-active").unwrap();
+
+        let planned = create_graph(
+            State(server.clone()),
+            Json(CreateGraphRequest {
+                id: "active-profile-graph".into(),
+                goal: Some("Use the selected provider".into()),
+                nodes: vec![],
+                edges: vec![],
+            }),
+        )
+        .await;
+        assert_eq!(planned.status(), StatusCode::CREATED);
+
+        let reviewed = review_graph(
+            State(server.clone()),
+            Path("active-profile-graph".into()),
+            Json(ReviewGraphRequest {
+                expected_revision: 1,
+            }),
+        )
+        .await;
+        assert_eq!(reviewed.status(), StatusCode::OK);
+        assert_eq!(body(reviewed).await["reviewed_revision"], 1);
+
         handle.abort();
     }
 

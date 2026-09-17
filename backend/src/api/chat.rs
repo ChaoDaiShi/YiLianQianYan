@@ -52,15 +52,7 @@ pub async fn chat_handler(
     let legacy_config = server.config.read().clone();
     let active_model = db.get_active_llm_model().ok().flatten();
     let mut config = legacy_config.clone();
-    if let Some(model) = active_model.as_ref() {
-        let mut active_config = model.to_model_config();
-        active_config.embedding_model = legacy_config.model.embedding_model.clone();
-        active_config.embedding_base_url = legacy_config.model.embedding_base_url.clone();
-        active_config.embedding_api_key = legacy_config.model.embedding_api_key.clone();
-        active_config.embedding_api_key_env = legacy_config.model.embedding_api_key_env.clone();
-        active_config.embedding_api_key_ref = legacy_config.model.embedding_api_key_ref.clone();
-        config.model = active_config;
-    }
+    config.model = server.effective_model_config();
     // Build one MCP-aware runtime registry snapshot for this whole chat run.
     // It is used by BOTH the LLM tool definitions and the Security Gateway so
     // the LLM, evaluation, and execution all see the same tool set.
