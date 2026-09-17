@@ -59,6 +59,7 @@ export interface ConversationRefreshSignal {
 interface GlobalVoiceContextBridgeValue {
   context: GlobalVoiceContextSnapshot;
   conversationRefresh: ConversationRefreshSignal | null;
+  session: GlobalVoiceSession | null;
   updateContext: (patch: GlobalVoiceContextPatch) => void;
 }
 
@@ -372,8 +373,8 @@ export default function GlobalVoiceHost({
   ]);
 
   const contextBridge = useMemo(
-    () => ({ context: voiceContext, conversationRefresh, updateContext }),
-    [conversationRefresh, updateContext, voiceContext],
+    () => ({ context: voiceContext, conversationRefresh, session, updateContext }),
+    [conversationRefresh, session, updateContext, voiceContext],
   );
 
   const setVoiceError = useCallback((message: string) => {

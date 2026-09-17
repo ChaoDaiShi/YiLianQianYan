@@ -20,9 +20,25 @@ function event(type: string, extra: Partial<AgentEvent> = {}): AgentEvent {
 
 describe("voice continuation evidence", () => {
   it("refuses approval continuations from an older server without trusted display attestation", async () => {
-    await expect(runVoiceContinuation({ kind: "approval", conversation_id: "conversation-a", approval_id: "approval-1", decision: "approve" }))
+    await expect(runVoiceContinuation({ kind: "approval", conversation_id: "conversation-a", approval_id: "approval-1", decision: "approve" } as never))
       .rejects.toThrow("voice_approval_attestation_required");
     expect(approveAction).not.toHaveBeenCalled();
+  });
+  it("executes a server-attested approval through the existing continuation", async () => {
+    vi.mocked(approveAction).mockImplementationOnce(async (_id, _conversation, onEvent) => {
+      onEvent(event("approval_resolved", { status: "approved", approval_id: "approval-1" }));
+      onEvent(event("verification", { approval_id: "approval-1", verification_success: true }));
+      onEvent(event("done", { approval_id: "approval-1" }));
+    });
+    const result = await runVoiceContinuation({
+      kind: "approval",
+      conversation_id: "conversation-a",
+      approval_id: "approval-1",
+      attestation_id: "attestation-1",
+      decision: "approve",
+    });
+    expect(result.verified).toBe(true);
+    expect(approveAction).toHaveBeenCalledTimes(1);
   });
   it("settles cancellation even when the chat stream never sends another event", async () => {
     vi.mocked(loadConversation).mockResolvedValueOnce({ id: "conversation-a", messages: [] } as Awaited<ReturnType<typeof loadConversation>>);

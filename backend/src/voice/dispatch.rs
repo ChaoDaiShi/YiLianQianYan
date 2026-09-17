@@ -27,6 +27,7 @@ pub enum VoiceContinuation {
     Approval {
         approval_id: String,
         conversation_id: String,
+        attestation_id: String,
         decision: VoiceApprovalDecision,
     },
 }
@@ -35,6 +36,7 @@ pub enum VoiceContinuation {
 pub struct VoiceDispatchRequest {
     pub accepted: AcceptedFinalTranscript,
     pub session: GlobalVoiceSession,
+    pub approval_attestation: Option<super::runtime::VoiceApprovalAttestation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

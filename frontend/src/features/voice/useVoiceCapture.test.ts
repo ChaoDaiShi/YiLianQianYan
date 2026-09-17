@@ -8,6 +8,7 @@ import {
   isCaptureStartAllowed,
   isCurrentCaptureOperation,
   isExplicitMicrophoneStart,
+  voiceInputOwnerForStart,
   selectRecorderMimeType,
   type CaptureBuffer,
 } from "./useVoiceCapture";
@@ -36,6 +37,11 @@ describe("bounded final-first voice capture", () => {
     expect(isExplicitMicrophoneStart("hands-free", false)).toBe(false);
     expect(isExplicitMicrophoneStart("hands-free", true)).toBe(true);
     expect(isExplicitMicrophoneStart("mount", true)).toBe(false);
+  });
+  it("reserves push-to-talk provenance for explicit user recording", () => {
+    expect(voiceInputOwnerForStart("user-click")).toBe("push_to_talk");
+    expect(voiceInputOwnerForStart("user-keyboard")).toBe("push_to_talk");
+    expect(voiceInputOwnerForStart("hands-free")).toBe("builtin_asr");
   });
   it("chooses only a supported official candidate and fails closed when none is supported", () => {
     expect(selectRecorderMimeType((mimeType) => mimeType === "audio/ogg;codecs=opus")).toBe(

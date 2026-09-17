@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::db::Database;
-use crate::safety::ApprovalStore;
+use crate::safety::{ApprovalStatus, ApprovalStore};
 use crate::shared::command::{
     CommandError, CommandRequest, CommandResult, CommandRouter, CommandStatus,
 };
@@ -16,11 +16,11 @@ use crate::shared::interaction::{
     ContextAnchorSnapshot, InteractionInput, InteractionIntent, InteractionSource,
     InteractionTarget, TargetResolution,
 };
-use crate::shared::voice::{VoiceInputLease, VoiceTurn};
+use crate::shared::voice::{VoiceInputLease, VoiceInputOwner, VoiceTurn};
 use crate::task::{TaskStatusProjection, TaskWorldRuntime};
 use crate::voice::{
-    VoiceContinuation, VoiceDispatchError, VoiceDispatchHook, VoiceDispatchOutcome,
-    VoiceDispatchRequest,
+    VoiceApprovalDecision, VoiceContinuation, VoiceDispatchError, VoiceDispatchHook,
+    VoiceDispatchOutcome, VoiceDispatchRequest,
 };
 
 use super::{InteractionContext, InteractionDecision, InteractionRouter, TaskNarrator};
@@ -166,9 +166,9 @@ impl InteractionVoiceDispatch {
     ) -> Option<CommandResult> {
         let command = decision.command.as_ref()?;
         if command == "task.approval.resolve" {
-            // Transcript provenance and a unique pending item are not proof of
-            // a displayed, identity-bound human decision. Until that attestation
-            // exists, leave the single ApprovalStore entirely untouched.
+            if self.has_current_approval_attestation(decision, request) {
+                return None;
+            }
             return Some(CommandResult {
                 request_id: format!(
                     "voice-{}-{}",
@@ -228,9 +228,80 @@ impl InteractionVoiceDispatch {
                 conversation_id: conversation_id.clone(),
                 message: request.accepted.text.clone(),
             }),
-            // Approval continuations require a future trusted display attestation.
+            (
+                TargetResolution::Resolved {
+                    target: InteractionTarget::Approval { approval_id },
+                },
+                InteractionIntent::Command { name },
+            ) if name == "task.approval.resolve"
+                && self.has_current_approval_attestation(decision, request) =>
+            {
+                let approval = self.approvals.get(approval_id)?;
+                if approval.status != ApprovalStatus::Pending
+                    || decision
+                        .parameters
+                        .get("conversation_id")
+                        .and_then(Value::as_str)
+                        != Some(approval.conversation_id.as_str())
+                {
+                    return None;
+                }
+                let decision = match decision
+                    .parameters
+                    .get("resolution")
+                    .and_then(Value::as_str)
+                {
+                    Some("approve") => VoiceApprovalDecision::Approve,
+                    Some("reject") => VoiceApprovalDecision::Reject,
+                    _ => return None,
+                };
+                Some(VoiceContinuation::Approval {
+                    approval_id: approval.approval_id,
+                    conversation_id: approval.conversation_id,
+                    attestation_id: request
+                        .approval_attestation
+                        .as_ref()
+                        .map(|attestation| attestation.attestation_id.clone())?,
+                    decision,
+                })
+            }
             _ => None,
         }
+    }
+
+    fn has_current_approval_attestation(
+        &self,
+        decision: &InteractionDecision,
+        request: &VoiceDispatchRequest,
+    ) -> bool {
+        let TargetResolution::Resolved {
+            target: InteractionTarget::Approval { approval_id },
+        } = &decision.target
+        else {
+            return false;
+        };
+        let Some(attestation) = request.approval_attestation.as_ref() else {
+            return false;
+        };
+        let conversation_id = decision
+            .parameters
+            .get("conversation_id")
+            .and_then(Value::as_str);
+        !attestation.attestation_id.trim().is_empty()
+            && request.accepted.input_owner == VoiceInputOwner::PushToTalk
+            && attestation.approval_id == *approval_id
+            && conversation_id == Some(attestation.conversation_id.as_str())
+            && attestation.voice_session_id == request.session.voice_session_id
+            && attestation.voice_session_id == request.accepted.session_id
+            && attestation.generation == request.session.generation
+            && attestation.generation == request.accepted.generation
+            && attestation.displayed_at <= request.accepted.created_at
+            && request.accepted.created_at <= attestation.expires_at
+            && request
+                .session
+                .conversational_anchor
+                .as_ref()
+                .is_some_and(|anchor| anchor.conversation_id == attestation.conversation_id)
     }
 
     fn narration(

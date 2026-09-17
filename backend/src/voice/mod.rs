@@ -8,8 +8,8 @@ pub mod provider;
 pub mod runtime;
 
 pub use runtime::{
-    AcceptedFinalTranscript, GlobalVoiceSessionRuntime, VoiceDispatchOnceError, VoiceRuntimeError,
-    VoiceRuntimeSnapshot,
+    AcceptedFinalTranscript, GlobalVoiceSessionRuntime, VoiceApprovalAttestation,
+    VoiceDispatchOnceError, VoiceRuntimeError, VoiceRuntimeSnapshot,
 };
 
 pub use dispatch::{

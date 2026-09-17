@@ -115,6 +115,16 @@ export interface VoiceContextUpdate {
   active_task?: string | null;
 }
 
+export interface VoiceApprovalAttestation {
+  attestation_id: string;
+  approval_id: string;
+  conversation_id: string;
+  voice_session_id: string;
+  generation: number;
+  displayed_at: number;
+  expires_at: number;
+}
+
 export interface VoiceTurnDispatch {
   session_id: string;
   generation: number;
@@ -147,6 +157,7 @@ export type VoiceContinuation =
       kind: "approval";
       approval_id: string;
       conversation_id: string;
+      attestation_id: string;
       decision: "approve" | "reject";
     };
 
@@ -341,6 +352,17 @@ export async function updateVoiceContext(
   signal?: AbortSignal,
 ): Promise<GlobalVoiceSession | null> {
   return jsonPost<GlobalVoiceSession>("/api/voice/context", context, signal);
+}
+
+export async function attestVoiceApprovalDisplayed(
+  approvalId: string,
+  signal?: AbortSignal,
+): Promise<VoiceApprovalAttestation | null> {
+  const response = await fetch(
+    `${API_BASE}/api/voice/approvals/${encodeURIComponent(approvalId)}/displayed`,
+    { method: "POST", headers: controlSessionHeaders(), signal },
+  );
+  return response.ok ? (response.json() as Promise<VoiceApprovalAttestation>) : null;
 }
 
 export async function sendPartialTranscript(

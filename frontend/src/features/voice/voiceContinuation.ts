@@ -1,3 +1,4 @@
+import { approveAction, rejectAction } from "../../api/approvals";
 import { sendMessage, stopGeneration, type AgentEvent } from "../../api/chat";
 import { loadConversation } from "../../api/conversations";
 import type { VoiceContinuation } from "../../api/voice";
@@ -155,12 +156,35 @@ async function runConversationContinuation(
   }
 }
 
+async function runApprovalContinuation(
+  continuation: Extract<VoiceContinuation, { kind: "approval" }>,
+  options: RunVoiceContinuationOptions,
+): Promise<VoiceContinuationResult> {
+  if (!continuation.attestation_id?.trim()) {
+    throw new Error("voice_approval_attestation_required：请在已显示的审批卡片中确认。");
+  }
+  if (options.signal?.aborted || options.isCurrent?.() === false) throw abortError();
+  const events: AgentEvent[] = [];
+  const submit = continuation.decision === "approve" ? approveAction : rejectAction;
+  await submit(
+    continuation.approval_id,
+    continuation.conversation_id,
+    (event) => {
+      events.push(event);
+      options.onEvent?.(event);
+    },
+    options.signal,
+  );
+  if (options.signal?.aborted || options.isCurrent?.() === false) throw abortError();
+  return reduceApprovalEvents(continuation.decision, events);
+}
+
 export async function runVoiceContinuation(
   continuation: VoiceContinuation,
   options: RunVoiceContinuationOptions = {},
 ): Promise<VoiceContinuationResult> {
   if (continuation.kind === "approval") {
-    throw new Error("voice_approval_attestation_required：请在已显示的审批卡片中确认。");
+    return runApprovalContinuation(continuation, options);
   }
   return runConversationContinuation(continuation, options);
 }

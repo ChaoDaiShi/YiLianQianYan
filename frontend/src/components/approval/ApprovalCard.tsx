@@ -1,5 +1,8 @@
+import { useEffect } from "react";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
+import { attestVoiceApprovalDisplayed } from "../../api/voice";
+import { useGlobalVoiceContext } from "../../features/voice/GlobalVoiceHost";
 import { formatToolDisplayName } from "../chat/toolDisplay";
 import { Button } from "../ui";
 
@@ -61,9 +64,28 @@ export default function ApprovalCard({
   onApprove,
   onReject,
 }: ApprovalCardProps) {
+  const { session } = useGlobalVoiceContext();
   const isCritical = approval.risk_level === "critical";
   const target = targetFromArgs(approval.arguments || {});
   const maskedArgs = JSON.stringify(maskArgs(approval.arguments || {}), null, 2);
+
+  useEffect(() => {
+    if (
+      !session
+      || session.state === "ended"
+      || session.conversational_anchor?.conversation_id !== approval.conversation_id
+    ) return;
+    const controller = new AbortController();
+    void attestVoiceApprovalDisplayed(approval.approval_id, controller.signal);
+    return () => controller.abort();
+  }, [
+    approval.approval_id,
+    approval.conversation_id,
+    session?.generation,
+    session?.state,
+    session?.voice_session_id,
+    session?.conversational_anchor?.conversation_id,
+  ]);
 
   return (
     <section

@@ -62,6 +62,7 @@ fn voice_approval_without_display_attestation_stays_pending() {
                 created_at: 2,
             },
             session,
+            approval_attestation: None,
         })
         .unwrap();
     assert!(outcome.continuation.is_none());
@@ -69,6 +70,68 @@ fn voice_approval_without_display_attestation_stays_pending() {
         outcome.command_result.unwrap().error.unwrap().code,
         "voice_approval_attestation_required"
     );
+    assert_eq!(
+        store.get(&approval_id).unwrap().status,
+        ApprovalStatus::Pending
+    );
+}
+
+#[test]
+fn voice_approval_with_current_display_attestation_returns_one_continuation() {
+    use yilian_backend::interaction::InteractionVoiceDispatch;
+    use yilian_backend::shared::interaction::{ConversationalAnchor, FocusedSurface};
+    use yilian_backend::shared::voice::{GlobalVoiceSession, VoiceInputOwner};
+    use yilian_backend::voice::{
+        AcceptedFinalTranscript, VoiceApprovalAttestation, VoiceApprovalDecision,
+        VoiceContinuation, VoiceDispatchHook, VoiceDispatchRequest,
+    };
+
+    let database = Database::new(Path::new(":memory:")).unwrap();
+    let conversation = database.create_conversation("voice approval").unwrap();
+    let tasks = TaskWorldRuntime::new(&database, EventHub::new(32)).unwrap();
+    let store = Arc::new(ApprovalStore::new());
+    let approval_id = pending(&store, &conversation.id, "call-attested");
+    let dispatcher =
+        InteractionVoiceDispatch::new(database, tasks, store.clone(), CommandRouter::new());
+    let mut session = GlobalVoiceSession::new(FocusedSurface::Conversation, 1);
+    session.conversational_anchor = Some(ConversationalAnchor::new(
+        &conversation.id,
+        "voice approval",
+        1,
+    ));
+    let accepted = AcceptedFinalTranscript {
+        session_id: session.voice_session_id.clone(),
+        generation: session.generation,
+        lease_id: "lease-attested".into(),
+        input_owner: VoiceInputOwner::PushToTalk,
+        text: "同意".into(),
+        created_at: 2,
+    };
+    let outcome = dispatcher
+        .dispatch(VoiceDispatchRequest {
+            approval_attestation: Some(VoiceApprovalAttestation {
+                attestation_id: "attestation-a".into(),
+                approval_id: approval_id.clone(),
+                conversation_id: conversation.id.clone(),
+                voice_session_id: session.voice_session_id.clone(),
+                generation: session.generation,
+                displayed_at: 1,
+                expires_at: 60_001,
+            }),
+            accepted,
+            session,
+        })
+        .unwrap();
+
+    assert_eq!(outcome.command_result, None);
+    assert!(matches!(
+        outcome.continuation,
+        Some(VoiceContinuation::Approval {
+            approval_id: ref id,
+            decision: VoiceApprovalDecision::Approve,
+            ..
+        }) if id == &approval_id
+    ));
     assert_eq!(
         store.get(&approval_id).unwrap().status,
         ApprovalStatus::Pending

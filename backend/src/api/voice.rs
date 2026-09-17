@@ -1,6 +1,6 @@
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{Path, State},
     http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -10,6 +10,7 @@ use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::safety::ApprovalStatus;
 use crate::server::AppServer;
 use crate::shared::interaction::{ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface};
 use crate::shared::voice::{VoiceInputOwner, VoiceTurn};
@@ -70,6 +71,31 @@ pub async fn providers_handler(State(server): State<Arc<AppServer>>) -> impl Int
             "unavailable_reason": provider_unavailable_reason(tts_supported, tts_structural, tts_credential),
         }
     }))
+}
+
+pub async fn approval_displayed_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(approval_id): Path<String>,
+) -> Response {
+    let Some(approval) = server.approval_store.get(&approval_id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "approval_not_found"})),
+        )
+            .into_response();
+    };
+    if approval.status != ApprovalStatus::Pending {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "approval_not_pending"})),
+        )
+            .into_response();
+    }
+    runtime_json(server.voice_runtime.attest_displayed_approval(
+        &approval.approval_id,
+        &approval.conversation_id,
+        chrono::Utc::now().timestamp_millis(),
+    ))
 }
 
 fn provider_unavailable_reason(

@@ -119,6 +119,10 @@ export function isExplicitMicrophoneStart(reason: string | undefined, handsFreeE
   return reason === "user-click" || reason === "user-keyboard" || (reason === "hands-free" && handsFreeEnabled);
 }
 
+export function voiceInputOwnerForStart(reason: string | undefined): "push_to_talk" | "builtin_asr" {
+  return reason === "user-click" || reason === "user-keyboard" ? "push_to_talk" : "builtin_asr";
+}
+
 /**
  * A new microphone lease must wait for the server-side interruption to settle.
  * The returned session is used when the interrupt advanced generation.
@@ -368,7 +372,7 @@ export function useVoiceCapture({
           return acquireVoiceInputLease(
             leaseSession.voice_session_id,
             leaseSession.generation,
-            "builtin_asr",
+            voiceInputOwnerForStart(reason),
             controller.signal,
           );
         });
