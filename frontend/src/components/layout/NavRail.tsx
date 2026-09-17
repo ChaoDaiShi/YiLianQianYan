@@ -5,6 +5,9 @@ import { Tooltip } from "../ui";
 import { useTheme } from "../../theme";
 import { healthCheck } from "../../api/client";
 import { NAV_GROUPS } from "./navGroups";
+import ModuleSetup from "../system/ModuleSetup";
+import { useProductPreferences } from "../system/useProductPreferences";
+import { TRUSTED_MODULES } from "../system/productPreferences";
 
 type BackendStatus = "connecting" | "healthy" | "unavailable";
 
@@ -20,6 +23,11 @@ const BACKEND_STATUS_META: Record<
 export default function NavRail() {
   const navigate = useNavigate();
   const { theme } = useTheme();
+  const { preferences } = useProductPreferences();
+  const items = NAV_GROUPS.flatMap((group) => group.items);
+  const groups = [{ label: "导航", items: preferences.navigation.filter((item) => item.visible
+    && !TRUSTED_MODULES.some((module) => !module.mandatory && module.navigation === item.id && !preferences.enabled_modules.includes(module.id)))
+    .flatMap((item) => { const found = items.find((entry) => entry.id === item.id); return found ? [found] : []; }) }];
   const [backendStatus, setBackendStatus] =
     useState<BackendStatus>("connecting");
 
@@ -69,7 +77,7 @@ export default function NavRail() {
       <div className="mb-2 w-10 shrink-0 border-t border-white/[0.07]" />
 
       <div className="nav-rail-list nav-rail-compact scrollbar-thin min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-1">
-        {NAV_GROUPS.map((group, groupIndex) => (
+        {groups.map((group, groupIndex) => (
           <div
             key={group.label}
             className={cn(
@@ -132,6 +140,13 @@ export default function NavRail() {
             })}
           </div>
         ))}
+      </div>
+
+      <div className="flex shrink-0 flex-col items-center gap-1 text-[10px]" aria-label="必需安全入口">
+        <button type="button" onClick={() => navigate("/settings")} aria-label="安全 Gateway 与权限设置">安全</button>
+        <button type="button" onClick={() => navigate("/system?card=approvals")} aria-label="查看待审批操作">审批</button>
+        <button type="button" onClick={() => navigate("/tasks")} aria-label="任务恢复入口">恢复</button>
+        <ModuleSetup />
       </div>
 
       <Tooltip content={`后端状态：${backendStatusMeta.label}`}>
