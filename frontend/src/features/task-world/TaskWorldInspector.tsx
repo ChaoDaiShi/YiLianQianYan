@@ -54,7 +54,6 @@ export default function TaskWorldInspector({
   saving = false,
   saveError = null,
   onSave,
-  onStart,
   onStartExecution,
   onCancelExecution,
   onRerun,
@@ -251,7 +250,7 @@ export default function TaskWorldInspector({
         )}
         <div className="mt-3 flex flex-wrap gap-2">
           {onStartExecution && !executionBusy && (
-            <Button type="button" size="sm" variant="secondary" disabled={saving || graphLocked || availability.kind === "unavailable"} onClick={() => void onStartExecution()}>
+            <Button type="button" size="sm" variant="secondary" disabled={saving || graphLocked || getExecutorAvailability(node.executor_ref).kind !== "configured"} onClick={() => void onStartExecution()}>
               {latestExecution ? "再次执行" : "开始执行"}
             </Button>
           )}
@@ -260,12 +259,13 @@ export default function TaskWorldInspector({
               取消执行
             </Button>
           )}
-          {onRerun && !executionBusy && latestExecution && (
+          {onRerun && !executionBusy && (latestExecution || node.status === "invalidated") && (
             <Button type="button" size="sm" variant="ghost" disabled={saving || graphLocked} onClick={() => void onRerun()}>
-              从此节点重跑
+              {node.status === "invalidated" ? "校验并准备重跑" : "从此节点重跑"}
             </Button>
           )}
         </div>
+        {node.status === "invalidated" && <p className="mt-2 text-xs text-[var(--text-faint)]">语义修改使原结果失效。校验并准备重跑后可开始新尝试；历史记录保留，不会撤销已发生的外部操作。</p>}
         {executionHistory.length > 0 && (
           <ol className="mt-3 space-y-1.5" aria-label="执行尝试历史">
             {executionHistory.map((execution) => (
@@ -363,11 +363,6 @@ export default function TaskWorldInspector({
               恢复
             </Button>
           </div>
-        )}
-        {node.status === "runnable" && (
-          <Button type="button" size="sm" variant="ghost" className="mt-3" disabled={saving || graphLocked} onClick={() => void onStart()}>
-            标记为运行中
-          </Button>
         )}
       </section>
     </Panel>

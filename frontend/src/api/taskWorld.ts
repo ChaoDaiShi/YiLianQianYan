@@ -347,6 +347,11 @@ export async function createTaskGraph(
   return result.ok ? { ok: true, data: result.data.graph } : result;
 }
 
+export async function planTaskGraph(id: string, goal: string): Promise<ApiResult<TaskGraphDefinition>> {
+  const result = await requestTaskWorld<TaskGraphResponse>("POST", "/api/task-world/graphs", { id, goal });
+  return result.ok ? { ok: true, data: result.data.graph } : result;
+}
+
 export async function getTaskGraphDetail(graphId: string): Promise<ApiResult<TaskGraphDetail>> {
   const result = await requestTaskWorld<TaskGraphDetailResponse>(
     "GET",

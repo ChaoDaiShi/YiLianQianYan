@@ -57,6 +57,37 @@ function creationDependencies(
 }
 
 describe("task center page contract", () => {
+  it("never navigates when a malformed success omits the persisted identity", async () => {
+    const createEmptyTaskGraph = await loadCreateEmptyTaskGraph();
+    const dependencies = creationDependencies(vi.fn().mockResolvedValue({ ok: true, data: {} }));
+    await createEmptyTaskGraph(dependencies);
+    expect(dependencies.navigate).not.toHaveBeenCalled();
+    expect(dependencies.setError).toHaveBeenCalledWith(expect.objectContaining({ code: "creation_failed" }));
+  });
+
+  it("allows another graph after the first request has completed", async () => {
+    const createEmptyTaskGraph = await loadCreateEmptyTaskGraph();
+    const createGraph = vi.fn().mockResolvedValueOnce(successfulGraph("first")).mockResolvedValueOnce(successfulGraph("second"));
+    const dependencies = creationDependencies(createGraph);
+    await createEmptyTaskGraph(dependencies);
+    await createEmptyTaskGraph(dependencies);
+    expect(createGraph).toHaveBeenCalledTimes(2);
+    expect(dependencies.navigate).toHaveBeenLastCalledWith("/task-world/second");
+  });
+  it("keeps creation and planning entries above the empty/nonempty branch", () => {
+    const beforeEmptyBranch = taskCenterSource.split("{taskGraphs.length === 0 ?")[0];
+    expect(beforeEmptyBranch).toContain("新建任务画布");
+    expect(beforeEmptyBranch).toContain("描述任务目标");
+  });
+
+  it("recovers from a rejected creation request without navigating", async () => {
+    const createEmptyTaskGraph = await loadCreateEmptyTaskGraph();
+    const dependencies = creationDependencies(vi.fn().mockRejectedValue(new Error("offline")));
+    await createEmptyTaskGraph(dependencies);
+    expect(dependencies.navigate).not.toHaveBeenCalled();
+    expect(dependencies.setError).toHaveBeenCalledWith(expect.objectContaining({ message: "offline" }));
+    expect(dependencies.inFlight.current).toBe(false);
+  });
   it("uses the existing task APIs and keeps task-to-conversation links honest", () => {
     expect(taskCenterSource).toContain("listTasks");
     expect(taskCenterSource).toContain("listTaskGraphs");

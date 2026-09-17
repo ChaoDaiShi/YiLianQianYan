@@ -3,6 +3,7 @@ import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   addTaskEdge,
+  addTaskNode,
   cancelTaskExecution,
   createTaskCheckpoint,
   deleteTaskEdge,
@@ -178,7 +179,7 @@ export default function TaskWorldPage() {
       <PageHeader
         title={`任务画布 · ${projection.graphId}`}
         description={`语义图 r${projection.revision} · 画布视图 r${view?.view_revision ?? "—"}`}
-        actions={<div className="flex gap-2"><Button variant="ghost" size="sm" onClick={() => navigate("/tasks")}><ArrowLeft className="h-4 w-4" />任务中心</Button><Button variant="secondary" size="sm" onClick={() => void reload()}><RefreshCw className="h-4 w-4" />刷新</Button></div>}
+        actions={<div className="flex gap-2"><Button variant="ghost" size="sm" onClick={() => navigate("/tasks")}><ArrowLeft className="h-4 w-4" />任务中心</Button><Button variant="secondary" size="sm" disabled={saving || graphLocked} onClick={() => void mutate(() => addTaskNode(graphId, projection.revision, { id: crypto.randomUUID(), kind: "work", title: "新任务", input: { instruction: "", acceptance_criteria: [] }, retry_policy: { max_attempts: 1 } }))}>添加任务节点</Button><Button variant="secondary" size="sm" onClick={() => void reload()}><RefreshCw className="h-4 w-4" />刷新</Button></div>}
       />
       {eventWarning && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]" role="status">实时事件暂不可用：{eventWarning}</p>}
       <div className="task-world-layout min-h-0 flex-1 px-4 pb-4 pt-3">

@@ -19,6 +19,7 @@ import {
   PageHeader,
   Panel,
   Skeleton,
+  Textarea,
 } from "../components/ui";
 import {
   conversationRunStatusToTaskStatus,
@@ -34,6 +35,7 @@ import { deriveTaskDisplayTitle } from "../components/chat/taskTitle";
 import {
   createTaskGraph,
   listTaskGraphs,
+  planTaskGraph,
   type ApiError,
   type TaskGraphSummary,
 } from "../api/taskWorld";
@@ -78,7 +80,12 @@ export async function createEmptyTaskGraph({
       setError(result.error);
       return;
     }
+    if (typeof result.data?.id !== "string" || !result.data.id.trim()) {
+      throw new Error("创建响应缺少已保存的图标识，请刷新任务列表确认后重试。");
+    }
     navigate(`/task-world/${encodeURIComponent(result.data.id)}`);
+  } catch (error) {
+    setError({ status: 0, code: "creation_failed", message: error instanceof Error ? error.message : String(error) });
   } finally {
     inFlight.current = false;
     setCreating(false);
@@ -100,6 +107,7 @@ export default function TaskCenterPage() {
   const [creatingTaskGraph, setCreatingTaskGraph] = useState(false);
   const [taskGraphError, setTaskGraphError] = useState<ApiError | null>(null);
   const taskGraphCreationInFlight = useRef(false);
+  const [planningGoal, setPlanningGoal] = useState("");
 
   const reload = useCallback(async () => {
     setError(null);
@@ -128,7 +136,8 @@ export default function TaskCenterPage() {
       setConversations([]);
       setConversationError("对话记录暂时无法加载");
     }
-    setTaskGraphs(graphResult.ok ? graphResult.data : []);
+    if (graphResult.ok) setTaskGraphs(graphResult.data);
+    else setTaskGraphError(graphResult.error);
   }, []);
 
   useEffect(() => {
@@ -176,6 +185,15 @@ export default function TaskCenterPage() {
     [navigate],
   );
 
+  const handlePlanTaskGraph = () => createEmptyTaskGraph({
+    createGraph: ({ id }) => planTaskGraph(id, planningGoal.trim()),
+    navigate,
+    setCreating: setCreatingTaskGraph,
+    setError: setTaskGraphError,
+    inFlight: taskGraphCreationInFlight,
+    makeGraphId: () => crypto.randomUUID(),
+  });
+
   return (
     <div className="page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
@@ -195,6 +213,14 @@ export default function TaskCenterPage() {
             <div><h2 className="text-sm font-semibold text-[var(--text)]">TaskGraph 控制面</h2><p className="mt-0.5 text-xs text-[var(--text-faint)]">真实语义图与独立画布视图</p></div>
             <span className="text-xs text-[var(--text-faint)]">{taskGraphs.length} 个图</span>
           </div>
+          <div className="space-y-2 border-b border-[var(--border-soft)] p-4">
+            <Textarea label="描述任务目标" value={planningGoal} onChange={(event) => setPlanningGoal(event.target.value)} rows={2} maxLength={4000} placeholder="描述你想完成的任务，使用已配置的模型生成可编辑计划" />
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" disabled={creatingTaskGraph || !planningGoal.trim()} onClick={() => void handlePlanTaskGraph()}>{creatingTaskGraph ? "处理中…" : "生成任务计划"}</Button>
+              <Button type="button" variant="secondary" disabled={creatingTaskGraph} onClick={() => void handleCreateTaskGraph()}>新建任务画布</Button>
+            </div>
+            <p className="text-xs text-[var(--text-faint)]">计划经校验后保存，不会自动执行。未配置模型时，可先创建空白画布。</p>
+          </div>
           {taskGraphError && (
             <p className="mx-4 mt-3 text-xs text-[var(--danger)]" role="alert">
               {taskGraphError.message}
@@ -205,15 +231,6 @@ export default function TaskCenterPage() {
               icon={<ListTodo className="h-6 w-6" />}
               title="还没有任务画布"
               description="创建一个任务画布后，可以在无限空间中组织、编辑和观察任务执行过程。"
-              action={
-                <Button
-                  type="button"
-                  disabled={creatingTaskGraph}
-                  onClick={() => void handleCreateTaskGraph()}
-                >
-                  {creatingTaskGraph ? "创建中…" : "新建任务画布"}
-                </Button>
-              }
               className="py-8"
             />
           ) : (
