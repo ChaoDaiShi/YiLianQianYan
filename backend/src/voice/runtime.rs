@@ -149,6 +149,7 @@ struct VoiceRuntimeState {
     last_accepted: Option<AcceptedFinalTranscript>,
     approval_attestation: Option<VoiceApprovalAttestation>,
     revoked_display_ids: VecDeque<String>,
+    display_revocations_saturated: bool,
     presence: PresenceSnapshot,
 }
 
@@ -177,6 +178,7 @@ impl GlobalVoiceSessionRuntime {
                 last_accepted: None,
                 approval_attestation: None,
                 revoked_display_ids: VecDeque::new(),
+                display_revocations_saturated: false,
                 presence: PresenceSnapshot {
                     source: "global-voice-runtime".to_string(),
                     ..PresenceSnapshot::default()
@@ -213,6 +215,7 @@ impl GlobalVoiceSessionRuntime {
                     state.last_accepted = None;
                     state.approval_attestation = None;
                     state.revoked_display_ids.clear();
+                    state.display_revocations_saturated = false;
                     state.consumed_lease_ids.clear();
                     state.presence.activity = PresenceActivity::Working;
                     state.presence.interaction = PresenceInteraction::Listening;
@@ -263,6 +266,7 @@ impl GlobalVoiceSessionRuntime {
             state.last_accepted = None;
             state.approval_attestation = None;
             state.revoked_display_ids.clear();
+            state.display_revocations_saturated = false;
             state.presence.activity = PresenceActivity::Working;
             state.presence.interaction = PresenceInteraction::Listening;
             state.presence.attention = PresenceAttention::None;
@@ -332,6 +336,7 @@ impl GlobalVoiceSessionRuntime {
                 state.last_accepted = None;
                 state.approval_attestation = None;
                 state.revoked_display_ids.clear();
+                state.display_revocations_saturated = false;
                 state.partial_transcript = None;
                 state.final_transcript = None;
                 state.presence.interaction = PresenceInteraction::Listening;
@@ -367,6 +372,11 @@ impl GlobalVoiceSessionRuntime {
             ));
         }
         let mut state = self.state.lock();
+        if state.display_revocations_saturated {
+            return Err(VoiceRuntimeError::InvalidState(
+                "approval display revocation capacity is saturated".to_string(),
+            ));
+        }
         if state
             .revoked_display_ids
             .iter()
@@ -435,10 +445,11 @@ impl GlobalVoiceSessionRuntime {
             .iter()
             .any(|revoked| revoked == display_id)
         {
-            while state.revoked_display_ids.len() >= 64 {
-                state.revoked_display_ids.pop_front();
+            if state.revoked_display_ids.len() >= 64 {
+                state.display_revocations_saturated = true;
+            } else {
+                state.revoked_display_ids.push_back(display_id.to_string());
             }
-            state.revoked_display_ids.push_back(display_id.to_string());
         }
         let matches = state
             .approval_attestation
@@ -880,6 +891,7 @@ impl GlobalVoiceSessionRuntime {
             state.last_accepted = None;
             state.approval_attestation = None;
             state.revoked_display_ids.clear();
+            state.display_revocations_saturated = false;
             state.presence.activity = PresenceActivity::Working;
             state.presence.interaction = PresenceInteraction::Interrupted;
             state.presence.updated_at = session.updated_at;
@@ -914,6 +926,7 @@ impl GlobalVoiceSessionRuntime {
             state.last_accepted = None;
             state.approval_attestation = None;
             state.revoked_display_ids.clear();
+            state.display_revocations_saturated = false;
             state.presence.activity = PresenceActivity::Idle;
             state.presence.interaction = PresenceInteraction::None;
             state.presence.attention = PresenceAttention::None;
@@ -1124,6 +1137,56 @@ mod tests {
             .reinitialize_input(&session.voice_session_id, session.generation)
             .unwrap();
         assert!(runtime.approval_attestation_for(&explicit, 12).is_none());
+    }
+
+    #[test]
+    fn display_revocation_overflow_fails_closed_until_generation_changes() {
+        let runtime = GlobalVoiceSessionRuntime::new(EventHub::new(32));
+        let started = runtime.start(FocusedSurface::Conversation).unwrap();
+        let session = runtime
+            .update_context(
+                &started.voice_session_id,
+                started.generation,
+                ContextAnchorSnapshot {
+                    focused_surface: FocusedSurface::Conversation,
+                    conversational_anchor: Some(
+                        crate::shared::interaction::ConversationalAnchor::new(
+                            "conversation-a",
+                            "A",
+                            1,
+                        ),
+                    ),
+                    active_task: None,
+                },
+            )
+            .unwrap();
+        for index in 0..65 {
+            runtime.revoke_displayed_approval(&format!("display-{index}"));
+        }
+        assert!(runtime
+            .attest_displayed_approval(
+                "approval-a",
+                "conversation-a",
+                &session.voice_session_id,
+                session.generation,
+                "display-new",
+                10,
+            )
+            .is_err());
+
+        let renewed = runtime
+            .reinitialize_input(&session.voice_session_id, session.generation)
+            .unwrap();
+        assert!(runtime
+            .attest_displayed_approval(
+                "approval-a",
+                "conversation-a",
+                &renewed.voice_session_id,
+                renewed.generation,
+                "display-new",
+                11,
+            )
+            .is_ok());
     }
 }
 
