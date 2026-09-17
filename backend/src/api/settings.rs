@@ -40,6 +40,39 @@ struct ProviderReadiness {
     tts: ProviderReadinessItem,
 }
 
+async fn delete_secret_or_fail(
+    server: &AppServer,
+    secret_ref: &SecretRef,
+    kind: SecretKind,
+) -> Result<(), Json<serde_json::Value>> {
+    match server.secret_store.delete(secret_ref).await {
+        Ok(()) => {
+            record_secret_event(
+                &server.audit_recorder,
+                AuditEventType::SecretDeleted,
+                kind,
+                secret_ref,
+                "clear",
+                true,
+            );
+            Ok(())
+        }
+        Err(_) => {
+            record_secret_event(
+                &server.audit_recorder,
+                AuditEventType::SecretDeleted,
+                kind,
+                secret_ref,
+                "clear",
+                false,
+            );
+            Err(Json(serde_json::json!({
+                "error": "系统安全凭据库删除失败，密钥未清除"
+            })))
+        }
+    }
+}
+
 pub(crate) async fn chat_source(
     resolver: &SecretResolver,
     config: &AppConfig,
@@ -437,15 +470,11 @@ pub async fn update_handler(
     // ── Chat API key: clear → delete; non-empty → rotate; empty → preserve. ──
     if incoming.model.clear_api_key {
         if let Some(secret_ref) = existing.model.api_key_ref.clone() {
-            let ok = server.secret_store.delete(&secret_ref).await.is_ok();
-            record_secret_event(
-                &server.audit_recorder,
-                AuditEventType::SecretDeleted,
-                SecretKind::ChatApiKey,
-                &secret_ref,
-                "clear",
-                ok,
-            );
+            if let Err(error) =
+                delete_secret_or_fail(&server, &secret_ref, SecretKind::ChatApiKey).await
+            {
+                return error;
+            }
         }
         incoming.model.api_key_ref = None;
         incoming.model.api_key = String::new();
@@ -494,15 +523,11 @@ pub async fn update_handler(
     // ── Embedding API key ──
     if incoming.model.clear_embedding_api_key {
         if let Some(secret_ref) = existing.model.embedding_api_key_ref.clone() {
-            let ok = server.secret_store.delete(&secret_ref).await.is_ok();
-            record_secret_event(
-                &server.audit_recorder,
-                AuditEventType::SecretDeleted,
-                SecretKind::EmbeddingApiKey,
-                &secret_ref,
-                "clear",
-                ok,
-            );
+            if let Err(error) =
+                delete_secret_or_fail(&server, &secret_ref, SecretKind::EmbeddingApiKey).await
+            {
+                return error;
+            }
         }
         incoming.model.embedding_api_key_ref = None;
         incoming.model.embedding_api_key = String::new();
@@ -553,15 +578,20 @@ pub async fn update_handler(
         if let Some(secret_ref) = existing.voice.stt.api_key_ref.clone() {
             let shared_legacy = secret_ref.key == VOICE_KEY_REF
                 && existing.voice.tts.api_key_ref.as_ref() == Some(&secret_ref);
-            let ok = shared_legacy || server.secret_store.delete(&secret_ref).await.is_ok();
-            record_secret_event(
-                &server.audit_recorder,
-                AuditEventType::SecretDeleted,
-                SecretKind::VoiceSttApiKey,
-                &secret_ref,
-                "clear",
-                ok,
-            );
+            if shared_legacy {
+                record_secret_event(
+                    &server.audit_recorder,
+                    AuditEventType::SecretDeleted,
+                    SecretKind::VoiceSttApiKey,
+                    &secret_ref,
+                    "clear_shared_legacy_ref",
+                    true,
+                );
+            } else if let Err(error) =
+                delete_secret_or_fail(&server, &secret_ref, SecretKind::VoiceSttApiKey).await
+            {
+                return error;
+            }
         }
         incoming.voice.stt.api_key_ref = None;
         incoming.voice.stt.api_key = String::new();
@@ -614,15 +644,20 @@ pub async fn update_handler(
         if let Some(secret_ref) = existing.voice.tts.api_key_ref.clone() {
             let shared_legacy = secret_ref.key == VOICE_KEY_REF
                 && existing.voice.stt.api_key_ref.as_ref() == Some(&secret_ref);
-            let ok = shared_legacy || server.secret_store.delete(&secret_ref).await.is_ok();
-            record_secret_event(
-                &server.audit_recorder,
-                AuditEventType::SecretDeleted,
-                SecretKind::VoiceTtsApiKey,
-                &secret_ref,
-                "clear",
-                ok,
-            );
+            if shared_legacy {
+                record_secret_event(
+                    &server.audit_recorder,
+                    AuditEventType::SecretDeleted,
+                    SecretKind::VoiceTtsApiKey,
+                    &secret_ref,
+                    "clear_shared_legacy_ref",
+                    true,
+                );
+            } else if let Err(error) =
+                delete_secret_or_fail(&server, &secret_ref, SecretKind::VoiceTtsApiKey).await
+            {
+                return error;
+            }
         }
         incoming.voice.tts.api_key_ref = None;
         incoming.voice.tts.api_key = String::new();
@@ -683,7 +718,45 @@ pub async fn update_handler(
 mod tests {
     use super::*;
     use crate::safety::ControlSession;
-    use crate::secret::InMemorySecretStore;
+    use crate::secret::{InMemorySecretStore, SecretStore, SecretStoreError, SecretStoreStatus};
+
+    struct DeleteFailingStore {
+        inner: InMemorySecretStore,
+    }
+
+    impl DeleteFailingStore {
+        fn new() -> Self {
+            Self {
+                inner: InMemorySecretStore::new(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SecretStore for DeleteFailingStore {
+        async fn put(
+            &self,
+            secret_ref: &SecretRef,
+            value: SecretString,
+        ) -> Result<(), SecretStoreError> {
+            self.inner.put(secret_ref, value).await
+        }
+
+        async fn get(
+            &self,
+            secret_ref: &SecretRef,
+        ) -> Result<Option<SecretString>, SecretStoreError> {
+            self.inner.get(secret_ref).await
+        }
+
+        async fn delete(&self, _secret_ref: &SecretRef) -> Result<(), SecretStoreError> {
+            Err(SecretStoreError::Backend)
+        }
+
+        async fn status(&self) -> SecretStoreStatus {
+            SecretStoreStatus::Available
+        }
+    }
 
     #[tokio::test]
     async fn settings_get_never_returns_secret_value() {
@@ -803,6 +876,88 @@ mod tests {
 
         drop(server);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn clear_delete_failure_preserves_each_persisted_secret_reference() {
+        for kind in ["model", "embedding", "stt", "tts"] {
+            let path = std::env::temp_dir().join(format!(
+                "yilian-settings-clear-failure-{kind}-{}.db",
+                uuid::Uuid::new_v4()
+            ));
+            let store: Arc<dyn SecretStore> = Arc::new(DeleteFailingStore::new());
+            let server = Arc::new(
+                AppServer::new_with_control_session_and_store(
+                    &path,
+                    ".",
+                    ControlSession::generate(),
+                    Arc::clone(&store),
+                )
+                .unwrap(),
+            );
+            let secret_ref = SecretRef::new(format!("test.clear.failure.{kind}"));
+            store
+                .put(&secret_ref, SecretString::from("test-clear-key"))
+                .await
+                .unwrap();
+            let mut persisted = server.config.read().clone();
+            match kind {
+                "model" => persisted.model.api_key_ref = Some(secret_ref.clone()),
+                "embedding" => persisted.model.embedding_api_key_ref = Some(secret_ref.clone()),
+                "stt" => {
+                    persisted.voice.stt.model = "test-stt".to_string();
+                    persisted.voice.stt.api_key_ref = Some(secret_ref.clone());
+                }
+                "tts" => persisted.voice.tts.api_key_ref = Some(secret_ref.clone()),
+                _ => unreachable!(),
+            }
+            server.db.save_settings(&persisted).unwrap();
+            *server.config.write() = persisted.clone();
+
+            let mut incoming = persisted;
+            match kind {
+                "model" => incoming.model.clear_api_key = true,
+                "embedding" => incoming.model.clear_embedding_api_key = true,
+                "stt" => incoming.voice.stt.clear_api_key = true,
+                "tts" => incoming.voice.tts.clear_api_key = true,
+                _ => unreachable!(),
+            }
+            let response = update_handler(State(Arc::clone(&server)), Json(incoming))
+                .await
+                .0;
+            assert!(
+                response.get("error").is_some(),
+                "{kind} clear must fail closed"
+            );
+
+            let current = server.config.read().clone();
+            let retained = match kind {
+                "model" => current.model.api_key_ref,
+                "embedding" => current.model.embedding_api_key_ref,
+                "stt" => current.voice.stt.api_key_ref,
+                "tts" => current.voice.tts.api_key_ref,
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                retained,
+                Some(secret_ref.clone()),
+                "{kind} ref must remain live"
+            );
+            assert!(matches!(store.get(&secret_ref).await, Ok(Some(_))));
+
+            let saved = server.db.get_settings().unwrap();
+            let persisted_ref = match kind {
+                "model" => saved.model.api_key_ref,
+                "embedding" => saved.model.embedding_api_key_ref,
+                "stt" => saved.voice.stt.api_key_ref,
+                "tts" => saved.voice.tts.api_key_ref,
+                _ => unreachable!(),
+            };
+            assert_eq!(persisted_ref, Some(secret_ref));
+
+            drop(server);
+            let _ = std::fs::remove_file(&path);
+        }
     }
 
     #[tokio::test]
@@ -941,6 +1096,206 @@ mod tests {
         assert_eq!(error.1 .0["error"], "INVALID_CONFIGURATION");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[derive(Clone, Default)]
+    struct ProviderMockCalls(Arc<std::sync::Mutex<Vec<(String, String)>>>);
+
+    async fn provider_mock_server(
+        failure_statuses: Option<(StatusCode, StatusCode, StatusCode)>,
+    ) -> (String, ProviderMockCalls, tokio::task::JoinHandle<()>) {
+        use axum::{body::Bytes, http::header::CONTENT_TYPE, routing::post, Router};
+
+        let calls = ProviderMockCalls::default();
+        let model_calls = calls.clone();
+        let stt_calls = calls.clone();
+        let tts_calls = calls.clone();
+        let (model_status, stt_status, tts_status) =
+            failure_statuses.unwrap_or((StatusCode::OK, StatusCode::OK, StatusCode::OK));
+        let app = Router::new()
+            .route(
+                "/chat/completions",
+                post(move |Json(body): Json<serde_json::Value>| {
+                    let calls = model_calls.clone();
+                    async move {
+                        calls
+                            .0
+                            .lock()
+                            .unwrap()
+                            .push(("model".to_string(), body.to_string()));
+                        if model_status == StatusCode::OK {
+                            (
+                                StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "id": "mock-model-response",
+                                    "choices": [{
+                                        "index": 0,
+                                        "message": { "role": "assistant", "content": "ok" },
+                                        "finish_reason": "stop"
+                                    }]
+                                })),
+                            )
+                        } else {
+                            (
+                                model_status,
+                                Json(
+                                    serde_json::json!({ "detail": "mock-provider-response-body" }),
+                                ),
+                            )
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/audio/transcriptions",
+                post(move |body: Bytes| {
+                    let calls = stt_calls.clone();
+                    async move {
+                        calls.0.lock().unwrap().push((
+                            "stt".to_string(),
+                            String::from_utf8_lossy(&body).to_string(),
+                        ));
+                        if stt_status == StatusCode::OK {
+                            (
+                                StatusCode::OK,
+                                Json(serde_json::json!({ "text": "mock transcript" })),
+                            )
+                        } else {
+                            (
+                                stt_status,
+                                Json(
+                                    serde_json::json!({ "detail": "mock-provider-response-body" }),
+                                ),
+                            )
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/audio/speech",
+                post(move |Json(body): Json<serde_json::Value>| {
+                    let calls = tts_calls.clone();
+                    async move {
+                        calls
+                            .0
+                            .lock()
+                            .unwrap()
+                            .push(("tts".to_string(), body.to_string()));
+                        if tts_status == StatusCode::OK {
+                            (
+                                StatusCode::OK,
+                                [(CONTENT_TYPE, "audio/mpeg")],
+                                vec![1u8, 2, 3],
+                            )
+                        } else {
+                            (
+                                tts_status,
+                                [(CONTENT_TYPE, "application/json")],
+                                serde_json::to_vec(
+                                    &serde_json::json!({ "detail": "mock-provider-response-body" }),
+                                )
+                                .unwrap(),
+                            )
+                        }
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (base_url, calls, task)
+    }
+
+    async fn provider_test_server(base_url: String) -> Arc<AppServer> {
+        let path = std::env::temp_dir().join(format!(
+            "yilian-settings-provider-mock-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
+        let server = Arc::new(
+            AppServer::new_with_control_session_and_store(
+                &path,
+                ".",
+                ControlSession::generate(),
+                Arc::clone(&store),
+            )
+            .unwrap(),
+        );
+        let chat_ref = SecretRef::new("test.provider.model");
+        let stt_ref = SecretRef::new("test.provider.stt");
+        let tts_ref = SecretRef::new("test.provider.tts");
+        for secret_ref in [&chat_ref, &stt_ref, &tts_ref] {
+            store
+                .put(secret_ref, SecretString::from("test-provider-key"))
+                .await
+                .unwrap();
+        }
+        let mut config = server.config.write();
+        config.model.base_url = base_url.clone();
+        config.model.name = "mock-model".to_string();
+        config.model.api_key_ref = Some(chat_ref);
+        config.voice.stt.provider = "openai-compatible".to_string();
+        config.voice.stt.base_url = base_url.clone();
+        config.voice.stt.model = "mock-stt".to_string();
+        config.voice.stt.api_key_ref = Some(stt_ref);
+        config.voice.tts.provider = "openai-compatible".to_string();
+        config.voice.tts.base_url = base_url;
+        config.voice.tts.model = "mock-tts".to_string();
+        config.voice.tts.voice = "mock-voice".to_string();
+        config.voice.tts.api_key_ref = Some(tts_ref);
+        drop(config);
+        server
+    }
+
+    #[tokio::test]
+    async fn provider_connection_leaf_makes_minimal_model_stt_and_tts_mock_calls() {
+        let (base_url, calls, task) = provider_mock_server(None).await;
+        let server = provider_test_server(base_url).await;
+        for kind in ["model", "stt", "tts"] {
+            let response =
+                verify_provider_handler(State(Arc::clone(&server)), Path(kind.to_string()))
+                    .await
+                    .unwrap();
+            assert_eq!(response.0["status"], "ok");
+        }
+        let calls = calls.0.lock().unwrap();
+        assert!(calls.iter().any(|(kind, body)| kind == "model"
+            && body.contains("mock-model")
+            && body.contains("ping")));
+        assert!(calls
+            .iter()
+            .any(|(kind, body)| kind == "stt" && body.contains("provider-connection-test.wav")));
+        assert!(calls.iter().any(|(kind, body)| kind == "tts"
+            && body.contains("连接测试")
+            && body.contains("mock-tts")));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn provider_connection_leaf_normalizes_mock_failures_without_response_bodies() {
+        let (base_url, _calls, task) = provider_mock_server(Some((
+            StatusCode::UNAUTHORIZED,
+            StatusCode::NOT_FOUND,
+            StatusCode::TOO_MANY_REQUESTS,
+        )))
+        .await;
+        let server = provider_test_server(base_url).await;
+        for (kind, expected) in [
+            ("model", "INVALID_CREDENTIAL"),
+            ("stt", "MODEL_NOT_FOUND"),
+            ("tts", "RATE_LIMITED"),
+        ] {
+            let error = verify_provider_handler(State(Arc::clone(&server)), Path(kind.to_string()))
+                .await
+                .unwrap_err();
+            assert_eq!(error.1 .0["error"], expected);
+            assert!(!error
+                .1
+                 .0
+                .to_string()
+                .contains("mock-provider-response-body"));
+        }
+        task.abort();
     }
 
     #[tokio::test]
