@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { bindCaptureOperation, type CaptureOperationHandle } from "./captureOperation";
 import {
   acquireVoiceInputLease,
   transcribeAudio,
@@ -194,6 +195,7 @@ export function useVoiceCapture({
   const captureLimitReachedRef = useRef(false);
   const cancelledRef = useRef(false);
   const latestSessionRef = useRef<GlobalVoiceSession | null>(session);
+  const controlsRef = useRef<CaptureOperationHandle>({ stop: () => undefined, cancel: () => undefined });
   latestSessionRef.current = session;
 
   const clearCaptureTimer = useCallback(() => {
@@ -421,6 +423,10 @@ export function useVoiceCapture({
         }, MAX_CAPTURE_DURATION_MS);
         clearAcquireInFlight(operation);
         setState({ status: "listening", error: null, lease });
+        return {
+          ...bindCaptureOperation(() => isCurrentOperation(operation, lease), () => controlsRef.current),
+          lease: { sessionId: lease.voice_session_id, generation: lease.generation, leaseId: lease.lease_id },
+        };
       } catch (error) {
         clearAcquireInFlight(operation);
         if (isCurrentOperationId(operation) && !controller.signal.aborted) fail(error);
@@ -432,6 +438,7 @@ export function useVoiceCapture({
       handsFreeEnabled,
       finalizeRecording,
       isCurrentOperationId,
+      isCurrentOperation,
       onBargeIn,
       session,
       state.status,
@@ -472,6 +479,7 @@ export function useVoiceCapture({
     invalidateCapture();
     reset();
   }, [invalidateCapture, reset]);
+  controlsRef.current = { stop, cancel };
 
   useEffect(() => {
     const lease = leaseRef.current;
@@ -497,7 +505,7 @@ export function useVoiceCapture({
 
 export interface UseVoiceCaptureResult {
   state: CaptureState;
-  start: (reason: string, sourceStream?: MediaStream) => Promise<void>;
+  start: (reason: string, sourceStream?: MediaStream) => Promise<CaptureOperationHandle | void>;
   stop: () => void;
   cancel: () => void;
 }
