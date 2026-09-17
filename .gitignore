@@ -45,6 +45,10 @@ docs/v1-release/*
 !docs/v1-release/rc-freeze.md
 !docs/v1-release/freeze-policy.md
 !docs/v1-release/github-ci-unblock.md
+!docs/v1-release/rc2-release-verification.md
+!docs/v1-release/rc2-freeze.md
+!docs/v1-release/rc2-start-guide.txt
+!docs/v1-release/rc2-notes.md
 !docs/roadmap/
 docs/roadmap/*
 !docs/roadmap/v1.1-service-cloud-web.md
