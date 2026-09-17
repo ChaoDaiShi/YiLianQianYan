@@ -3,7 +3,11 @@ param(
     [string]$InstallerPath,
 
     [Parameter(Mandatory = $false)]
-    [string]$ScreenshotPath = (Join-Path ([System.IO.Path]::GetTempPath()) 'YiLianQianYan-v0.9.0-gui-acceptance.png'),
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
+    [string]$ExpectedVersion = '1.0.0-rc.1',
+
+    [Parameter(Mandatory = $false)]
+    [string]$ScreenshotPath = (Join-Path ([System.IO.Path]::GetTempPath()) "YiLianQianYan-v$ExpectedVersion-gui-acceptance.png"),
 
     [Parameter(Mandatory = $false)]
     [string]$StaleDirectory
@@ -116,7 +120,7 @@ try {
     Wait-Until -TimeoutSeconds 20 -FailureMessage 'Packaged backend health endpoint did not become ready.' -Condition {
         try {
             $script:health = Invoke-RestMethod -Uri 'http://127.0.0.1:9420/api/health' -TimeoutSec 2
-            return $script:health.status -eq 'healthy' -and $script:health.version -eq '0.9.0'
+            return $script:health.status -eq 'healthy' -and $script:health.version -eq $ExpectedVersion
         }
         catch {
             return $false

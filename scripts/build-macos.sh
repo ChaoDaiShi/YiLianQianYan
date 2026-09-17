@@ -81,7 +81,7 @@ echo "=============================================="
 echo ""
 echo "构建产物位置:"
 echo "  App 包:  $BUILD_DIR/macos/忆涟千言.app"
-echo "  DMG 安装包: $BUILD_DIR/dmg/忆涟千言_0.9.0_<arch>.dmg"
+echo "  DMG 安装包: $BUILD_DIR/dmg/忆涟千言_1.0.0-rc.1_<arch>.dmg"
 echo ""
 
 if [ -d "$BUILD_DIR" ]; then

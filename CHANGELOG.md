@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 1.0.0-rc.1 — 2026-09-17
+
+### Added
+
+- v1 无限任务画布：自然语言规划、第二张图、语义/视图独立 revision、持久化分组与折叠、依赖感知自动布局、检查点、部分重跑和真实 Task Harness。
+- 全局 VoiceSession、Conversation Anchor、MiniMax 云 STT/TTS、自定义音色、免按键讲话打断，以及绑定已展示审批与 generation 的一次性语音授权凭证。
+- 受控 Resource 摄入和解析、Conversation/Task/Node 绑定、有限 NodeContext、可追溯 Artifact 预览/下载，以及从真实完成任务生成可审查的 Memory-to-Skill 候选。
+- Capability Center 的 MD/ZIP/公开 GitHub 检查与预览、事务化安装/更新/回滚/卸载、显式 Skill 启停；声明式 Plugin 保持惰性，不加载任意前端或原生代码。
+- 内置系统模块、受保护的侧栏定制、真实系统监控卡片、网格/自由布局和可见性受控刷新。
+- 使用系统 Edge/Chrome 与隔离临时数据库运行的真实后端浏览器核心路径 E2E。
+
+### Changed
+
+- 默认产品保持 v1 Workspace，不初始化被冻结的 v2 DesktopSpace、Windows 观察/控制、App Mount、Wallpaper 或桌宠能力。
+- React Router 更新到 6.30.6；版本与安装脚本统一为候选版本 `1.0.0-rc.1`。
+
+### Security
+
+- 缺失执行器、活动任务图语义编辑、资源解析、Skill 导入、语音审批和陈旧 revision 均保持 fail closed。
+- AI 图审查只返回绑定被审查 revision 的受限节点文案建议；必须由用户逐条接受，且不能修改执行器、权限、边或图标识。
+
+### Release status
+
+- 这是候选版本，不是正式 v1.0.0 Release。技术全门禁、安装包验收与 V1-H 真人语音/听觉/安装体验完成前保持 RC/HUMAN_PENDING。
+
 ## 0.9.0 — 2026-08-22
 
 ### Added

@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $false)]
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '0.9.0',
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
+    [string]$Version = '1.0.0-rc.1',
 
     [Parameter(Mandatory = $false)]
     [switch]$SkipTests,
@@ -19,7 +19,7 @@ if ($Help) {
     Write-Host ''
     Write-Host 'Usage:'
     Write-Host '  npm run build:windows'
-    Write-Host '  npm run build:windows -- -Version 0.9.0'
+    Write-Host '  npm run build:windows -- -Version 1.0.0-rc.1'
     Write-Host '  npm run build:windows -- -SkipTests'
     exit 0
 }

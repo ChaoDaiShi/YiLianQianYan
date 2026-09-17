@@ -40,6 +40,8 @@ docs/*
 docs/v1-release/*
 !docs/v1-release/requirements.md
 !docs/v1-release/gate-remap.md
+!docs/v1-release/release-verification.md
+!docs/v1-release/v1-h-checklist.md
 
 AGENTS.md
 YiLianQianYan_Sprint01_AI_Coding_Modification_Guide.md
