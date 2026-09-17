@@ -55,18 +55,38 @@ pub enum NodeContextBuildError {
 /// Builds the small, explicit context supplied to one execution attempt.
 /// Callers must provide already-observed dependency outputs; this builder does
 /// not fetch conversation history, serialize the graph, or query providers.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct NodeContextBuilder {
     limits: NodeContextLimits,
+    resource_database: Option<crate::db::Database>,
+}
+
+impl std::fmt::Debug for NodeContextBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeContextBuilder")
+            .field("limits", &self.limits)
+            .field(
+                "bound_resource_resolution",
+                &self.resource_database.is_some(),
+            )
+            .finish()
+    }
 }
 
 impl NodeContextBuilder {
+    pub fn with_resource_database(mut self, database: crate::db::Database) -> Self {
+        self.resource_database = Some(database);
+        self
+    }
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn with_limits(limits: NodeContextLimits) -> Self {
-        Self { limits }
+        Self {
+            limits,
+            resource_database: None,
+        }
     }
 
     pub fn build<I>(
@@ -110,7 +130,16 @@ impl NodeContextBuilder {
         let instructions = optional_text(input, "instructions")?
             .or(optional_text(input, "instruction")?)
             .unwrap_or_else(|| node.title.clone());
-        let resources = bounded_text_list(input, "resources", self.limits)?;
+        let resources = if let Some(database) = &self.resource_database {
+            crate::resource_input::bound_node_resources(
+                database,
+                graph.id.as_str(),
+                node.id.as_str(),
+            )
+            .map_err(NodeContextBuildError::InvalidField)?
+        } else {
+            bounded_text_list(input, "resources", self.limits)?
+        };
         let memory_references = bounded_text_list(input, "memory_references", self.limits)?;
         let capabilities = bounded_text_list(input, "capabilities", self.limits)?;
         let constraints = bounded_text_list(input, "constraints", self.limits)?;
@@ -281,4 +310,62 @@ mod tests {
             Err(NodeContextBuildError::InvalidField(_))
         ));
     }
+}
+#[test]
+fn only_bound_ready_resources_enter_context_with_provenance() {
+    let root = std::env::temp_dir().join(format!("bound-context-{}", uuid::Uuid::new_v4()));
+    let db = crate::db::Database::new(&root.join("test.db")).unwrap();
+    let runtime =
+        crate::task::TaskWorldRuntime::new(&db, crate::shared::event::EventHub::new(4)).unwrap();
+    let graph_id = crate::task::TaskGraphId::new("resource-graph").unwrap();
+    let node_id = crate::task::TaskNodeId::new("node").unwrap();
+    let graph = runtime
+        .create_graph(
+            graph_id.clone(),
+            vec![crate::task::TaskNode::new(
+                node_id.clone(),
+                crate::task::TaskNodeKind::Work,
+                "Resource task",
+                serde_json::json!({"resources":["unbound-context-must-not-enter"]}),
+            )
+            .unwrap()],
+            vec![],
+            1,
+        )
+        .unwrap();
+    let service = crate::shared::resource::ResourceService::new(
+        db.clone(),
+        root.join("resources"),
+        crate::shared::event::EventHub::new(4),
+    );
+    let resource = crate::resource_input::ingest_resource(
+        &service,
+        "bound.txt",
+        "text/plain",
+        b"authorized context",
+    )
+    .unwrap();
+    let failed =
+        crate::resource_input::ingest_resource(&service, "bad.txt", "text/plain", &[255]).unwrap();
+    db.bind_resources(
+        &crate::db::ResourceTarget::Node {
+            graph_id: graph_id.to_string(),
+            node_id: node_id.to_string(),
+        },
+        &[resource.id.clone(), failed.id],
+    )
+    .unwrap();
+    let builder = NodeContextBuilder::new().with_resource_database(db);
+    let context = builder.build(&graph, &node_id, Vec::new()).unwrap();
+    assert_eq!(context.resources.len(), 1);
+    assert!(context.resources[0].contains("authorized context"));
+    assert!(context.resources[0].contains(&resource.hash));
+    assert!(!context.resources[0].contains("unbound-context"));
+    std::fs::remove_file(&resource.storage_path).unwrap();
+    assert!(builder
+        .build(&graph, &node_id, Vec::new())
+        .unwrap()
+        .resources
+        .is_empty());
+    let _ = std::fs::remove_dir_all(root);
 }

@@ -161,6 +161,48 @@ impl ResourceService {
             .list_resources(limit, offset)
             .map_err(ResourceError::Persistence)
     }
+
+    pub fn read_bytes(&self, id: &str) -> Result<Vec<u8>, ResourceError> {
+        let resource = self
+            .get(id)?
+            .ok_or_else(|| ResourceError::Storage("resource is missing".into()))?;
+        let root = self
+            .storage_root
+            .canonicalize()
+            .map_err(|_| ResourceError::Storage("managed storage is unavailable".into()))?;
+        let target = std::path::Path::new(&resource.storage_path)
+            .canonicalize()
+            .map_err(|_| ResourceError::Storage("resource file is unavailable".into()))?;
+        if target == root
+            || !target.starts_with(&root)
+            || resource.size <= 0
+            || resource.size as u64 > self.max_bytes as u64
+        {
+            return Err(ResourceError::Storage(
+                "resource containment or size check failed".into(),
+            ));
+        }
+        let file = std::fs::File::open(&target)
+            .map_err(|_| ResourceError::Storage("resource file is unavailable".into()))?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| ResourceError::Storage("resource metadata unavailable".into()))?;
+        if !metadata.is_file() || metadata.len() != resource.size as u64 {
+            return Err(ResourceError::Storage("resource size mismatch".into()));
+        }
+        let mut bytes = Vec::new();
+        file.take(self.max_bytes as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ResourceError::Storage("resource read failed".into()))?;
+        if bytes.len() != resource.size as usize
+            || format!("{:x}", Sha256::digest(&bytes)) != resource.hash
+        {
+            return Err(ResourceError::Storage(
+                "resource integrity check failed".into(),
+            ));
+        }
+        Ok(bytes)
+    }
 }
 
 fn verify_blob(
@@ -299,6 +341,27 @@ mod tests {
         assert_eq!(first.storage_path, second.storage_path);
         assert_eq!(db.list_resources(10, 0).unwrap().len(), 2);
         assert_eq!(std::fs::read_dir(root.join("files")).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn controlled_read_requires_managed_containment_and_matching_bytes() {
+        let (root, db_path) = temp_paths("controlled-read");
+        let db = Database::new(&db_path).unwrap();
+        let service = ResourceService::new(db.clone(), root.join("files"), EventHub::new(2));
+        let resource = service
+            .ingest("safe.txt", "text/plain", b"safe", json!({}))
+            .unwrap();
+        assert_eq!(service.read_bytes(&resource.id).unwrap(), b"safe");
+        let outside = root.join("outside.txt");
+        std::fs::write(&outside, b"safe").unwrap();
+        let mut escaped = resource.clone();
+        escaped.id = "outside-record".into();
+        escaped.storage_path = outside.to_string_lossy().into();
+        db.insert_resource(&escaped).unwrap();
+        assert!(service.read_bytes(&escaped.id).is_err());
+        std::fs::write(&resource.storage_path, b"edit").unwrap();
+        assert!(service.read_bytes(&resource.id).is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 
