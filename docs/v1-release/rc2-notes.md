@@ -24,7 +24,7 @@
 
 - 完整源代码技术门禁：PASS。
 - 安装包构建与独立复算 SHA：PASS。
-- 打包后 GUI 自动化：因另一个正在运行的忆涟实例占用固定端口 9420，保持 `BLOCKED_EXTERNAL`，没有擅自关闭该进程。
+- 打包后 GUI 自动化：PASS。既有忆涟实例自然退出后，隔离安装、可见窗口、健康版本、截图内容、正常关闭、端口释放和卸载均通过。
 - 远端 CI：`BLOCKED_BY_WORKFLOW_SCOPE`。
 - 真人验收：`HUMAN_PENDING`。
 - 正式 v1.0.0：`NOT RELEASED`。

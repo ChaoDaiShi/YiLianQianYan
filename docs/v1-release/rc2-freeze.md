@@ -22,7 +22,7 @@ Do not start Identity, Cloud Gateway, Cloud Harness, Web Surface, v2 or Gate 4 w
 
 ## Remaining acceptance
 
-- Packaged GUI automation remains `BLOCKED_EXTERNAL` until the independently running YiLian process releases port 9420.
+- Packaged GUI automation passed after the independently running YiLian process released port 9420 naturally: visible window, matching health/version, screenshot-content check, normal close, port release and isolated uninstall all succeeded.
 - Remote CI remains `BLOCKED_BY_WORKFLOW_SCOPE`.
 - Real microphone, cloud Provider, audible TTS, acoustic echo behavior, direct spoken barge-in and installer usability remain `HUMAN_PENDING` under `v1-h-checklist.md`.
 - Formal v1.0.0 remains `NOT RELEASED`.

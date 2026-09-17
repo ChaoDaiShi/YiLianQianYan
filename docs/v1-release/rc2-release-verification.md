@@ -77,14 +77,14 @@ The first E2E launch found port 9420 already occupied by an independently runnin
 - SHA-256: `3B4FA8A73C5A155CCC447B81B094D3A268CDFBAEA29360D01B478C2FA37BE406`.
 - Signing: unsigned.
 - Build: PASS after the complete source gate, using `npm run build:windows -- -SkipTests -Version 1.0.0-rc.2`.
-- Packaged GUI automation: `BLOCKED_EXTERNAL` because an independently running YiLian process owns the product-fixed port 9420. It was not terminated by the release task. Run `scripts/test-windows-gui.ps1` after that process exits.
+- Packaged GUI automation: PASS after the independently running YiLian process released port 9420 naturally. The isolated install produced a visible 1214×838 window, reported healthy backend/database version `1.0.0-rc.2`, passed screenshot-content checks, closed normally, released port 9420 and uninstalled successfully.
 
 ## Release status
 
 - Technical source gate: `PASS`.
 - Installer build and checksum: `PASS`.
 - Source/installer candidate freeze: `FROZEN`.
-- Packaged GUI automation: `BLOCKED_EXTERNAL` as recorded above.
+- Packaged GUI automation: `PASS`.
 - Remote CI: `BLOCKED_BY_WORKFLOW_SCOPE`; no remote CI success is claimed.
 - Human acceptance: `HUMAN_PENDING`; use the current `v1-h-checklist.md`.
 - Formal v1.0.0: `NOT RELEASED`.
