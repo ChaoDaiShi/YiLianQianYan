@@ -14,7 +14,7 @@ function inspector(status: "runnable" | "invalidated", executor_ref: string | nu
   } as TaskNodeProjection;
   const noop = async () => {};
   return renderToStaticMarkup(createElement(TaskWorldInspector, {
-    node, expectedRevision: 1, revisions: [], checkpoints: [], dependencyEdges: [], dependencyCandidates: [],
+    graphId: "graph-test", node, expectedRevision: 1, revisions: [], checkpoints: [], dependencyEdges: [], dependencyCandidates: [],
     onSave: noop, onStart: noop, onStartExecution: noop, onRerun: noop, onCheckpoint: noop,
     onRestore: noop, onAddDependency: noop, onRemoveDependency: noop, graphLocked: false,
   }));

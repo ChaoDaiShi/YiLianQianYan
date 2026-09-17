@@ -43,6 +43,9 @@ import {
   classifyArtifactType,
   type ArtifactDisplayKind,
 } from "../../features/tasks/workspacePresentation";
+import ResourceBindingPanel from "../../features/resources/ResourceBindingPanel";
+import ArtifactResultsPanel from "../../features/tasks/ArtifactResultsPanel";
+import MemorySkillCandidatePanel from "../../features/memory/MemorySkillCandidatePanel";
 
 interface TaskDetailPanelProps {
   task: Task;
@@ -126,6 +129,12 @@ export default function TaskDetailPanel({
   const canStart = isTaskStartable(task.status);
   const canRetry = task.status === "failed" || task.status === "cancelled";
   const displayTitle = deriveTaskDisplayTitle(task.title);
+  const latestEvidenceExecution = executions?.find((execution) => execution.status === "completed");
+  const evidenceSource = latestEvidenceExecution ? {
+    kind: "task" as const,
+    task_id: task.id,
+    execution_id: latestEvidenceExecution.id,
+  } : undefined;
 
   return (
     <div className="space-y-3">
@@ -293,6 +302,10 @@ export default function TaskDetailPanel({
           </div>
         )}
       </DetailSection>
+
+      <ResourceBindingPanel target={{ kind: "task", task_id: task.id }} />
+      <ArtifactResultsPanel source={evidenceSource} completed={Boolean(latestEvidenceExecution)} />
+      <MemorySkillCandidatePanel source={evidenceSource} completed={Boolean(latestEvidenceExecution)} />
 
       {decisions && decisions.length > 0 && (
         <DetailSection title="用户决定" icon={<Info className="h-4 w-4 text-[var(--accent-gold)]" />}>

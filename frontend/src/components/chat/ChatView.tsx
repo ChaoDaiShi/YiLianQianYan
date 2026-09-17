@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   activateWorkflow,
+  createConversation,
   listWorkflows,
   loadConversation,
   sendMessage,
@@ -17,6 +18,7 @@ import {
   type AgentEvent,
   type Workflow,
 } from "../../api/client";
+import { bindResources } from "../../api/resources";
 import type { ConversationalAnchor } from "../../api/voice";
 import {
   approveAction,
@@ -429,8 +431,26 @@ export default function ChatView({
   }, []);
 
   const handleSend = useCallback(
-    (text: string) => {
-      if (!text.trim() || isLoading) return;
+    async (text: string, resourceIds: string[] = []) => {
+      if (!text.trim() || isLoading) return false;
+      let targetConversationId = currentConvId;
+      if (resourceIds.length > 0) {
+        if (!targetConversationId) {
+          const created = await createConversation(text.trim().slice(0, 80));
+          if (!created || typeof created.id !== "string" || !created.id.trim()) {
+            throw new Error("创建附件会话失败");
+          }
+          targetConversationId = created.id;
+          setCurrentConvId(created.id);
+          onConversationChange(created.id);
+        }
+        const boundConversationId = targetConversationId;
+        if (!boundConversationId) throw new Error("附件会话标识不可用");
+        await bindResources(
+          { kind: "conversation", conversation_id: boundConversationId },
+          resourceIds,
+        );
+      }
       shouldFollowMessagesRef.current = true;
       setError(null);
       setFinished(false);
@@ -444,16 +464,17 @@ export default function ChatView({
           created_at: Date.now(),
         },
       ]);
-      dispatchExecution({ type: "start_run", conversationId: currentConvId });
+      dispatchExecution({ type: "start_run", conversationId: targetConversationId });
       setIsLoading(true);
       abortRef.current = sendMessage(
         text,
-        currentConvId,
+        targetConversationId,
         handleAgentEvent,
         activeWorkflow?.id
       );
+      return true;
     },
-    [activeWorkflow, currentConvId, handleAgentEvent, isLoading]
+    [activeWorkflow, currentConvId, handleAgentEvent, isLoading, onConversationChange]
   );
 
   const handleRetry = useCallback(() => {
@@ -465,7 +486,7 @@ export default function ChatView({
         ? current.slice(0, -1)
         : current;
     });
-    handleSend(retryText);
+    void handleSend(retryText);
   }, [handleSend, isLoading, lastSubmittedText]);
 
   const handleStop = useCallback(async () => {
@@ -518,6 +539,7 @@ export default function ChatView({
           isLoading={isLoading}
           finished={finished}
           onSend={handleSend}
+          conversationId={currentConvId}
           onStop={handleStop}
           suggestedText={suggestedText}
           onTextUsed={() => setSuggestedText("")}
@@ -538,6 +560,7 @@ export default function ChatView({
           <footer className="conversation-composer shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
             <ChatInput
               onSend={handleSend}
+              conversationId={currentConvId}
               isLoading={isLoading}
               onStop={handleStop}
               suggestedText={suggestedText}

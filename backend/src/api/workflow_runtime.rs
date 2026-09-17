@@ -20,6 +20,7 @@ use crate::db::{WorkflowGraphRecord, WorkflowRunQuery};
 use crate::execution::{ExecutionContext, ExecutionId};
 use crate::safety::{SecurityExecutionGateway, SecuritySubject};
 use crate::server::AppServer;
+use crate::task::NodeContext;
 use crate::workflow::{
     LlmWorkflowAgentExecutor, SecurityGatewayNodeExecutor, WorkflowAgentExecutor,
     WorkflowGraphDefinition, WorkflowRun, WorkflowRunId, WorkflowRunner,
@@ -251,11 +252,30 @@ pub(crate) async fn execute_for_task_harness(
     server: Arc<AppServer>,
     workflow_graph_id: &str,
     cancel: CancellationToken,
+    node_context: Option<&NodeContext>,
 ) -> Result<Option<serde_json::Value>, String> {
-    let graph = server
+    let mut graph = server
         .db
         .get_workflow_graph(workflow_graph_id)?
         .ok_or_else(|| format!("workflow graph not found: {workflow_graph_id}"))?;
+    if let Some(node_context) = node_context {
+        let context = bounded_workflow_task_context(node_context);
+        for node in &mut graph.definition.nodes {
+            match &mut node.config {
+                crate::workflow::WorkflowNodeConfig::Agent { prompt } => {
+                    prompt.push_str(&context);
+                }
+                crate::workflow::WorkflowNodeConfig::Subagent { task, .. } => {
+                    task.push_str(&context);
+                }
+                _ => {}
+            }
+        }
+        graph
+            .definition
+            .validate()
+            .map_err(|error| error.to_string())?;
+    }
     let now = chrono::Utc::now().timestamp_millis();
     let context = ExecutionContext::new(
         ExecutionId::generate(),
@@ -307,6 +327,18 @@ pub(crate) async fn execute_for_task_harness(
         crate::workflow::WorkflowRunStatus::Failed => Err("workflow failed".to_string()),
         status => Err(format!("workflow ended in non-terminal status {status}")),
     }
+}
+
+fn bounded_workflow_task_context(context: &NodeContext) -> String {
+    let mut text = format!(
+        "\n\nTask context (authorized, bounded):\nGoal: {}\nInstructions: {}",
+        context.goal, context.instructions
+    );
+    if !context.resources.is_empty() {
+        text.push_str("\nResources:\n");
+        text.push_str(&context.resources.join("\n"));
+    }
+    text.chars().take(8_000).collect()
 }
 
 pub async fn get_workflow_run(
@@ -563,7 +595,7 @@ mod tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
 
-        let result = execute_for_task_harness(server.clone(), &graph_id, cancel).await;
+        let result = execute_for_task_harness(server.clone(), &graph_id, cancel, None).await;
 
         assert_eq!(result, Err("workflow cancelled".to_string()));
         assert!(server.active_workflow_runs.lock().is_empty());

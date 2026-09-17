@@ -520,12 +520,13 @@ impl WorkflowExecutionProvider for ExistingWorkflowProvider {
     async fn execute(
         &self,
         workflow_id: &str,
-        _context: &NodeContext,
+        context: &NodeContext,
     ) -> Result<Option<Value>, AdapterError> {
         super::workflow_runtime::execute_for_task_harness(
             Arc::clone(&self.server),
             workflow_id,
             self.cancel.clone(),
+            Some(context),
         )
         .await
         .map_err(AdapterError::Execution)

@@ -15,6 +15,9 @@ import {
   type TaskNodeProjection,
 } from "./taskGraphProjection";
 import { Badge, Button, EmptyState, Input, Panel, Textarea } from "../../components/ui";
+import ResourceBindingPanel from "../resources/ResourceBindingPanel";
+import ArtifactResultsPanel from "../tasks/ArtifactResultsPanel";
+import MemorySkillCandidatePanel from "../memory/MemorySkillCandidatePanel";
 
 interface TaskNodeDraft {
   kind: TaskNodeKind;
@@ -24,6 +27,7 @@ interface TaskNodeDraft {
 }
 
 interface TaskWorldInspectorProps {
+  graphId: string;
   node: TaskNodeProjection | null;
   expectedRevision: number;
   revisions: TaskRevisionSummary[];
@@ -45,6 +49,7 @@ interface TaskWorldInspectorProps {
 }
 
 export default function TaskWorldInspector({
+  graphId,
   node,
   expectedRevision,
   revisions,
@@ -102,6 +107,12 @@ export default function TaskWorldInspector({
   const execution_status = latestExecution?.status;
   const executionBusy = isActiveExecution(execution_status);
   const executionHistory: TaskNodeExecutionSummary[] = node.execution_history || [];
+  const evidenceSource = latestExecution ? {
+    kind: "node" as const,
+    graph_id: graphId,
+    node_id: node.id,
+    execution_id: latestExecution.execution_id,
+  } : undefined;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -276,6 +287,22 @@ export default function TaskWorldInspector({
             ))}
           </ol>
         )}
+      </section>
+
+      <section className="mt-5 border-t border-[var(--border-soft)] pt-4">
+        <ResourceBindingPanel target={{ kind: "node", graph_id: graphId, node_id: node.id }} />
+      </section>
+      <section className="mt-5 border-t border-[var(--border-soft)] pt-4">
+        <ArtifactResultsPanel
+          source={evidenceSource}
+          completed={latestExecution?.status === "succeeded"}
+        />
+      </section>
+      <section className="mt-5 border-t border-[var(--border-soft)] pt-4">
+        <MemorySkillCandidatePanel
+          source={evidenceSource}
+          completed={latestExecution?.status === "succeeded"}
+        />
       </section>
 
       {node.kind === "approval" && (

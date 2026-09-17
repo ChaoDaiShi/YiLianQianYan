@@ -9,6 +9,7 @@ import {
 import ChatInput from "./ChatInput";
 
 interface WorkbenchHomeProps {
+  conversationId?: string | null;
   connection: AgentRunState["connection"];
   pendingApprovals: PendingApproval[];
   isLoading: boolean;
@@ -96,6 +97,7 @@ const STATUS_META: Record<
 };
 
 export default function WorkbenchHome({
+  conversationId,
   connection,
   pendingApprovals,
   isLoading,
@@ -170,6 +172,7 @@ export default function WorkbenchHome({
         </div>
 
         <ChatInput
+          conversationId={conversationId}
           onSend={onSend}
           isLoading={isLoading}
           onStop={onStop}

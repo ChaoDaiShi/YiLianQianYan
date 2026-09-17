@@ -200,6 +200,7 @@ export default function TaskWorldPage() {
           /> : <EmptyState title="画布视图不可用" description="真实图已加载，但视觉状态尚未就绪。" className="py-20" />}
         </Panel>
         <TaskWorldInspector
+          graphId={graphId}
           node={selectedNode}
           expectedRevision={projection.revision}
           revisions={projection.revisions}
