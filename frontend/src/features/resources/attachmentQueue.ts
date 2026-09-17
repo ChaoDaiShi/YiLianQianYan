@@ -13,6 +13,11 @@ export function validateAttachment(file: Pick<File, "name" | "size" | "type">): 
   if (!file.size || file.size > MAX_ATTACHMENT_BYTES) return "文件须为 1 字节至 25 MiB";
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (!EXTENSIONS.has(extension)) return "暂不支持此文件类型";
+  const declared = file.type.split(";")[0].trim().toLowerCase();
+  const expected: Record<string,string> = { png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",pdf:"application/pdf",docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+  if (declared && declared !== "application/octet-stream") {
+    if (expected[extension] ? declared !== expected[extension] : !(declared.startsWith("text/") || ["application/json","application/xml","application/javascript"].includes(declared))) return "文件类型与 MIME 不一致";
+  }
   if (file.name.length > 255 || /[\u0000-\u001f]/.test(file.name)) return "文件名无效";
   return null;
 }

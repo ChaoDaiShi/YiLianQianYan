@@ -29,7 +29,7 @@ describe("bounded attachment queue", () => {
   it("rejects count, size and unsupported type before any upload", async () => {
     const deps = options(); const queue = new AttachmentQueue(deps);
     expect(() => queue.add(Array.from({ length: 9 }, () => file()))).toThrow();
-    queue.add([file("too-large.txt", 26 * 1024 * 1024), file("program.exe", 5, "application/octet-stream")]);
+    queue.add([file("too-large.txt", 26 * 1024 * 1024), file("program.exe", 5, "application/octet-stream"), file("false.png", 5, "text/plain")]);
     await queue.process();
     expect(queue.snapshot().every(item => item.state === "failed")).toBe(true);
     expect(deps.upload).not.toHaveBeenCalled();
