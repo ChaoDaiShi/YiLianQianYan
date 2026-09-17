@@ -512,6 +512,7 @@ fn executor_resolver(
 
 struct ExistingWorkflowProvider {
     server: Arc<AppServer>,
+    cancel: tokio_util::sync::CancellationToken,
 }
 
 #[async_trait]
@@ -524,7 +525,7 @@ impl WorkflowExecutionProvider for ExistingWorkflowProvider {
         super::workflow_runtime::execute_for_task_harness(
             Arc::clone(&self.server),
             workflow_id,
-            tokio_util::sync::CancellationToken::new(),
+            self.cancel.clone(),
         )
         .await
         .map_err(AdapterError::Execution)
@@ -544,12 +545,30 @@ async fn dispatch_execution(
         .ok_or_else(|| {
             TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(execution_id.clone()))
         })?;
+    if execution.status == crate::task::NodeExecutionStatus::Cancelled {
+        return Ok(execution);
+    }
+    let cancel = server
+        .task_world
+        .execution_cancellation_token(&execution_id)
+        .ok_or_else(|| {
+            TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(execution_id.clone()))
+        })?;
     let registry = AdapterRegistry::new()
         .with_adapter(CommandExecutor::new(server.command_router.clone()))
         .with_adapter(WorkflowExecutor::new(Arc::new(ExistingWorkflowProvider {
             server: Arc::clone(&server),
+            cancel,
         })));
-    match registry.dispatch(&plan, &execution).await {
+    let result = registry.dispatch(&plan, &execution).await;
+    // A cooperative cancellation may settle after an in-flight atomic call.
+    // Preserve the authoritative cancelled row and discard its late output.
+    if let Some((_, current)) = server.task_world.find_execution(&execution_id) {
+        if current.status == crate::task::NodeExecutionStatus::Cancelled {
+            return Ok(current);
+        }
+    }
+    match result {
         Ok(ExecutorDispatch::Completed {
             output: Some(output),
         }) => {
@@ -863,6 +882,118 @@ mod core_path_tests {
 
     async fn body(response: Response) -> Value {
         serde_json::from_slice(&to_bytes(response.into_body(), 256 * 1024).await.unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn cancellation_and_pause_stop_real_workflow_after_inflight_model_returns() {
+        for pause in [false, true] {
+            let server = server();
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let provider = axum::Router::new().route("/chat/completions", axum::routing::post({
+                let entered = entered.clone();
+                let release = release.clone();
+                move || { let entered = entered.clone(); let release = release.clone(); async move {
+                    entered.notify_one();
+                    release.notified().await;
+                    Json(json!({"id":"blocking-model-test","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Local model result"}}]}))
+                }}
+            }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let provider_handle = tokio::spawn(async move {
+                axum::serve(listener, provider).await.unwrap();
+            });
+            {
+                let mut config = server.config.write();
+                config.model.base_url = format!("http://{address}");
+                config.model.api_key = "local-test-placeholder".into();
+                config.model.invoke_timeout_ms = 5000;
+            }
+            server.db.create_workflow_graph(&crate::db::WorkflowGraphRecord {
+                id: "cancellable".into(), name: "Cancellable".into(), description: String::new(), created_at: 1, updated_at: 1,
+                definition: serde_json::from_value(json!({"schema_version":1,"entry_node_id":"model","nodes":[
+                    {"id":"model","kind":"agent","config":{"type":"agent","prompt":"Return local test text"}},
+                    {"id":"after","kind":"output","config":{"type":"output","template":null}}
+                ],"edges":[{"from":"model","to":"after"}]})).unwrap(),
+            }).unwrap();
+            let id = TaskGraphId::new("cancel-graph").unwrap();
+            let node_id = TaskNodeId::new("work").unwrap();
+            server
+                .task_world
+                .create_graph(
+                    id.clone(),
+                    vec![TaskNode::new(
+                        node_id.clone(),
+                        TaskNodeKind::Work,
+                        "Cancellable",
+                        json!({"executor_ref":"workflow://cancellable"}),
+                    )
+                    .unwrap()],
+                    vec![],
+                    1,
+                )
+                .unwrap();
+            let execution = server
+                .task_world
+                .start_execution_with_resolver(
+                    &id,
+                    &node_id,
+                    1,
+                    executor_resolver(&server, &id, &node_id).unwrap(),
+                    2,
+                )
+                .unwrap();
+            let running = tokio::spawn(dispatch_execution(
+                server.clone(),
+                id.clone(),
+                execution.id.clone(),
+            ));
+            tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+                .await
+                .unwrap();
+            assert!(server
+                .task_world
+                .cancel_execution(&id, &execution.id, 99, 3)
+                .is_err());
+            if pause {
+                server.task_world.pause_task(&id, 4).unwrap();
+            } else {
+                server
+                    .task_world
+                    .cancel_execution(&id, &execution.id, 1, 4)
+                    .unwrap();
+            }
+            release.notify_one();
+            let settled = tokio::time::timeout(std::time::Duration::from_secs(5), running)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(settled.status, crate::task::NodeExecutionStatus::Cancelled);
+            let runs = server
+                .db
+                .list_workflow_runs(&crate::db::WorkflowRunQuery::default())
+                .unwrap();
+            assert_eq!(runs.len(), 1);
+            assert_eq!(
+                runs[0].run.status,
+                crate::workflow::WorkflowRunStatus::Cancelled
+            );
+            assert_ne!(
+                runs[0].run.node_states[1].status,
+                crate::workflow::NodeRunStatus::Completed
+            );
+            assert_eq!(
+                server
+                    .task_world
+                    .list_node_executions(&id, &node_id)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            provider_handle.abort();
+        }
     }
 
     #[tokio::test]

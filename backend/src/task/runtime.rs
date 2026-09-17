@@ -4,6 +4,7 @@ use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value};
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 use crate::db::{Database, TaskExecutionPersistenceError, TaskWorldPersistenceError};
 use crate::shared::command::{CommandRequest, CommandResult, CommandRouter, CommandStatus};
@@ -94,10 +95,27 @@ pub struct TaskWorldRuntime {
     /// reservations. A pause that acquires this guard first prevents a later
     /// dispatch from passing the running-state check.
     control_dispatch_lock: Arc<Mutex<()>>,
+    execution_tokens: Arc<Mutex<HashMap<NodeExecutionId, CancellationToken>>>,
     events: EventHub,
 }
 
 impl TaskWorldRuntime {
+    /// The task-owned cancellation signal reserved before provider dispatch.
+    pub fn execution_cancellation_token(
+        &self,
+        execution_id: &NodeExecutionId,
+    ) -> Option<CancellationToken> {
+        self.execution_tokens.lock().get(execution_id).cloned()
+    }
+
+    fn finish_execution_token(&self, execution_id: &NodeExecutionId, cancel: bool) {
+        if let Some(token) = self.execution_tokens.lock().remove(execution_id) {
+            if cancel {
+                token.cancel();
+            }
+        }
+    }
+
     /// Load all persisted v1 snapshots and explicitly install migration 1000.
     pub fn new(database: &Database, events: EventHub) -> Result<Self, TaskWorldRuntimeError> {
         database.initialize_task_world_schema()?;
@@ -157,6 +175,7 @@ impl TaskWorldRuntime {
             execution_controls: Arc::new(RwLock::new(execution_controls)),
             canvas_write_lock: Arc::new(Mutex::new(())),
             control_dispatch_lock: Arc::new(Mutex::new(())),
+            execution_tokens: Arc::new(Mutex::new(HashMap::new())),
             events,
         })
     }
@@ -242,10 +261,8 @@ impl TaskWorldRuntime {
         Ok(())
     }
 
-    /// Pause a graph without erasing verified results.  Local attempts without
-    /// an external executor are cancelled with a resumable marker; command or
-    /// provider-backed attempts remain untouched because v1 cannot claim an
-    /// external action was rolled back.
+    /// Pause without erasing history. Local and registered Workflow attempts
+    /// receive a cooperative stop; no external action rollback is claimed.
     pub fn pause_task(
         &self,
         graph_id: &TaskGraphId,
@@ -279,11 +296,18 @@ impl TaskWorldRuntime {
                     .all_attempts()
                     .into_iter()
                     .filter(|execution| {
-                        execution.status.is_active() && execution.executor_ref.is_none()
+                        execution.status.is_active()
+                            && (execution.executor_ref.is_none()
+                                || (execution
+                                    .executor_ref
+                                    .as_ref()
+                                    .is_some_and(|reference| reference.scheme() == "workflow")
+                                    && self.execution_tokens.lock().contains_key(&execution.id)))
                     })
                     .collect::<Vec<_>>();
                 for execution in active_attempts {
                     harness.cancel_execution_for_pause(&execution.id, updated_at)?;
+                    self.finish_execution_token(&execution.id, true);
                     let updated = harness.execution(&execution.id).cloned().ok_or_else(|| {
                         TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(
                             execution.id.clone(),
@@ -669,6 +693,9 @@ impl TaskWorldRuntime {
             TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(execution_id.clone()))
         })?;
         self.database.save_node_execution(&execution)?;
+        self.execution_tokens
+            .lock()
+            .insert(execution_id.clone(), CancellationToken::new());
         drop(harnesses);
         self.publish(
             "task.execution.created",
@@ -752,6 +779,7 @@ impl TaskWorldRuntime {
             TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(execution_id.clone()))
         })?;
         self.database.update_node_execution(&execution)?;
+        self.finish_execution_token(execution_id, false);
         drop(harnesses);
         self.publish(
             if execution.status == NodeExecutionStatus::Succeeded {
@@ -787,6 +815,7 @@ impl TaskWorldRuntime {
             TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(execution_id.clone()))
         })?;
         self.database.update_node_execution(&execution)?;
+        self.finish_execution_token(execution_id, true);
         drop(harnesses);
         self.publish(
             "task.execution.failed",
@@ -842,6 +871,7 @@ impl TaskWorldRuntime {
             }
             NodeExecutionStatus::Cancelled => {
                 harness.cancel_execution(execution_id, now)?;
+                self.finish_execution_token(execution_id, true);
             }
             _ => {}
         }
@@ -872,6 +902,7 @@ impl TaskWorldRuntime {
         expected_revision: u64,
         now: i64,
     ) -> Result<NodeExecution, TaskWorldRuntimeError> {
+        let _control_dispatch_guard = self.control_dispatch_lock.lock();
         let expected_revision = GraphRevision::new(expected_revision)?;
         let supervisor = self
             .supervisors
@@ -2193,6 +2224,101 @@ mod tests {
     };
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn execution_cancellation_tokens_validate_target_and_clean_up_terminal_attempts() {
+        let database = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+        let graph_id = TaskGraphId::new("token-owner").unwrap();
+        let other_id = TaskGraphId::new("other-graph").unwrap();
+        let node_id = TaskNodeId::new("work").unwrap();
+        runtime
+            .create_graph(
+                graph_id.clone(),
+                vec![TaskNode::new(
+                    node_id.clone(),
+                    TaskNodeKind::Work,
+                    "Work",
+                    json!({"executor_ref":"workflow://local"}),
+                )
+                .unwrap()],
+                vec![],
+                1,
+            )
+            .unwrap();
+        runtime
+            .create_graph(other_id.clone(), vec![], vec![], 1)
+            .unwrap();
+        let first = runtime
+            .start_execution_with_resolver(
+                &graph_id,
+                &node_id,
+                1,
+                ExecutorResolver::new().with_workflow("local"),
+                2,
+            )
+            .unwrap();
+        let token = runtime
+            .execution_cancellation_token(&first.id)
+            .expect("registered before dispatch");
+        assert!(runtime
+            .cancel_execution(&graph_id, &first.id, 9, 3)
+            .is_err());
+        assert!(runtime
+            .cancel_execution(&other_id, &first.id, 1, 3)
+            .is_err());
+        assert!(!token.is_cancelled());
+        runtime
+            .cancel_execution(&graph_id, &first.id, 1, 4)
+            .unwrap();
+        assert!(token.is_cancelled());
+        assert!(runtime.execution_cancellation_token(&first.id).is_none());
+        runtime
+            .prepare_rerun_from_node(&graph_id, &node_id, 1, 5)
+            .unwrap();
+        let second = runtime
+            .start_execution_with_resolver(
+                &graph_id,
+                &node_id,
+                1,
+                ExecutorResolver::new().with_workflow("local"),
+                6,
+            )
+            .unwrap();
+        runtime
+            .complete_execution(
+                &graph_id,
+                &second.id,
+                json!({"ok":true}),
+                ValidationPolicy::StructuredResult,
+                7,
+            )
+            .unwrap();
+        assert!(runtime.execution_cancellation_token(&second.id).is_none());
+        runtime
+            .prepare_rerun_from_node(&graph_id, &node_id, 1, 8)
+            .unwrap();
+        let third = runtime
+            .start_execution_with_resolver(
+                &graph_id,
+                &node_id,
+                1,
+                ExecutorResolver::new().with_workflow("local"),
+                9,
+            )
+            .unwrap();
+        runtime
+            .fail_execution(&graph_id, &third.id, "provider_error", "local failure", 10)
+            .unwrap();
+        assert!(runtime.execution_cancellation_token(&third.id).is_none());
+        assert_eq!(
+            runtime
+                .list_node_executions(&graph_id, &node_id)
+                .unwrap()
+                .len(),
+            3
+        );
+    }
 
     #[test]
     fn graph_creation_rolls_back_when_execution_control_persistence_fails() {
