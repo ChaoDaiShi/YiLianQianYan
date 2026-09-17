@@ -50,10 +50,10 @@ pub async fn ingest_handler(
     };
     let service = server.resource_service.clone();
     let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         crate::resource_input::ingest_resource(&service, &query.name, &mime_type, &body)
     })
     .await;
-    drop(permit);
     match result {
         Ok(Ok(resource)) => (StatusCode::CREATED, Json(resource)).into_response(),
         Ok(Err(error)) => input_error(StatusCode::BAD_REQUEST, error),
@@ -77,10 +77,11 @@ pub async fn preview_handler(
         return input_error(StatusCode::TOO_MANY_REQUESTS, "资源解析繁忙，请重试".into());
     };
     let service = server.resource_service.clone();
-    let result =
-        tokio::task::spawn_blocking(move || crate::resource_input::resource_preview(&service, &id))
-            .await;
-    drop(permit);
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        crate::resource_input::resource_preview(&service, &id)
+    })
+    .await;
     match result {
         Ok(Ok(preview)) => Json(preview).into_response(),
         Ok(Err(error)) => input_error(StatusCode::NOT_FOUND, error),
