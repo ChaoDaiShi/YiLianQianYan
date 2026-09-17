@@ -7,8 +7,17 @@ import { chromium } from "playwright-core";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..");
 const frontendRoot = resolve(import.meta.dirname, "..");
-const backendPort = 9420;
-const frontendPort = 1420;
+
+function configuredPort(name, fallback) {
+  const port = Number(process.env[name] ?? fallback);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${name} must be a valid TCP port`);
+  }
+  return port;
+}
+
+const backendPort = configuredPort("YILIAN_E2E_BACKEND_PORT", 9420);
+const frontendPort = configuredPort("YILIAN_E2E_FRONTEND_PORT", 1420);
 const controlToken = "v1-e2e-control-session-token-".padEnd(64, "x");
 const edgePaths = [
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
