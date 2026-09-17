@@ -1,6 +1,6 @@
 # v1.0-rc.1 release verification
 
-Current status: `HUMAN_PENDING`
+Current status: `BLOCKED` (remote v1 CI trigger) + `HUMAN_PENDING` (V1-H)
 
 The candidate is not a formal v1.0 release. This report records current evidence without promoting historical results to current-SHA proof.
 
@@ -42,6 +42,7 @@ Installer artifact (unsigned RC):
 
 ## Remaining actions
 
-1. Push only `HEAD:refs/heads/v1/release-work`, verify the remote SHA, and do not create a tag or GitHub Release.
-2. Complete `v1-h-checklist.md`. Real microphone, hearing, direct-speech interruption, representative file/artifact use and hands-on installer experience remain human evidence.
-3. Keep the release at RC/HUMAN_PENDING until all applicable V1-H rows are accepted.
+1. The current PAT lacks GitHub `workflow` scope, so GitHub rejected the commit that added `v1/**` to the Actions push trigger. That net workflow change is removed from the uploadable branch; enabling remote v1 CI remains `BLOCKED` until an appropriately scoped credential or a maintainer workflow edit is available.
+2. Push only `HEAD:refs/heads/v1/release-work`, verify the remote SHA, and do not create a tag or GitHub Release.
+3. Complete `v1-h-checklist.md`. Real microphone, hearing, direct-speech interruption, representative file/artifact use and hands-on installer experience remain human evidence.
+4. Keep the release at RC; formal v1.0 requires the CI trigger blocker to be cleared and all applicable V1-H rows to be accepted.

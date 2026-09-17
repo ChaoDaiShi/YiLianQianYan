@@ -7,7 +7,6 @@ on:
       - develop
       - "prep/**"
       - "feat/**"
-      - "v1/**"
   pull_request:
     branches:
       - main
