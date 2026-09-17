@@ -1237,7 +1237,7 @@ impl TaskWorldRuntime {
                 ));
             }
         }
-        let mutation = self.mutate_graph(
+        let mutation = self.mutate_graph_locked(
             graph_id,
             expected_revision,
             now,
@@ -1813,6 +1813,7 @@ impl TaskWorldRuntime {
         expected_revision: u64,
         now: i64,
     ) -> Result<TaskGraph, TaskWorldRuntimeError> {
+        let _control_dispatch_guard = self.control_dispatch_lock.lock();
         let checkpoint = self
             .database
             .load_task_checkpoint(checkpoint_id)?
@@ -1831,6 +1832,7 @@ impl TaskWorldRuntime {
             });
         }
         let mut candidate = current.clone();
+        self.ensure_no_active_harness_execution(graph_id)?;
         let _restored_revision = candidate.restore(&checkpoint)?;
         candidate.graph().validate()?;
         self.database
@@ -1863,6 +1865,38 @@ impl TaskWorldRuntime {
     where
         F: FnOnce(&mut TaskSupervisor) -> Result<(), TaskSupervisorError>,
     {
+        let _control_dispatch_guard = self.control_dispatch_lock.lock();
+        self.mutate_graph_locked(graph_id, expected_revision, now, change, edit)
+    }
+
+    fn ensure_no_active_harness_execution(
+        &self,
+        graph_id: &TaskGraphId,
+    ) -> Result<(), TaskWorldRuntimeError> {
+        if let Some(execution) = self.harnesses.read().get(graph_id).and_then(|harness| {
+            harness
+                .all_attempts()
+                .into_iter()
+                .find(|execution| execution.status.is_active())
+        }) {
+            return Err(TaskWorldRuntimeError::Harness(
+                TaskHarnessError::ActiveExecution(execution.id),
+            ));
+        }
+        Ok(())
+    }
+
+    fn mutate_graph_locked<F>(
+        &self,
+        graph_id: &TaskGraphId,
+        expected_revision: u64,
+        now: i64,
+        change: &str,
+        edit: F,
+    ) -> Result<CommittedGraphMutation, TaskWorldRuntimeError>
+    where
+        F: FnOnce(&mut TaskSupervisor) -> Result<(), TaskSupervisorError>,
+    {
         let expected_revision = GraphRevision::new(expected_revision)?;
         let mut supervisors = self.supervisors.write();
         let current = supervisors
@@ -1876,6 +1910,7 @@ impl TaskWorldRuntime {
             });
         }
         let before = current.clone();
+        self.ensure_no_active_harness_execution(graph_id)?;
         let mut candidate = current.clone();
 
         // All edits operate on a candidate.  Supervisor graph edits validate
@@ -2224,6 +2259,138 @@ mod tests {
     };
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn active_harness_semantic_edits_are_rejected_before_any_persistence() {
+        let mut violations = Vec::new();
+        for operation in [
+            "update",
+            "delete",
+            "add-node",
+            "add-edge",
+            "delete-edge",
+            "restore",
+        ] {
+            let database = Database::new(Path::new(":memory:")).unwrap();
+            let runtime = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+            let id = TaskGraphId::new("active-edit").unwrap();
+            let active = TaskNodeId::new("a").unwrap();
+            let dependent = TaskNodeId::new("b").unwrap();
+            let unrelated = TaskNodeId::new("c").unwrap();
+            let nodes = [&active, &dependent, &unrelated]
+                .into_iter()
+                .map(|node_id| {
+                    TaskNode::new(
+                        node_id.clone(),
+                        TaskNodeKind::Work,
+                        node_id.to_string(),
+                        json!({"executor_ref":"workflow://local"}),
+                    )
+                    .unwrap()
+                })
+                .collect();
+            let original = runtime
+                .create_graph(
+                    id.clone(),
+                    nodes,
+                    vec![TaskEdge::new(active.clone(), dependent.clone())],
+                    1,
+                )
+                .unwrap();
+            let checkpoint = runtime.checkpoint(&id, 1, 2).unwrap();
+            let attempt = runtime
+                .start_execution_with_resolver(
+                    &id,
+                    &active,
+                    1,
+                    ExecutorResolver::new().with_workflow("local"),
+                    3,
+                )
+                .unwrap();
+            let revisions = database.load_task_revision_history(&id).unwrap();
+            let history =
+                serde_json::to_value(runtime.list_node_executions(&id, &active).unwrap()).unwrap();
+            let result = match operation {
+                "update" => runtime.update_node(
+                    &id,
+                    TaskNode::new(active.clone(), TaskNodeKind::Work, "Changed", json!({}))
+                        .unwrap(),
+                    1,
+                    4,
+                ),
+                "delete" => runtime.delete_node(&id, &active, 1, 4),
+                "add-node" => runtime.add_node(
+                    &id,
+                    TaskNode::new(
+                        TaskNodeId::new("new").unwrap(),
+                        TaskNodeKind::Work,
+                        "New",
+                        json!({}),
+                    )
+                    .unwrap(),
+                    1,
+                    4,
+                ),
+                "add-edge" => runtime.add_edge(&id, TaskEdge::new(active.clone(), unrelated), 1, 4),
+                "delete-edge" => {
+                    runtime.delete_edge(&id, &TaskEdge::new(active.clone(), dependent), 1, 4)
+                }
+                "restore" => runtime.restore(&id, checkpoint.id.as_str(), 1, 4),
+                _ => unreachable!(),
+            };
+            let unchanged = result.is_err()
+                && runtime.get_graph(&id).as_ref() == Some(&original)
+                && database
+                    .load_task_supervisor_snapshot(&id)
+                    .unwrap()
+                    .unwrap()
+                    .supervisor
+                    .graph()
+                    == &original
+                && database.load_task_revision_history(&id).unwrap() == revisions
+                && serde_json::to_value(runtime.list_node_executions(&id, &active).unwrap())
+                    .unwrap()
+                    == history
+                && runtime.find_execution(&attempt.id).unwrap().1.status
+                    == NodeExecutionStatus::Dispatching;
+            if !unchanged {
+                violations.push(operation);
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "active edits changed state before rejecting: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn active_harness_keeps_canvas_layout_writes_independent() {
+        let database = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+        let id = TaskGraphId::new("active-layout").unwrap();
+        let node_id = TaskNodeId::new("work").unwrap();
+        runtime
+            .create_graph(
+                id.clone(),
+                vec![
+                    TaskNode::new(node_id.clone(), TaskNodeKind::Work, "Work", json!({})).unwrap(),
+                ],
+                vec![],
+                1,
+            )
+            .unwrap();
+        runtime.start_execution(&id, &node_id, 1, 2).unwrap();
+        let mut view = runtime.get_canvas_view(&id).unwrap();
+        let revision = view.view_revision;
+        view.viewport.x = 42.0;
+        let saved = runtime.save_canvas_view(&id, view, revision, 3).unwrap();
+        assert_eq!(saved.view_revision, revision + 1);
+        assert_eq!(runtime.get_graph(&id).unwrap().revision.value(), 1);
+        assert_eq!(
+            runtime.list_node_executions(&id, &node_id).unwrap().len(),
+            1
+        );
+    }
 
     #[test]
     fn execution_cancellation_tokens_validate_target_and_clean_up_terminal_attempts() {
