@@ -537,7 +537,6 @@ async fn dispatch_execution(
     graph_id: TaskGraphId,
     execution_id: NodeExecutionId,
 ) -> Result<NodeExecution, TaskWorldRuntimeError> {
-    let plan = server.task_world.execution_plan(&graph_id, &execution_id)?;
     let execution = server
         .task_world
         .find_execution(&execution_id)
@@ -548,12 +547,11 @@ async fn dispatch_execution(
     if execution.status == crate::task::NodeExecutionStatus::Cancelled {
         return Ok(execution);
     }
-    let cancel = server
+    let ownership = server
         .task_world
-        .execution_cancellation_token(&execution_id)
-        .ok_or_else(|| {
-            TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(execution_id.clone()))
-        })?;
+        .claim_execution_dispatch(&graph_id, &execution_id)?;
+    let cancel = ownership.cancellation_token();
+    let plan = server.task_world.execution_plan(&graph_id, &execution_id)?;
     let registry = AdapterRegistry::new()
         .with_adapter(CommandExecutor::new(server.command_router.clone()))
         .with_adapter(WorkflowExecutor::new(Arc::new(ExistingWorkflowProvider {
@@ -944,6 +942,7 @@ mod core_path_tests {
                     2,
                 )
                 .unwrap();
+            let checkpoint = server.task_world.checkpoint(&id, 1, 2).unwrap();
             let running = tokio::spawn(dispatch_execution(
                 server.clone(),
                 id.clone(),
@@ -964,6 +963,50 @@ mod core_path_tests {
                     .cancel_execution(&id, &execution.id, 1, 4)
                     .unwrap();
             }
+            if pause {
+                server.task_world.resume_task(&id, 5).unwrap();
+            }
+            let graph_before = server.task_world.get_graph(&id).unwrap();
+            let history_before = serde_json::to_value(
+                server
+                    .task_world
+                    .list_node_executions(&id, &node_id)
+                    .unwrap(),
+            )
+            .unwrap();
+            let mut changed = graph_before.nodes[0].clone();
+            changed.title = "Must remain blocked until provider settles".into();
+            assert!(server.task_world.update_node(&id, changed, 1, 6).is_err());
+            assert!(server.task_world.delete_node(&id, &node_id, 1, 6).is_err());
+            assert!(server
+                .task_world
+                .restore(&id, checkpoint.id.as_str(), 1, 6)
+                .is_err());
+            assert!(server
+                .task_world
+                .prepare_rerun_from_node(&id, &node_id, 1, 6)
+                .is_err());
+            assert!(server
+                .task_world
+                .start_execution_with_resolver(
+                    &id,
+                    &node_id,
+                    1,
+                    executor_resolver(&server, &id, &node_id).unwrap(),
+                    6
+                )
+                .is_err());
+            assert_eq!(server.task_world.get_graph(&id).unwrap(), graph_before);
+            assert_eq!(
+                serde_json::to_value(
+                    server
+                        .task_world
+                        .list_node_executions(&id, &node_id)
+                        .unwrap()
+                )
+                .unwrap(),
+                history_before
+            );
             release.notify_one();
             let settled = tokio::time::timeout(std::time::Duration::from_secs(5), running)
                 .await
@@ -971,6 +1014,10 @@ mod core_path_tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(settled.status, crate::task::NodeExecutionStatus::Cancelled);
+            assert!(server
+                .task_world
+                .execution_cancellation_token(&execution.id)
+                .is_none());
             let runs = server
                 .db
                 .list_workflow_runs(&crate::db::WorkflowRunQuery::default())
@@ -992,6 +1039,25 @@ mod core_path_tests {
                     .len(),
                 1
             );
+            server
+                .task_world
+                .prepare_rerun_from_node(&id, &node_id, 1, 7)
+                .unwrap();
+            let retry = server
+                .task_world
+                .start_execution_with_resolver(
+                    &id,
+                    &node_id,
+                    1,
+                    executor_resolver(&server, &id, &node_id).unwrap(),
+                    8,
+                )
+                .unwrap();
+            assert_eq!(retry.attempt, 2);
+            server
+                .task_world
+                .cancel_execution(&id, &retry.id, 1, 9)
+                .unwrap();
             provider_handle.abort();
         }
     }

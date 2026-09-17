@@ -78,6 +78,33 @@ struct CommittedGraphMutation {
     newly_ready: Vec<TaskNodeId>,
 }
 
+struct ExecutionCancellation {
+    graph_id: TaskGraphId,
+    token: CancellationToken,
+    in_flight: bool,
+}
+
+/// Owns one actual provider future, independently of its projected attempt
+/// status. Dropping the future settles ownership and releases its signal.
+pub struct TaskDispatchLease {
+    execution_id: NodeExecutionId,
+    token: CancellationToken,
+    registry: Arc<Mutex<HashMap<NodeExecutionId, ExecutionCancellation>>>,
+}
+
+impl TaskDispatchLease {
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.token.clone()
+    }
+}
+
+impl Drop for TaskDispatchLease {
+    fn drop(&mut self) {
+        self.token.cancel();
+        self.registry.lock().remove(&self.execution_id);
+    }
+}
+
 /// The authoritative in-memory Task World registry.
 ///
 /// Each graph has exactly one supervisor owned by this runtime.  Persistence
@@ -95,7 +122,7 @@ pub struct TaskWorldRuntime {
     /// reservations. A pause that acquires this guard first prevents a later
     /// dispatch from passing the running-state check.
     control_dispatch_lock: Arc<Mutex<()>>,
-    execution_tokens: Arc<Mutex<HashMap<NodeExecutionId, CancellationToken>>>,
+    execution_tokens: Arc<Mutex<HashMap<NodeExecutionId, ExecutionCancellation>>>,
     events: EventHub,
 }
 
@@ -105,13 +132,64 @@ impl TaskWorldRuntime {
         &self,
         execution_id: &NodeExecutionId,
     ) -> Option<CancellationToken> {
-        self.execution_tokens.lock().get(execution_id).cloned()
+        self.execution_tokens
+            .lock()
+            .get(execution_id)
+            .map(|entry| entry.token.clone())
+    }
+
+    pub fn claim_execution_dispatch(
+        &self,
+        graph_id: &TaskGraphId,
+        execution_id: &NodeExecutionId,
+    ) -> Result<TaskDispatchLease, TaskWorldRuntimeError> {
+        let _control_dispatch_guard = self.control_dispatch_lock.lock();
+        let harnesses = self.harnesses.read();
+        let execution = harnesses
+            .get(graph_id)
+            .and_then(|harness| harness.execution(execution_id))
+            .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
+        if !execution.status.is_active() {
+            return Err(TaskHarnessError::InvalidValidationStatus(execution.status).into());
+        }
+        let mut registry = self.execution_tokens.lock();
+        let entry = registry
+            .get_mut(execution_id)
+            .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
+        if entry.in_flight {
+            return Err(TaskHarnessError::ActiveExecution(execution_id.clone()).into());
+        }
+        entry.in_flight = true;
+        Ok(TaskDispatchLease {
+            execution_id: execution_id.clone(),
+            token: entry.token.clone(),
+            registry: Arc::clone(&self.execution_tokens),
+        })
+    }
+
+    fn ensure_no_unsettled_provider(
+        &self,
+        graph_id: &TaskGraphId,
+    ) -> Result<(), TaskWorldRuntimeError> {
+        if let Some((id, _)) = self
+            .execution_tokens
+            .lock()
+            .iter()
+            .find(|(_, entry)| entry.graph_id == *graph_id && entry.in_flight)
+        {
+            return Err(TaskHarnessError::ActiveExecution(id.clone()).into());
+        }
+        Ok(())
     }
 
     fn finish_execution_token(&self, execution_id: &NodeExecutionId, cancel: bool) {
-        if let Some(token) = self.execution_tokens.lock().remove(execution_id) {
+        let mut registry = self.execution_tokens.lock();
+        if let Some(entry) = registry.get(execution_id) {
             if cancel {
-                token.cancel();
+                entry.token.cancel();
+            }
+            if !entry.in_flight {
+                registry.remove(execution_id);
             }
         }
     }
@@ -436,6 +514,9 @@ impl TaskWorldRuntime {
         now: i64,
     ) -> Result<Vec<NodeExecution>, TaskWorldRuntimeError> {
         self.ensure_execution_allowed(graph_id)?;
+        if self.ensure_no_unsettled_provider(graph_id).is_err() {
+            return Ok(Vec::new());
+        }
         let graph = self.ensure_graph(graph_id)?;
         let mut harnesses = self.harnesses.write();
         let harness = harnesses
@@ -668,6 +749,7 @@ impl TaskWorldRuntime {
     ) -> Result<NodeExecution, TaskWorldRuntimeError> {
         let _control_dispatch_guard = self.control_dispatch_lock.lock();
         self.ensure_execution_allowed(graph_id)?;
+        self.ensure_no_unsettled_provider(graph_id)?;
         let expected_revision = GraphRevision::new(expected_revision)?;
         let graph = self.ensure_graph(graph_id)?;
         let supervisors = self.supervisors.read();
@@ -693,9 +775,14 @@ impl TaskWorldRuntime {
             TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(execution_id.clone()))
         })?;
         self.database.save_node_execution(&execution)?;
-        self.execution_tokens
-            .lock()
-            .insert(execution_id.clone(), CancellationToken::new());
+        self.execution_tokens.lock().insert(
+            execution_id.clone(),
+            ExecutionCancellation {
+                graph_id: graph_id.clone(),
+                token: CancellationToken::new(),
+                in_flight: false,
+            },
+        );
         drop(harnesses);
         self.publish(
             "task.execution.created",
@@ -952,6 +1039,7 @@ impl TaskWorldRuntime {
     ) -> Result<Vec<TaskNodeId>, TaskWorldRuntimeError> {
         let _control_dispatch_guard = self.control_dispatch_lock.lock();
         self.ensure_execution_allowed(graph_id)?;
+        self.ensure_no_unsettled_provider(graph_id)?;
         let expected_revision = GraphRevision::new(expected_revision)?;
         let supervisor = self
             .supervisors
@@ -1019,6 +1107,7 @@ impl TaskWorldRuntime {
     ) -> Result<NodeExecution, TaskWorldRuntimeError> {
         let _control_dispatch_guard = self.control_dispatch_lock.lock();
         self.ensure_execution_allowed(graph_id)?;
+        self.ensure_no_unsettled_provider(graph_id)?;
         let graph = self.ensure_graph(graph_id)?;
         let mut harnesses = self.harnesses.write();
         let harness = harnesses
@@ -1873,6 +1962,7 @@ impl TaskWorldRuntime {
         &self,
         graph_id: &TaskGraphId,
     ) -> Result<(), TaskWorldRuntimeError> {
+        self.ensure_no_unsettled_provider(graph_id)?;
         if let Some(execution) = self.harnesses.read().get(graph_id).and_then(|harness| {
             harness
                 .all_attempts()
