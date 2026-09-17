@@ -1,17 +1,33 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button, Modal } from "../ui";
 import { NAV_GROUPS } from "../layout/navGroups";
 import { MANDATORY_NAV, TRUSTED_MODULES, type ProductPreferences } from "./productPreferences";
 import { useProductPreferences } from "./useProductPreferences";
 
 export default function ModuleSetup() {
+  const navigate = useNavigate();
   const { preferences, loaded, error, save } = useProductPreferences();
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [draft, setDraft] = useState<ProductPreferences>(preferences);
   const [saving, setSaving] = useState(false);
+  const [providerStepOpen, setProviderStepOpen] = useState(false);
   useEffect(() => { if (loaded && !preferences.setup_completed && !dismissed) { setDraft(preferences); setOpen(true); } }, [loaded, preferences, dismissed]);
   const close = () => { setDismissed(true); setOpen(false); };
+  const saveModuleSetup = async () => {
+    const firstRun = !preferences.setup_completed;
+    setSaving(true);
+    try {
+      await save({ ...draft, setup_completed: true });
+      close();
+      setProviderStepOpen(firstRun);
+    } catch {
+      // The hook exposes the safe, user-facing error and keeps the dialog open.
+    } finally {
+      setSaving(false);
+    }
+  };
   return <>
     <button type="button" className="shrink-0 rounded-lg p-1 text-[10px] hover:bg-white/10" aria-label="配置系统模块与导航" onClick={() => { setDraft(preferences); setOpen(true); }}>定制导航</button>
     <Modal open={open} onClose={close} title={preferences.setup_completed ? "系统模块与导航" : "选择可选系统模块"}>
@@ -24,7 +40,16 @@ export default function ModuleSetup() {
         <button type="button" disabled={index === draft.navigation.length - 1 || saving} aria-label={`下移 ${item.id}`} onClick={() => { const navigation = [...draft.navigation]; [navigation[index + 1], navigation[index]] = [navigation[index], navigation[index + 1]]; setDraft({ ...draft, navigation }); }}>↓</button>
       </div>)}
       {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
-      <div className="mt-4 flex gap-2"><Button disabled={saving || !loaded} onClick={() => { setSaving(true); void save({ ...draft, setup_completed: true }).then(close).catch(() => undefined).finally(() => setSaving(false)); }}>确认并保存</Button><Button variant="secondary" disabled={saving} onClick={close}>取消</Button></div>
+      <div className="mt-4 flex gap-2"><Button disabled={saving || !loaded} onClick={() => void saveModuleSetup()}>确认并保存</Button><Button variant="secondary" disabled={saving} onClick={close}>取消</Button></div>
+    </Modal>
+    <Modal
+      open={providerStepOpen}
+      onClose={() => setProviderStepOpen(false)}
+      title="配置 AI 模型"
+      footer={<><Button variant="secondary" onClick={() => setProviderStepOpen(false)}>稍后配置</Button><Button onClick={() => { setProviderStepOpen(false); navigate("/settings"); }}>前往设置</Button></>}
+    >
+      <p className="text-sm leading-6">模型服务是使用 AI 对话的推荐配置。你可以先设置模型 Provider、地址、模型名和写入系统凭据库的密钥，再进行连接验证。</p>
+      <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">语音为可选项：不配置 STT 或 TTS 也不会阻止继续使用文字对话。</p>
     </Modal>
   </>;
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Check, Monitor, Moon, Sun, Upload, RotateCcw } from "lucide-react";
 import { getSettings, updateSettings, getIsolationStatus, listSecurityGrants, type IsolationStatus, type SecurityGrant } from "../api/client";
+import { verifyProviderConnection, type ProviderConnectionKind } from "../api/providerConnection";
 import { useTheme } from "../theme";
 import type { AppConfig } from "../types";
 import { PageHeader, Button, Input, Badge } from "../components/ui";
@@ -86,6 +87,41 @@ const APPEARANCE_MODES = [
   },
 ] as const;
 
+interface ProviderReadinessItem {
+  configured: boolean;
+  available: boolean;
+  provider: string;
+  model: string;
+}
+
+interface ProviderReadiness {
+  model: ProviderReadinessItem;
+  stt: ProviderReadinessItem;
+  tts: ProviderReadinessItem;
+}
+
+function ProviderReadinessCard({ readiness, kinds, testing, results, onVerify }: { readiness: ProviderReadiness | null; kinds: ProviderConnectionKind[]; testing: ProviderConnectionKind | null; results: Partial<Record<ProviderConnectionKind, string>>; onVerify: (kind: ProviderConnectionKind) => void }) {
+  if (!readiness) return null;
+  const labels: Record<keyof ProviderReadiness, string> = { model: "模型", stt: "STT", tts: "TTS" };
+  return (
+    <section className="rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4" aria-label="Provider 就绪状态">
+      <h3 className="text-sm font-semibold">Provider 就绪状态</h3>
+      <p className="mt-1 text-xs text-[var(--text-muted)]">仅反映当前运行配置与凭据可解析性，不将其视为外部服务连通性证明。</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        {kinds.map((kind) => {
+          const item = readiness[kind];
+          return <div key={kind} className="min-w-0 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2">
+            <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{labels[kind]}</span><Badge tone={item.available ? "success" : "default"}>{item.available ? "已就绪" : "未就绪"}</Badge></div>
+            <p className="mt-1 truncate text-[11px] text-[var(--text-muted)]">{item.provider || "未指定 Provider"} · {item.model || "未指定模型"}</p>
+            <div className="mt-1 flex items-center justify-between gap-2"><p className="text-[11px] text-[var(--text-faint)]">凭据：{item.configured ? "已配置" : "未配置"}</p><Button variant="secondary" size="sm" disabled={testing !== null} onClick={() => onVerify(kind)}>{testing === kind ? "测试中…" : "测试连接"}</Button></div>
+            {results[kind] ? <p className="mt-1 text-[11px] text-[var(--text-muted)]" role="status">{results[kind]}</p> : null}
+          </div>;
+        })}
+      </div>
+    </section>
+  );
+}
+
 function comparableConfig(config: AppConfig) {
   return JSON.stringify({
     ...config,
@@ -127,6 +163,11 @@ export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionKey>("model");
   const [isolation, setIsolation] = useState<IsolationStatus | null>(null);
   const [grants, setGrants] = useState<SecurityGrant[]>([]);
+  const [providerReadiness, setProviderReadiness] = useState<ProviderReadiness | null>(null);
+  const [secretRefreshToken, setSecretRefreshToken] = useState(0);
+  const [replaceVoiceKey, setReplaceVoiceKey] = useState<{ stt: boolean; tts: boolean }>({ stt: false, tts: false });
+  const [testingProvider, setTestingProvider] = useState<ProviderConnectionKind | null>(null);
+  const [providerTestResults, setProviderTestResults] = useState<Partial<Record<ProviderConnectionKind, string>>>({});
   const theme = useTheme();
 
   useEffect(() => {
@@ -142,6 +183,7 @@ export default function SettingsPage() {
           },
         };
         setConfig(nextConfig);
+        setProviderReadiness((c as AppConfig & { provider_readiness?: ProviderReadiness }).provider_readiness ?? null);
         setSavedSnapshot(comparableConfig(nextConfig));
       }
     });
@@ -178,7 +220,10 @@ export default function SettingsPage() {
             },
           };
       setConfig(nextConfig);
+      setProviderReadiness((fresh as AppConfig & { provider_readiness?: ProviderReadiness }).provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
+      setSecretRefreshToken((value) => value + 1);
+      setReplaceVoiceKey({ stt: false, tts: false });
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2500);
     } else {
@@ -189,6 +234,7 @@ export default function SettingsPage() {
   };
 
   const clearSecret = async (field: "api_key" | "embedding_api_key") => {
+    if (!window.confirm("确定清除已保存的 API 密钥？此操作会从系统凭据库删除该密钥。")) return;
     const clearField = field === "api_key" ? "clear_api_key" : "clear_embedding_api_key";
     const next = {
       ...config,
@@ -207,7 +253,9 @@ export default function SettingsPage() {
         model: { ...defaultConfig.model, ...fresh.model, api_key: "", embedding_api_key: "" },
       };
       setConfig(nextConfig);
+      setProviderReadiness((fresh as AppConfig & { provider_readiness?: ProviderReadiness }).provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
+      setSecretRefreshToken((value) => value + 1);
     }
     setSaved(true);
     setSaveError("");
@@ -215,6 +263,7 @@ export default function SettingsPage() {
   };
 
   const clearVoiceSecret = async (side: "stt" | "tts") => {
+    if (!window.confirm(`确定清除已保存的 ${side.toUpperCase()} API 密钥？此操作会从系统凭据库删除该密钥。`)) return;
     const next = {
       ...config,
       voice: {
@@ -239,7 +288,10 @@ export default function SettingsPage() {
         },
       };
       setConfig(nextConfig);
+      setProviderReadiness((fresh as AppConfig & { provider_readiness?: ProviderReadiness }).provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
+      setSecretRefreshToken((value) => value + 1);
+      setReplaceVoiceKey((value) => ({ ...value, [side]: false }));
     }
     setSaved(true);
     setSaveError("");
@@ -267,6 +319,16 @@ export default function SettingsPage() {
     }));
   };
 
+  const testProvider = async (kind: ProviderConnectionKind) => {
+    setTestingProvider(kind);
+    const result = await verifyProviderConnection(kind);
+    setProviderTestResults((current) => ({
+      ...current,
+      [kind]: result.ok ? "连接测试完成" : result.error,
+    }));
+    setTestingProvider(null);
+  };
+
   const dirty = comparableConfig(config) !== savedSnapshot;
 
   // ── Appearance helpers ──
@@ -288,8 +350,9 @@ export default function SettingsPage() {
       case "model":
         return (
           <div className="space-y-4">
+            <ProviderReadinessCard readiness={providerReadiness} kinds={["model"]} testing={testingProvider} results={providerTestResults} onVerify={(kind) => void testProvider(kind)} />
             <ModelManagerPanel
-              legacyModel={{ config, updateField, clearSecret, secretSourceLabel }}
+              legacyModel={{ config, updateField, clearSecret, secretSourceLabel, secretRefreshToken }}
             />
           </div>
         );
@@ -297,6 +360,7 @@ export default function SettingsPage() {
       case "voice":
         return (
           <div className="space-y-6">
+            <ProviderReadinessCard readiness={providerReadiness} kinds={["stt", "tts"]} testing={testingProvider} results={providerTestResults} onVerify={(kind) => void testProvider(kind)} />
             <p className="text-xs leading-5 text-[var(--text-faint)]">
               语音识别与语音合成独立配置；两个密钥均只写入系统凭据库，不会在页面中回显。
             </p>
@@ -310,14 +374,14 @@ export default function SettingsPage() {
               <Input label="API 地址" value={config.voice.stt.base_url} onChange={(e) => updateVoiceField("stt", "base_url", e.target.value)} placeholder="https://api.openai.com/v1" />
               <Input label="模型" value={config.voice.stt.model} onChange={(e) => updateVoiceField("stt", "model", e.target.value)} placeholder="gpt-4o-mini-transcribe" />
               <Input label="语言" value={config.voice.stt.language} onChange={(e) => updateVoiceField("stt", "language", e.target.value)} placeholder="zh" />
-              <Input label="STT API 密钥" type="password" value={config.voice.stt.api_key} onChange={(e) => updateVoiceField("stt", "api_key", e.target.value)} placeholder={config.voice.stt.api_key_configured ? "输入新 key 可替换" : "输入后安全保存"} />
               <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
                 <div>
                   <p className="text-xs font-medium text-[var(--text)]">{config.voice.stt.api_key_configured ? "STT 凭据已配置" : "STT 凭据未配置"}</p>
                   <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{secretSourceLabel(config.voice.stt.api_key_source)}</p>
                 </div>
-                {config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void clearVoiceSecret("stt")}>清除密钥</Button> : null}
+                <div className="flex gap-2">{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => setReplaceVoiceKey((value) => ({ ...value, stt: true }))}>替换密钥</Button> : null}{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void clearVoiceSecret("stt")}>清除密钥</Button> : null}</div>
               </div>
+              {(!config.voice.stt.api_key_configured || replaceVoiceKey.stt) && <Input label="STT API 密钥" type="password" value={config.voice.stt.api_key} onChange={(e) => updateVoiceField("stt", "api_key", e.target.value)} placeholder="输入后安全保存" />}
               <Input label="密钥环境变量名" value={config.voice.stt.api_key_env} onChange={(e) => updateVoiceField("stt", "api_key_env", e.target.value)} placeholder="OPENAI_API_KEY" />
               <Input label="请求超时（毫秒）" type="number" value={String(config.voice.stt.timeout_ms)} onChange={(e) => updateVoiceField("stt", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
             </section>
@@ -334,14 +398,14 @@ export default function SettingsPage() {
                 <Input label="默认音色" value={config.voice.tts.voice} onChange={(e) => updateVoiceField("tts", "voice", e.target.value)} placeholder="voice_id" />
                 <Input label="语言" value={config.voice.tts.language} onChange={(e) => updateVoiceField("tts", "language", e.target.value)} placeholder="zh" />
               </div>
-              <Input label="TTS API 密钥" type="password" value={config.voice.tts.api_key} onChange={(e) => updateVoiceField("tts", "api_key", e.target.value)} placeholder={config.voice.tts.api_key_configured ? "输入新 key 可替换" : "输入后安全保存"} />
               <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
                 <div>
                   <p className="text-xs font-medium text-[var(--text)]">{config.voice.tts.api_key_configured ? "TTS 凭据已配置" : "TTS 凭据未配置"}</p>
                   <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{secretSourceLabel(config.voice.tts.api_key_source)}</p>
                 </div>
-                {config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void clearVoiceSecret("tts")}>清除密钥</Button> : null}
+                <div className="flex gap-2">{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => setReplaceVoiceKey((value) => ({ ...value, tts: true }))}>替换密钥</Button> : null}{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void clearVoiceSecret("tts")}>清除密钥</Button> : null}</div>
               </div>
+              {(!config.voice.tts.api_key_configured || replaceVoiceKey.tts) && <Input label="TTS API 密钥" type="password" value={config.voice.tts.api_key} onChange={(e) => updateVoiceField("tts", "api_key", e.target.value)} placeholder="输入后安全保存" />}
               <Input label="密钥环境变量名" value={config.voice.tts.api_key_env} onChange={(e) => updateVoiceField("tts", "api_key_env", e.target.value)} placeholder="留空时使用系统凭据库" />
               <Input label="请求超时（毫秒）" type="number" value={String(config.voice.tts.timeout_ms)} onChange={(e) => updateVoiceField("tts", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
             </section>
@@ -632,22 +696,20 @@ export default function SettingsPage() {
         </nav>
 
         {/* Section content */}
-        <div className="system-settings-content min-h-0 flex-1 overflow-y-auto p-6 scrollbar-thin">
-          <div className="max-w-2xl">
+        <div className="system-settings-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-6 pb-16 scrollbar-thin">
+          <div className="max-w-2xl space-y-6">
             {renderSection()}
+            <section className="settings-save-card rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-[var(--text-faint)]">修改后点击保存设置；密钥输入在保存后会被清空并重新读取脱敏状态。</p>
+                <Button onClick={handleSave} disabled={!dirty || saving} aria-label="保存设置">
+                  <Check className="w-4 h-4" />
+                  {saving ? "保存中…" : "保存设置"}
+                </Button>
+              </div>
+            </section>
           </div>
         </div>
-      </div>
-
-      {/* Save bar */}
-      <div className="system-settings-savebar border-t border-[var(--border)] px-6 py-3 bg-[var(--panel)]/60 flex items-center justify-between">
-        <p className="text-xs text-[var(--text-faint)]">
-          修改后点击保存设置
-        </p>
-        <Button onClick={handleSave} disabled={!dirty || saving} aria-label="保存设置">
-          <Check className="w-4 h-4" />
-          {saving ? "保存中…" : "保存设置"}
-        </Button>
       </div>
     </div>
   );

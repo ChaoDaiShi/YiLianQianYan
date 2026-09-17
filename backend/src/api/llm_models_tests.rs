@@ -12,9 +12,44 @@ use secrecy::SecretString;
 use tower::ServiceExt;
 
 use crate::db::LlmModelInput;
+use crate::llm::client::LlmError;
 use crate::safety::{ControlSession, CONTROL_SESSION_HEADER};
 use crate::secret::{llm_model_key_ref, InMemorySecretStore, SecretRef, SecretStore};
 use crate::server::AppServer;
+
+#[test]
+fn provider_connection_errors_are_normalized_without_response_details() {
+    assert_eq!(
+        crate::api::llm_models::normalize_provider_error(&LlmError::NoApiKey),
+        "INVALID_CONFIGURATION"
+    );
+    assert_eq!(
+        crate::api::llm_models::normalize_provider_error(&LlmError::Timeout),
+        "TIMEOUT"
+    );
+    assert_eq!(
+        crate::api::llm_models::normalize_provider_error(&LlmError::Api(
+            "HTTP 401: response body must not escape".into()
+        )),
+        "INVALID_CREDENTIAL"
+    );
+    assert_eq!(
+        crate::api::llm_models::normalize_provider_error(&LlmError::Api("HTTP 404".into())),
+        "MODEL_NOT_FOUND"
+    );
+    assert_eq!(
+        crate::api::llm_models::normalize_provider_error(&LlmError::Api("HTTP 429".into())),
+        "RATE_LIMITED"
+    );
+    assert_eq!(
+        crate::api::llm_models::normalize_provider_error(&LlmError::Api("HTTP 503".into())),
+        "PROVIDER_UNREACHABLE"
+    );
+    assert_eq!(
+        crate::api::llm_models::normalize_provider_error(&LlmError::Parse("opaque".into())),
+        "INVALID_CONFIGURATION"
+    );
+}
 
 struct TempDatabase(PathBuf);
 

@@ -390,14 +390,29 @@ pub async fn usage_handler(
     ))
 }
 
-fn safe_error(error: &LlmError) -> String {
+pub(crate) fn normalize_provider_error(error: &LlmError) -> &'static str {
     match error {
-        LlmError::NoApiKey | LlmError::EmbeddingNoApiKey => "未配置 API Key".to_string(),
-        LlmError::Timeout => "连接超时".to_string(),
-        LlmError::Http(_) | LlmError::Api(_) => "服务商返回错误".to_string(),
-        LlmError::Parse(_) | LlmError::Stream(_) => "响应格式不兼容".to_string(),
-        _ => "模型连接失败".to_string(),
+        LlmError::NoApiKey | LlmError::EmbeddingNoApiKey | LlmError::SecretUnavailable => {
+            "INVALID_CONFIGURATION"
+        }
+        LlmError::Timeout => "TIMEOUT",
+        LlmError::Http(error) if error.is_timeout() => "TIMEOUT",
+        LlmError::Http(_) => "PROVIDER_UNREACHABLE",
+        LlmError::Api(message) if message.contains("HTTP 401") || message.contains("HTTP 403") => {
+            "INVALID_CREDENTIAL"
+        }
+        LlmError::Api(message) if message.contains("HTTP 404") => "MODEL_NOT_FOUND",
+        LlmError::Api(message) if message.contains("HTTP 429") => "RATE_LIMITED",
+        LlmError::Api(_) => "PROVIDER_UNREACHABLE",
+        LlmError::Parse(_)
+        | LlmError::Stream(_)
+        | LlmError::EmbeddingNotConfigured
+        | LlmError::InvalidEmbeddingResponse(_) => "INVALID_CONFIGURATION",
     }
+}
+
+fn safe_error(error: &LlmError) -> String {
+    normalize_provider_error(error).to_string()
 }
 
 fn bad_request(message: String) -> (StatusCode, Json<serde_json::Value>) {

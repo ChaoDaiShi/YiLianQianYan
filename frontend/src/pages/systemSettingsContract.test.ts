@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import source from "./SettingsPage.tsx?raw";
 import modelManagerSource from "../features/llm/ModelManagerPanel.tsx?raw";
+import moduleSetupSource from "../components/system/ModuleSetup.tsx?raw";
 import typesSource from "../types/index.ts?raw";
 
 describe("Settings contract", () => {
@@ -64,5 +65,21 @@ describe("Settings contract", () => {
     expect(source).not.toContain("面板透明度");
     expect(source).not.toContain(">模糊<");
     expect(source).not.toContain(">字号<");
+  });
+
+  it("keeps provider credentials write-only and makes settings actions scroll with their card", () => {
+    expect(modelManagerSource).toContain("replaceApiKey");
+    expect(source).toContain("replaceVoiceKey");
+    expect(source).toContain("window.confirm");
+    expect(source).toContain("provider_readiness");
+    expect(source).toContain("settings-save-card");
+    expect(source).not.toContain("system-settings-savebar");
+  });
+
+  it("offers a thin provider step after first-run module setup without requiring voice", () => {
+    expect(moduleSetupSource).toContain("配置 AI 模型");
+    expect(moduleSetupSource).toContain("稍后配置");
+    expect(moduleSetupSource).toContain("语音为可选项");
+    expect(moduleSetupSource).toContain("/settings");
   });
 });
