@@ -366,6 +366,30 @@ impl ApprovalStore {
         self.consume_unique_pending(conversation_id, ApprovalStatus::Rejected)
     }
 
+    pub fn consume_unique_expected_for_approval(
+        &self,
+        conversation_id: &str,
+        expected_approval_id: &str,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_unique_expected(
+            conversation_id,
+            expected_approval_id,
+            ApprovalStatus::Approved,
+        )
+    }
+
+    pub fn consume_unique_expected_for_rejection(
+        &self,
+        conversation_id: &str,
+        expected_approval_id: &str,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_unique_expected(
+            conversation_id,
+            expected_approval_id,
+            ApprovalStatus::Rejected,
+        )
+    }
+
     /// Atomically mark a pending approval as Cancelled.
     pub fn cancel(
         &self,
@@ -429,6 +453,42 @@ impl ApprovalStore {
         // The map is locked from selection through mutation. Keep this check
         // explicit so the expiry boundary remains fail closed if the clock
         // advances between the initial filter and this assignment.
+        if approval.is_expired(now) {
+            approval.status = ApprovalStatus::Expired;
+            return Err(ApprovalError::Expired);
+        }
+        approval.status = target;
+        Ok(approval.clone())
+    }
+
+    fn consume_unique_expected(
+        &self,
+        conversation_id: &str,
+        expected_approval_id: &str,
+        target: ApprovalStatus,
+    ) -> Result<PendingApproval, ApprovalError> {
+        let now = Utc::now();
+        let mut map = self.approvals.write();
+        let matching = map
+            .values()
+            .filter(|approval| {
+                approval.conversation_id == conversation_id
+                    && approval.status == ApprovalStatus::Pending
+                    && !approval.is_expired(now)
+            })
+            .map(|approval| approval.approval_id.clone())
+            .collect::<Vec<_>>();
+        let [approval_id] = matching.as_slice() else {
+            return if matching.is_empty() {
+                Err(ApprovalError::NotFound)
+            } else {
+                Err(ApprovalError::Ambiguous)
+            };
+        };
+        if approval_id != expected_approval_id {
+            return Err(ApprovalError::NotFound);
+        }
+        let approval = map.get_mut(approval_id).ok_or(ApprovalError::NotFound)?;
         if approval.is_expired(now) {
             approval.status = ApprovalStatus::Expired;
             return Err(ApprovalError::Expired);

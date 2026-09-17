@@ -28,12 +28,14 @@ pub const VOICE_APPROVAL_ATTESTATION_TTL_MS: i64 = 120_000;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoiceApprovalAttestation {
     pub attestation_id: String,
+    pub display_id: String,
     pub approval_id: String,
     pub conversation_id: String,
     pub voice_session_id: String,
     pub generation: u64,
     pub displayed_at: i64,
     pub expires_at: i64,
+    pub dispatched_lease_id: Option<String>,
 }
 
 impl VoiceApprovalAttestation {
@@ -44,6 +46,8 @@ impl VoiceApprovalAttestation {
         now: i64,
     ) -> bool {
         accepted.input_owner == VoiceInputOwner::PushToTalk
+            && self.dispatched_lease_id.is_none()
+            && accepted.created_at >= self.displayed_at
             && self.displayed_at <= now
             && now <= self.expires_at
             && self.voice_session_id == accepted.session_id
@@ -342,9 +346,15 @@ impl GlobalVoiceSessionRuntime {
         &self,
         approval_id: &str,
         conversation_id: &str,
+        expected_session_id: &str,
+        expected_generation: u64,
+        display_id: &str,
         displayed_at: i64,
     ) -> Result<VoiceApprovalAttestation, VoiceRuntimeError> {
-        if approval_id.trim().is_empty() || conversation_id.trim().is_empty() {
+        if approval_id.trim().is_empty()
+            || conversation_id.trim().is_empty()
+            || display_id.trim().is_empty()
+        {
             return Err(VoiceRuntimeError::InvalidState(
                 "approval attestation identity is missing".to_string(),
             ));
@@ -357,6 +367,12 @@ impl GlobalVoiceSessionRuntime {
         if session.state == VoiceSessionState::Ended {
             return Err(VoiceRuntimeError::SessionEnded);
         }
+        if session.voice_session_id != expected_session_id {
+            return Err(VoiceRuntimeError::SessionMismatch);
+        }
+        if session.generation != expected_generation {
+            return Err(VoiceRuntimeError::StaleGeneration);
+        }
         if !session
             .conversational_anchor
             .as_ref()
@@ -368,12 +384,14 @@ impl GlobalVoiceSessionRuntime {
         }
         let attestation = VoiceApprovalAttestation {
             attestation_id: uuid::Uuid::new_v4().to_string(),
+            display_id: display_id.to_string(),
             approval_id: approval_id.to_string(),
             conversation_id: conversation_id.to_string(),
             voice_session_id: session.voice_session_id,
             generation: session.generation,
             displayed_at,
             expires_at: displayed_at.saturating_add(VOICE_APPROVAL_ATTESTATION_TTL_MS),
+            dispatched_lease_id: None,
         };
         state.approval_attestation = Some(attestation.clone());
         Ok(attestation)
@@ -391,6 +409,58 @@ impl GlobalVoiceSessionRuntime {
             .as_ref()
             .filter(|attestation| attestation.matches(accepted, session, now))
             .cloned()
+    }
+
+    pub fn revoke_displayed_approval(&self, attestation_id: &str, display_id: &str) -> bool {
+        let mut state = self.state.lock();
+        let matches = state
+            .approval_attestation
+            .as_ref()
+            .is_some_and(|attestation| {
+                attestation.attestation_id == attestation_id && attestation.display_id == display_id
+            });
+        if matches {
+            state.approval_attestation = None;
+        }
+        matches
+    }
+
+    pub fn consume_spoken_approval_attestation(
+        &self,
+        attestation_id: &str,
+        approval_id: &str,
+        conversation_id: &str,
+        now: i64,
+    ) -> Result<(), VoiceRuntimeError> {
+        let mut state = self.state.lock();
+        let session = state
+            .session
+            .as_ref()
+            .ok_or(VoiceRuntimeError::NoActiveSession)?;
+        let valid = state
+            .approval_attestation
+            .as_ref()
+            .is_some_and(|attestation| {
+                attestation.attestation_id == attestation_id
+                    && attestation.approval_id == approval_id
+                    && attestation.conversation_id == conversation_id
+                    && attestation.voice_session_id == session.voice_session_id
+                    && attestation.generation == session.generation
+                    && attestation.displayed_at <= now
+                    && now <= attestation.expires_at
+                    && attestation.dispatched_lease_id.is_some()
+                    && session
+                        .conversational_anchor
+                        .as_ref()
+                        .is_some_and(|anchor| anchor.conversation_id == conversation_id)
+            });
+        if !valid {
+            return Err(VoiceRuntimeError::InvalidState(
+                "spoken approval attestation is missing, stale, or mismatched".to_string(),
+            ));
+        }
+        state.approval_attestation = None;
+        Ok(())
     }
 
     pub fn begin_processing(
@@ -583,15 +653,17 @@ impl GlobalVoiceSessionRuntime {
                 .session
                 .clone()
                 .ok_or(VoiceRuntimeError::NoActiveSession)?;
+            let routed_at = now_millis();
             let approval_attestation = state
                 .approval_attestation
                 .as_ref()
-                .filter(|attestation| attestation.matches(pending, &session, pending.created_at))
+                .filter(|attestation| attestation.matches(pending, &session, routed_at))
                 .cloned();
             let dispatch = hook.dispatch(VoiceDispatchRequest {
                 accepted: pending.clone(),
                 session,
                 approval_attestation,
+                routed_at,
             });
             // A final is never dispatched twice, including when a domain hook
             // fails after beginning a side effect.
@@ -600,12 +672,12 @@ impl GlobalVoiceSessionRuntime {
             if let Some(crate::voice::VoiceContinuation::Approval { approval_id, .. }) =
                 outcome.continuation.as_ref()
             {
-                if state
-                    .approval_attestation
-                    .as_ref()
-                    .is_some_and(|attestation| attestation.approval_id == *approval_id)
-                {
-                    state.approval_attestation = None;
+                if let Some(attestation) = state.approval_attestation.as_mut() {
+                    if attestation.approval_id == *approval_id
+                        && attestation.dispatched_lease_id.is_none()
+                    {
+                        attestation.dispatched_lease_id = Some(accepted.lease_id.clone());
+                    }
                 }
             }
             if outcome.turn.voice_session_id != accepted.session_id
@@ -976,7 +1048,14 @@ mod tests {
             )
             .unwrap();
         let attestation = runtime
-            .attest_displayed_approval("approval-a", "conversation-a", 10)
+            .attest_displayed_approval(
+                "approval-a",
+                "conversation-a",
+                &session.voice_session_id,
+                session.generation,
+                "display-a",
+                10,
+            )
             .unwrap();
         assert_eq!(attestation.voice_session_id, session.voice_session_id);
         assert_eq!(attestation.generation, session.generation);

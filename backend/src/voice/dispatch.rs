@@ -37,6 +37,7 @@ pub struct VoiceDispatchRequest {
     pub accepted: AcceptedFinalTranscript,
     pub session: GlobalVoiceSession,
     pub approval_attestation: Option<super::runtime::VoiceApprovalAttestation>,
+    pub routed_at: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

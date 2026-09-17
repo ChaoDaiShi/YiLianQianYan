@@ -637,10 +637,18 @@ export default function GlobalVoiceHost({
     }
   }, [capture.cancel, interruptForBargeIn, session]);
 
-  const startCapture = useCallback(() => {
-    captureStartEpochRef.current += 1;
+  const startCapture = useCallback(async () => {
+    const operationEpoch = ++captureStartEpochRef.current;
+    const identityEpoch = contextIdentityEpochRef.current;
     captureEchoRef.current = null;
-    void capture.start("user-click");
+    const overlap = playbackRef.current.captureOverlap();
+    const handle = await capture.start("user-click");
+    if (overlap && handle?.lease && operationEpoch === captureStartEpochRef.current
+      && identityEpoch === contextIdentityEpochRef.current
+      && overlap.sessionId === handle.lease.sessionId
+      && overlap.playbackGeneration + 1 === handle.lease.generation) {
+      captureEchoRef.current = { ...overlap, ...handle.lease, identityEpoch };
+    }
   }, [capture]);
 
   const speakLastTranscript = useCallback(() => {
@@ -744,7 +752,7 @@ export default function GlobalVoiceHost({
                     type="button"
                     className="global-voice-primary"
                     data-testid="voice-mic"
-                    onClick={capture.state.status === "listening" ? capture.stop : startCapture}
+                    onClick={capture.state.status === "listening" ? capture.stop : () => void startCapture()}
                     disabled={capture.state.status === "acquiring" || capture.state.status === "transcribing"}
                   >
                     {capture.state.status === "listening" ? "停止录音" : "开始说话"}

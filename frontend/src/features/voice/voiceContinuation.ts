@@ -174,6 +174,7 @@ async function runApprovalContinuation(
       options.onEvent?.(event);
     },
     options.signal,
+    continuation.attestation_id,
   );
   if (options.signal?.aborted || options.isCurrent?.() === false) throw abortError();
   return reduceApprovalEvents(continuation.decision, events);

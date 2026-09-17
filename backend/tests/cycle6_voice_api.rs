@@ -307,6 +307,24 @@ async fn partial_transcript_never_dispatches_and_current_final_commits_once() {
         ))
         .await
         .unwrap();
+    let (status, untrusted) = json_response(response).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(untrusted["code"], "duplicate_final");
+
+    temp.server
+        .voice_runtime
+        .commit_final(&session_id, generation, &lease_id, "暂停这个任务")
+        .expect("provider-owned final is committed before dispatch");
+    let response = temp
+        .app()
+        .oneshot(json_request(
+            &temp.token,
+            Method::POST,
+            "/api/voice/turns/dispatch",
+            dispatch.clone(),
+        ))
+        .await
+        .unwrap();
     let (status, accepted) = json_response(response).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(accepted["turn"]["final_transcript"], "暂停这个任务");
@@ -341,6 +359,10 @@ async fn partial_transcript_never_dispatches_and_current_final_commits_once() {
 async fn dispatch_without_trusted_router_is_unavailable_and_does_not_accept_client_routing() {
     let temp = TempServer::without_dispatch_hook();
     let (session_id, generation, lease_id) = start_and_lease(&temp).await;
+    temp.server
+        .voice_runtime
+        .commit_final(&session_id, generation, &lease_id, "打开一个任务")
+        .expect("provider-owned final is committed before dispatch");
     let response = temp
         .app()
         .oneshot(json_request(

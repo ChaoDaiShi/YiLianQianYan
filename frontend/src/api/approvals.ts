@@ -30,6 +30,7 @@ async function streamDecision(
   body: { conversation_id?: string | null },
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
+  attestationId?: string,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -115,7 +116,7 @@ export function approveAction(
 ): Promise<void> {
   return streamDecision(
     `/api/approvals/${approvalId}/approve`,
-    { conversation_id: conversationId },
+    { conversation_id: conversationId, attestation_id: attestationId },
     onEvent,
     signal,
   );
@@ -126,10 +127,11 @@ export function rejectAction(
   conversationId: string | null,
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
+  attestationId?: string,
 ): Promise<void> {
   return streamDecision(
     `/api/approvals/${approvalId}/reject`,
-    { conversation_id: conversationId },
+    { conversation_id: conversationId, attestation_id: attestationId },
     onEvent,
     signal,
   );

@@ -63,6 +63,7 @@ fn voice_approval_without_display_attestation_stays_pending() {
             },
             session,
             approval_attestation: None,
+            routed_at: 2,
         })
         .unwrap();
     assert!(outcome.continuation.is_none());
@@ -111,15 +112,18 @@ fn voice_approval_with_current_display_attestation_returns_one_continuation() {
         .dispatch(VoiceDispatchRequest {
             approval_attestation: Some(VoiceApprovalAttestation {
                 attestation_id: "attestation-a".into(),
+                display_id: "display-a".into(),
                 approval_id: approval_id.clone(),
                 conversation_id: conversation.id.clone(),
                 voice_session_id: session.voice_session_id.clone(),
                 generation: session.generation,
                 displayed_at: 1,
                 expires_at: 60_001,
+                dispatched_lease_id: None,
             }),
             accepted,
             session,
+            routed_at: 2,
         })
         .unwrap();
 

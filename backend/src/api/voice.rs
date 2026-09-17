@@ -73,9 +73,17 @@ pub async fn providers_handler(State(server): State<Arc<AppServer>>) -> impl Int
     }))
 }
 
+#[derive(Deserialize)]
+pub struct ApprovalDisplayedRequest {
+    voice_session_id: String,
+    generation: u64,
+    display_id: String,
+}
+
 pub async fn approval_displayed_handler(
     State(server): State<Arc<AppServer>>,
     Path(approval_id): Path<String>,
+    Json(request): Json<ApprovalDisplayedRequest>,
 ) -> Response {
     let Some(approval) = server.approval_store.get(&approval_id) else {
         return (
@@ -94,8 +102,28 @@ pub async fn approval_displayed_handler(
     runtime_json(server.voice_runtime.attest_displayed_approval(
         &approval.approval_id,
         &approval.conversation_id,
+        &request.voice_session_id,
+        request.generation,
+        &request.display_id,
         chrono::Utc::now().timestamp_millis(),
     ))
+}
+
+#[derive(Deserialize)]
+pub struct ApprovalDisplayRevokeRequest {
+    attestation_id: String,
+    display_id: String,
+}
+
+pub async fn approval_display_revoke_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(_approval_id): Path<String>,
+    Json(request): Json<ApprovalDisplayRevokeRequest>,
+) -> Response {
+    let revoked = server
+        .voice_runtime
+        .revoke_displayed_approval(&request.attestation_id, &request.display_id);
+    (StatusCode::OK, Json(json!({"revoked": revoked}))).into_response()
 }
 
 fn provider_unavailable_reason(
@@ -356,24 +384,13 @@ pub async fn dispatch_handler(
     State(server): State<Arc<AppServer>>,
     Json(request): Json<TurnDispatchRequest>,
 ) -> Response {
-    let accepted = match server.voice_runtime.commit_final(
+    let accepted = match server.voice_runtime.accepted_final(
         &request.session_id,
         request.generation,
         &request.lease_id,
         &request.final_transcript,
     ) {
         Ok(accepted) => accepted,
-        Err(VoiceRuntimeError::DuplicateFinal) => match server.voice_runtime.accepted_final(
-            &request.session_id,
-            request.generation,
-            &request.lease_id,
-            &request.final_transcript,
-        ) {
-            Ok(accepted) => accepted,
-            Err(error) => {
-                return runtime_json::<crate::voice::runtime::AcceptedFinalTranscript>(Err(error))
-            }
-        },
         Err(error) => {
             return runtime_json::<crate::voice::runtime::AcceptedFinalTranscript>(Err(error))
         }

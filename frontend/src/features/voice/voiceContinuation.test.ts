@@ -39,6 +39,13 @@ describe("voice continuation evidence", () => {
     });
     expect(result.verified).toBe(true);
     expect(approveAction).toHaveBeenCalledTimes(1);
+    expect(approveAction).toHaveBeenCalledWith(
+      "approval-1",
+      "conversation-a",
+      expect.any(Function),
+      undefined,
+      "attestation-1",
+    );
   });
   it("settles cancellation even when the chat stream never sends another event", async () => {
     vi.mocked(loadConversation).mockResolvedValueOnce({ id: "conversation-a", messages: [] } as Awaited<ReturnType<typeof loadConversation>>);

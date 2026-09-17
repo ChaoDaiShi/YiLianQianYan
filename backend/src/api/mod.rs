@@ -71,7 +71,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/voice/providers", get(voice::providers_handler))
         .route(
             "/api/voice/approvals/:approval_id/displayed",
-            post(voice::approval_displayed_handler),
+            post(voice::approval_displayed_handler).delete(voice::approval_display_revoke_handler),
         )
         .route("/api/voice/session", get(voice::session_handler))
         .route("/api/voice/sessions/start", post(voice::start_handler))

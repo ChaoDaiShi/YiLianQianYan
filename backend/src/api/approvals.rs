@@ -42,6 +42,8 @@ use crate::workflow::{cancel_workflow_approval, resolve_workflow_approval, Workf
 pub struct ApprovalDecisionRequest {
     #[serde(default)]
     pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub attestation_id: Option<String>,
 }
 
 fn status_for(e: &ApprovalError) -> StatusCode {
@@ -117,6 +119,41 @@ fn resolve_and_consume(
     let approval = result.map_err(|e| (status_for(&e), e.to_string()))?;
     record_approval_resolved(server, &approval);
     Ok(approval)
+}
+
+fn consume_spoken_attested(
+    server: &AppServer,
+    approval: &PendingApproval,
+    body: &ApprovalDecisionRequest,
+    approve: bool,
+) -> Result<Option<PendingApproval>, (StatusCode, String)> {
+    let Some(attestation_id) = body.attestation_id.as_deref() else {
+        return Ok(None);
+    };
+    if body.conversation_id.as_deref() != Some(approval.conversation_id.as_str()) {
+        return Err((StatusCode::CONFLICT, "语音审批上下文不匹配".to_string()));
+    }
+    server
+        .voice_runtime
+        .consume_spoken_approval_attestation(
+            attestation_id,
+            &approval.approval_id,
+            &approval.conversation_id,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .map_err(|_| (StatusCode::CONFLICT, "语音审批凭据无效或已过期".to_string()))?;
+    let result = if approve {
+        server
+            .approval_store
+            .consume_unique_expected_for_approval(&approval.conversation_id, &approval.approval_id)
+    } else {
+        server
+            .approval_store
+            .consume_unique_expected_for_rejection(&approval.conversation_id, &approval.approval_id)
+    };
+    let consumed = result.map_err(|error| (status_for(&error), error.to_string()))?;
+    record_approval_resolved(server, &consumed);
+    Ok(Some(consumed))
 }
 
 async fn execute_approved_tool(
@@ -472,6 +509,16 @@ pub async fn approve_handler(
         .approval_store
         .get(&approval_id)
         .ok_or((StatusCode::NOT_FOUND, "审批不存在".to_string()))?;
+    if body.attestation_id.is_some() && !matches!(classify_approval(&lookup), ApprovalTarget::Agent)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "语音审批暂仅支持当前对话中的工具审批".to_string(),
+        ));
+    }
+    if let Some(approval) = consume_spoken_attested(&server, &lookup, &body, true)? {
+        return Ok(Sse::new(resume_stream(server, approval, true)));
+    }
     match classify_approval(&lookup) {
         ApprovalTarget::Agent => {
             let approval =
@@ -514,6 +561,16 @@ pub async fn reject_handler(
         .approval_store
         .get(&approval_id)
         .ok_or((StatusCode::NOT_FOUND, "审批不存在".to_string()))?;
+    if body.attestation_id.is_some() && !matches!(classify_approval(&lookup), ApprovalTarget::Agent)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "语音审批暂仅支持当前对话中的工具审批".to_string(),
+        ));
+    }
+    if let Some(approval) = consume_spoken_attested(&server, &lookup, &body, false)? {
+        return Ok(Sse::new(resume_stream(server, approval, false)));
+    }
     match classify_approval(&lookup) {
         ApprovalTarget::Agent => {
             let approval = resolve_and_consume(
@@ -1083,8 +1140,9 @@ async fn resume_agent(
 #[cfg(test)]
 mod tests {
     use super::{
-        approve_handler, cancel_handler, classify_approval, execute_approved_tool, reject_handler,
-        resolve_and_consume, workflow_approval_stream, ApprovalDecisionRequest, ApprovalTarget,
+        approve_handler, cancel_handler, classify_approval, consume_spoken_attested,
+        execute_approved_tool, reject_handler, resolve_and_consume, workflow_approval_stream,
+        ApprovalDecisionRequest, ApprovalTarget,
     };
     use async_trait::async_trait;
     use axum::{
@@ -1109,6 +1167,10 @@ mod tests {
         safety::execution_gateway::SecurityExecutionOutcome,
         safety::ControlSession,
         server::AppServer,
+        shared::{
+            interaction::{ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface},
+            voice::{VoiceInputOwner, VoiceSessionState},
+        },
         tools::{trait_def::RiskLevel, Tool, ToolRegistry, ToolResult},
         workflow::{
             NodeRunStatus, WorkflowGraphDefinition, WorkflowNodeConfig, WorkflowNodeDefinition,
@@ -1342,6 +1404,121 @@ mod tests {
         assert_resolution(&events[0], &pending.approval_id, "rejected");
     }
 
+    #[test]
+    fn spoken_attestation_is_rechecked_and_consumed_at_the_approval_boundary() {
+        let (_temp, server) = test_server("spoken-attestation");
+        let conversation = server.db.create_conversation("spoken approval").unwrap();
+        let pending = server.approval_store.create(
+            conversation.id.clone(),
+            "voice-tool-call".to_string(),
+            "bash".to_string(),
+            serde_json::json!({"command": "echo safe"}),
+            RiskLevel::High,
+            "high-risk tool".to_string(),
+            "local-user".to_string(),
+        );
+        let started = server
+            .voice_runtime
+            .start(FocusedSurface::Conversation)
+            .unwrap();
+        let session = server
+            .voice_runtime
+            .update_context(
+                &started.voice_session_id,
+                started.generation,
+                ContextAnchorSnapshot {
+                    focused_surface: FocusedSurface::Conversation,
+                    conversational_anchor: Some(ConversationalAnchor::new(
+                        &conversation.id,
+                        &conversation.title,
+                        conversation.updated_at,
+                    )),
+                    active_task: None,
+                },
+            )
+            .unwrap();
+        assert_ne!(session.state, VoiceSessionState::Ended);
+        let attestation = server
+            .voice_runtime
+            .attest_displayed_approval(
+                &pending.approval_id,
+                &conversation.id,
+                &session.voice_session_id,
+                session.generation,
+                "display-boundary",
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .unwrap();
+        let lease = server
+            .voice_runtime
+            .acquire_lease(
+                &session.voice_session_id,
+                session.generation,
+                VoiceInputOwner::PushToTalk,
+            )
+            .unwrap();
+        let accepted = server
+            .voice_runtime
+            .commit_final(
+                &session.voice_session_id,
+                session.generation,
+                &lease.lease_id,
+                "同意",
+            )
+            .unwrap();
+        let hook = server.voice_dispatch_hook().unwrap();
+        let outcome = server
+            .voice_runtime
+            .dispatch_once(accepted, hook.as_ref())
+            .unwrap();
+        assert!(matches!(
+            outcome.continuation,
+            Some(crate::voice::VoiceContinuation::Approval { .. })
+        ));
+
+        assert!(consume_spoken_attested(
+            &server,
+            &pending,
+            &ApprovalDecisionRequest {
+                conversation_id: Some(conversation.id.clone()),
+                attestation_id: Some("not-issued".to_string()),
+            },
+            true,
+        )
+        .is_err());
+        assert_eq!(
+            server
+                .approval_store
+                .get(&pending.approval_id)
+                .unwrap()
+                .status,
+            crate::safety::ApprovalStatus::Pending
+        );
+
+        let consumed = consume_spoken_attested(
+            &server,
+            &pending,
+            &ApprovalDecisionRequest {
+                conversation_id: Some(conversation.id.clone()),
+                attestation_id: Some(attestation.attestation_id.clone()),
+            },
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(consumed.status, crate::safety::ApprovalStatus::Approved);
+        assert!(consume_spoken_attested(
+            &server,
+            &pending,
+            &ApprovalDecisionRequest {
+                conversation_id: Some(conversation.id),
+                attestation_id: Some(attestation.attestation_id),
+            },
+            true,
+        )
+        .is_err());
+    }
+
     #[tokio::test]
     async fn cancel_records_cancelled_resolution_once() {
         let (_temp, server) = test_server("cancel");
@@ -1352,6 +1529,7 @@ mod tests {
             Path(pending.approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: Some(pending.conversation_id.clone()),
+                attestation_id: None,
             }),
         )
         .await;
@@ -1649,6 +1827,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await
@@ -1684,6 +1863,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await
@@ -1718,6 +1898,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await;
@@ -1751,6 +1932,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await
@@ -1764,6 +1946,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await;
@@ -1802,6 +1985,7 @@ mod tests {
             Path("partial-1".to_string()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await;
@@ -1818,6 +2002,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await
@@ -1856,6 +2041,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await

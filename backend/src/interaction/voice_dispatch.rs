@@ -295,8 +295,10 @@ impl InteractionVoiceDispatch {
             && attestation.voice_session_id == request.accepted.session_id
             && attestation.generation == request.session.generation
             && attestation.generation == request.accepted.generation
+            && attestation.dispatched_lease_id.is_none()
             && attestation.displayed_at <= request.accepted.created_at
-            && request.accepted.created_at <= attestation.expires_at
+            && request.accepted.created_at <= request.routed_at
+            && request.routed_at <= attestation.expires_at
             && request
                 .session
                 .conversational_anchor

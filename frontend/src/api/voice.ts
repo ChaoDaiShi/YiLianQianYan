@@ -356,13 +356,37 @@ export async function updateVoiceContext(
 
 export async function attestVoiceApprovalDisplayed(
   approvalId: string,
+  sessionId: string,
+  generation: number,
+  displayId: string,
   signal?: AbortSignal,
 ): Promise<VoiceApprovalAttestation | null> {
   const response = await fetch(
     `${API_BASE}/api/voice/approvals/${encodeURIComponent(approvalId)}/displayed`,
-    { method: "POST", headers: controlSessionHeaders(), signal },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...controlSessionHeaders() },
+      body: JSON.stringify({
+        voice_session_id: sessionId,
+        generation,
+        display_id: displayId,
+      }),
+      signal,
+    },
   );
   return response.ok ? (response.json() as Promise<VoiceApprovalAttestation>) : null;
+}
+
+export async function revokeVoiceApprovalDisplay(
+  approvalId: string,
+  attestationId: string,
+  displayId: string,
+): Promise<void> {
+  await fetch(`${API_BASE}/api/voice/approvals/${encodeURIComponent(approvalId)}/displayed`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...controlSessionHeaders() },
+    body: JSON.stringify({ attestation_id: attestationId, display_id: displayId }),
+  });
 }
 
 export async function sendPartialTranscript(
