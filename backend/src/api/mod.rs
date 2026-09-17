@@ -35,6 +35,7 @@ mod secrets;
 mod security;
 mod security_grants;
 mod settings;
+mod skill_candidates;
 mod skills_route;
 mod subagents;
 mod system;
