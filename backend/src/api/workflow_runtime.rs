@@ -250,6 +250,7 @@ pub async fn run_workflow_graph(
 pub(crate) async fn execute_for_task_harness(
     server: Arc<AppServer>,
     workflow_graph_id: &str,
+    cancel: CancellationToken,
 ) -> Result<Option<serde_json::Value>, String> {
     let graph = server
         .db
@@ -272,7 +273,6 @@ pub(crate) async fn execute_for_task_harness(
     .map_err(|error| error.to_string())?;
     let run_id = run.run_id.clone();
     server.db.create_workflow_run(workflow_graph_id, &run)?;
-    let cancel = CancellationToken::new();
     server
         .active_workflow_runs
         .lock()
@@ -553,6 +553,20 @@ mod tests {
         assert_eq!(view.0["status"], "completed");
         assert_eq!(view.0["workflow_graph_id"], graph_id);
         assert_eq!(view.0["nodes"][0]["result"]["summary"], "工作流执行完成");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn task_harness_execution_uses_the_callers_cancel_token() {
+        let (path, server) = test_server();
+        let graph_id = create_graph_id(&server).await;
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let result = execute_for_task_harness(server.clone(), &graph_id, cancel).await;
+
+        assert_eq!(result, Err("workflow cancelled".to_string()));
+        assert!(server.active_workflow_runs.lock().is_empty());
         let _ = std::fs::remove_file(&path);
     }
 

@@ -455,9 +455,13 @@ impl WorkflowExecutionProvider for ExistingWorkflowProvider {
         workflow_id: &str,
         _context: &NodeContext,
     ) -> Result<Option<Value>, AdapterError> {
-        super::workflow_runtime::execute_for_task_harness(Arc::clone(&self.server), workflow_id)
-            .await
-            .map_err(AdapterError::Execution)
+        super::workflow_runtime::execute_for_task_harness(
+            Arc::clone(&self.server),
+            workflow_id,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .map_err(AdapterError::Execution)
     }
 }
 
