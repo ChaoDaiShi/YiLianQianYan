@@ -26,6 +26,8 @@ import {
 import { useSpeechPlayback, cleanupVoiceSession } from "./useSpeechPlayback";
 import { useVoiceCapture, type FinalVoiceTranscript } from "./useVoiceCapture";
 import { runVoiceContinuation } from "./voiceContinuation";
+import { useHandsFree } from "./useHandsFree";
+import { isPlaybackEcho } from "./speechActivity";
 import "./globalVoice.css";
 
 export interface GlobalVoiceHostProps {
@@ -44,7 +46,10 @@ export interface GlobalVoiceContextSnapshot {
   active_task: string | null;
 }
 
-export type GlobalVoiceContextPatch = Partial<GlobalVoiceContextSnapshot>;
+export type GlobalVoiceContextPatch = Partial<GlobalVoiceContextSnapshot> & {
+  /** Only conversation lifecycle publishers may explicitly clear the anchor. */
+  anchor_action?: "replace";
+};
 
 interface GlobalVoiceContextBridgeValue {
   context: GlobalVoiceContextSnapshot;
@@ -71,6 +76,7 @@ export function mergeVoiceContext(
     "conversational_anchor",
     "active_task",
   ] as const) {
+    if (key === "conversational_anchor" && patch[key] === null && patch.anchor_action !== "replace") continue;
     if (patch[key] !== undefined) next[key] = patch[key] as never;
   }
   return next;
@@ -96,33 +102,28 @@ export function resolveVoiceContextForRoute(
   ) {
     return {
       focused_surface: "task_canvas",
-      conversational_anchor: null,
     };
   }
   if (pathname === "/memory" || pathname.startsWith("/memory/")) {
     return {
       focused_surface: "memory",
-      conversational_anchor: null,
       active_task: null,
     };
   }
   if (pathname === "/capabilities" || pathname.startsWith("/capabilities/")) {
     return {
       focused_surface: "capability_center",
-      conversational_anchor: null,
       active_task: null,
     };
   }
   if (pathname === "/system" || pathname === "/logs" || pathname === "/settings") {
     return {
       focused_surface: "system",
-      conversational_anchor: null,
       active_task: null,
     };
   }
   return {
     focused_surface: "workspace",
-    conversational_anchor: null,
     active_task: null,
   };
 }
@@ -244,6 +245,10 @@ export default function GlobalVoiceHost({
   const [notice, setNotice] = useState<string | null>(null);
   const [targetDescription, setTargetDescription] = useState("尚未解析");
   const [intentDescription, setIntentDescription] = useState("会话对话");
+  const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
+  const lastSpokenRef = useRef("");
+  const captureWasHandsFreeRef = useRef(false);
+  const invalidateContextRef = useRef<() => void>(() => undefined);
   const localContextTouchedRef = useRef(false);
   const dispatchEpochRef = useRef(0);
   const continuationControllerRef = useRef<AbortController | null>(null);
@@ -251,10 +256,20 @@ export default function GlobalVoiceHost({
   const [voiceContext, setVoiceContext] = useState<GlobalVoiceContextSnapshot>(() =>
     contextFromSession(initialSnapshot?.session ?? null),
   );
+  const latestContextRef = useRef(voiceContext);
+  latestContextRef.current = voiceContext;
 
   const updateContext = useCallback((patch: GlobalVoiceContextPatch) => {
     localContextTouchedRef.current = true;
-    setVoiceContext((current) => mergeVoiceContext(current, patch));
+    const next = mergeVoiceContext(latestContextRef.current, patch);
+    if (next.conversational_anchor?.conversation_id !== latestContextRef.current.conversational_anchor?.conversation_id) {
+      dispatchEpochRef.current += 1;
+      continuationControllerRef.current?.abort();
+      continuationControllerRef.current = null;
+      invalidateContextRef.current();
+    }
+    latestContextRef.current = next;
+    setVoiceContext(next);
   }, []);
 
   const session = snapshot?.session ?? null;
@@ -325,8 +340,16 @@ export default function GlobalVoiceHost({
         }
         return { ...previous, session: updated };
       });
-    }).catch(() => {
-      // Context sync is best effort; the local host keeps the last known context.
+    }).catch(async () => {
+      if (controller.signal.aborted) return;
+      // A superseded context write may already have advanced the server generation.
+      // Reload authoritative identity before attempting the latest context again.
+      const refreshed = await getVoiceSession(controller.signal).catch(() => null);
+      if (controller.signal.aborted || !refreshed?.session) return;
+      const refreshedSession = refreshed.session;
+      setSnapshot((previous) => previous?.session
+        && previous.session.voice_session_id === refreshedSession.voice_session_id
+        && previous.session.generation <= refreshedSession.generation ? refreshed : previous);
     });
     return () => controller.abort();
   }, [
@@ -349,12 +372,24 @@ export default function GlobalVoiceHost({
     onError: setVoiceError,
   });
 
+  const playbackRef = useRef(playback);
+  playbackRef.current = playback;
+  useEffect(() => () => {
+    dispatchEpochRef.current += 1;
+    continuationControllerRef.current?.abort();
+  }, []);
+
   const handleFinalTranscript = useCallback(
     async (result: FinalVoiceTranscript) => {
       const current = latestSessionRef.current;
       const dispatchEpoch = dispatchEpochRef.current;
-      if (!current || !isFinalTranscriptForSession(result, current)) {
+      if (!current || !isFinalTranscriptForSession(result, current)
+        || current.conversational_anchor?.conversation_id !== latestContextRef.current.conversational_anchor?.conversation_id) {
         setNotice("这段语音来自旧会话，已安全丢弃。");
+        return;
+      }
+      if (captureWasHandsFreeRef.current && isPlaybackEcho(result.text, lastSpokenRef.current)) {
+        setNotice("已忽略疑似播报回声，请重新说话。");
         return;
       }
       setSnapshot((previous) =>
@@ -409,6 +444,10 @@ export default function GlobalVoiceHost({
         try {
           const continuationResult = await runVoiceContinuation(routed.continuation, {
             signal: continuationController.signal,
+            isCurrent: () => dispatchEpochRef.current === dispatchEpoch
+              && latestSessionRef.current?.voice_session_id === result.sessionId
+              && latestSessionRef.current?.generation === result.generation
+              && latestContextRef.current.conversational_anchor?.conversation_id === current.conversational_anchor?.conversation_id,
           });
           narration = continuationResult.narration;
         } catch (error) {
@@ -432,7 +471,8 @@ export default function GlobalVoiceHost({
         return;
       }
       if (narration && current.attention_mode !== "silent") {
-        await playback.speak(narration);
+        lastSpokenRef.current = narration;
+        await playbackRef.current.speak(narration);
       }
     },
     [playback],
@@ -440,10 +480,14 @@ export default function GlobalVoiceHost({
 
   const interruptForBargeIn = useCallback(async (): Promise<GlobalVoiceSession | void> => {
     dispatchEpochRef.current += 1;
+    const requestEpoch = dispatchEpochRef.current;
     continuationControllerRef.current?.abort();
     continuationControllerRef.current = null;
     playback.interrupt();
     if (!session) return;
+    if (session.conversational_anchor?.conversation_id !== latestContextRef.current.conversational_anchor?.conversation_id) {
+      throw new Error("正在同步对话，请稍后重新说话。");
+    }
     const interrupted = await interruptVoiceSession(
       session.voice_session_id,
       session.generation,
@@ -451,6 +495,12 @@ export default function GlobalVoiceHost({
     if (!interrupted) {
       throw new Error("语音服务未确认打断，未取得新的输入 generation。");
     }
+    if (dispatchEpochRef.current !== requestEpoch
+      || latestSessionRef.current?.voice_session_id !== session.voice_session_id
+      || latestSessionRef.current?.generation !== session.generation) {
+      throw new Error("旧语音会话的打断响应已丢弃。");
+    }
+    latestSessionRef.current = interrupted;
     setSnapshot((previous) =>
       previous
         ? { ...previous, session: interrupted, lease: null, partial_transcript: null }
@@ -462,6 +512,7 @@ export default function GlobalVoiceHost({
 
   const capture = useVoiceCapture({
     session,
+    handsFreeEnabled,
     onBargeIn: interruptForBargeIn,
     onPartial: (text) => {
       setSnapshot((previous) =>
@@ -471,13 +522,29 @@ export default function GlobalVoiceHost({
     onFinal: handleFinalTranscript,
     onError: setVoiceError,
   });
+  invalidateContextRef.current = () => { capture.cancel(); playback.interrupt(); };
+  useHandsFree({
+    enabled: handsFreeEnabled && session?.state !== "ended",
+    sessionId: session?.voice_session_id ?? null,
+    playing: playback.state.status === "playing" || playback.state.status === "synthesizing",
+    capture: {
+      ...capture,
+      start: (reason, stream) => {
+        captureWasHandsFreeRef.current = true;
+        return capture.start(reason, stream);
+      },
+    },
+    onError: (message) => { setHandsFreeEnabled(false); capture.cancel(); setNotice(message); },
+  });
 
   const startSession = useCallback(async () => {
     dispatchEpochRef.current += 1;
+    const requestEpoch = dispatchEpochRef.current;
     continuationControllerRef.current?.abort();
     continuationControllerRef.current = null;
     playback.interrupt();
     const started = await startVoiceSession(voiceContext.focused_surface);
+    if (dispatchEpochRef.current !== requestEpoch) return;
     if (!started) {
       setNotice("语音会话未能启动，请检查后端与语音配置。");
       return;
@@ -489,7 +556,9 @@ export default function GlobalVoiceHost({
 
   const endSession = useCallback(async () => {
     if (!session) return;
+    setHandsFreeEnabled(false);
     dispatchEpochRef.current += 1;
+    const requestEpoch = dispatchEpochRef.current;
     continuationControllerRef.current?.abort();
     continuationControllerRef.current = null;
     await cleanupVoiceSession({
@@ -499,7 +568,7 @@ export default function GlobalVoiceHost({
       interruptPlayback: playback.interrupt,
       endSession: async (sessionId, generation) => {
         const ended = await endVoiceSession(sessionId, generation);
-        if (ended) {
+        if (ended && dispatchEpochRef.current === requestEpoch) {
           setSnapshot((previous) =>
             previous
               ? {
@@ -529,6 +598,7 @@ export default function GlobalVoiceHost({
   }, [capture.cancel, interruptForBargeIn, session]);
 
   const startCapture = useCallback(() => {
+    captureWasHandsFreeRef.current = false;
     void capture.start("user-click");
   }, [capture]);
 
@@ -537,6 +607,7 @@ export default function GlobalVoiceHost({
       setNotice("还没有可播报的最终文字。");
       return;
     }
+    lastSpokenRef.current = finalTranscript;
     void playback.speak(finalTranscript);
   }, [finalTranscript, playback]);
 
@@ -641,6 +712,13 @@ export default function GlobalVoiceHost({
                   <button type="button" onClick={() => void interruptSession()}>
                     打断
                   </button>
+                  <button type="button" aria-pressed={handsFreeEnabled} onClick={() => {
+                    if (handsFreeEnabled) capture.cancel();
+                    setHandsFreeEnabled(!handsFreeEnabled);
+                  }}>
+                    {handsFreeEnabled ? "关闭免手持" : "开启免手持"}
+                  </button>
+                  {handsFreeEnabled ? <span role="status">麦克风持续开启；说话可打断播报，停顿后提交。建议佩戴耳机。</span> : null}
                 </>
               ) : (
                 <button type="button" className="global-voice-primary" onClick={() => void startSession()}>

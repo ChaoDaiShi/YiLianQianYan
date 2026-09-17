@@ -66,6 +66,20 @@ export function interruptAudioElement(audio: HTMLAudioElement | null): void {
   audio.load();
 }
 
+export async function replayAudioIfCurrent(
+  audio: HTMLAudioElement,
+  isCurrent: () => boolean,
+  reportStarted: () => Promise<boolean>,
+): Promise<boolean> {
+  if (!isCurrent()) return false;
+  await audio.play();
+  if (!isCurrent()) {
+    interruptAudioElement(audio);
+    return false;
+  }
+  return await reportStarted() && isCurrent();
+}
+
 export interface VoiceCleanupOptions {
   sessionId: string;
   generation: number;
@@ -261,14 +275,18 @@ export function useSpeechPlayback({
   const replay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    const identity = latestRef.current;
+    const controller = requestControllerRef.current;
+    if (!identity.sessionId || identity.generation === null) return;
+    const replaySessionId = identity.sessionId;
+    const replayGeneration = identity.generation;
     audio.currentTime = 0;
-    void audio
-      .play()
-      .then(async () => {
-        const current = latestRef.current;
-        if (!current.sessionId || current.generation === null) return;
-        const started = await markVoiceSpeechStarted(current.sessionId, current.generation);
-        if (started && audioRef.current === audio) {
+    void replayAudioIfCurrent(audio,
+      () => audioRef.current === audio && !controller?.signal.aborted
+        && latestRef.current.sessionId === replaySessionId && latestRef.current.generation === replayGeneration,
+      async () => Boolean(await markVoiceSpeechStarted(replaySessionId, replayGeneration, controller?.signal)),
+    ).then((started) => {
+        if (started) {
           setState((playback) => reducePlaybackState(playback, "replay"));
         }
       })

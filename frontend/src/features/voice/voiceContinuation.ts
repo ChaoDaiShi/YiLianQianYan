@@ -1,4 +1,3 @@
-import { approveAction, rejectAction } from "../../api/approvals";
 import { sendMessage, stopGeneration, type AgentEvent } from "../../api/chat";
 import { loadConversation } from "../../api/conversations";
 import type { VoiceContinuation } from "../../api/voice";
@@ -20,6 +19,7 @@ export interface VoiceContinuationResult {
 
 export interface RunVoiceContinuationOptions {
   signal?: AbortSignal;
+  isCurrent?: () => boolean;
   onEvent?: (event: AgentEvent) => void;
 }
 
@@ -107,6 +107,7 @@ async function runConversationContinuation(
   options: RunVoiceContinuationOptions,
 ): Promise<VoiceContinuationResult> {
   const before = await loadConversation(continuation.conversation_id);
+  if (options.signal?.aborted || options.isCurrent?.() === false) throw abortError();
   const previousMessageIds = new Set<string>(
     (Array.isArray(before?.messages) ? before.messages : [])
       .map((message: { id?: string }) => message.id)
@@ -114,14 +115,17 @@ async function runConversationContinuation(
   );
   const events: AgentEvent[] = [];
   let requestController: AbortController | null = null;
+  let rejectStream: ((reason: Error) => void) | null = null;
   const onAbort = () => {
     requestController?.abort();
+    rejectStream?.(abortError());
     void stopGeneration(continuation.conversation_id);
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     await new Promise<void>((resolve, reject) => {
-      if (options.signal?.aborted) {
+      rejectStream = reject;
+      if (options.signal?.aborted || options.isCurrent?.() === false) {
         reject(abortError());
         return;
       }
@@ -137,7 +141,7 @@ async function runConversationContinuation(
         },
       );
     });
-    if (options.signal?.aborted) throw abortError();
+    if (options.signal?.aborted || options.isCurrent?.() === false) throw abortError();
     const evidence = reduceConversationEvents(events);
     await waitForPersistedAssistant(
       continuation.conversation_id,
@@ -151,31 +155,12 @@ async function runConversationContinuation(
   }
 }
 
-async function runApprovalContinuation(
-  continuation: Extract<VoiceContinuation, { kind: "approval" }>,
-  options: RunVoiceContinuationOptions,
-): Promise<VoiceContinuationResult> {
-  if (options.signal?.aborted) throw abortError();
-  const events: AgentEvent[] = [];
-  const submit = continuation.decision === "approve" ? approveAction : rejectAction;
-  await submit(
-    continuation.approval_id,
-    continuation.conversation_id,
-    (event) => {
-      events.push(event);
-      options.onEvent?.(event);
-    },
-    options.signal,
-  );
-  if (options.signal?.aborted) throw abortError();
-  return reduceApprovalEvents(continuation.decision, events);
-}
-
 export async function runVoiceContinuation(
   continuation: VoiceContinuation,
   options: RunVoiceContinuationOptions = {},
 ): Promise<VoiceContinuationResult> {
-  return continuation.kind === "conversation"
-    ? runConversationContinuation(continuation, options)
-    : runApprovalContinuation(continuation, options);
+  if (continuation.kind === "approval") {
+    throw new Error("voice_approval_attestation_required：请在已显示的审批卡片中确认。");
+  }
+  return runConversationContinuation(continuation, options);
 }

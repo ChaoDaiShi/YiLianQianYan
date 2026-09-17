@@ -17,7 +17,7 @@ export default function ChatPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const conversationId = id || null;
-  const { updateContext } = useGlobalVoiceContext();
+  const { context, updateContext } = useGlobalVoiceContext();
   const [workspaceMode, setWorkspaceMode] = useState(() =>
     getWorkspaceMode(window.innerWidth)
   );
@@ -43,12 +43,14 @@ export default function ChatPage() {
   }, [workspaceMode]);
 
   useEffect(() => {
-    updateContext({ conversational_anchor: null });
-  }, [conversationId, updateContext]);
+    if (context.conversational_anchor?.conversation_id !== conversationId) {
+      updateContext({ conversational_anchor: null, anchor_action: "replace" });
+    }
+  }, [conversationId, context.conversational_anchor?.conversation_id, updateContext]);
 
   const onVoiceAnchorChange = useCallback(
     (anchor: ConversationalAnchor | null) => {
-      updateContext({ conversational_anchor: anchor });
+      updateContext({ conversational_anchor: anchor, anchor_action: "replace" });
     },
     [updateContext],
   );

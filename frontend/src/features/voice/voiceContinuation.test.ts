@@ -1,15 +1,55 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { loadConversation } from "../../api/conversations";
+import { sendMessage } from "../../api/chat";
+import { approveAction } from "../../api/approvals";
 import type { AgentEvent } from "../../api/client";
 import {
   reduceApprovalEvents,
   reduceConversationEvents,
+  runVoiceContinuation,
 } from "./voiceContinuation";
+
+vi.mock("../../api/conversations", () => ({ loadConversation: vi.fn() }));
+vi.mock("../../api/chat", () => ({ sendMessage: vi.fn(), stopGeneration: vi.fn() }));
+vi.mock("../../api/approvals", () => ({ approveAction: vi.fn().mockResolvedValue(undefined), rejectAction: vi.fn().mockResolvedValue(undefined) }));
+beforeEach(() => vi.resetAllMocks());
 
 function event(type: string, extra: Partial<AgentEvent> = {}): AgentEvent {
   return { type, conversation_id: "conversation-a", ...extra };
 }
 
 describe("voice continuation evidence", () => {
+  it("refuses approval continuations from an older server without trusted display attestation", async () => {
+    await expect(runVoiceContinuation({ kind: "approval", conversation_id: "conversation-a", approval_id: "approval-1", decision: "approve" }))
+      .rejects.toThrow("voice_approval_attestation_required");
+    expect(approveAction).not.toHaveBeenCalled();
+  });
+  it("settles cancellation even when the chat stream never sends another event", async () => {
+    vi.mocked(loadConversation).mockResolvedValueOnce({ id: "conversation-a", messages: [] } as Awaited<ReturnType<typeof loadConversation>>);
+    const controller = new AbortController();
+    let started!: () => void;
+    const start = new Promise<void>((resolve) => { started = resolve; });
+    vi.mocked(sendMessage).mockImplementationOnce(() => { started(); return new AbortController(); });
+    const result = runVoiceContinuation({ kind: "conversation", conversation_id: "conversation-a", message: "hello" }, { signal: controller.signal });
+    await start;
+    controller.abort();
+    await expect(result).rejects.toThrow("取消");
+    vi.mocked(sendMessage).mockClear();
+  });
+  it("revalidates the bound identity after loading and before committing the chat message", async () => {
+    let current = true;
+    vi.mocked(loadConversation).mockImplementationOnce(async () => {
+      current = false;
+      return { id: "conversation-a", messages: [] } as Awaited<ReturnType<typeof loadConversation>>;
+    });
+    vi.mocked(sendMessage).mockImplementationOnce((_message, _conversation, onEvent) => {
+      onEvent({ type: "done", conversation_id: "conversation-a" });
+      return new AbortController();
+    });
+    await expect(runVoiceContinuation({ kind: "conversation", conversation_id: "conversation-a", message: "hello" },
+      { isCurrent: () => current })).rejects.toThrow("取消");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
   it("collects the real assistant stream only after a terminal done event", () => {
     const result = reduceConversationEvents([
       event("token", { token: "第三点是" }),

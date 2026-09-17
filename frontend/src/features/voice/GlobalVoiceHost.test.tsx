@@ -19,6 +19,7 @@ import {
 } from "./useVoiceCapture";
 import {
   cleanupVoiceSession,
+  replayAudioIfCurrent,
   interruptAudioElement,
   reducePlaybackState,
   shouldAcceptSpeechGeneration,
@@ -64,6 +65,19 @@ const snapshot: VoiceRuntimeSnapshot = {
 };
 
 describe("GlobalVoiceHost contract", () => {
+  it("does not report or revive playback when replay resolves after interruption", async () => {
+    let resolvePlay!: () => void;
+    const play = new Promise<void>((resolve) => { resolvePlay = resolve; });
+    let current = true;
+    const audio = { play: () => play, pause: vi.fn(), currentTime: 3, removeAttribute: vi.fn(), load: vi.fn() } as unknown as HTMLAudioElement;
+    const report = vi.fn().mockResolvedValue(true);
+    const replay = replayAudioIfCurrent(audio, () => current, report);
+    current = false;
+    resolvePlay();
+    expect(await replay).toBe(false);
+    expect(report).not.toHaveBeenCalled();
+    expect(audio.pause).toHaveBeenCalledOnce();
+  });
   it("keeps one visible pill and one session key while the surface content changes", () => {
     const first = renderToStaticMarkup(
       <GlobalVoiceHost initialSnapshot={snapshot}>
@@ -178,11 +192,26 @@ describe("GlobalVoiceHost contract", () => {
     });
     expect(resolveVoiceContextForRoute("/task-world/graph-7", "standalone")).toEqual({
       focused_surface: "task_canvas",
-      conversational_anchor: null,
     });
     expect(resolveVoiceContextForRoute("/chat/conversation-7", "desktop-skeleton")).toEqual({
       focused_surface: "workspace",
     });
+  });
+
+  it("preserves the conversation anchor through every ordinary workspace route", () => {
+    const current = {
+      focused_surface: "conversation" as const,
+      conversational_anchor: snapshot.session!.conversational_anchor!,
+      active_task: null,
+    };
+    for (const route of ["/tasks", "/task-world/graph-7", "/capabilities", "/system", "/settings"]) {
+      expect(mergeVoiceContext(current, resolveVoiceContextForRoute(route, "standalone"))
+        .conversational_anchor).toEqual(current.conversational_anchor);
+    }
+    expect(mergeVoiceContext(current, { active_task: "graph-7", conversational_anchor: null })
+      .conversational_anchor).toEqual(current.conversational_anchor);
+    expect(mergeVoiceContext(current, { conversational_anchor: null, anchor_action: "replace" })
+      .conversational_anchor).toBeNull();
   });
 
   it("dispatches only a final transcript and accepts speech from the active generation", () => {

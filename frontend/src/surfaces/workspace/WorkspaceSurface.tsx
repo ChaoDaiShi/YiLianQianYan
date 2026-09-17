@@ -1,5 +1,6 @@
 import { lazy } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import GlobalVoiceHost, { resolveVoiceContextForRoute } from "../../features/voice/GlobalVoiceHost";
 import AppShell from "../../components/layout/AppShell";
 import ChatPage from "../../pages/ChatPage";
 
@@ -19,7 +20,9 @@ const MemoryPage = lazy(() => import("../../pages/MemoryPage"));
 const KnowledgePage = lazy(() => import("../../pages/KnowledgePage"));
 
 export default function WorkspaceSurface() {
+  const { pathname } = useLocation();
   return (
+    <GlobalVoiceHost contextPatch={resolveVoiceContextForRoute(pathname, "standalone")}>
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/chat" replace />} />
@@ -42,5 +45,6 @@ export default function WorkspaceSurface() {
         <Route path="*" element={<Navigate to="/chat" replace />} />
       </Route>
     </Routes>
+    </GlobalVoiceHost>
   );
 }

@@ -25,8 +25,9 @@ export interface FinalVoiceTranscript {
 
 export interface UseVoiceCaptureOptions {
   session: GlobalVoiceSession | null;
+  handsFreeEnabled?: boolean;
   onBargeIn?: () => Promise<GlobalVoiceSession | void> | GlobalVoiceSession | void;
-  onFinal?: (transcript: FinalVoiceTranscript) => void;
+  onFinal?: (transcript: FinalVoiceTranscript) => Promise<void> | void;
   /** Retained for callers that render a partial field; capture never uploads partials. */
   onPartial?: (text: string) => void;
   onError?: (message: string) => void;
@@ -113,8 +114,8 @@ export function isCurrentCaptureOperation(
   );
 }
 
-export function isExplicitMicrophoneStart(reason: string | undefined): boolean {
-  return reason === "user-click" || reason === "user-keyboard";
+export function isExplicitMicrophoneStart(reason: string | undefined, handsFreeEnabled = false): boolean {
+  return reason === "user-click" || reason === "user-keyboard" || (reason === "hands-free" && handsFreeEnabled);
 }
 
 /**
@@ -175,6 +176,7 @@ function extractTranscript(response: unknown): string | null {
 
 export function useVoiceCapture({
   session,
+  handsFreeEnabled = false,
   onBargeIn,
   onFinal,
   onError,
@@ -293,13 +295,14 @@ export function useVoiceCapture({
             fail("语音服务没有返回可用文字，请重试。");
             return;
           }
-          onFinal?.({
+          window.clearTimeout(timeoutId);
+          await onFinal?.({
             text,
             sessionId: lease.voice_session_id,
             generation: lease.generation,
             leaseId: lease.lease_id,
           });
-          reset();
+          if (isCurrentOperation(operation, lease)) reset();
         } catch (error) {
           if (!isCurrentOperation(operation, lease)) return;
           if (timedOut) {
@@ -319,7 +322,7 @@ export function useVoiceCapture({
   );
 
   const start = useCallback(
-    async (reason: string) => {
+    async (reason: string, sourceStream?: MediaStream) => {
       if (
         !isCaptureStartAllowed(
           state.status,
@@ -330,7 +333,7 @@ export function useVoiceCapture({
       ) {
         return;
       }
-      if (!isExplicitMicrophoneStart(reason)) {
+      if (!isExplicitMicrophoneStart(reason, handsFreeEnabled)) {
         fail("请点击或使用明确的快捷键开始麦克风输入。");
         return;
       }
@@ -378,7 +381,9 @@ export function useVoiceCapture({
         }
         leaseRef.current = lease;
         setState({ status: "acquiring", error: null, lease });
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = sourceStream ? sourceStream.clone() : await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+        });
         if (!isCurrentOperationId(operation) || controller.signal.aborted) {
           clearAcquireInFlight(operation);
           stream.getTracks().forEach((track) => track.stop());
@@ -424,6 +429,7 @@ export function useVoiceCapture({
     [
       clearAcquireInFlight,
       fail,
+      handsFreeEnabled,
       finalizeRecording,
       isCurrentOperationId,
       onBargeIn,
@@ -491,7 +497,7 @@ export function useVoiceCapture({
 
 export interface UseVoiceCaptureResult {
   state: CaptureState;
-  start: (reason: string) => Promise<void>;
+  start: (reason: string, sourceStream?: MediaStream) => Promise<void>;
   stop: () => void;
   cancel: () => void;
 }

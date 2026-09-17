@@ -7,6 +7,7 @@ import {
   MAX_CAPTURE_DURATION_MS,
   isCaptureStartAllowed,
   isCurrentCaptureOperation,
+  isExplicitMicrophoneStart,
   selectRecorderMimeType,
   type CaptureBuffer,
 } from "./useVoiceCapture";
@@ -31,6 +32,11 @@ const lease: VoiceInputLease = {
 };
 
 describe("bounded final-first voice capture", () => {
+  it("allows automatic speech start only under explicit hands-free opt-in", () => {
+    expect(isExplicitMicrophoneStart("hands-free", false)).toBe(false);
+    expect(isExplicitMicrophoneStart("hands-free", true)).toBe(true);
+    expect(isExplicitMicrophoneStart("mount", true)).toBe(false);
+  });
   it("chooses only a supported official candidate and fails closed when none is supported", () => {
     expect(selectRecorderMimeType((mimeType) => mimeType === "audio/ogg;codecs=opus")).toBe(
       "audio/ogg;codecs=opus",
