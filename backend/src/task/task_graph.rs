@@ -129,7 +129,7 @@ impl Default for RetryPolicy {
 
 impl RetryPolicy {
     pub fn new(max_attempts: u32) -> Result<Self, TaskGraphValidationError> {
-        if max_attempts == 0 {
+        if max_attempts == 0 || max_attempts > super::execution::MAX_RETRY_ATTEMPTS {
             return Err(TaskGraphValidationError::InvalidRetryPolicy);
         }
         Ok(Self { max_attempts })
@@ -268,7 +268,9 @@ impl TaskGraph {
                     node.id.to_string(),
                 ));
             }
-            if node.retry_policy.max_attempts == 0 {
+            if node.retry_policy.max_attempts == 0
+                || node.retry_policy.max_attempts > super::execution::MAX_RETRY_ATTEMPTS
+            {
                 return Err(TaskGraphValidationError::InvalidRetryPolicy);
             }
         }

@@ -78,6 +78,20 @@ mod tests {
     }
 
     #[test]
+    fn review_planner_retry_policy_matches_execution_bounds() {
+        let id = TaskGraphId::new("planned").unwrap();
+        for (attempts, accepted) in [(0, false), (8, true), (9, false)] {
+            let mut value = proposal();
+            value["nodes"][0]["retry_policy"]["max_attempts"] = json!(attempts);
+            assert_eq!(
+                parse_graph_proposal(&value.to_string(), &id, &[]).is_ok(),
+                accepted,
+                "attempts={attempts}"
+            );
+        }
+    }
+
+    #[test]
     fn accepts_editable_plan_without_inventing_an_executor() {
         let graph = parse_graph_proposal(
             &proposal().to_string(),
