@@ -13,11 +13,14 @@
 // ============================================================
 
 pub mod builtin;
+pub mod import_archive;
+pub mod import_store;
 pub mod imports;
 pub mod model;
 pub mod provider;
 pub mod registry;
 pub mod runtime_providers;
+pub mod system_preferences;
 
 #[cfg(test)]
 mod tests;
