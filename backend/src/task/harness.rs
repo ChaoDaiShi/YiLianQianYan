@@ -100,6 +100,10 @@ impl TaskHarness {
         self.resolver = resolver;
     }
 
+    pub fn set_context_builder(&mut self, context_builder: NodeContextBuilder) {
+        self.context_builder = context_builder;
+    }
+
     /// Rehydrate append-only attempts loaded from the v1 persistence layer.
     /// Rows are validated before entering the authoritative harness map.
     pub fn from_attempts(

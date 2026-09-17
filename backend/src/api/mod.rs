@@ -66,7 +66,23 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             )),
         )
         .route("/api/resources", get(resources::list_handler))
+        .route(
+            "/api/resources/:id/preview",
+            get(resources::preview_handler),
+        )
+        .route(
+            "/api/resources/:id/content",
+            get(resources::content_handler),
+        )
         .route("/api/resources/:id", get(resources::get_handler))
+        .route(
+            "/api/resource-bindings",
+            post(resources::bind_handler).get(resources::list_bindings_handler),
+        )
+        .route(
+            "/api/resource-bindings/:id",
+            delete(resources::unbind_handler),
+        )
         .route("/api/presence", get(voice::presence_handler))
         .route("/api/voice/providers", get(voice::providers_handler))
         .route(

@@ -11,6 +11,7 @@ use crate::shared::command::{CommandRequest, CommandResult, CommandRouter, Comma
 use crate::shared::context::{ContextRequest, TaskProjection, TaskProjectionProvider};
 use crate::shared::event::{EventHub, YiEvent};
 
+use super::context::NodeContextBuilder;
 use super::validation::ValidationPolicy;
 use super::voice_commands::{
     status_from_detail, TaskExecutionControl, TaskExecutionControlState, TaskStatusProjection,
@@ -230,11 +231,14 @@ impl TaskWorldRuntime {
         let mut harnesses = HashMap::with_capacity(supervisors.len());
         for (graph_id, supervisor) in &supervisors {
             let attempts = executions_by_graph.remove(graph_id).unwrap_or_default();
-            let harness = TaskHarness::from_attempts(
+            let mut harness = TaskHarness::from_attempts(
                 supervisor.graph().clone(),
                 ExecutorResolver::new(),
                 attempts,
             )?;
+            harness.set_context_builder(
+                NodeContextBuilder::new().with_resource_database(database.clone()),
+            );
             harnesses.insert(graph_id.clone(), harness);
         }
         if let Some((graph_id, _)) = executions_by_graph.into_iter().next() {
@@ -759,9 +763,13 @@ impl TaskWorldRuntime {
         ensure_revision(&supervisor, expected_revision)?;
         drop(supervisors);
         let mut harnesses = self.harnesses.write();
-        let harness = harnesses
-            .entry(graph_id.clone())
-            .or_insert(TaskHarness::new(graph, ExecutorResolver::new())?);
+        let harness = harnesses.entry(graph_id.clone()).or_insert({
+            let mut harness = TaskHarness::new(graph, ExecutorResolver::new())?;
+            harness.set_context_builder(
+                NodeContextBuilder::new().with_resource_database(self.database.clone()),
+            );
+            harness
+        });
         harness.set_resolver(resolver);
         let execution_id = if harness
             .latest_execution(node_id)
@@ -1170,7 +1178,10 @@ impl TaskWorldRuntime {
         now: i64,
     ) -> Result<TaskGraph, TaskWorldRuntimeError> {
         let graph = TaskGraph::new(graph_id.clone(), GraphRevision::initial(), nodes, edges)?;
-        let harness = TaskHarness::new(graph.clone(), ExecutorResolver::new())?;
+        let mut harness = TaskHarness::new(graph.clone(), ExecutorResolver::new())?;
+        harness.set_context_builder(
+            NodeContextBuilder::new().with_resource_database(self.database.clone()),
+        );
         let supervisor = TaskSupervisor::new(graph, now)?;
 
         let mut supervisors = self.supervisors.write();
@@ -2078,9 +2089,13 @@ impl TaskWorldRuntime {
         drop(supervisors);
 
         let mut harnesses = self.harnesses.write();
-        let harness = harnesses
-            .entry(graph.id.clone())
-            .or_insert(TaskHarness::new(graph.clone(), ExecutorResolver::new())?);
+        let harness = harnesses.entry(graph.id.clone()).or_insert({
+            let mut harness = TaskHarness::new(graph.clone(), ExecutorResolver::new())?;
+            harness.set_context_builder(
+                NodeContextBuilder::new().with_resource_database(self.database.clone()),
+            );
+            harness
+        });
         harness.update_graph(graph.clone())?;
         harness.mark_stale_nodes(&invalidated, now)?;
         for execution in harness.all_attempts() {
