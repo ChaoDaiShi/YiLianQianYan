@@ -19,11 +19,11 @@ use serde_json::{json, Value};
 use crate::server::AppServer;
 use crate::task::validation::ValidationPolicy;
 use crate::task::{
-    execution_summary, AdapterError, AdapterRegistry, CanvasNodeLayout, CanvasView, CanvasViewport,
-    CommandExecutor, ExecutorDispatch, ExecutorKind, ExecutorResolver, NodeContext, NodeExecution,
-    NodeExecutionId, ResolvedExecutionPlan, RetryPolicy, TaskEdge, TaskGraphId, TaskHarnessError,
-    TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntimeError, WorkflowExecutionProvider,
-    WorkflowExecutor, CANVAS_VIEW_SCHEMA_VERSION,
+    execution_summary, AdapterError, AdapterRegistry, CanvasGroup, CanvasNodeLayout, CanvasView,
+    CanvasViewport, CommandExecutor, ExecutorDispatch, ExecutorKind, ExecutorResolver, NodeContext,
+    NodeExecution, NodeExecutionId, ResolvedExecutionPlan, RetryPolicy, TaskEdge, TaskGraphId,
+    TaskHarnessError, TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntimeError,
+    WorkflowExecutionProvider, WorkflowExecutor, CANVAS_VIEW_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +66,12 @@ pub struct ExpectedRevisionRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewGraphRequest {
+    pub expected_revision: u64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CancelCommandRequest {
     pub expected_revision: u64,
     pub request_id: String,
@@ -101,6 +107,8 @@ pub struct UpdateCanvasViewRequest {
     pub node_layouts: Vec<CanvasNodeLayout>,
     #[serde(default)]
     pub selection: Vec<TaskNodeId>,
+    #[serde(default)]
+    pub groups: Vec<CanvasGroup>,
 }
 
 fn default_canvas_schema_version() -> u32 {
@@ -223,6 +231,49 @@ pub async fn get_graph_detail(
     }
 }
 
+pub async fn review_graph(
+    State(server): State<Arc<AppServer>>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<ReviewGraphRequest>,
+) -> Response {
+    let graph_id = match parse_graph_id(graph_id) {
+        Ok(graph_id) => graph_id,
+        Err(error) => return runtime_error(error),
+    };
+    let graph = match server.task_world.get_graph(&graph_id) {
+        Some(graph) => graph,
+        None => return runtime_error(TaskWorldRuntimeError::GraphNotFound(graph_id.to_string())),
+    };
+    if graph.revision.value() != request.expected_revision {
+        return runtime_error(TaskWorldRuntimeError::StaleRevision {
+            expected: request.expected_revision,
+            actual: graph.revision.value(),
+        });
+    }
+    let model = server.config.read().model.clone();
+    let planner = crate::task::LlmTaskPlanner::new(&model, Arc::clone(&server.secret_resolver));
+    match planner.review_graph(&graph).await {
+        Ok(review) => (
+            StatusCode::OK,
+            Json(json!({
+                "review": review,
+                "reviewed_revision": graph.revision.value(),
+            })),
+        )
+            .into_response(),
+        Err(crate::task::TaskPlannerError::Llm(message)) => planning_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "review_unavailable",
+            message,
+        ),
+        Err(error) => planning_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_review",
+            error.to_string(),
+        ),
+    }
+}
+
 pub async fn get_canvas_view(
     State(server): State<Arc<AppServer>>,
     Path(graph_id): Path<String>,
@@ -257,6 +308,7 @@ pub async fn put_canvas_view(
         viewport: request.viewport,
         node_layouts: request.node_layouts,
         selection: request.selection,
+        groups: request.groups,
         updated_at,
     };
     match server.task_world.save_canvas_view(

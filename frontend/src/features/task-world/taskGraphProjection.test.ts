@@ -7,6 +7,7 @@ import {
   toReactFlowModel,
   getExecutorAvailability,
 } from "./taskGraphProjection";
+import * as taskGraphProjection from "./taskGraphProjection";
 import type { CanvasView, TaskGraphDetail } from "../../api/taskWorld";
 
 const detail: TaskGraphDetail = {
@@ -120,6 +121,7 @@ const view: CanvasView = {
     { node_id: "finish", x: 740, y: 120, width: 240, height: 128 },
   ],
   selection: ["review"],
+  groups: [],
   updated_at: 14,
 };
 
@@ -147,6 +149,32 @@ describe("TaskGraph projection boundary", () => {
 
     expect(trail.map((item) => item.nodeId)).toEqual(["review", "prepare", "finish"]);
     expect(trail[0].node).toBe(projection.nodes.find((node) => node.id === "review"));
+  });
+
+  it("hides collapsed visual-group members without mutating the semantic graph", () => {
+    const projection = projectTaskGraph(detail);
+    const groupedView = {
+      ...view,
+      groups: [{ id: "group-1", title: "准备阶段", node_ids: ["prepare", "review"], collapsed: true }],
+    } satisfies CanvasView;
+
+    const model = toReactFlowModel(projection, groupedView, null);
+
+    expect(model.nodes.map((node) => node.id)).toEqual(["finish"]);
+    expect(model.edges).toEqual([]);
+    expect(projection.nodes.map((node) => node.id)).toEqual(["prepare", "review", "finish"]);
+  });
+
+  it("builds a deterministic dependency-aware auto layout", () => {
+    const candidate = (taskGraphProjection as unknown as Record<string, unknown>).buildAutoLayout;
+    expect(typeof candidate).toBe("function");
+    if (typeof candidate !== "function") return;
+
+    expect(candidate(projectTaskGraph(detail))).toEqual([
+      { node_id: "prepare", x: 40, y: 40, width: 240, height: 128 },
+      { node_id: "review", x: 360, y: 40, width: 240, height: 128 },
+      { node_id: "finish", x: 680, y: 40, width: 240, height: 128 },
+    ]);
   });
 
   it("matches task events by graph id without applying supervisor transitions", () => {

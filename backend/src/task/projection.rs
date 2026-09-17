@@ -104,6 +104,7 @@ pub struct TaskNodeDetail {
     pub id: String,
     pub kind: TaskNodeKind,
     pub title: String,
+    pub retry_policy: super::RetryPolicy,
     pub status: TaskNodeStatus,
     pub state: TaskNodeStateSummary,
     pub executor_ref: Option<String>,
@@ -284,6 +285,7 @@ fn node_detail(
         id: node.id.to_string(),
         kind: node.kind,
         title: node.title.clone(),
+        retry_policy: node.retry_policy,
         status: projected_status,
         state: state_summary,
         executor_ref,
@@ -838,7 +840,8 @@ mod tests {
                 "private_payload": "do not expose"
             }),
         )
-        .unwrap();
+        .unwrap()
+        .with_retry_policy(crate::task::RetryPolicy { max_attempts: 3 });
         let graph = TaskGraph::new(
             graph_id("detail-graph"),
             GraphRevision::initial(),
@@ -863,6 +866,7 @@ mod tests {
             Some("workflow://review")
         );
         let value = serde_json::to_value(detail).unwrap();
+        assert_eq!(value["nodes"][0]["retry_policy"]["max_attempts"], 3);
         assert!(value["nodes"][0].get("input").is_none());
         assert!(value["nodes"][0].get("private_payload").is_none());
     }

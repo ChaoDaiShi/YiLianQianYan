@@ -57,4 +57,19 @@ describe("Task World surface contract", () => {
     expect(inspectorSource).not.toContain("desktop.app");
     expect(pageSource).not.toContain("desktop.app");
   });
+
+  it("offers persisted visual grouping, collapse and auto layout without semantic edits", () => {
+    expect(pageSource).toContain("创建分组");
+    expect(pageSource).toContain("自动布局");
+    expect(pageSource).toContain("group.collapsed");
+    expect(pageSource).toContain("groups:");
+  });
+
+  it("keeps AI graph review as user-accepted suggestions", () => {
+    expect(pageSource).toContain("AI 审查");
+    expect(pageSource).toContain("接受建议");
+    expect(pageSource).toContain("拒绝建议");
+    expect(pageSource).toContain("reviewTaskGraph");
+    expect(pageSource).toContain("reviewed_revision");
+  });
 });

@@ -44,6 +44,7 @@ const view: CanvasView = {
   viewport: { x: 12, y: -4, zoom: 1.1 },
   node_layouts: [],
   selection: [],
+  groups: [],
   updated_at: 1_700_000_000,
 };
 
@@ -106,6 +107,7 @@ describe("Task World API", () => {
           viewport: view.viewport,
           node_layouts: view.node_layouts,
           selection: view.selection,
+          groups: view.groups,
         }),
       }),
     );

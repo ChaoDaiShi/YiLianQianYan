@@ -37,6 +37,13 @@ pub(crate) const TASK_CANVAS_SCHEMA_MIGRATION: ProductMigrationSpec = ProductMig
     TASK_CANVAS_SCHEMA_SQL,
 );
 
+pub(crate) const TASK_CANVAS_GROUPS_MIGRATION: ProductMigrationSpec = ProductMigrationSpec::new(
+    1013,
+    "1013_task_canvas_groups",
+    MigrationOwner::V1TaskWorld,
+    "ALTER TABLE task_canvas_views ADD COLUMN groups_json TEXT NOT NULL DEFAULT '[]';",
+);
+
 fn encode_json<T: Serialize>(
     field: &'static str,
     value: &T,
@@ -88,6 +95,7 @@ impl Database {
         &self,
     ) -> Result<(), super::TaskWorldPersistenceError> {
         self.apply_product_migration(&TASK_CANVAS_SCHEMA_MIGRATION)?;
+        self.apply_product_migration(&TASK_CANVAS_GROUPS_MIGRATION)?;
         Ok(())
     }
 
@@ -102,20 +110,22 @@ impl Database {
         let viewport_json = encode_json("viewport_json", &view.viewport)?;
         let node_layouts_json = encode_json("node_layouts_json", &view.node_layouts)?;
         let selection_json = encode_json("selection_json", &view.selection)?;
+        let groups_json = encode_json("groups_json", &view.groups)?;
 
         let mut conn = self.conn();
         let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
             "INSERT INTO task_canvas_views (
                 graph_id, view_revision, graph_revision_seen, viewport_json,
-                node_layouts_json, selection_json, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                node_layouts_json, selection_json, groups_json, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(graph_id) DO UPDATE SET
                 view_revision=excluded.view_revision,
                 graph_revision_seen=excluded.graph_revision_seen,
                 viewport_json=excluded.viewport_json,
                 node_layouts_json=excluded.node_layouts_json,
                 selection_json=excluded.selection_json,
+                groups_json=excluded.groups_json,
                 updated_at=excluded.updated_at",
             params![
                 view.graph_id.as_str(),
@@ -124,6 +134,7 @@ impl Database {
                 viewport_json,
                 node_layouts_json,
                 selection_json,
+                groups_json,
                 view.updated_at,
             ],
         )?;
@@ -136,10 +147,10 @@ impl Database {
         graph: &TaskGraph,
     ) -> Result<Option<CanvasView>, super::TaskWorldPersistenceError> {
         let conn = self.conn();
-        let row: Option<(String, i64, i64, String, String, String, i64)> = conn
+        let row: Option<(String, i64, i64, String, String, String, String, i64)> = conn
             .query_row(
                 "SELECT graph_id, view_revision, graph_revision_seen, viewport_json,
-                        node_layouts_json, selection_json, updated_at
+                        node_layouts_json, selection_json, groups_json, updated_at
                  FROM task_canvas_views WHERE graph_id=?1",
                 params![graph.id.as_str()],
                 |row| {
@@ -151,6 +162,7 @@ impl Database {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
+                        row.get(7)?,
                     ))
                 },
             )
@@ -164,6 +176,7 @@ impl Database {
             viewport_json,
             node_layouts_json,
             selection_json,
+            groups_json,
             updated_at,
         )) = row
         else {
@@ -184,6 +197,7 @@ impl Database {
             viewport: decode_json("viewport_json", &viewport_json)?,
             node_layouts: decode_json("node_layouts_json", &node_layouts_json)?,
             selection: decode_json("selection_json", &selection_json)?,
+            groups: decode_json("groups_json", &groups_json)?,
             updated_at,
         };
         view.validate_shape().map_err(canvas_error)?;

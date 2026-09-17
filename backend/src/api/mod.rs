@@ -138,6 +138,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             get(task_world::get_graph_detail),
         )
         .route(
+            "/api/task-world/graphs/:graph_id/review",
+            post(task_world::review_graph),
+        )
+        .route(
             "/api/task-world/graphs/:graph_id/canvas-view",
             get(task_world::get_canvas_view),
         )

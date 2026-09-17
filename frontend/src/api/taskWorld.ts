@@ -97,6 +97,7 @@ export interface TaskNodeDetail {
   id: string;
   kind: TaskNodeKind;
   title: string;
+  retry_policy?: RetryPolicy;
   status: TaskNodeStatus;
   state: TaskNodeStateSummary;
   executor_ref: string | null;
@@ -177,6 +178,13 @@ export interface CanvasNodeLayout {
   height: number;
 }
 
+export interface CanvasGroup {
+  id: string;
+  title: string;
+  node_ids: string[];
+  collapsed: boolean;
+}
+
 export interface CanvasView {
   schema_version: number;
   graph_id: string;
@@ -185,6 +193,7 @@ export interface CanvasView {
   viewport: CanvasViewport;
   node_layouts: CanvasNodeLayout[];
   selection: string[];
+  groups: CanvasGroup[];
   updated_at: number;
 }
 
@@ -230,6 +239,26 @@ export interface TaskRerunResponse {
   graph_id: string;
   node_id: string;
   affected_nodes: string[];
+}
+
+export interface TaskGraphReviewSuggestion {
+  suggestion_id: string;
+  node_id: string;
+  title: string;
+  instruction: string;
+  acceptance_criteria: string[];
+  reason: string;
+}
+
+export interface TaskGraphReview {
+  reviewed_revision: number;
+  summary: string;
+  suggestions: TaskGraphReviewSuggestion[];
+}
+
+interface TaskGraphReviewResponse {
+  reviewed_revision: number;
+  review: Omit<TaskGraphReview, "reviewed_revision">;
 }
 
 interface ErrorPayload {
@@ -360,6 +389,20 @@ export async function getTaskGraphDetail(graphId: string): Promise<ApiResult<Tas
   return result.ok ? { ok: true, data: result.data.detail } : result;
 }
 
+export async function reviewTaskGraph(
+  graphId: string,
+  expectedRevision: number,
+): Promise<ApiResult<TaskGraphReview>> {
+  const result = await requestTaskWorld<TaskGraphReviewResponse>(
+    "POST",
+    `/api/task-world/graphs/${encodeURIComponent(graphId)}/review`,
+    { expected_revision: expectedRevision },
+  );
+  return result.ok
+    ? { ok: true, data: { ...result.data.review, reviewed_revision: result.data.reviewed_revision } }
+    : result;
+}
+
 export async function getCanvasView(graphId: string): Promise<ApiResult<CanvasView>> {
   const result = await requestTaskWorld<CanvasViewResponse>(
     "GET",
@@ -384,6 +427,7 @@ export async function saveCanvasView(
       viewport: view.viewport,
       node_layouts: view.node_layouts,
       selection: view.selection,
+      groups: view.groups,
     },
   );
   return result.ok ? { ok: true, data: result.data.view } : result;

@@ -128,7 +128,7 @@ export default function TaskWorldInspector({
       kind: node.kind,
       title: title.trim(),
       input,
-      retry_policy: { max_attempts: 1 },
+      retry_policy: node.retry_policy || { max_attempts: 1 },
     });
   };
 

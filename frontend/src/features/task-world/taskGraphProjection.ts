@@ -1,5 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import type {
+  CanvasNodeLayout,
   CanvasView,
   TaskGraphDetail,
   TaskNodeDetail,
@@ -152,7 +153,12 @@ export function toReactFlowModel(
   focusedNodeId: string | null = null,
 ): TaskGraphReactFlowModel {
   const layouts = new Map(view?.node_layouts.map((layout) => [layout.node_id, layout]));
-  const nodes = projection.nodes.map((task, index) => {
+  const hiddenNodeIds = new Set(
+    (view?.groups || [])
+      .filter((group) => group.collapsed)
+      .flatMap((group) => group.node_ids),
+  );
+  const nodes = projection.nodes.filter((task) => !hiddenNodeIds.has(task.id)).map((task, index) => {
     const layout = layouts.get(task.id);
     return {
       id: task.id,
@@ -171,13 +177,47 @@ export function toReactFlowModel(
       selected: view?.selection.includes(task.id) || focusedNodeId === task.id,
     } satisfies TaskGraphCanvasNode;
   });
-  const edges = projection.edges.map((edge) => ({
+  const edges = projection.edges.filter((edge) => !hiddenNodeIds.has(edge.from) && !hiddenNodeIds.has(edge.to)).map((edge) => ({
     id: `${edge.from}->${edge.to}`,
     source: edge.from,
     target: edge.to,
     type: "smoothstep",
   }));
   return { nodes, edges };
+}
+
+export function buildAutoLayout(projection: TaskGraphProjection): CanvasNodeLayout[] {
+  const indegree = new Map(projection.nodes.map((node) => [node.id, 0]));
+  const outgoing = new Map(projection.nodes.map((node) => [node.id, [] as string[]]));
+  for (const edge of projection.edges) {
+    if (!indegree.has(edge.from) || !indegree.has(edge.to)) continue;
+    indegree.set(edge.to, (indegree.get(edge.to) || 0) + 1);
+    outgoing.get(edge.from)?.push(edge.to);
+  }
+  const queue = projection.nodes.filter((node) => indegree.get(node.id) === 0).map((node) => node.id);
+  const level = new Map(queue.map((id) => [id, 0]));
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const id = queue[cursor];
+    for (const next of outgoing.get(id) || []) {
+      level.set(next, Math.max(level.get(next) || 0, (level.get(id) || 0) + 1));
+      const remaining = (indegree.get(next) || 0) - 1;
+      indegree.set(next, remaining);
+      if (remaining === 0) queue.push(next);
+    }
+  }
+  const rows = new Map<number, number>();
+  return projection.nodes.map((node, index) => {
+    const column = level.get(node.id) ?? index;
+    const row = rows.get(column) || 0;
+    rows.set(column, row + 1);
+    return {
+      node_id: node.id,
+      x: 40 + column * 320,
+      y: 40 + row * 200,
+      width: 240,
+      height: 128,
+    };
+  });
 }
 
 function defaultPosition(index: number) {

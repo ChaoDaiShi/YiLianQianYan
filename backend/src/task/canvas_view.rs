@@ -15,6 +15,8 @@ use super::{TaskGraph, TaskGraphId, TaskNodeId, MAX_TASK_GRAPH_NODES};
 pub const CANVAS_VIEW_SCHEMA_VERSION: u32 = 1;
 pub const MAX_CANVAS_VIEW_LAYOUTS: usize = MAX_TASK_GRAPH_NODES;
 pub const MAX_CANVAS_VIEW_SELECTION: usize = MAX_TASK_GRAPH_NODES;
+pub const MAX_CANVAS_VIEW_GROUPS: usize = MAX_TASK_GRAPH_NODES;
+pub const MAX_CANVAS_GROUP_TITLE_CHARS: usize = 120;
 pub const MAX_CANVAS_VIEW_COORDINATE: f64 = 1_000_000.0;
 pub const MIN_CANVAS_VIEW_ZOOM: f64 = 0.1;
 pub const MAX_CANVAS_VIEW_ZOOM: f64 = 4.0;
@@ -73,6 +75,16 @@ impl CanvasNodeLayout {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanvasGroup {
+    pub id: String,
+    pub title: String,
+    pub node_ids: Vec<TaskNodeId>,
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanvasView {
     pub schema_version: u32,
     pub graph_id: TaskGraphId,
@@ -81,6 +93,8 @@ pub struct CanvasView {
     pub viewport: CanvasViewport,
     pub node_layouts: Vec<CanvasNodeLayout>,
     pub selection: Vec<TaskNodeId>,
+    #[serde(default)]
+    pub groups: Vec<CanvasGroup>,
     pub updated_at: i64,
 }
 
@@ -124,6 +138,14 @@ pub enum CanvasViewError {
     DuplicateLayout(String),
     #[error("canvas view contains a duplicate selection: {0}")]
     DuplicateSelection(String),
+    #[error("canvas view contains too many groups: {0}")]
+    TooManyGroups(usize),
+    #[error("canvas view contains an invalid group: {0}")]
+    InvalidGroup(String),
+    #[error("canvas view contains a duplicate group: {0}")]
+    DuplicateGroup(String),
+    #[error("canvas view assigns a node to multiple groups: {0}")]
+    DuplicateGroupNode(String),
     #[error("canvas view references a node that is not in the graph: {0}")]
     UnknownNode(String),
     #[error("canvas view contains a non-finite {field}")]
@@ -154,6 +176,7 @@ impl CanvasView {
             viewport: CanvasViewport::default(),
             node_layouts,
             selection: Vec::new(),
+            groups: Vec::new(),
             updated_at: now,
         };
         view.validate_for_graph(graph)?;
@@ -177,6 +200,13 @@ impl CanvasView {
         for node_id in &self.selection {
             if !graph_nodes.contains(node_id.as_str()) {
                 return Err(CanvasViewError::UnknownNode(node_id.to_string()));
+            }
+        }
+        for group in &self.groups {
+            for node_id in &group.node_ids {
+                if !graph_nodes.contains(node_id.as_str()) {
+                    return Err(CanvasViewError::UnknownNode(node_id.to_string()));
+                }
             }
         }
         Ok(())
@@ -206,10 +236,17 @@ impl CanvasView {
         let graph_ids: HashSet<&str> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
         let before_layout_count = self.node_layouts.len();
         let before_selection_count = self.selection.len();
+        let before_groups = self.groups.clone();
         self.node_layouts
             .retain(|layout| graph_ids.contains(layout.node_id.as_str()));
         self.selection
             .retain(|node_id| graph_ids.contains(node_id.as_str()));
+        for group in &mut self.groups {
+            group
+                .node_ids
+                .retain(|node_id| graph_ids.contains(node_id.as_str()));
+        }
+        self.groups.retain(|group| group.node_ids.len() >= 2);
 
         let mut occupied = self
             .node_layouts
@@ -231,6 +268,7 @@ impl CanvasView {
         }
         let changed = before_layout_count != self.node_layouts.len()
             || before_selection_count != self.selection.len()
+            || before_groups != self.groups
             || self.graph_revision_seen != graph.revision.value();
         self.graph_revision_seen = graph.revision.value();
         if changed {
@@ -262,6 +300,9 @@ impl CanvasView {
         if self.selection.len() > MAX_CANVAS_VIEW_SELECTION {
             return Err(CanvasViewError::TooManySelections(self.selection.len()));
         }
+        if self.groups.len() > MAX_CANVAS_VIEW_GROUPS {
+            return Err(CanvasViewError::TooManyGroups(self.groups.len()));
+        }
         validate_viewport(&self.viewport)?;
         let mut layouts = HashSet::with_capacity(self.node_layouts.len());
         for layout in &self.node_layouts {
@@ -289,6 +330,30 @@ impl CanvasView {
             validate_node_id(node_id)?;
             if !selection.insert(node_id.as_str()) {
                 return Err(CanvasViewError::DuplicateSelection(node_id.to_string()));
+            }
+        }
+        let mut group_ids = HashSet::with_capacity(self.groups.len());
+        let mut grouped_nodes = HashSet::new();
+        for group in &self.groups {
+            if !valid_identifier(&group.id)
+                || group.title.trim().is_empty()
+                || group.title.trim() != group.title
+                || group.title.chars().count() > MAX_CANVAS_GROUP_TITLE_CHARS
+                || group.node_ids.len() < 2
+                || group.node_ids.len() > MAX_TASK_GRAPH_NODES
+            {
+                return Err(CanvasViewError::InvalidGroup(group.id.clone()));
+            }
+            if !group_ids.insert(group.id.as_str()) {
+                return Err(CanvasViewError::DuplicateGroup(group.id.clone()));
+            }
+            let mut local_nodes = HashSet::with_capacity(group.node_ids.len());
+            for node_id in &group.node_ids {
+                validate_node_id(node_id)?;
+                if !local_nodes.insert(node_id.as_str()) || !grouped_nodes.insert(node_id.as_str())
+                {
+                    return Err(CanvasViewError::DuplicateGroupNode(node_id.to_string()));
+                }
             }
         }
         Ok(())
@@ -444,5 +509,13 @@ mod tests {
         let mut view = CanvasView::initial(&graph, 100).unwrap();
         view.node_layouts[0].width = 10_000.0;
         assert!(view.validate_for_graph(&graph).is_err());
+    }
+
+    #[test]
+    fn canvas_view_serializes_persisted_visual_groups() {
+        let view = CanvasView::initial(&graph(1, &["a", "b"]), 100).unwrap();
+        let value = serde_json::to_value(view).unwrap();
+
+        assert_eq!(value["groups"], json!([]));
     }
 }

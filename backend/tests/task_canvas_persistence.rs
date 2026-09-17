@@ -101,6 +101,25 @@ fn canvas_migration_registers_v1_owner_and_both_projection_tables() {
             .unwrap();
         assert_eq!(exists, 1, "missing migration table {table}");
     }
+    let canvas_columns = connection
+        .prepare("PRAGMA table_info(task_canvas_views)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(canvas_columns.iter().any(|column| column == "groups_json"));
+    let group_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, owner FROM schema_migrations WHERE version=1013",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        group_migration,
+        ("1013_task_canvas_groups".into(), "v1_task_world".into())
+    );
     remove_database(&path);
 }
 

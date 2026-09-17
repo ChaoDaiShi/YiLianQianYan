@@ -16,6 +16,7 @@ const initialView: CanvasView = {
   viewport: { x: 0, y: 0, zoom: 1 },
   node_layouts: [],
   selection: [],
+  groups: [],
   updated_at: 1,
 };
 

@@ -67,8 +67,8 @@ pub use model::*;
 pub use orchestrator::{build_task_orchestrator, TaskOrchestrator};
 pub use planner::{
     build_planner_capabilities, validate_plan_references, validate_plan_structure, LlmTaskPlanner,
-    PlannerCapability, TaskPlanner, TaskPlannerError, TaskPlanningInput, MAX_PLANNER_CAPABILITIES,
-    MAX_PLANNER_CAPABILITY_CONTEXT_CHARS,
+    PlannerCapability, TaskGraphReview, TaskGraphReviewSuggestion, TaskPlanner, TaskPlannerError,
+    TaskPlanningInput, MAX_PLANNER_CAPABILITIES, MAX_PLANNER_CAPABILITY_CONTEXT_CHARS,
 };
 pub use presence::TaskPresenceAdapter;
 pub use projection::*;
