@@ -90,6 +90,26 @@ fn review_rerun_persistence_failure_rolls_back_every_attempt() {
 }
 
 #[test]
+fn review_automatic_rerun_insert_failure_keeps_recovery_atomic() {
+    let (db, runtime, events, graph, a, _) = setup();
+    complete(&runtime, &graph, &a);
+    let before = serde_json::to_value(runtime.get_graph_detail(&graph).unwrap()).unwrap();
+    let rows = serde_json::to_value(db.load_all_node_executions().unwrap()).unwrap();
+    db.conn().execute_batch("CREATE TRIGGER fail_rerun_reservation BEFORE INSERT ON task_node_executions BEGIN SELECT RAISE(ABORT, 'injected rerun reservation failure'); END;").unwrap();
+    let mut receiver = events.subscribe();
+    assert!(runtime.rerun_from_node(&graph, &a, 1, 5).is_err());
+    assert_eq!(
+        serde_json::to_value(runtime.get_graph_detail(&graph).unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(
+        serde_json::to_value(db.load_all_node_executions().unwrap()).unwrap(),
+        rows
+    );
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
 fn review_restore_persistence_failure_preserves_supervisor_harness_and_rows() {
     let (db, runtime, _, graph, a, _) = setup();
     let checkpoint = runtime.checkpoint(&graph, 1, 2).unwrap();

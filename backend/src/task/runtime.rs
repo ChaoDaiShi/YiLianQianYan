@@ -1060,8 +1060,27 @@ impl TaskWorldRuntime {
             .into_iter()
             .filter(|execution| affected.contains(&execution.node_id))
             .collect::<Vec<_>>();
+        let mut new_attempts = Vec::new();
+        if dispatch {
+            for ready in candidate.schedule().ready {
+                if candidate
+                    .graph()
+                    .node(&ready)
+                    .is_some_and(|node| node.input.get("executor_ref").is_some())
+                {
+                    continue;
+                }
+                let execution_id = candidate.start_node(&ready, now)?;
+                new_attempts.push(
+                    candidate
+                        .execution(&execution_id)
+                        .cloned()
+                        .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id))?,
+                );
+            }
+        }
         self.database
-            .update_node_executions_atomically(&changed_attempts)?;
+            .update_node_executions_atomically(&changed_attempts, &new_attempts)?;
         harnesses.insert(graph_id.clone(), candidate);
         drop(harnesses);
         self.publish(
@@ -1071,8 +1090,15 @@ impl TaskWorldRuntime {
                 "node_id": node_id.as_str(),
             }),
         );
-        if dispatch {
-            self.dispatch_ready_nodes_locked(graph_id, now)?;
+        for execution in &new_attempts {
+            self.publish(
+                "task.execution.created",
+                json!({
+                    "graph_id": graph_id.as_str(), "node_id": execution.node_id.as_str(),
+                    "execution_id": execution.id.as_str(), "attempt": execution.attempt,
+                    "status": execution.status, "reason": "partial rerun reserved local work",
+                }),
+            );
         }
         for affected_node in &affected {
             self.publish(

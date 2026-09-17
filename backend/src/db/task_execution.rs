@@ -211,6 +211,56 @@ fn row_to_execution(
     Ok(execution)
 }
 
+pub(crate) fn insert_node_execution_on(
+    conn: &rusqlite::Connection,
+    execution: &NodeExecution,
+) -> Result<(), TaskExecutionPersistenceError> {
+    execution.context.validate()?;
+    let attempt = to_i64(execution.attempt, "attempt")?;
+    let context_json = encode_json("context_json", &execution.context)?;
+    let output_json = execution
+        .output
+        .as_ref()
+        .map(|value| encode_json("output_json", value))
+        .transpose()?;
+    let validation_json = execution
+        .validation
+        .as_ref()
+        .map(|value| encode_json("validation_json", value))
+        .transpose()?;
+    let retry_policy_json = encode_json("retry_policy_json", &execution.retry_policy)?;
+    conn.execute(
+        "INSERT INTO task_node_executions (
+            execution_id, graph_id, node_id, attempt, status, executor_ref,
+            context_json, output_json, validation_json, audit_ref, approval_ref,
+            failure_code, error, retry_policy_json, created_at, updated_at,
+            started_at, finished_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                   ?14, ?15, ?16, ?17, ?18)",
+        params![
+            execution.id.as_str(),
+            execution.graph_id.as_str(),
+            execution.node_id.as_str(),
+            attempt,
+            execution.status.to_string(),
+            execution.executor_ref.as_ref().map(ToString::to_string),
+            context_json,
+            output_json,
+            validation_json,
+            execution.audit_ref,
+            execution.approval_ref,
+            execution.failure_code,
+            execution.error,
+            retry_policy_json,
+            execution.created_at,
+            execution.updated_at,
+            execution.started_at,
+            execution.finished_at,
+        ],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn update_node_execution_on(
     conn: &rusqlite::Connection,
     execution: &NodeExecution,
@@ -280,51 +330,9 @@ impl Database {
         &self,
         execution: &NodeExecution,
     ) -> Result<(), TaskExecutionPersistenceError> {
-        execution.context.validate()?;
-        let attempt = to_i64(execution.attempt, "attempt")?;
-        let context_json = encode_json("context_json", &execution.context)?;
-        let output_json = execution
-            .output
-            .as_ref()
-            .map(|value| encode_json("output_json", value))
-            .transpose()?;
-        let validation_json = execution
-            .validation
-            .as_ref()
-            .map(|value| encode_json("validation_json", value))
-            .transpose()?;
-        let retry_policy_json = encode_json("retry_policy_json", &execution.retry_policy)?;
         let mut conn = self.conn();
         let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "INSERT INTO task_node_executions (
-                execution_id, graph_id, node_id, attempt, status, executor_ref,
-                context_json, output_json, validation_json, audit_ref, approval_ref,
-                failure_code, error, retry_policy_json, created_at, updated_at,
-                started_at, finished_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                       ?14, ?15, ?16, ?17, ?18)",
-            params![
-                execution.id.as_str(),
-                execution.graph_id.as_str(),
-                execution.node_id.as_str(),
-                attempt,
-                execution.status.to_string(),
-                execution.executor_ref.as_ref().map(ToString::to_string),
-                context_json,
-                output_json,
-                validation_json,
-                execution.audit_ref,
-                execution.approval_ref,
-                execution.failure_code,
-                execution.error,
-                retry_policy_json,
-                execution.created_at,
-                execution.updated_at,
-                execution.started_at,
-                execution.finished_at,
-            ],
-        )?;
+        insert_node_execution_on(&transaction, execution)?;
         transaction.commit()?;
         Ok(())
     }
@@ -342,11 +350,15 @@ impl Database {
     pub(crate) fn update_node_executions_atomically(
         &self,
         executions: &[NodeExecution],
+        new_executions: &[NodeExecution],
     ) -> Result<(), TaskExecutionPersistenceError> {
         let mut conn = self.conn();
         let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for execution in executions {
             update_node_execution_on(&transaction, execution)?;
+        }
+        for execution in new_executions {
+            insert_node_execution_on(&transaction, execution)?;
         }
         transaction.commit()?;
         Ok(())
