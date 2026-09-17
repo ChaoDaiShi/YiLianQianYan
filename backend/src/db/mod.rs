@@ -2,6 +2,7 @@
 // Database module — SQLite persistence (thread-safe, cloneable)
 // ============================================================
 
+mod artifact_provenance;
 mod conversations;
 mod llm_models;
 mod mcp;
@@ -22,6 +23,7 @@ mod workspace;
 #[cfg(test)]
 mod llm_models_tests;
 
+pub use artifact_provenance::*;
 pub use conversations::*;
 pub use llm_models::*;
 pub use mcp::McpServer;

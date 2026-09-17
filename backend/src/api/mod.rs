@@ -18,6 +18,7 @@ use crate::server::AppServer;
 
 mod agents;
 mod approvals;
+mod artifact_download;
 mod capabilities;
 mod chat;
 mod commands;
