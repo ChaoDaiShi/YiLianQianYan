@@ -59,7 +59,13 @@ fn request(
 }
 
 async fn json_body(response: axum::response::Response) -> Value {
-    serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    assert!(
+        !bytes.is_empty(),
+        "expected JSON response body for HTTP {status}"
+    );
+    serde_json::from_slice(&bytes).unwrap()
 }
 
 #[tokio::test]
@@ -103,10 +109,10 @@ async fn gate_zero_shared_foundation_routes_are_functional_and_honest() {
             "application/json",
             Body::from(
                 json!({
-                    "command": "desktop.app.open",
+                    "command": "core.echo",
                     "request_id": "gate0-command",
                     "source": "gate0",
-                    "payload": {"app": "notepad"}
+                    "payload": {"message": "foundation"}
                 })
                 .to_string(),
             ),
@@ -116,8 +122,7 @@ async fn gate_zero_shared_foundation_routes_are_functional_and_honest() {
     assert_eq!(command.status(), StatusCode::OK);
     let command = json_body(command).await;
     assert_eq!(command["status"], "succeeded");
-    assert_eq!(command["result"]["simulated"], true);
-    assert_eq!(command["result"]["executed"], false);
+    assert_eq!(command["result"]["message"], "foundation");
 
     let ingest = app
         .clone()
@@ -203,23 +208,7 @@ async fn gate_zero_shared_foundation_routes_are_functional_and_honest() {
         .await
         .unwrap();
     let tasks = json_body(tasks).await;
-    assert_eq!(tasks["tasks"][0]["simulation"]["simulated"], true);
-    assert_eq!(tasks["tasks"][0]["simulation"]["provider"], "mock");
-
-    let desktop = app
-        .oneshot(request(
-            Method::GET,
-            "/api/projections/desktop-context?scope=workspace%3Agate0",
-            &token,
-            "application/json",
-            Body::empty(),
-        ))
-        .await
-        .unwrap();
-    let desktop = json_body(desktop).await;
-    assert_eq!(desktop["simulation"]["simulated"], true);
-    assert_eq!(desktop["simulation"]["provider"], "mock");
-    assert!(desktop.get("hwnd").is_none());
+    assert!(tasks["tasks"].as_array().unwrap().is_empty());
 
     server
         .event_hub

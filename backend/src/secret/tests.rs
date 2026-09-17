@@ -342,6 +342,14 @@ async fn raw_sqlite_legacy_secrets_migrated_and_plaintext_removed() {
             "model": {
                 "api_key": "SUPER_SECRET_CHAT_123",
                 "embedding_api_key": "SUPER_SECRET_EMBED_456"
+            },
+            "voice": {
+                "provider": "openai-compatible",
+                "base_url": "https://voice.example/v1",
+                "stt_model": "legacy-stt",
+                "tts_model": "legacy-tts",
+                "voice": "legacy-voice",
+                "api_key": "SUPER_SECRET_VOICE_789"
             }
         });
         conn.execute(
@@ -369,6 +377,8 @@ async fn raw_sqlite_legacy_secrets_migrated_and_plaintext_removed() {
     let report = server.migrate_secrets().await;
     assert!(report.migrated_chat_key);
     assert!(report.migrated_embedding_key);
+    assert!(report.migrated_voice_stt_key);
+    assert!(report.migrated_voice_tts_key);
     assert_eq!(report.migrated_mcp_values, 1);
 
     // Raw SQLite scan — plaintext MUST be gone.
@@ -382,6 +392,7 @@ async fn raw_sqlite_legacy_secrets_migrated_and_plaintext_removed() {
         .unwrap();
     assert!(!settings_value.contains("SUPER_SECRET_CHAT_123"));
     assert!(!settings_value.contains("SUPER_SECRET_EMBED_456"));
+    assert!(!settings_value.contains("SUPER_SECRET_VOICE_789"));
 
     let mcp_env: Option<String> = conn
         .query_row("SELECT env FROM mcp_servers WHERE id = 'mcp-1'", [], |r| {
@@ -413,6 +424,18 @@ async fn raw_sqlite_legacy_secrets_migrated_and_plaintext_removed() {
         .unwrap()
         .unwrap();
     assert_eq!(embed.expose_secret(), "SUPER_SECRET_EMBED_456");
+    let voice_stt = store
+        .get(&SecretRef::new(crate::secret::STT_KEY_REF))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(voice_stt.expose_secret(), "SUPER_SECRET_VOICE_789");
+    let voice_tts = store
+        .get(&SecretRef::new(crate::secret::TTS_KEY_REF))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(voice_tts.expose_secret(), "SUPER_SECRET_VOICE_789");
 
     drop(server);
     let _ = std::fs::remove_file(&path);

@@ -24,6 +24,27 @@ const defaultConfig: AppConfig = {
     embedding_api_key: "",
     embedding_api_key_env: "",
   },
+  voice: {
+    stt: {
+      provider: "openai-compatible",
+      base_url: "https://api.openai.com/v1",
+      model: "",
+      language: "zh",
+      api_key: "",
+      api_key_env: "OPENAI_API_KEY",
+      timeout_ms: 60000,
+    },
+    tts: {
+      provider: "minimax",
+      base_url: "https://api.minimax.io",
+      model: "speech-2.8-turbo",
+      voice: "female-shaonv",
+      language: "zh",
+      api_key: "",
+      api_key_env: "",
+      timeout_ms: 60000,
+    },
+  },
   permissions: { mode: "ask", interrupt_on: ["bash", "write_file", "edit_file", "http_request"] },
   sandbox: { profile: "workspace-write", writable_paths: [], denied_write_paths: [] },
   skills: { directories: [], progressive_loading: true },
@@ -31,10 +52,11 @@ const defaultConfig: AppConfig = {
   compaction: { enabled: true, context_window: 200000, trigger_threshold: 0.8, keep_recent_tokens: 20000 },
 };
 
-type SectionKey = "model" | "agent" | "permissions" | "sandbox" | "compaction" | "skills" | "appearance";
+type SectionKey = "model" | "voice" | "agent" | "permissions" | "sandbox" | "compaction" | "skills" | "appearance";
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: "model", label: "模型" },
+  { key: "voice", label: "语音" },
   { key: "agent", label: "智能体" },
   { key: "permissions", label: "权限与安全" },
   { key: "sandbox", label: "沙箱" },
@@ -74,6 +96,11 @@ function comparableConfig(config: AppConfig) {
       clear_api_key: undefined,
       clear_embedding_api_key: undefined,
     },
+    voice: {
+      ...config.voice,
+      stt: { ...config.voice.stt, api_key: "", clear_api_key: undefined },
+      tts: { ...config.voice.tts, api_key: "", clear_api_key: undefined },
+    },
   });
 }
 
@@ -109,6 +136,10 @@ export default function SettingsPage() {
           ...defaultConfig,
           ...c,
           model: { ...defaultConfig.model, ...c.model, api_key: c.model.api_key || "", embedding_api_key: c.model.embedding_api_key || "" },
+          voice: {
+            stt: { ...defaultConfig.voice.stt, ...c.voice?.stt, api_key: "" },
+            tts: { ...defaultConfig.voice.tts, ...c.voice?.tts, api_key: "" },
+          },
         };
         setConfig(nextConfig);
         setSavedSnapshot(comparableConfig(nextConfig));
@@ -128,7 +159,26 @@ export default function SettingsPage() {
     setSaveError("");
     const result = await updateSettings(config);
     if (result && !result.error) {
-      setSavedSnapshot(comparableConfig(config));
+      const fresh = await getSettings();
+      const nextConfig = fresh
+        ? {
+            ...defaultConfig,
+            ...fresh,
+            model: { ...defaultConfig.model, ...fresh.model, api_key: "", embedding_api_key: "" },
+            voice: {
+              stt: { ...defaultConfig.voice.stt, ...fresh.voice?.stt, api_key: "" },
+              tts: { ...defaultConfig.voice.tts, ...fresh.voice?.tts, api_key: "" },
+            },
+          }
+        : {
+            ...config,
+            voice: {
+              stt: { ...config.voice.stt, api_key: "", clear_api_key: undefined },
+              tts: { ...config.voice.tts, api_key: "", clear_api_key: undefined },
+            },
+          };
+      setConfig(nextConfig);
+      setSavedSnapshot(comparableConfig(nextConfig));
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2500);
     } else {
@@ -164,12 +214,56 @@ export default function SettingsPage() {
     window.setTimeout(() => setSaved(false), 2500);
   };
 
+  const clearVoiceSecret = async (side: "stt" | "tts") => {
+    const next = {
+      ...config,
+      voice: {
+        ...config.voice,
+        [side]: { ...config.voice[side], clear_api_key: true, api_key: "" },
+      },
+    };
+    const result = await updateSettings(next);
+    if (!result || result.error) {
+      setSaveError("设置暂时无法保存");
+      return;
+    }
+    const fresh = await getSettings();
+    if (fresh) {
+      const nextConfig = {
+        ...defaultConfig,
+        ...fresh,
+        model: { ...defaultConfig.model, ...fresh.model, api_key: "", embedding_api_key: "" },
+        voice: {
+          stt: { ...defaultConfig.voice.stt, ...fresh.voice?.stt, api_key: "" },
+          tts: { ...defaultConfig.voice.tts, ...fresh.voice?.tts, api_key: "" },
+        },
+      };
+      setConfig(nextConfig);
+      setSavedSnapshot(comparableConfig(nextConfig));
+    }
+    setSaved(true);
+    setSaveError("");
+    window.setTimeout(() => setSaved(false), 2500);
+  };
+
   const updateField = (section: keyof AppConfig, key: string, value: any) => {
     setSaveError("");
     setSaved(false);
     setConfig((prev: any) => ({
       ...prev,
       [section]: { ...prev[section], [key]: value },
+    }));
+  };
+
+  const updateVoiceField = (side: "stt" | "tts", key: string, value: string | number) => {
+    setSaveError("");
+    setSaved(false);
+    setConfig((prev) => ({
+      ...prev,
+      voice: {
+        ...prev.voice,
+        [side]: { ...prev.voice[side], [key]: value },
+      },
     }));
   };
 
@@ -197,6 +291,64 @@ export default function SettingsPage() {
             <ModelManagerPanel
               legacyModel={{ config, updateField, clearSecret, secretSourceLabel }}
             />
+          </div>
+        );
+
+      case "voice":
+        return (
+          <div className="space-y-6">
+            <p className="text-xs leading-5 text-[var(--text-faint)]">
+              语音识别与语音合成独立配置；两个密钥均只写入系统凭据库，不会在页面中回显。
+            </p>
+
+            <section className="space-y-4 rounded-xl border border-[var(--border-soft)] p-4">
+              <div>
+                <h3 className="font-semibold text-sm text-[var(--text)]">语音识别（STT）</h3>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">将真实麦克风音频转换为最终文本。</p>
+              </div>
+              <Input label="Provider" value={config.voice.stt.provider} onChange={(e) => updateVoiceField("stt", "provider", e.target.value)} placeholder="openai-compatible" />
+              <Input label="API 地址" value={config.voice.stt.base_url} onChange={(e) => updateVoiceField("stt", "base_url", e.target.value)} placeholder="https://api.openai.com/v1" />
+              <Input label="模型" value={config.voice.stt.model} onChange={(e) => updateVoiceField("stt", "model", e.target.value)} placeholder="gpt-4o-mini-transcribe" />
+              <Input label="语言" value={config.voice.stt.language} onChange={(e) => updateVoiceField("stt", "language", e.target.value)} placeholder="zh" />
+              <Input label="STT API 密钥" type="password" value={config.voice.stt.api_key} onChange={(e) => updateVoiceField("stt", "api_key", e.target.value)} placeholder={config.voice.stt.api_key_configured ? "输入新 key 可替换" : "输入后安全保存"} />
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
+                <div>
+                  <p className="text-xs font-medium text-[var(--text)]">{config.voice.stt.api_key_configured ? "STT 凭据已配置" : "STT 凭据未配置"}</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{secretSourceLabel(config.voice.stt.api_key_source)}</p>
+                </div>
+                {config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void clearVoiceSecret("stt")}>清除密钥</Button> : null}
+              </div>
+              <Input label="密钥环境变量名" value={config.voice.stt.api_key_env} onChange={(e) => updateVoiceField("stt", "api_key_env", e.target.value)} placeholder="OPENAI_API_KEY" />
+              <Input label="请求超时（毫秒）" type="number" value={String(config.voice.stt.timeout_ms)} onChange={(e) => updateVoiceField("stt", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
+            </section>
+
+            <section className="space-y-4 rounded-xl border border-[var(--border-soft)] p-4">
+              <div>
+                <h3 className="font-semibold text-sm text-[var(--text)]">语音合成（TTS）</h3>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">默认使用 MiniMax 原生语音接口与当前默认音色。</p>
+              </div>
+              <Input label="Provider" value={config.voice.tts.provider} onChange={(e) => updateVoiceField("tts", "provider", e.target.value)} placeholder="minimax" />
+              <Input label="API 地址" value={config.voice.tts.base_url} onChange={(e) => updateVoiceField("tts", "base_url", e.target.value)} placeholder="https://api.minimax.io" />
+              <Input label="模型" value={config.voice.tts.model} onChange={(e) => updateVoiceField("tts", "model", e.target.value)} placeholder="speech-2.8-turbo" />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input label="默认音色" value={config.voice.tts.voice} onChange={(e) => updateVoiceField("tts", "voice", e.target.value)} placeholder="voice_id" />
+                <Input label="语言" value={config.voice.tts.language} onChange={(e) => updateVoiceField("tts", "language", e.target.value)} placeholder="zh" />
+              </div>
+              <Input label="TTS API 密钥" type="password" value={config.voice.tts.api_key} onChange={(e) => updateVoiceField("tts", "api_key", e.target.value)} placeholder={config.voice.tts.api_key_configured ? "输入新 key 可替换" : "输入后安全保存"} />
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
+                <div>
+                  <p className="text-xs font-medium text-[var(--text)]">{config.voice.tts.api_key_configured ? "TTS 凭据已配置" : "TTS 凭据未配置"}</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{secretSourceLabel(config.voice.tts.api_key_source)}</p>
+                </div>
+                {config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void clearVoiceSecret("tts")}>清除密钥</Button> : null}
+              </div>
+              <Input label="密钥环境变量名" value={config.voice.tts.api_key_env} onChange={(e) => updateVoiceField("tts", "api_key_env", e.target.value)} placeholder="留空时使用系统凭据库" />
+              <Input label="请求超时（毫秒）" type="number" value={String(config.voice.tts.timeout_ms)} onChange={(e) => updateVoiceField("tts", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
+            </section>
+
+            <p className="text-xs leading-5 text-[var(--text-muted)]">
+              每个 Provider 独立判断可用性；任一侧配置不完整时，该侧保持 fail closed。
+            </p>
           </div>
         );
 

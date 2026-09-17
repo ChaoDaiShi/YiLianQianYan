@@ -2,7 +2,13 @@ use std::{path::PathBuf, sync::Arc};
 
 use axum::{
     body::{to_bytes, Body},
-    http::{header::CONTENT_TYPE, Method, Request, StatusCode},
+    http::{
+        header::{
+            ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_REQUEST_HEADERS,
+            ACCESS_CONTROL_REQUEST_METHOD, CONTENT_TYPE, ORIGIN,
+        },
+        Method, Request, StatusCode,
+    },
 };
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -103,6 +109,194 @@ async fn health_is_public_but_tools_require_the_exact_control_session() {
     assert_eq!(accepted.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn voice_transcribe_preflight_allows_runtime_headers() {
+    let (_temp, server, _token) = test_server();
+    let response = build_router(server)
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/api/voice/transcribe")
+                .header(ORIGIN, "http://localhost:1420")
+                .header(ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(
+                    ACCESS_CONTROL_REQUEST_HEADERS,
+                    "content-type,x-yilian-control-session,x-yilian-voice-session,x-yilian-voice-generation,x-yilian-voice-lease",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let allowed = response
+        .headers()
+        .get(ACCESS_CONTROL_ALLOW_HEADERS)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    for header in [
+        "content-type",
+        "x-yilian-control-session",
+        "x-yilian-voice-session",
+        "x-yilian-voice-generation",
+        "x-yilian-voice-lease",
+    ] {
+        assert!(
+            allowed.contains(header),
+            "CORS did not allow {header}: {allowed}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn task_world_routes_use_live_projection_and_reject_stale_revision() {
+    let (_temp, server, token) = test_server();
+    let app = build_router(server);
+    let graph = json!({
+        "id": "api-task-graph",
+        "nodes": [{
+            "id": "root",
+            "kind": "work",
+            "title": "Root",
+            "input": {},
+            "retry_policy": { "max_attempts": 1 }
+        }],
+        "edges": []
+    });
+
+    let created = app
+        .clone()
+        .oneshot(auth_request(
+            Method::POST,
+            "/api/task-world/graphs",
+            &token,
+            Body::from(graph.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = json_body(created).await;
+    assert_eq!(created["graph"]["revision"], 1);
+
+    let projection = app
+        .clone()
+        .oneshot(auth_request(
+            Method::GET,
+            "/api/projections/tasks?scope=task-world&max_items=1",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(projection.status(), StatusCode::OK);
+    let projection = json_body(projection).await;
+    assert_eq!(projection["tasks"][0]["id"], "api-task-graph");
+    assert_eq!(projection["tasks"][0]["status"], "runnable");
+    assert_eq!(projection["tasks"][0]["simulation"]["simulated"], false);
+    assert!(projection["tasks"][0]["simulation"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("no workflow or tool execution"));
+
+    let started = app
+        .clone()
+        .oneshot(auth_request(
+            Method::POST,
+            "/api/task-world/graphs/api-task-graph/nodes/root/start",
+            &token,
+            Body::from(json!({ "expected_revision": 1 }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(started.status(), StatusCode::OK);
+
+    let projection = app
+        .clone()
+        .oneshot(auth_request(
+            Method::GET,
+            "/api/projections/tasks?scope=task-world",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    let projection = json_body(projection).await;
+    assert_eq!(projection["tasks"][0]["status"], "working");
+
+    let presence = app
+        .clone()
+        .oneshot(auth_request(
+            Method::GET,
+            "/api/presence",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(json_body(presence).await["activity"], "working");
+
+    let add_node = json!({
+        "expected_revision": 1,
+        "node": {
+            "id": "child",
+            "kind": "work",
+            "title": "Child",
+            "input": {},
+            "retry_policy": { "max_attempts": 1 }
+        }
+    });
+    let updated = app
+        .clone()
+        .oneshot(auth_request(
+            Method::POST,
+            "/api/task-world/graphs/api-task-graph/nodes",
+            &token,
+            Body::from(add_node.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    assert_eq!(json_body(updated).await["graph"]["revision"], 2);
+
+    let stale = app
+        .clone()
+        .oneshot(auth_request(
+            Method::POST,
+            "/api/task-world/graphs/api-task-graph/nodes",
+            &token,
+            Body::from(
+                json!({
+                    "expected_revision": 1,
+                    "node": {
+                        "id": "other",
+                        "kind": "work",
+                        "title": "Other",
+                        "input": {},
+                        "retry_policy": { "max_attempts": 1 }
+                    }
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(json_body(stale).await["error"], "stale_revision");
+
+    let missing_session = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/task-world/graphs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_session.status(), StatusCode::UNAUTHORIZED);
+}
+
 fn auth_request(method: Method, uri: &str, token: &str, body: Body) -> Request<Body> {
     Request::builder()
         .method(method)
@@ -111,6 +305,10 @@ fn auth_request(method: Method, uri: &str, token: &str, body: Body) -> Request<B
         .header(CONTENT_TYPE, "application/json")
         .body(body)
         .unwrap()
+}
+
+async fn json_body(response: axum::response::Response) -> Value {
+    serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
 }
 
 fn seed_policy_event(server: &AppServer, request_id: &str, created_for: &str) {

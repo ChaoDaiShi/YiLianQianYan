@@ -10,11 +10,14 @@ import {
 } from "../components/layout/workspaceLayout";
 import { Drawer } from "../components/ui";
 import ExecutionSidebar from "../features/execution/ExecutionSidebar";
+import { useGlobalVoiceContext } from "../features/voice/GlobalVoiceHost";
+import type { ConversationalAnchor } from "../api/voice";
 
 export default function ChatPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const conversationId = id || null;
+  const { updateContext } = useGlobalVoiceContext();
   const [workspaceMode, setWorkspaceMode] = useState(() =>
     getWorkspaceMode(window.innerWidth)
   );
@@ -38,6 +41,17 @@ export default function ChatPage() {
       setConversationDrawerOpen(false);
     }
   }, [workspaceMode]);
+
+  useEffect(() => {
+    updateContext({ conversational_anchor: null });
+  }, [conversationId, updateContext]);
+
+  const onVoiceAnchorChange = useCallback(
+    (anchor: ConversationalAnchor | null) => {
+      updateContext({ conversational_anchor: anchor });
+    },
+    [updateContext],
+  );
 
   const onConversationChange = useCallback(
     (nextId: string | null) => {
@@ -101,6 +115,7 @@ export default function ChatPage() {
         executionToggleRef={executionToggleRef}
         onToggleConversations={() => openDrawer("conversations")}
         onToggleExecution={() => openDrawer("execution")}
+        onVoiceAnchorChange={onVoiceAnchorChange}
         renderExecution={(controller) =>
           workspaceMode === "full" ? (
             <div className="execution-region min-h-0 border-l border-[var(--border)]">

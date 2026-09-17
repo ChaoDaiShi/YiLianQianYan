@@ -6,6 +6,8 @@ describe("task center routing", () => {
   it("adds a task center route while preserving conversation navigation", () => {
     expect(workspaceSurfaceSource).toContain('path="tasks"');
     expect(workspaceSurfaceSource).toContain("TaskCenterPage");
+    expect(workspaceSurfaceSource).toContain('path="task-world/:graphId"');
+    expect(workspaceSurfaceSource).toContain("TaskWorldPage");
     expect(navGroupsSource).toContain('to: "/tasks"');
     expect(navGroupsSource).toContain('to: "/chat"');
   });

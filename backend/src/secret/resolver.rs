@@ -16,6 +16,7 @@ use std::sync::Arc;
 use super::model::{SecretRef, SecretStoreError, SecretStoreStatus};
 use super::store::SecretStore;
 use crate::config::types::ModelConfig;
+use crate::config::types::{VoiceSttConfig, VoiceTtsConfig};
 
 pub struct SecretResolver {
     store: Arc<dyn SecretStore>,
@@ -80,6 +81,43 @@ impl SecretResolver {
         // LEGACY MIGRATION ONLY.
         if !config.embedding_api_key.is_empty() {
             return Ok(Some(SecretString::from(config.embedding_api_key.clone())));
+        }
+        Ok(None)
+    }
+
+    pub async fn resolve_voice_stt_api_key(
+        &self,
+        config: &VoiceSttConfig,
+    ) -> Result<Option<SecretString>, SecretStoreError> {
+        if let Some(secret_ref) = &config.api_key_ref {
+            return self.store.get(secret_ref).await;
+        }
+        if !config.api_key_env.is_empty() {
+            if let Ok(value) = std::env::var(&config.api_key_env) {
+                return Ok(Some(SecretString::from(value)));
+            }
+        }
+        // LEGACY MIGRATION ONLY — normal settings writes use SecretStore.
+        if !config.api_key.is_empty() {
+            return Ok(Some(SecretString::from(config.api_key.clone())));
+        }
+        Ok(None)
+    }
+
+    pub async fn resolve_voice_tts_api_key(
+        &self,
+        config: &VoiceTtsConfig,
+    ) -> Result<Option<SecretString>, SecretStoreError> {
+        if let Some(secret_ref) = &config.api_key_ref {
+            return self.store.get(secret_ref).await;
+        }
+        if !config.api_key_env.is_empty() {
+            if let Ok(value) = std::env::var(&config.api_key_env) {
+                return Ok(Some(SecretString::from(value)));
+            }
+        }
+        if !config.api_key.is_empty() {
+            return Ok(Some(SecretString::from(config.api_key.clone())));
         }
         Ok(None)
     }

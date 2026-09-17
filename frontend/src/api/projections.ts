@@ -6,7 +6,6 @@ export interface SimulationMetadata {
   provider: string;
   reason?: string;
 }
-
 export interface TaskProjection {
   id: string;
   title: string;
@@ -19,18 +18,6 @@ export interface TaskProjection {
   schema_version: number;
   [key: string]: unknown;
 }
-
-export interface DesktopContextProjection {
-  space_id?: string;
-  focused_app?: string;
-  focused_window?: string;
-  available_capabilities: string[];
-  updated_at: number;
-  simulation: SimulationMetadata;
-  schema_version: number;
-  [key: string]: unknown;
-}
-
 function scopeQuery(scope?: string): string {
   return scope ? `?${new URLSearchParams({ scope })}` : "";
 }
@@ -43,13 +30,4 @@ export async function listTaskProjections(scope?: string): Promise<TaskProjectio
   const body = (await response.json()) as { tasks: TaskProjection[] };
   return body.tasks;
 }
-
-export async function getDesktopContextProjection(
-  scope?: string,
-): Promise<DesktopContextProjection | null> {
-  const response = await fetch(
-    `${API_BASE}/api/projections/desktop-context${scopeQuery(scope)}`,
-    { headers: controlSessionHeaders() },
-  );
-  return response.ok ? (response.json() as Promise<DesktopContextProjection>) : null;
-}
+// v1 intentionally exports only product projections owned by the v1 workspace.

@@ -14,7 +14,7 @@ use secrecy::{ExposeSecret, SecretString};
 
 use super::model::{
     mcp_env_ref, SecretMigrationReport, SecretRef, SecretStoreError, CHAT_KEY_REF,
-    EMBEDDING_KEY_REF,
+    EMBEDDING_KEY_REF, STT_KEY_REF, TTS_KEY_REF,
 };
 use super::store::SecretStore;
 use crate::config::types::AppConfig;
@@ -37,6 +37,38 @@ pub async fn migrate_legacy_secrets(
                 config.model.api_key_ref = Some(secret_ref);
                 config.model.api_key.clear();
                 report.migrated_chat_key = true;
+            }
+            Err(_) => {
+                report.pending += 1;
+                report.failed += 1;
+            }
+        }
+    }
+
+    // ── Voice STT API key ──
+    if config.voice.stt.api_key_ref.is_none() && !config.voice.stt.api_key.is_empty() {
+        let secret_ref = SecretRef::new(STT_KEY_REF);
+        match migrate_one(store, &secret_ref, &config.voice.stt.api_key).await {
+            Ok(()) => {
+                config.voice.stt.api_key_ref = Some(secret_ref);
+                config.voice.stt.api_key.clear();
+                report.migrated_voice_stt_key = true;
+            }
+            Err(_) => {
+                report.pending += 1;
+                report.failed += 1;
+            }
+        }
+    }
+
+    // ── Voice TTS API key ──
+    if config.voice.tts.api_key_ref.is_none() && !config.voice.tts.api_key.is_empty() {
+        let secret_ref = SecretRef::new(TTS_KEY_REF);
+        match migrate_one(store, &secret_ref, &config.voice.tts.api_key).await {
+            Ok(()) => {
+                config.voice.tts.api_key_ref = Some(secret_ref);
+                config.voice.tts.api_key.clear();
+                report.migrated_voice_tts_key = true;
             }
             Err(_) => {
                 report.pending += 1;

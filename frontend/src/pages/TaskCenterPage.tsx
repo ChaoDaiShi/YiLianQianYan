@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListTodo, MessageSquare, RefreshCw, Search, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -31,6 +31,12 @@ import {
   type TaskFilter,
 } from "../features/tasks/taskPresentation";
 import { deriveTaskDisplayTitle } from "../components/chat/taskTitle";
+import {
+  createTaskGraph,
+  listTaskGraphs,
+  type ApiError,
+  type TaskGraphSummary,
+} from "../api/taskWorld";
 
 const FILTERS: Array<{ id: TaskFilter; label: string }> = [
   { id: "all", label: "全部" },
@@ -39,6 +45,45 @@ const FILTERS: Array<{ id: TaskFilter; label: string }> = [
   { id: "failed", label: "失败" },
   { id: "cancelled", label: "已取消" },
 ];
+
+interface EmptyTaskGraphCreationDependencies {
+  createGraph: typeof createTaskGraph;
+  navigate: (path: string) => void;
+  setCreating: (creating: boolean) => void;
+  setError: (error: ApiError | null) => void;
+  inFlight: { current: boolean };
+  makeGraphId: () => string;
+}
+
+export async function createEmptyTaskGraph({
+  createGraph,
+  navigate,
+  setCreating,
+  setError,
+  inFlight,
+  makeGraphId,
+}: EmptyTaskGraphCreationDependencies): Promise<void> {
+  if (inFlight.current) return;
+
+  inFlight.current = true;
+  setCreating(true);
+  setError(null);
+  try {
+    const result = await createGraph({
+      id: makeGraphId(),
+      nodes: [],
+      edges: [],
+    });
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    navigate(`/task-world/${encodeURIComponent(result.data.id)}`);
+  } finally {
+    inFlight.current = false;
+    setCreating(false);
+  }
+}
 
 export default function TaskCenterPage() {
   const navigate = useNavigate();
@@ -51,13 +96,18 @@ export default function TaskCenterPage() {
   const [error, setError] = useState<string | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [conversationError, setConversationError] = useState<string | null>(null);
+  const [taskGraphs, setTaskGraphs] = useState<TaskGraphSummary[]>([]);
+  const [creatingTaskGraph, setCreatingTaskGraph] = useState(false);
+  const [taskGraphError, setTaskGraphError] = useState<ApiError | null>(null);
+  const taskGraphCreationInFlight = useRef(false);
 
   const reload = useCallback(async () => {
     setError(null);
-    const [taskResult, workspaceResult, conversationResult] = await Promise.all([
+    const [taskResult, workspaceResult, conversationResult, graphResult] = await Promise.all([
       listTasks({ limit: 200 }),
       listWorkspaces(),
       listConversations(),
+      listTaskGraphs(),
     ]);
     if (taskResult.ok) {
       setTasks(taskResult.data);
@@ -78,6 +128,7 @@ export default function TaskCenterPage() {
       setConversations([]);
       setConversationError("对话记录暂时无法加载");
     }
+    setTaskGraphs(graphResult.ok ? graphResult.data : []);
   }, []);
 
   useEffect(() => {
@@ -112,6 +163,19 @@ export default function TaskCenterPage() {
   const selectedTask = visibleTasks.find((task) => task.id === selectedId) || null;
   const workspaceNames = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
 
+  const handleCreateTaskGraph = useCallback(
+    () =>
+      createEmptyTaskGraph({
+        createGraph: createTaskGraph,
+        navigate,
+        setCreating: setCreatingTaskGraph,
+        setError: setTaskGraphError,
+        inFlight: taskGraphCreationInFlight,
+        makeGraphId: () => crypto.randomUUID(),
+      }),
+    [navigate],
+  );
+
   return (
     <div className="page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
@@ -126,6 +190,43 @@ export default function TaskCenterPage() {
       />
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 pt-4">
+        <Panel padding={false} className="shrink-0 overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
+            <div><h2 className="text-sm font-semibold text-[var(--text)]">TaskGraph 控制面</h2><p className="mt-0.5 text-xs text-[var(--text-faint)]">真实语义图与独立画布视图</p></div>
+            <span className="text-xs text-[var(--text-faint)]">{taskGraphs.length} 个图</span>
+          </div>
+          {taskGraphError && (
+            <p className="mx-4 mt-3 text-xs text-[var(--danger)]" role="alert">
+              {taskGraphError.message}
+            </p>
+          )}
+          {taskGraphs.length === 0 ? (
+            <EmptyState
+              icon={<ListTodo className="h-6 w-6" />}
+              title="还没有任务画布"
+              description="创建一个任务画布后，可以在无限空间中组织、编辑和观察任务执行过程。"
+              action={
+                <Button
+                  type="button"
+                  disabled={creatingTaskGraph}
+                  onClick={() => void handleCreateTaskGraph()}
+                >
+                  {creatingTaskGraph ? "创建中…" : "新建任务画布"}
+                </Button>
+              }
+              className="py-8"
+            />
+          ) : (
+            <div className="grid gap-2 p-2 md:grid-cols-2">
+              {taskGraphs.map((graph) => (
+                <button key={graph.id} type="button" onClick={() => navigate(`/task-world/${encodeURIComponent(graph.id)}`)} className="rounded-[var(--radius-md)] border border-[var(--border-soft)] px-3 py-2.5 text-left hover:bg-[var(--surface-hover)]">
+                  <span className="block truncate text-sm font-medium text-[var(--text)]">{graph.id}</span>
+                  <span className="mt-1 block text-xs text-[var(--text-faint)]">r{graph.revision} · {graph.node_count} 节点 · {graph.edge_count} 条边</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Panel>
         <div className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] p-3 sm:flex-row sm:items-center">
           <label className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-faint)]" />
@@ -224,7 +325,7 @@ export default function TaskCenterPage() {
           />
         ) : tasks === null ? (
           <TaskCenterSkeleton />
-        ) : tasks.length === 0 && (conversations || []).length === 0 ? (
+        ) : tasks.length === 0 && (conversations || []).length === 0 && taskGraphs.length === 0 ? (
           <Panel className="min-h-0 flex-1">
             <EmptyState
               icon={<ListTodo className="h-6 w-6" />}

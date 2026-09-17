@@ -5,6 +5,7 @@
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 use crate::capability::{
@@ -40,6 +41,7 @@ pub(crate) fn mcp_transport_config(server: &crate::db::McpServer) -> McpTranspor
 }
 use crate::config::types::AppConfig;
 use crate::db::Database;
+use crate::interaction::{ApprovalVoiceAdapter, InteractionVoiceDispatch};
 use crate::isolation::{ManagedProcessRegistry, SharedManagedProcessRegistry};
 use crate::safety::{
     approval::ApprovalStore, grant::GrantEffect, grant::GrantResource, grant::GrantSource,
@@ -47,11 +49,17 @@ use crate::safety::{
 };
 use crate::secret::{migrate_legacy_secrets, OsSecretStore, SecretResolver, SecretStore};
 use crate::shared::command::CommandRouter;
+use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;
 use crate::shared::resource::ResourceService;
-use crate::shared::voice::VoiceCore;
+use crate::task::{TaskCommandService, TaskPresenceAdapter, TaskWorldRuntime};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
+use crate::voice::{
+    GlobalVoiceSessionRuntime, MiniMaxSttProvider, MiniMaxTtsProvider, OpenAiCompatibleSttProvider,
+    OpenAiCompatibleTtsProvider, SpeechToTextProvider, TextToSpeechProvider, VoiceDispatchHook,
+    VoiceProviderError,
+};
 
 /// Number of relevant memories injected into the chat system prompt.
 pub const CHAT_MEMORY_TOP_K: usize = 8;
@@ -166,14 +174,20 @@ pub struct AppServer {
     pub secret_store: Arc<dyn SecretStore>,
     /// Application-lifetime secret resolver (single instance).
     pub secret_resolver: Arc<SecretResolver>,
+    /// Single-flight gate for final cloud STT requests.
+    pub voice_stt_requests: Arc<Semaphore>,
     /// Bounded product-event channel. High-frequency streams stay separate.
     pub event_hub: EventHub,
     /// Shared command routing only; authorization remains external.
     pub command_router: CommandRouter,
     /// Safe app-managed resource ingestion and metadata service.
     pub resource_service: ResourceService,
-    /// Provider-neutral voice session state and layered presence.
-    pub voice_core: VoiceCore,
+    /// Application-lifetime global voice session state and layered presence.
+    pub voice_runtime: GlobalVoiceSessionRuntime,
+    /// Optional trusted hand-off into the v1 Interaction Router.
+    voice_dispatch_hook: Arc<RwLock<Option<Arc<dyn VoiceDispatchHook>>>>,
+    /// Authoritative v1 Task World registry and persistence boundary.
+    pub task_world: TaskWorldRuntime,
 }
 
 impl AppServer {
@@ -259,18 +273,37 @@ impl AppServer {
 
         let log_buffer = LogBuffer::new(2000);
         let event_hub = EventHub::new(256);
+        let task_world =
+            TaskWorldRuntime::new(&db, event_hub.clone()).map_err(|error| error.to_string())?;
         let resource_root = db_path
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
             .join("resources");
         let resource_service =
             ResourceService::new(db.clone_connection(), resource_root, event_hub.clone());
-        let voice_core = VoiceCore::deterministic(event_hub.clone());
-        let command_router = CommandRouter::with_foundation_handlers();
-        let presence_voice = voice_core.clone();
+        let voice_runtime = GlobalVoiceSessionRuntime::new(event_hub.clone());
+        let approval_store = Arc::new(ApprovalStore::new());
+        let config = Arc::new(RwLock::new(config));
+        let command_router = CommandRouter::new();
+        command_router
+            .register("core.echo", |request| Ok(request.payload.clone()))
+            .map_err(|error| format!("register core.echo command: {error}"))?;
+        TaskCommandService::new(task_world.clone())
+            .register(&command_router)
+            .map_err(|error| format!("register task command: {error}"))?;
+        ApprovalVoiceAdapter::new(Arc::clone(&approval_store))
+            .register(&command_router)
+            .map_err(|error| format!("register approval command: {error}"))?;
+        let presence_voice = voice_runtime.clone();
+        let presence_task_world = task_world.clone();
         command_router
             .register("presence.get", move |_| {
-                serde_json::to_value(presence_voice.presence()).map_err(|error| {
+                let request = ContextRequest::new("task-world");
+                let presence = TaskPresenceAdapter::merge(
+                    &presence_voice.presence(),
+                    &presence_task_world.list(&request),
+                );
+                serde_json::to_value(presence).map_err(|error| {
                     crate::shared::command::CommandError::new(
                         "presence_serialization_failed",
                         error.to_string(),
@@ -281,7 +314,7 @@ impl AppServer {
 
         let server = Self {
             db,
-            config: Arc::new(RwLock::new(config)),
+            config,
             tool_registry,
             managed_process_registry,
             skill_discovery,
@@ -291,7 +324,7 @@ impl AppServer {
             active_workflow_runs: Arc::new(Mutex::new(HashMap::new())),
             active_task_executions: Arc::new(Mutex::new(HashMap::new())),
             log_buffer,
-            approval_store: Arc::new(ApprovalStore::new()),
+            approval_store,
             audit_recorder,
             control_session,
             capability_registry: Arc::new(RwLock::new(None)),
@@ -300,13 +333,75 @@ impl AppServer {
             ))),
             secret_store,
             secret_resolver,
+            voice_stt_requests: Arc::new(Semaphore::new(1)),
             event_hub,
             command_router,
             resource_service,
-            voice_core,
+            voice_runtime,
+            voice_dispatch_hook: Arc::new(RwLock::new(None)),
+            task_world,
         };
+        server.set_voice_dispatch_hook(Arc::new(InteractionVoiceDispatch::new(
+            server.db.clone_connection(),
+            server.task_world.clone(),
+            Arc::clone(&server.approval_store),
+            server.command_router.clone(),
+        )));
         server.seed_default_grants();
         Ok(server)
+    }
+
+    /// Read Voice presence and overlay live Task World facts without changing
+    /// Voice-owned interaction state.
+    pub fn presence(&self) -> crate::shared::voice::PresenceSnapshot {
+        let request = ContextRequest::new("task-world");
+        TaskPresenceAdapter::merge(
+            &self.voice_runtime.presence(),
+            &self.task_world.list(&request),
+        )
+    }
+
+    pub fn stt_provider(&self) -> Result<Arc<dyn SpeechToTextProvider>, VoiceProviderError> {
+        let config = self.config.read().voice.stt.clone();
+        if config.provider.eq_ignore_ascii_case("openai-compatible") {
+            Ok(Arc::new(OpenAiCompatibleSttProvider::from_config(
+                &config,
+                Arc::clone(&self.secret_resolver),
+            )))
+        } else if config.provider.eq_ignore_ascii_case("minimax") {
+            Ok(Arc::new(MiniMaxSttProvider::from_config_with_request_gate(
+                &config,
+                Arc::clone(&self.secret_resolver),
+                Arc::clone(&self.voice_stt_requests),
+            )))
+        } else {
+            Err(VoiceProviderError::ProviderUnavailable)
+        }
+    }
+
+    pub fn tts_provider(&self) -> Result<Arc<dyn TextToSpeechProvider>, VoiceProviderError> {
+        let config = self.config.read().voice.tts.clone();
+        if config.provider.eq_ignore_ascii_case("minimax") {
+            Ok(Arc::new(MiniMaxTtsProvider::from_config(
+                &config,
+                Arc::clone(&self.secret_resolver),
+            )))
+        } else if config.provider.eq_ignore_ascii_case("openai-compatible") {
+            Ok(Arc::new(OpenAiCompatibleTtsProvider::from_config(
+                &config,
+                Arc::clone(&self.secret_resolver),
+            )))
+        } else {
+            Err(VoiceProviderError::ProviderUnavailable)
+        }
+    }
+
+    pub fn set_voice_dispatch_hook(&self, hook: Arc<dyn VoiceDispatchHook>) {
+        *self.voice_dispatch_hook.write() = Some(hook);
+    }
+
+    pub(crate) fn voice_dispatch_hook(&self) -> Option<Arc<dyn VoiceDispatchHook>> {
+        self.voice_dispatch_hook.read().clone()
     }
 
     /// Migrate legacy plaintext secrets into the SecretStore (write → verify →
@@ -316,7 +411,11 @@ impl AppServer {
         let mut mcp_servers = self.db.list_mcp_servers().unwrap_or_default();
         let report =
             migrate_legacy_secrets(self.secret_store.as_ref(), &mut config, &mut mcp_servers).await;
-        if report.migrated_chat_key || report.migrated_embedding_key {
+        if report.migrated_chat_key
+            || report.migrated_embedding_key
+            || report.migrated_voice_stt_key
+            || report.migrated_voice_tts_key
+        {
             if let Err(e) = self.db.save_settings(&config) {
                 tracing::warn!(error = %e, "failed to persist migrated model secret refs");
             }

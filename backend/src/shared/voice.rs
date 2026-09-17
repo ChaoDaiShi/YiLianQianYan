@@ -1,5 +1,9 @@
 use crate::shared::contracts::SHARED_SCHEMA_VERSION;
 use crate::shared::event::{EventHub, YiEvent};
+use crate::shared::interaction::{
+    ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface, InteractionIntent,
+    InteractionSource, TargetResolution,
+};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -9,9 +13,13 @@ use uuid::Uuid;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VoiceSessionState {
+    Idle,
     Listening,
+    Processing,
     Speaking,
     Interrupted,
+    Error,
+    Ended,
     Stopped,
     Cancelled,
 }
@@ -385,6 +393,146 @@ pub enum VoiceAttentionPolicy {
     Silent,
     Balanced,
     Companion,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceInputOwner {
+    BuiltinAsr,
+    ExternalAsr,
+    PushToTalk,
+    FutureWakeWord,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlobalVoiceSession {
+    pub voice_session_id: String,
+    pub generation: u64,
+    pub state: VoiceSessionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_owner: Option<VoiceInputOwner>,
+    pub focused_surface: FocusedSurface,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversational_anchor: Option<ConversationalAnchor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_task: Option<String>,
+    pub attention_mode: VoiceAttentionPolicy,
+    pub started_at: i64,
+    pub updated_at: i64,
+    pub schema_version: u32,
+}
+
+impl GlobalVoiceSession {
+    pub fn new(focused_surface: FocusedSurface, now: i64) -> Self {
+        Self {
+            voice_session_id: Uuid::new_v4().to_string(),
+            generation: 1,
+            state: VoiceSessionState::Listening,
+            input_owner: None,
+            focused_surface,
+            conversational_anchor: None,
+            active_task: None,
+            attention_mode: VoiceAttentionPolicy::Balanced,
+            started_at: now,
+            updated_at: now,
+            schema_version: SHARED_SCHEMA_VERSION,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceInputLease {
+    pub lease_id: String,
+    pub voice_session_id: String,
+    pub generation: u64,
+    pub owner: VoiceInputOwner,
+    pub acquired_at: i64,
+}
+
+impl VoiceInputLease {
+    pub fn new(session: &GlobalVoiceSession, owner: VoiceInputOwner, now: i64) -> Self {
+        Self {
+            lease_id: Uuid::new_v4().to_string(),
+            voice_session_id: session.voice_session_id.clone(),
+            generation: session.generation,
+            owner,
+            acquired_at: now,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceTurn {
+    pub turn_id: String,
+    pub voice_session_id: String,
+    pub generation: u64,
+    pub lease_id: String,
+    pub source: InteractionSource,
+    pub final_transcript: String,
+    pub focused_surface: FocusedSurface,
+    pub anchor_snapshot: ContextAnchorSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_projection_ref: Option<String>,
+    pub resolved_target: TargetResolution,
+    pub intent: InteractionIntent,
+    pub created_at: i64,
+    pub schema_version: u32,
+}
+
+impl VoiceTurn {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        session: &GlobalVoiceSession,
+        lease: &VoiceInputLease,
+        source: InteractionSource,
+        transcript: impl Into<String>,
+        anchor_snapshot: ContextAnchorSnapshot,
+        resolved_target: TargetResolution,
+        intent: InteractionIntent,
+        now: i64,
+    ) -> Result<Self, VoiceContractError> {
+        if session.voice_session_id != lease.voice_session_id
+            || session.generation != lease.generation
+        {
+            return Err(VoiceContractError::StaleGeneration);
+        }
+        let final_transcript = transcript.into().trim().to_string();
+        if final_transcript.is_empty() || final_transcript.chars().count() > 4_096 {
+            return Err(VoiceContractError::InvalidTranscript);
+        }
+        Ok(Self {
+            turn_id: Uuid::new_v4().to_string(),
+            voice_session_id: session.voice_session_id.clone(),
+            generation: session.generation,
+            lease_id: lease.lease_id.clone(),
+            source,
+            final_transcript,
+            focused_surface: anchor_snapshot.focused_surface,
+            anchor_snapshot,
+            task_projection_ref: None,
+            resolved_target,
+            intent,
+            created_at: now,
+            schema_version: SHARED_SCHEMA_VERSION,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum VoiceContractError {
+    #[error("voice input belongs to a stale session generation")]
+    StaleGeneration,
+    #[error("final transcript must be 1-4096 characters")]
+    InvalidTranscript,
+}
+
+impl VoiceContractError {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::StaleGeneration => "stale_generation",
+            Self::InvalidTranscript => "invalid_transcript",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

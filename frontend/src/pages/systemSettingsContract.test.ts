@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import source from "./SettingsPage.tsx?raw";
 import modelManagerSource from "../features/llm/ModelManagerPanel.tsx?raw";
+import typesSource from "../types/index.ts?raw";
 
 describe("Settings contract", () => {
   it("keeps real settings APIs and masked secret controls", () => {
@@ -8,6 +9,21 @@ describe("Settings contract", () => {
     expect(source).toContain("updateSettings");
     expect(modelManagerSource).toContain('type="password"');
     expect(modelManagerSource).toContain("api_key_configured");
+  });
+
+  it("preserves secure voice provider settings and write-only credentials", () => {
+    expect(typesSource).toContain("export interface VoiceConfig");
+    expect(typesSource).toContain("voice: VoiceConfig");
+    expect(source).toContain('{ key: "voice", label: "语音" }');
+    expect(typesSource).toContain("export interface VoiceSttConfig");
+    expect(typesSource).toContain("export interface VoiceTtsConfig");
+    expect(source).toContain("语音识别（STT）");
+    expect(source).toContain("语音合成（TTS）");
+    expect(source).toContain("config.voice.stt");
+    expect(source).toContain("config.voice.tts");
+    expect(source).toContain("api_key_configured");
+    expect(source).toContain("clearVoiceSecret");
+    expect(source).toContain('type="password"');
   });
 
   it("provides section semantics and save feedback", () => {
@@ -23,7 +39,7 @@ describe("Settings contract", () => {
     expect(modelManagerSource).toContain("运行时兼容配置");
     expect(modelManagerSource).toContain("API 地址");
     expect(modelManagerSource).toContain("Embedding 配置");
-    expect(source).not.toContain('<Input label="API 地址"');
+    expect(source).not.toContain('<Input label="API 地址" value={config.model.base_url}');
     expect(source).not.toContain('<h4 className="font-semibold text-sm text-[var(--text-muted)]">Embedding 配置</h4>');
   });
 

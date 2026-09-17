@@ -243,6 +243,72 @@ pub async fn run_workflow_graph(
     })))
 }
 
+/// Execute an existing WorkflowGraph for Task Harness without introducing a
+/// second workflow state machine. The same persisted WorkflowRun,
+/// SecurityExecutionGateway and WorkflowRunner used by the HTTP runtime are
+/// retained; Task Harness only observes the bounded terminal result.
+pub(crate) async fn execute_for_task_harness(
+    server: Arc<AppServer>,
+    workflow_graph_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    let graph = server
+        .db
+        .get_workflow_graph(workflow_graph_id)?
+        .ok_or_else(|| format!("workflow graph not found: {workflow_graph_id}"))?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let context = ExecutionContext::new(
+        ExecutionId::generate(),
+        SecuritySubject::local_user().subject_id,
+        "task-harness-workflow",
+        None,
+        now,
+    );
+    let mut run = WorkflowRun::new(
+        WorkflowRunId::generate(),
+        context,
+        graph.definition.clone(),
+        now,
+    )
+    .map_err(|error| error.to_string())?;
+    let run_id = run.run_id.clone();
+    server.db.create_workflow_run(workflow_graph_id, &run)?;
+    let cancel = CancellationToken::new();
+    server
+        .active_workflow_runs
+        .lock()
+        .insert(run_id.to_string(), cancel.clone());
+
+    let gateway = build_gateway(&server).await;
+    let executor =
+        SecurityGatewayNodeExecutor::new(Arc::clone(&gateway), Arc::clone(&server.approval_store))
+            .with_agent_executor(build_agent_executor(&server));
+    let runner = WorkflowRunner::new(executor);
+    let db = server.db.clone_connection();
+    let graph_id = workflow_graph_id.to_string();
+    let result = runner
+        .run(&mut run, &cancel, move |state| {
+            db.update_workflow_run(&graph_id, state)
+        })
+        .await;
+    server.active_workflow_runs.lock().remove(run_id.as_str());
+    result.map_err(|error| error.to_string())?;
+
+    match run.status {
+        crate::workflow::WorkflowRunStatus::Completed => Ok(Some(serde_json::json!({
+            "status": "completed",
+            "completed": true,
+            "workflow_graph_id": workflow_graph_id,
+            "workflow_run_id": run_id.as_str(),
+        }))),
+        crate::workflow::WorkflowRunStatus::WaitingApproval => {
+            Err("workflow paused for approval".to_string())
+        }
+        crate::workflow::WorkflowRunStatus::Cancelled => Err("workflow cancelled".to_string()),
+        crate::workflow::WorkflowRunStatus::Failed => Err("workflow failed".to_string()),
+        status => Err(format!("workflow ended in non-terminal status {status}")),
+    }
+}
+
 pub async fn get_workflow_run(
     State(server): State<Arc<AppServer>>,
     Path(run_id): Path<String>,

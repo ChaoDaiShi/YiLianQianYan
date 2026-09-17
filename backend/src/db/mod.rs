@@ -11,6 +11,9 @@ mod resources;
 mod security_audit;
 mod settings;
 mod task;
+mod task_canvas;
+mod task_execution;
+mod task_world;
 mod workflow_runtime;
 mod workflows;
 mod workspace;
@@ -24,6 +27,8 @@ pub use mcp::McpServer;
 pub use memories::*;
 pub use security_audit::*;
 pub use task::*;
+pub use task_execution::*;
+pub use task_world::{TaskSupervisorSnapshot, TaskWorldPersistenceError};
 pub use workflow_runtime::*;
 pub use workflows::Workflow;
 // settings::* not re-exported (used internally via Database impl)
@@ -548,6 +553,24 @@ impl Database {
     fn run_versioned_migrations(&self, adopted_v09: bool) -> Result<(), rusqlite::Error> {
         let mut conn = self.conn.lock().unwrap();
         migrations::run_versioned_migrations(&mut conn, adopted_v09)
+    }
+
+    /// Apply product-owned migrations through the shared registrar while
+    /// keeping the connection behind Database's crate-private mutex.
+    pub(crate) fn apply_product_migrations(
+        &self,
+        specs: &[migrations::ProductMigrationSpec],
+    ) -> Result<(), rusqlite::Error> {
+        let mut conn = self.conn.lock().unwrap();
+        migrations::apply_product_migrations(&mut conn, specs)
+    }
+
+    /// Apply one product-owned migration through the same locked registrar.
+    pub(crate) fn apply_product_migration(
+        &self,
+        spec: &migrations::ProductMigrationSpec,
+    ) -> Result<(), rusqlite::Error> {
+        self.apply_product_migrations(std::slice::from_ref(spec))
     }
 
     /// Seed built-in workflow templates if the workflows table is empty.

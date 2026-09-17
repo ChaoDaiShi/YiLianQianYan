@@ -83,6 +83,28 @@ export interface ModelConfig {
   clear_embedding_api_key?: boolean;
 }
 
+export interface VoiceSttConfig {
+  provider: string;
+  base_url: string;
+  model: string;
+  language: string;
+  api_key: string;
+  api_key_configured?: boolean;
+  api_key_source?: string;
+  api_key_env: string;
+  clear_api_key?: boolean;
+  timeout_ms: number;
+}
+
+export interface VoiceTtsConfig extends VoiceSttConfig {
+  voice: string;
+}
+
+export interface VoiceConfig {
+  stt: VoiceSttConfig;
+  tts: VoiceTtsConfig;
+}
+
 export interface PermissionsConfig {
   mode: string;
   interrupt_on: string[];
@@ -113,6 +135,7 @@ export interface CompactionConfig {
 export interface AppConfig {
   agent: AgentConfig;
   model: ModelConfig;
+  voice: VoiceConfig;
   permissions: PermissionsConfig;
   sandbox: SandboxConfig;
   skills: SkillsConfig;

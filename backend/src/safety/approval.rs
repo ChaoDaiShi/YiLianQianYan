@@ -73,6 +73,7 @@ impl PendingApproval {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalError {
     NotFound,
+    Ambiguous,
     AlreadyProcessed,
     Expired,
     Cancelled,
@@ -83,6 +84,7 @@ impl std::fmt::Display for ApprovalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             ApprovalError::NotFound => "审批不存在",
+            ApprovalError::Ambiguous => "当前会话存在多个待处理审批",
             ApprovalError::AlreadyProcessed => "审批已被处理，不能重复操作",
             ApprovalError::Expired => "审批已过期",
             ApprovalError::Cancelled => "审批已取消",
@@ -302,6 +304,25 @@ impl ApprovalStore {
             .collect()
     }
 
+    /// List only currently active approvals belonging to one conversation.
+    ///
+    /// A bare approval is never allowed to search the process-wide store. The
+    /// conversation binding is the minimum context needed to make a voice or
+    /// text confirmation safe.
+    pub fn list_pending_for_conversation(&self, conversation_id: &str) -> Vec<PendingApproval> {
+        let now = Utc::now();
+        self.approvals
+            .read()
+            .values()
+            .filter(|approval| {
+                approval.conversation_id == conversation_id
+                    && approval.status == ApprovalStatus::Pending
+                    && !approval.is_expired(now)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Atomically mark a pending approval as Approved.
     ///
     /// Returns the approval with its original tool-call payload. The
@@ -322,6 +343,27 @@ impl ApprovalStore {
         conversation_id: &str,
     ) -> Result<PendingApproval, ApprovalError> {
         self.transition(approval_id, conversation_id, ApprovalStatus::Rejected)
+    }
+
+    /// Atomically select and consume the only active approval in a
+    /// conversation. Selection and the status transition happen under the
+    /// same write lock, so a second pending item or a concurrent resolver can
+    /// never turn a stale list result into a side effect.
+    pub fn consume_unique_pending_for_approval(
+        &self,
+        conversation_id: &str,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_unique_pending(conversation_id, ApprovalStatus::Approved)
+    }
+
+    /// Atomically select and reject the only active approval in a
+    /// conversation. See [`Self::consume_unique_pending_for_approval`] for
+    /// the selection and concurrency guarantee.
+    pub fn consume_unique_pending_for_rejection(
+        &self,
+        conversation_id: &str,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_unique_pending(conversation_id, ApprovalStatus::Rejected)
     }
 
     /// Atomically mark a pending approval as Cancelled.
@@ -355,6 +397,42 @@ impl ApprovalStore {
             return Err(ApprovalError::Expired);
         }
 
+        approval.status = target;
+        Ok(approval.clone())
+    }
+
+    fn consume_unique_pending(
+        &self,
+        conversation_id: &str,
+        target: ApprovalStatus,
+    ) -> Result<PendingApproval, ApprovalError> {
+        let now = Utc::now();
+        let mut map = self.approvals.write();
+        let matching = map
+            .values()
+            .filter(|approval| {
+                approval.conversation_id == conversation_id
+                    && approval.status == ApprovalStatus::Pending
+                    && !approval.is_expired(now)
+            })
+            .map(|approval| approval.approval_id.clone())
+            .collect::<Vec<_>>();
+        let [approval_id] = matching.as_slice() else {
+            return if matching.is_empty() {
+                Err(ApprovalError::NotFound)
+            } else {
+                Err(ApprovalError::Ambiguous)
+            };
+        };
+
+        let approval = map.get_mut(approval_id).ok_or(ApprovalError::NotFound)?;
+        // The map is locked from selection through mutation. Keep this check
+        // explicit so the expiry boundary remains fail closed if the clock
+        // advances between the initial filter and this assignment.
+        if approval.is_expired(now) {
+            approval.status = ApprovalStatus::Expired;
+            return Err(ApprovalError::Expired);
+        }
         approval.status = target;
         Ok(approval.clone())
     }

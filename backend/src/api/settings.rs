@@ -14,7 +14,7 @@ use crate::config::types::AppConfig;
 use crate::safety::AuditEventType;
 use crate::secret::{
     record_secret_event, SecretKind, SecretRef, SecretResolver, SecretSource, CHAT_KEY_REF,
-    EMBEDDING_KEY_REF,
+    EMBEDDING_KEY_REF, STT_KEY_REF, TTS_KEY_REF, VOICE_KEY_REF,
 };
 use crate::server::AppServer;
 
@@ -54,12 +54,44 @@ pub(crate) async fn embedding_source(
     (SecretSource::None, false)
 }
 
+async fn voice_stt_source(resolver: &SecretResolver, config: &AppConfig) -> (SecretSource, bool) {
+    if let Some(secret_ref) = &config.voice.stt.api_key_ref {
+        let ok = matches!(resolver.resolve_ref(secret_ref).await, Ok(Some(_)));
+        return (SecretSource::SecretStore, ok);
+    }
+    if !config.voice.stt.api_key_env.is_empty() {
+        let ok = std::env::var(&config.voice.stt.api_key_env).is_ok();
+        return (SecretSource::Environment, ok);
+    }
+    if !config.voice.stt.api_key.is_empty() {
+        return (SecretSource::LegacyPending, true);
+    }
+    (SecretSource::None, false)
+}
+
+async fn voice_tts_source(resolver: &SecretResolver, config: &AppConfig) -> (SecretSource, bool) {
+    if let Some(secret_ref) = &config.voice.tts.api_key_ref {
+        let ok = matches!(resolver.resolve_ref(secret_ref).await, Ok(Some(_)));
+        return (SecretSource::SecretStore, ok);
+    }
+    if !config.voice.tts.api_key_env.is_empty() {
+        let ok = std::env::var(&config.voice.tts.api_key_env).is_ok();
+        return (SecretSource::Environment, ok);
+    }
+    if !config.voice.tts.api_key.is_empty() {
+        return (SecretSource::LegacyPending, true);
+    }
+    (SecretSource::None, false)
+}
+
 async fn build_redacted_config(server: &AppServer) -> serde_json::Value {
     let config = server.config.read().clone();
     let mut value = serde_json::to_value(&config).unwrap_or_else(|_| serde_json::json!({}));
 
     let (chat_src, chat_configured) = chat_source(&server.secret_resolver, &config).await;
     let (embed_src, embed_configured) = embedding_source(&server.secret_resolver, &config).await;
+    let (stt_src, stt_configured) = voice_stt_source(&server.secret_resolver, &config).await;
+    let (tts_src, tts_configured) = voice_tts_source(&server.secret_resolver, &config).await;
 
     if let Some(model) = value
         .get_mut("model")
@@ -91,12 +123,53 @@ async fn build_redacted_config(server: &AppServer) -> serde_json::Value {
         );
     }
 
+    if let Some(stt) = value
+        .pointer_mut("/voice/stt")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        stt.insert(
+            "api_key".to_string(),
+            serde_json::Value::String(String::new()),
+        );
+        stt.insert(
+            "api_key_configured".to_string(),
+            serde_json::Value::Bool(stt_configured),
+        );
+        stt.insert(
+            "api_key_source".to_string(),
+            serde_json::to_value(stt_src).unwrap(),
+        );
+    }
+    if let Some(tts) = value
+        .pointer_mut("/voice/tts")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        tts.insert(
+            "api_key".to_string(),
+            serde_json::Value::String(String::new()),
+        );
+        tts.insert(
+            "api_key_configured".to_string(),
+            serde_json::Value::Bool(tts_configured),
+        );
+        tts.insert(
+            "api_key_source".to_string(),
+            serde_json::to_value(tts_src).unwrap(),
+        );
+    }
+
     let migration_pending = {
         let mut pending = 0usize;
         if !config.model.api_key.is_empty() {
             pending += 1;
         }
         if !config.model.embedding_api_key.is_empty() {
+            pending += 1;
+        }
+        if !config.voice.stt.api_key.is_empty() {
+            pending += 1;
+        }
+        if !config.voice.tts.api_key.is_empty() {
             pending += 1;
         }
         pending += server
@@ -253,6 +326,128 @@ pub async fn update_handler(
     }
     incoming.model.clear_embedding_api_key = false;
 
+    // ── STT API key ──
+    if incoming.voice.stt.clear_api_key {
+        if let Some(secret_ref) = existing.voice.stt.api_key_ref.clone() {
+            let shared_legacy = secret_ref.key == VOICE_KEY_REF
+                && existing.voice.tts.api_key_ref.as_ref() == Some(&secret_ref);
+            let ok = shared_legacy || server.secret_store.delete(&secret_ref).await.is_ok();
+            record_secret_event(
+                &server.audit_recorder,
+                AuditEventType::SecretDeleted,
+                SecretKind::VoiceSttApiKey,
+                &secret_ref,
+                "clear",
+                ok,
+            );
+        }
+        incoming.voice.stt.api_key_ref = None;
+        incoming.voice.stt.api_key = String::new();
+    } else if !incoming.voice.stt.api_key.is_empty() {
+        let secret_ref = existing
+            .voice
+            .stt
+            .api_key_ref
+            .clone()
+            .filter(|value| value.key != VOICE_KEY_REF)
+            .unwrap_or_else(|| SecretRef::new(STT_KEY_REF));
+        if let Err(e) = server
+            .secret_store
+            .put(
+                &secret_ref,
+                SecretString::from(incoming.voice.stt.api_key.clone()),
+            )
+            .await
+        {
+            record_secret_event(
+                &server.audit_recorder,
+                AuditEventType::SecretStoreUnavailable,
+                SecretKind::VoiceSttApiKey,
+                &secret_ref,
+                "rotate",
+                false,
+            );
+            return Json(
+                serde_json::json!({ "error": format!("系统安全凭据库不可用，STT API Key 未保存: {e}") }),
+            );
+        }
+        record_secret_event(
+            &server.audit_recorder,
+            AuditEventType::SecretRotated,
+            SecretKind::VoiceSttApiKey,
+            &secret_ref,
+            "rotate",
+            true,
+        );
+        incoming.voice.stt.api_key_ref = Some(secret_ref);
+        incoming.voice.stt.api_key = String::new();
+    } else {
+        incoming.voice.stt.api_key_ref = existing.voice.stt.api_key_ref.clone();
+        incoming.voice.stt.api_key = String::new();
+    }
+    incoming.voice.stt.clear_api_key = false;
+
+    // ── TTS API key ──
+    if incoming.voice.tts.clear_api_key {
+        if let Some(secret_ref) = existing.voice.tts.api_key_ref.clone() {
+            let shared_legacy = secret_ref.key == VOICE_KEY_REF
+                && existing.voice.stt.api_key_ref.as_ref() == Some(&secret_ref);
+            let ok = shared_legacy || server.secret_store.delete(&secret_ref).await.is_ok();
+            record_secret_event(
+                &server.audit_recorder,
+                AuditEventType::SecretDeleted,
+                SecretKind::VoiceTtsApiKey,
+                &secret_ref,
+                "clear",
+                ok,
+            );
+        }
+        incoming.voice.tts.api_key_ref = None;
+        incoming.voice.tts.api_key = String::new();
+    } else if !incoming.voice.tts.api_key.is_empty() {
+        let secret_ref = existing
+            .voice
+            .tts
+            .api_key_ref
+            .clone()
+            .filter(|value| value.key != VOICE_KEY_REF)
+            .unwrap_or_else(|| SecretRef::new(TTS_KEY_REF));
+        if let Err(e) = server
+            .secret_store
+            .put(
+                &secret_ref,
+                SecretString::from(incoming.voice.tts.api_key.clone()),
+            )
+            .await
+        {
+            record_secret_event(
+                &server.audit_recorder,
+                AuditEventType::SecretStoreUnavailable,
+                SecretKind::VoiceTtsApiKey,
+                &secret_ref,
+                "rotate",
+                false,
+            );
+            return Json(
+                serde_json::json!({ "error": format!("系统安全凭据库不可用，TTS API Key 未保存: {e}") }),
+            );
+        }
+        record_secret_event(
+            &server.audit_recorder,
+            AuditEventType::SecretRotated,
+            SecretKind::VoiceTtsApiKey,
+            &secret_ref,
+            "rotate",
+            true,
+        );
+        incoming.voice.tts.api_key_ref = Some(secret_ref);
+        incoming.voice.tts.api_key = String::new();
+    } else {
+        incoming.voice.tts.api_key_ref = existing.voice.tts.api_key_ref.clone();
+        incoming.voice.tts.api_key = String::new();
+    }
+    incoming.voice.tts.clear_api_key = false;
+
     match server.db.save_settings(&incoming) {
         Ok(_) => {
             *server.config.write() = incoming;
@@ -300,6 +495,89 @@ mod tests {
         assert_eq!(json["model"]["api_key"], "");
         assert_eq!(json["model"]["api_key_configured"], true);
         assert_eq!(json["model"]["api_key_source"], "secret_store");
+
+        drop(server);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn legacy_flat_voice_settings_migrate_without_guessing_models() {
+        let migrated: crate::config::types::VoiceConfig =
+            serde_json::from_value(serde_json::json!({
+                "provider": "openai-compatible",
+                "base_url": "https://voice.example/v1",
+                "stt_model": "stt-real",
+                "tts_model": "tts-real",
+                "voice": "legacy-voice",
+                "language": "zh",
+                "api_key_env": "VOICE_KEY",
+                "timeout_ms": 4321
+            }))
+            .unwrap();
+
+        assert_eq!(migrated.stt.provider, "openai-compatible");
+        assert_eq!(migrated.stt.model, "stt-real");
+        assert_eq!(migrated.tts.provider, "openai-compatible");
+        assert_eq!(migrated.tts.model, "tts-real");
+        assert_eq!(migrated.tts.voice, "legacy-voice");
+        let encoded = serde_json::to_value(&migrated).unwrap();
+        assert!(encoded.get("stt").is_some());
+        assert!(encoded.get("tts").is_some());
+        assert!(encoded.get("provider").is_none());
+
+        let missing_tts: crate::config::types::VoiceConfig =
+            serde_json::from_value(serde_json::json!({
+                "provider": "openai-compatible",
+                "base_url": "https://voice.example/v1",
+                "stt_model": "stt-real",
+                "voice": "legacy-voice",
+                "language": "zh",
+                "api_key_env": "VOICE_KEY",
+                "timeout_ms": 4321
+            }))
+            .unwrap();
+        assert!(missing_tts.tts.model.is_empty());
+        assert!(!missing_tts.tts.structurally_configured());
+    }
+
+    #[tokio::test]
+    async fn voice_settings_redact_stt_and_tts_secrets_independently() {
+        let path = std::env::temp_dir().join(format!(
+            "yilian-settings-voice-split-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let store: Arc<dyn crate::secret::SecretStore> = Arc::new(InMemorySecretStore::new());
+        let server = AppServer::new_with_control_session_and_store(
+            &path,
+            ".",
+            ControlSession::generate(),
+            Arc::clone(&store),
+        )
+        .unwrap();
+        let stt_ref = SecretRef::new(crate::secret::STT_KEY_REF);
+        let tts_ref = SecretRef::new(crate::secret::TTS_KEY_REF);
+        store
+            .put(&stt_ref, SecretString::from("STT_SECRET"))
+            .await
+            .unwrap();
+        store
+            .put(&tts_ref, SecretString::from("TTS_SECRET"))
+            .await
+            .unwrap();
+        {
+            let mut config = server.config.write();
+            config.voice.stt.api_key_ref = Some(stt_ref);
+            config.voice.tts.api_key_ref = Some(tts_ref);
+        }
+
+        let value = build_redacted_config(&server).await;
+        let text = value.to_string();
+        assert!(!text.contains("STT_SECRET"));
+        assert!(!text.contains("TTS_SECRET"));
+        assert_eq!(value["voice"]["stt"]["api_key"], "");
+        assert_eq!(value["voice"]["stt"]["api_key_configured"], true);
+        assert_eq!(value["voice"]["tts"]["api_key"], "");
+        assert_eq!(value["voice"]["tts"]["api_key_configured"], true);
 
         drop(server);
         let _ = std::fs::remove_file(&path);

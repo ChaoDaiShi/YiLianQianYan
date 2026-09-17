@@ -9,6 +9,7 @@ pub mod capability;
 pub mod config;
 pub mod db;
 pub mod execution;
+pub mod interaction;
 pub mod isolation;
 pub mod llm;
 pub mod mcp;
@@ -22,6 +23,7 @@ pub mod skill_management;
 pub mod task;
 pub mod tools;
 pub mod utils;
+pub mod voice;
 pub mod workflow;
 pub mod workspace;
 
@@ -37,7 +39,7 @@ fn default_data_dir() -> PathBuf {
     std::env::var("YILIAN_DATA_DIR")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| dirs::data_dir().map(|d| d.join("yilianqianyan")))
+        .or_else(|| dirs::data_dir().map(|d| d.join("yilianqianyan-v1")))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -51,7 +53,7 @@ async fn create_server_with_control_session(
 ) -> Result<(Arc<AppServer>, axum::Router), String> {
     let data_dir = default_data_dir();
     std::fs::create_dir_all(&data_dir).ok();
-    let db_path = data_dir.join("yilianqianyan.db");
+    let db_path = data_dir.join("yilianqianyan-v1.db");
 
     let workspace_root = std::env::var("YILIAN_WORKSPACE")
         .ok()
@@ -63,7 +65,7 @@ async fn create_server_with_control_session(
         .unwrap_or_else(|| ".".to_string());
 
     tracing::info!(
-        "Backend: data_dir={}, workspace={}",
+        "Backend: profile=v1, data_dir={}, workspace={}",
         data_dir.display(),
         workspace_root
     );

@@ -17,6 +17,7 @@ import {
   type AgentEvent,
   type Workflow,
 } from "../../api/client";
+import type { ConversationalAnchor } from "../../api/voice";
 import {
   approveAction,
   getApproval,
@@ -58,6 +59,7 @@ interface ChatViewProps {
   executionToggleRef?: RefObject<HTMLButtonElement>;
   onToggleConversations: () => void;
   onToggleExecution: () => void;
+  onVoiceAnchorChange?: (anchor: ConversationalAnchor | null) => void;
   renderExecution?: (controller: ExecutionController) => ReactNode;
 }
 
@@ -100,6 +102,7 @@ export default function ChatView({
   executionToggleRef,
   onToggleConversations,
   onToggleExecution,
+  onVoiceAnchorChange,
   renderExecution,
 }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -168,7 +171,19 @@ export default function ChatView({
 
     setCurrentConvId(conversationId);
     loadConversation(conversationId).then(async (conversation) => {
-      if (cancelled || !conversation?.messages) return;
+      if (cancelled) return;
+      const anchor = conversation
+        && typeof conversation.id === "string"
+        && typeof conversation.title === "string"
+        && typeof conversation.updated_at === "number"
+        ? {
+            conversation_id: conversation.id,
+            title: conversation.title,
+            updated_at: conversation.updated_at,
+          }
+        : null;
+      onVoiceAnchorChange?.(anchor);
+      if (!conversation?.messages) return;
       const loadedMessages = (conversation.messages as unknown[]).filter(
         (message): message is Message => {
           if (!message || typeof message !== "object") return false;
@@ -234,7 +249,7 @@ export default function ChatView({
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [conversationId, onVoiceAnchorChange]);
 
   const clearResolvingForConversation = useCallback((targetId: string) => {
     const store = useApprovalStore.getState();

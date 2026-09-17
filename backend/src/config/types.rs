@@ -12,6 +12,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub model: ModelConfig,
     #[serde(default)]
+    pub voice: VoiceConfig,
+    #[serde(default)]
     pub permissions: PermissionsConfig,
     #[serde(default)]
     pub sandbox: SandboxConfig,
@@ -28,6 +30,7 @@ impl Default for AppConfig {
         Self {
             agent: AgentConfig::default(),
             model: ModelConfig::default(),
+            voice: VoiceConfig::default(),
             permissions: PermissionsConfig::default(),
             sandbox: SandboxConfig::default(),
             compaction: CompactionConfig::default(),
@@ -201,6 +204,259 @@ impl ModelConfig {
     pub fn has_embedding(&self) -> bool {
         !self.embedding_model.is_empty() && !self.embedding_base_url.is_empty()
     }
+}
+
+// ── Voice providers ──
+
+/// Persisted, provider-neutral voice settings. Credentials are write-only and
+/// are stored through SecretStore; only the stable SecretRef is serialized.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct VoiceConfig {
+    pub stt: VoiceSttConfig,
+    pub tts: VoiceTtsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VoiceSttConfig {
+    #[serde(default = "default_voice_provider")]
+    pub provider: String,
+    #[serde(default = "default_voice_base_url")]
+    pub base_url: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default = "default_voice_language")]
+    pub language: String,
+    #[serde(default, skip_serializing)]
+    pub api_key: String,
+    #[serde(default = "default_voice_api_key_env")]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub api_key_ref: Option<crate::secret::SecretRef>,
+    #[serde(default)]
+    pub clear_api_key: bool,
+    #[serde(default = "default_voice_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VoiceTtsConfig {
+    #[serde(default = "default_tts_provider")]
+    pub provider: String,
+    #[serde(default = "default_tts_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_tts_model")]
+    pub model: String,
+    #[serde(default = "default_tts_voice")]
+    pub voice: String,
+    #[serde(default = "default_voice_language")]
+    pub language: String,
+    #[serde(default, skip_serializing)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub api_key_ref: Option<crate::secret::SecretRef>,
+    #[serde(default)]
+    pub clear_api_key: bool,
+    #[serde(default = "default_voice_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for VoiceSttConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_voice_provider(),
+            base_url: default_voice_base_url(),
+            model: String::new(),
+            language: default_voice_language(),
+            api_key: String::new(),
+            api_key_env: default_voice_api_key_env(),
+            api_key_ref: None,
+            clear_api_key: false,
+            timeout_ms: default_voice_timeout_ms(),
+        }
+    }
+}
+
+impl Default for VoiceTtsConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_tts_provider(),
+            base_url: default_tts_base_url(),
+            model: default_tts_model(),
+            voice: default_tts_voice(),
+            language: default_voice_language(),
+            api_key: String::new(),
+            api_key_env: String::new(),
+            api_key_ref: None,
+            clear_api_key: false,
+            timeout_ms: default_voice_timeout_ms(),
+        }
+    }
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            stt: VoiceSttConfig::default(),
+            tts: VoiceTtsConfig::default(),
+        }
+    }
+}
+
+impl VoiceSttConfig {
+    pub fn structurally_configured(&self) -> bool {
+        !self.provider.trim().is_empty()
+            && !self.base_url.trim().is_empty()
+            && !self.model.trim().is_empty()
+            && self.timeout_ms > 0
+    }
+}
+
+impl VoiceTtsConfig {
+    pub fn structurally_configured(&self) -> bool {
+        !self.provider.trim().is_empty()
+            && !self.base_url.trim().is_empty()
+            && !self.model.trim().is_empty()
+            && !self.voice.trim().is_empty()
+            && self.timeout_ms > 0
+    }
+}
+
+#[derive(Default, Deserialize)]
+struct VoiceConfigWire {
+    #[serde(default)]
+    stt: Option<VoiceSttConfig>,
+    #[serde(default)]
+    tts: Option<VoiceTtsConfig>,
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    base_url: String,
+    #[serde(default)]
+    stt_model: String,
+    #[serde(default)]
+    tts_model: String,
+    #[serde(default)]
+    voice: String,
+    #[serde(default)]
+    language: String,
+    #[serde(default)]
+    api_key: String,
+    #[serde(default)]
+    api_key_env: String,
+    #[serde(default)]
+    api_key_ref: Option<crate::secret::SecretRef>,
+    #[serde(default)]
+    clear_api_key: bool,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for VoiceConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = VoiceConfigWire::deserialize(deserializer)?;
+        if wire.stt.is_some() || wire.tts.is_some() {
+            return Ok(Self {
+                stt: wire.stt.unwrap_or_default(),
+                tts: wire.tts.unwrap_or_default(),
+            });
+        }
+
+        let provider = if wire.provider.trim().is_empty() {
+            default_voice_provider()
+        } else {
+            wire.provider
+        };
+        let base_url = if wire.base_url.trim().is_empty() {
+            default_voice_base_url()
+        } else {
+            wire.base_url
+        };
+        let language = if wire.language.trim().is_empty() {
+            default_voice_language()
+        } else {
+            wire.language
+        };
+        let timeout_ms = wire.timeout_ms.unwrap_or_else(default_voice_timeout_ms);
+        let credential = (
+            wire.api_key,
+            if wire.api_key_env.trim().is_empty() {
+                default_voice_api_key_env()
+            } else {
+                wire.api_key_env
+            },
+            wire.api_key_ref,
+            wire.clear_api_key,
+        );
+        let stt = VoiceSttConfig {
+            provider: provider.clone(),
+            base_url: base_url.clone(),
+            model: wire.stt_model,
+            language: language.clone(),
+            api_key: credential.0.clone(),
+            api_key_env: credential.1.clone(),
+            api_key_ref: credential.2.clone(),
+            clear_api_key: credential.3,
+            timeout_ms,
+        };
+        let tts = VoiceTtsConfig {
+            provider,
+            base_url,
+            model: wire.tts_model,
+            voice: if wire.voice.trim().is_empty() {
+                "alloy".to_string()
+            } else {
+                wire.voice
+            },
+            language,
+            api_key: credential.0,
+            api_key_env: credential.1,
+            api_key_ref: credential.2,
+            clear_api_key: credential.3,
+            timeout_ms,
+        };
+        Ok(Self { stt, tts })
+    }
+}
+
+fn default_voice_provider() -> String {
+    "openai-compatible".to_string()
+}
+
+fn default_voice_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_tts_provider() -> String {
+    "minimax".to_string()
+}
+
+fn default_tts_base_url() -> String {
+    "https://api.minimax.io".to_string()
+}
+
+fn default_tts_model() -> String {
+    "speech-2.8-turbo".to_string()
+}
+
+fn default_tts_voice() -> String {
+    "female-shaonv".to_string()
+}
+
+fn default_voice_language() -> String {
+    "zh".to_string()
+}
+
+fn default_voice_api_key_env() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+
+fn default_voice_timeout_ms() -> u64 {
+    60_000
 }
 
 fn default_provider() -> String {

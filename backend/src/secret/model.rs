@@ -20,6 +20,10 @@ pub const SECRET_SERVICE_NAME: &str = "io.yilianqianyan";
 /// Stable SecretRef keys for the model secrets.
 pub const CHAT_KEY_REF: &str = "model.chat.api_key";
 pub const EMBEDDING_KEY_REF: &str = "model.embedding.api_key";
+/// Stable SecretRef key for the provider-neutral voice API key.
+pub const VOICE_KEY_REF: &str = "voice.api_key";
+pub const STT_KEY_REF: &str = "voice.stt.api_key";
+pub const TTS_KEY_REF: &str = "voice.tts.api_key";
 
 /// Build a stable, non-sensitive keyring account for a saved LLM profile.
 pub fn llm_model_key_ref(model_id: &str) -> SecretRef {
@@ -80,6 +84,9 @@ fn digest16(bytes: &[u8]) -> String {
 pub enum SecretKind {
     ChatApiKey,
     EmbeddingApiKey,
+    VoiceApiKey,
+    VoiceSttApiKey,
+    VoiceTtsApiKey,
     LlmModelApiKey,
     McpEnv,
 }
@@ -92,6 +99,12 @@ pub enum SecretSource {
     Environment,
     LegacyPending,
     None,
+}
+
+impl Default for SecretSource {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 /// Whether the OS-backed store is usable.
@@ -108,6 +121,8 @@ pub enum SecretStoreStatus {
 pub struct SecretMigrationReport {
     pub migrated_chat_key: bool,
     pub migrated_embedding_key: bool,
+    pub migrated_voice_stt_key: bool,
+    pub migrated_voice_tts_key: bool,
     pub migrated_mcp_values: usize,
     pub pending: usize,
     pub failed: usize,

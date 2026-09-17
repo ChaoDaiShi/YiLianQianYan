@@ -17,7 +17,7 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
-    async fn handler_returns_explicit_mock_result() {
+    async fn handler_routes_registered_v1_commands() {
         let db_path =
             std::env::temp_dir().join(format!("yilian-command-{}.db", uuid::Uuid::new_v4()));
         let server = Arc::new(
@@ -31,14 +31,18 @@ mod tests {
         let Json(result) = execute_handler(
             State(server),
             Json(CommandRequest::new(
-                "desktop.space.switch",
+                "core.echo",
                 "req-api",
                 "test",
-                json!({"space": "mock-space"}),
+                json!({"message": "hello"}),
             )),
         )
         .await;
-        assert_eq!(result.result.unwrap()["simulated"], true);
+        assert_eq!(
+            result.status,
+            crate::shared::command::CommandStatus::Succeeded
+        );
+        assert_eq!(result.result, Some(json!({"message": "hello"})));
         let _ = std::fs::remove_file(db_path);
     }
 }

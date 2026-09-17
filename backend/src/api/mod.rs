@@ -37,6 +37,7 @@ mod settings;
 mod skills_route;
 mod subagents;
 mod system;
+mod task_world;
 mod tasks;
 mod tools;
 mod voice;
@@ -67,23 +68,112 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/resources", get(resources::list_handler))
         .route("/api/resources/:id", get(resources::get_handler))
         .route("/api/presence", get(voice::presence_handler))
+        .route("/api/voice/providers", get(voice::providers_handler))
         .route("/api/voice/session", get(voice::session_handler))
         .route("/api/voice/sessions/start", post(voice::start_handler))
+        .route(
+            "/api/voice/sessions/reinitialize",
+            post(voice::reinitialize_handler),
+        )
         .route("/api/voice/sessions/stop", post(voice::stop_handler))
         .route(
             "/api/voice/sessions/interrupt",
             post(voice::interrupt_handler),
         )
         .route("/api/voice/sessions/cancel", post(voice::cancel_handler))
+        .route("/api/voice/leases", post(voice::lease_handler))
+        .route("/api/voice/context", post(voice::context_handler))
+        .route(
+            "/api/voice/transcript/partial",
+            post(voice::partial_handler),
+        )
         .route("/api/voice/transcribe", post(voice::transcribe_handler))
+        .route(
+            "/api/voice/transcribe/partial",
+            post(voice::transcribe_partial_handler),
+        )
+        .route("/api/voice/turns/dispatch", post(voice::dispatch_handler))
         .route("/api/voice/speak", post(voice::speak_handler))
+        .route("/api/voice/speech/start", post(voice::speech_start_handler))
+        .route(
+            "/api/voice/speech/finished",
+            post(voice::speech_finished_handler),
+        )
         .route(
             "/api/projections/tasks",
             get(projections::task_projections_handler),
         )
+        // v1 Task World graph state (all routes remain under the control
+        // session middleware applied to this protected router).
+        .route("/api/task-world/graphs", get(task_world::list_graphs))
+        .route("/api/task-world/graphs", post(task_world::create_graph))
         .route(
-            "/api/projections/desktop-context",
-            get(projections::desktop_context_handler),
+            "/api/task-world/graphs/:graph_id",
+            get(task_world::get_graph),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/detail",
+            get(task_world::get_graph_detail),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/canvas-view",
+            get(task_world::get_canvas_view),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/canvas-view",
+            put(task_world::put_canvas_view),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/nodes",
+            post(task_world::add_node),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/nodes/:node_id",
+            put(task_world::update_node),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/nodes/:node_id",
+            delete(task_world::delete_node),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/nodes/:node_id/start",
+            post(task_world::start_node),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/nodes/:node_id/executions",
+            post(task_world::start_execution).get(task_world::list_executions),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/executions/:execution_id/cancel",
+            post(task_world::cancel_execution),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/rerun",
+            post(task_world::rerun),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/nodes/:node_id/execute-command",
+            post(task_world::execute_command),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/nodes/:node_id/cancel-command",
+            post(task_world::cancel_command),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/edges",
+            post(task_world::add_edge),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/edges/:from/:to",
+            delete(task_world::delete_edge),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/checkpoint",
+            post(task_world::checkpoint),
+        )
+        .route(
+            "/api/task-world/graphs/:graph_id/restore",
+            post(task_world::restore),
         )
         .route("/api/conversations", get(conversations::list_handler))
         .route("/api/conversations", post(conversations::create_handler))
@@ -361,5 +451,8 @@ fn control_plane_cors() -> CorsLayer {
         .allow_headers([
             CONTENT_TYPE,
             HeaderName::from_static(CONTROL_SESSION_HEADER),
+            HeaderName::from_static("x-yilian-voice-session"),
+            HeaderName::from_static("x-yilian-voice-generation"),
+            HeaderName::from_static("x-yilian-voice-lease"),
         ])
 }

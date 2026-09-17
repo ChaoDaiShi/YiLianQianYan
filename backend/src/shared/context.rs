@@ -70,10 +70,21 @@ impl TaskProjectionProvider for MockTaskProjectionProvider {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DesktopObservedAppSummary {
+    pub app_id: String,
+    pub display_name: String,
+    pub process_count: u32,
+    pub window_count: u32,
+    pub is_foreground: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesktopContextProjection {
     pub space_id: Option<String>,
     pub focused_app: Option<String>,
     pub focused_window: Option<String>,
+    #[serde(default)]
+    pub observed_apps: Vec<DesktopObservedAppSummary>,
     pub available_capabilities: Vec<String>,
     pub updated_at: i64,
     pub simulation: SimulationMetadata,
@@ -93,6 +104,7 @@ impl DesktopContextProvider for MockDesktopContextProvider {
             space_id: Some("mock-space".to_string()),
             focused_app: Some("mock-editor".to_string()),
             focused_window: Some("Mock document".to_string()),
+            observed_apps: Vec::new(),
             available_capabilities: vec![
                 "desktop.app.open".to_string(),
                 "desktop.space.switch".to_string(),
@@ -130,5 +142,25 @@ mod tests {
         let value = serde_json::to_value(projection).unwrap();
         assert!(value.get("hwnd").is_none());
         assert!(value.get("window_tree").is_none());
+    }
+
+    #[test]
+    fn older_desktop_context_defaults_observed_apps_to_empty() {
+        let decoded: DesktopContextProjection = serde_json::from_value(serde_json::json!({
+            "space_id": null,
+            "focused_app": null,
+            "focused_window": null,
+            "available_capabilities": ["desktop.space.read"],
+            "updated_at": 0,
+            "simulation": {
+                "simulated": false,
+                "provider": "desktop-space-store",
+                "reason": "structured local state"
+            },
+            "schema_version": SHARED_SCHEMA_VERSION
+        }))
+        .expect("older desktop context remains wire compatible");
+
+        assert!(decoded.observed_apps.is_empty());
     }
 }

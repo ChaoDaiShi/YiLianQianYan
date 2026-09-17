@@ -4,6 +4,7 @@ import AppShell from "../../components/layout/AppShell";
 import ChatPage from "../../pages/ChatPage";
 
 const TaskCenterPage = lazy(() => import("../../pages/TaskCenterPage"));
+const TaskWorldPage = lazy(() => import("../../features/task-world/TaskWorldPage"));
 const SystemPage = lazy(() => import("../../pages/SystemPage"));
 const LogsPage = lazy(() => import("../../pages/LogsPage"));
 const SettingsPage = lazy(() => import("../../pages/SettingsPage"));
@@ -25,6 +26,7 @@ export default function WorkspaceSurface() {
         <Route path="chat" element={<ChatPage />} />
         <Route path="chat/:id" element={<ChatPage />} />
         <Route path="tasks" element={<TaskCenterPage />} />
+        <Route path="task-world/:graphId" element={<TaskWorldPage />} />
         <Route path="system" element={<SystemPage />} />
         <Route path="logs" element={<LogsPage />} />
         <Route path="skills" element={<SkillsPage />} />

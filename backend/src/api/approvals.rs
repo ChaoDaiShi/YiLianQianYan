@@ -47,7 +47,8 @@ pub struct ApprovalDecisionRequest {
 fn status_for(e: &ApprovalError) -> StatusCode {
     match e {
         ApprovalError::NotFound => StatusCode::NOT_FOUND,
-        ApprovalError::AlreadyProcessed
+        ApprovalError::Ambiguous
+        | ApprovalError::AlreadyProcessed
         | ApprovalError::Expired
         | ApprovalError::Cancelled
         | ApprovalError::ConversationMismatch => StatusCode::CONFLICT,
