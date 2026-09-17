@@ -45,6 +45,9 @@ docs/v1-release/*
 !docs/v1-release/rc-freeze.md
 !docs/v1-release/freeze-policy.md
 !docs/v1-release/github-ci-unblock.md
+!docs/roadmap/
+docs/roadmap/*
+!docs/roadmap/v1.1-service-cloud-web.md
 
 AGENTS.md
 YiLianQianYan_Sprint01_AI_Coding_Modification_Guide.md
