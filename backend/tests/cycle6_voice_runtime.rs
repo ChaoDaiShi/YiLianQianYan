@@ -12,6 +12,72 @@ fn runtime() -> GlobalVoiceSessionRuntime {
 }
 
 #[test]
+fn explicit_anchor_switch_invalidates_inflight_capture_and_accepted_final() {
+    for accept_before_switch in [false, true] {
+        let runtime = runtime();
+        let initial = runtime.start(FocusedSurface::Conversation).unwrap();
+        let first = runtime
+            .update_context(
+                &initial.voice_session_id,
+                initial.generation,
+                ContextAnchorSnapshot {
+                    focused_surface: FocusedSurface::Conversation,
+                    conversational_anchor: Some(ConversationalAnchor::new("a", "A", 1)),
+                    active_task: None,
+                },
+            )
+            .unwrap();
+        let lease = runtime
+            .acquire_lease(
+                &first.voice_session_id,
+                first.generation,
+                VoiceInputOwner::BuiltinAsr,
+            )
+            .unwrap();
+        if accept_before_switch {
+            runtime
+                .commit_final(
+                    &first.voice_session_id,
+                    first.generation,
+                    &lease.lease_id,
+                    "hello",
+                )
+                .unwrap();
+        }
+        let switched = runtime
+            .update_context(
+                &first.voice_session_id,
+                first.generation,
+                ContextAnchorSnapshot {
+                    focused_surface: FocusedSurface::Conversation,
+                    conversational_anchor: Some(ConversationalAnchor::new("b", "B", 2)),
+                    active_task: None,
+                },
+            )
+            .unwrap();
+        assert!(switched.generation > first.generation);
+        assert_eq!(
+            runtime.commit_final(
+                &first.voice_session_id,
+                first.generation,
+                &lease.lease_id,
+                "hello"
+            ),
+            Err(VoiceRuntimeError::StaleGeneration)
+        );
+        assert_eq!(
+            runtime.accepted_final(
+                &first.voice_session_id,
+                first.generation,
+                &lease.lease_id,
+                "hello"
+            ),
+            Err(VoiceRuntimeError::StaleGeneration)
+        );
+    }
+}
+
+#[test]
 fn session_generation_is_monotonic_and_reinitialize_releases_old_input() {
     let runtime = runtime();
     let started = runtime
@@ -102,7 +168,8 @@ fn start_and_context_updates_keep_one_session_across_surfaces() {
 
     assert_eq!(desktop.voice_session_id, started.voice_session_id);
     assert_eq!(returned.voice_session_id, started.voice_session_id);
-    assert_eq!(returned.generation, started.generation);
+    assert_eq!(returned.generation, task.generation);
+    assert_eq!(desktop.generation, task.generation);
     assert_eq!(returned.focused_surface, FocusedSurface::Conversation);
     assert_eq!(returned.active_task.as_deref(), Some("task-123"));
     assert_eq!(

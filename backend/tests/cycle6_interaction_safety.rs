@@ -31,6 +31,50 @@ fn pending(store: &ApprovalStore, conversation_id: &str, tool_call_id: &str) -> 
         .approval_id
 }
 
+#[test]
+fn voice_approval_without_display_attestation_stays_pending() {
+    use yilian_backend::interaction::InteractionVoiceDispatch;
+    use yilian_backend::shared::interaction::{ConversationalAnchor, FocusedSurface};
+    use yilian_backend::shared::voice::{GlobalVoiceSession, VoiceInputOwner};
+    use yilian_backend::voice::{AcceptedFinalTranscript, VoiceDispatchHook, VoiceDispatchRequest};
+
+    let database = Database::new(Path::new(":memory:")).unwrap();
+    let conversation = database.create_conversation("voice approval").unwrap();
+    let tasks = TaskWorldRuntime::new(&database, EventHub::new(32)).unwrap();
+    let store = Arc::new(ApprovalStore::new());
+    let approval_id = pending(&store, &conversation.id, "call-voice");
+    let dispatcher =
+        InteractionVoiceDispatch::new(database, tasks, store.clone(), CommandRouter::new());
+    let mut session = GlobalVoiceSession::new(FocusedSurface::Conversation, 1);
+    session.conversational_anchor = Some(ConversationalAnchor::new(
+        &conversation.id,
+        "voice approval",
+        1,
+    ));
+    let outcome = dispatcher
+        .dispatch(VoiceDispatchRequest {
+            accepted: AcceptedFinalTranscript {
+                session_id: session.voice_session_id.clone(),
+                generation: session.generation,
+                lease_id: "lease-approval".into(),
+                input_owner: VoiceInputOwner::BuiltinAsr,
+                text: "同意".into(),
+                created_at: 2,
+            },
+            session,
+        })
+        .unwrap();
+    assert!(outcome.continuation.is_none());
+    assert_eq!(
+        outcome.command_result.unwrap().error.unwrap().code,
+        "voice_approval_attestation_required"
+    );
+    assert_eq!(
+        store.get(&approval_id).unwrap().status,
+        ApprovalStatus::Pending
+    );
+}
+
 fn graph_id() -> TaskGraphId {
     TaskGraphId::new("cycle6-proposal").expect("valid graph id")
 }

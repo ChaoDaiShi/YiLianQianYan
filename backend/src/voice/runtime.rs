@@ -268,6 +268,25 @@ impl GlobalVoiceSessionRuntime {
                 .session
                 .clone()
                 .ok_or(VoiceRuntimeError::NoActiveSession)?;
+            let identity_changed = session
+                .conversational_anchor
+                .as_ref()
+                .map(|a| &a.conversation_id)
+                != context
+                    .conversational_anchor
+                    .as_ref()
+                    .map(|a| &a.conversation_id);
+            if identity_changed {
+                session.generation = session.generation.checked_add(1).ok_or_else(|| {
+                    VoiceRuntimeError::InvalidState("generation overflow".to_string())
+                })?;
+                session.state = VoiceSessionState::Listening;
+                state.lease = None;
+                state.last_accepted = None;
+                state.partial_transcript = None;
+                state.final_transcript = None;
+                state.presence.interaction = PresenceInteraction::Listening;
+            }
             session.focused_surface = context.focused_surface;
             session.conversational_anchor = context.conversational_anchor;
             session.active_task = context.active_task;

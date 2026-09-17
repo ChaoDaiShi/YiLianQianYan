@@ -7,8 +7,10 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::db::Database;
-use crate::safety::{ApprovalStatus, ApprovalStore};
-use crate::shared::command::{CommandRequest, CommandResult, CommandRouter, CommandStatus};
+use crate::safety::ApprovalStore;
+use crate::shared::command::{
+    CommandError, CommandRequest, CommandResult, CommandRouter, CommandStatus,
+};
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::interaction::{
     ContextAnchorSnapshot, InteractionInput, InteractionIntent, InteractionSource,
@@ -17,8 +19,8 @@ use crate::shared::interaction::{
 use crate::shared::voice::{VoiceInputLease, VoiceTurn};
 use crate::task::{TaskStatusProjection, TaskWorldRuntime};
 use crate::voice::{
-    VoiceApprovalDecision, VoiceContinuation, VoiceDispatchError, VoiceDispatchHook,
-    VoiceDispatchOutcome, VoiceDispatchRequest,
+    VoiceContinuation, VoiceDispatchError, VoiceDispatchHook, VoiceDispatchOutcome,
+    VoiceDispatchRequest,
 };
 
 use super::{InteractionContext, InteractionDecision, InteractionRouter, TaskNarrator};
@@ -164,7 +166,22 @@ impl InteractionVoiceDispatch {
     ) -> Option<CommandResult> {
         let command = decision.command.as_ref()?;
         if command == "task.approval.resolve" {
-            return None;
+            // Transcript provenance and a unique pending item are not proof of
+            // a displayed, identity-bound human decision. Until that attestation
+            // exists, leave the single ApprovalStore entirely untouched.
+            return Some(CommandResult {
+                request_id: format!(
+                    "voice-{}-{}",
+                    request.session.voice_session_id, request.accepted.lease_id
+                ),
+                status: CommandStatus::Failed,
+                result: None,
+                error: Some(CommandError::new(
+                    "voice_approval_attestation_required",
+                    "语音确认尚未绑定已显示的审批与用户身份，请在审批卡片中确认。",
+                )),
+                schema_version: crate::shared::contracts::SHARED_SCHEMA_VERSION,
+            });
         }
         let mut payload = match &decision.target {
             TargetResolution::Resolved {
@@ -211,37 +228,7 @@ impl InteractionVoiceDispatch {
                 conversation_id: conversation_id.clone(),
                 message: request.accepted.text.clone(),
             }),
-            (
-                TargetResolution::Resolved {
-                    target: InteractionTarget::Approval { approval_id },
-                },
-                InteractionIntent::Command { name },
-            ) if name == "task.approval.resolve" => {
-                let approval = self.approvals.get(approval_id)?;
-                if approval.status != ApprovalStatus::Pending
-                    || decision
-                        .parameters
-                        .get("conversation_id")
-                        .and_then(Value::as_str)
-                        != Some(approval.conversation_id.as_str())
-                {
-                    return None;
-                }
-                let decision = match decision
-                    .parameters
-                    .get("resolution")
-                    .and_then(Value::as_str)
-                {
-                    Some("approve") => VoiceApprovalDecision::Approve,
-                    Some("reject") => VoiceApprovalDecision::Reject,
-                    _ => return None,
-                };
-                Some(VoiceContinuation::Approval {
-                    approval_id: approval.approval_id,
-                    conversation_id: approval.conversation_id,
-                    decision,
-                })
-            }
+            // Approval continuations require a future trusted display attestation.
             _ => None,
         }
     }
