@@ -1,0 +1,139 @@
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  :root {
+    color-scheme: light;
+    --bg-app: #F8F6FD;
+    --bg-soft: #f4f0fc;
+    --bg-subtle: var(--bg-soft);
+    /* Shared translucent surfaces keep the global Cyrene artwork visible across every page. */
+    --surface: rgba(255, 255, 255, 0.38);
+    --surface-solid: #ffffff;
+    --surface-muted: rgba(252, 249, 255, 0.30);
+    --surface-elevated: rgba(255, 255, 255, 0.48);
+    --surface-hover: rgba(249, 243, 252, 0.58);
+    --titlebar-bg: rgba(255, 255, 255, 0.28);
+    --text-primary: #292536;
+    --text-secondary: #696276;
+    --text-faint: #9690A1;
+    --text-disabled: #bdb8c5;
+    --divider: rgba(91, 76, 125, 0.10);
+    --border-soft: rgba(86, 72, 117, 0.10);
+    --accent-primary: #ea91b9;
+    --accent-primary-hover: #df7eaa;
+    --accent-contrast: #292536;
+    --accent-fg: #292536;
+    --accent-soft: #f9dce9;
+    --accent-purple: #ad9be8;
+    --accent-blue: #99cfea;
+    --accent-gold: #ebcf8c;
+    --accent-border: rgba(234, 145, 185, 0.25);
+    --focus-ring-soft: rgba(234, 145, 185, 0.30);
+    --sidebar-bg: #29263a;
+    --sidebar-bg-2: #312c46;
+    --sidebar-text: #eeeaf8;
+    --sidebar-fg: var(--sidebar-text);
+    --sidebar-muted: #aaa3ba;
+    --sidebar-active: rgba(234, 145, 185, 0.17);
+    --cyrene-glow-pink: rgba(234, 145, 185, 0.22);
+    --cyrene-glow-purple: rgba(173, 155, 232, 0.18);
+    --cyrene-glow-blue: rgba(153, 207, 234, 0.14);
+    --cyrene-glass-border: rgba(255, 255, 255, 0.52);
+    --cyrene-surface-tint: rgba(255, 255, 255, 0.34);
+    --cyrene-night: #29263a;
+    --cyrene-water: rgba(153, 207, 234, 0.18);
+    --cyrene-ripple: rgba(173, 155, 232, 0.18);
+    --shadow-card: 0 4px 16px rgba(54, 45, 79, 0.04);
+    --shadow-float: 0 12px 36px rgba(48, 38, 76, 0.10);
+    --radius-xs: 6px;
+    --radius-sm: 10px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --motion-fast: 140ms;
+    --motion-normal: 220ms;
+    --bg: var(--bg-app);
+    --bg-2: var(--bg-subtle);
+    --panel: var(--surface);
+    --panel-2: rgba(255, 255, 255, 0.48);
+    --panel-hover: var(--surface-hover);
+    --text: var(--text-primary);
+    --text-muted: var(--text-secondary);
+    --border: var(--border-soft);
+    --accent: var(--accent-primary);
+    --input-bg: rgba(255, 255, 255, 0.50);
+    --success: #73b99a;
+    --success-soft: rgba(115, 185, 154, 0.12);
+    --success-border: rgba(115, 185, 154, 0.30);
+    --success-fg: #292536;
+    --warning: #d9b866;
+    --warning-soft: rgba(217, 184, 102, 0.12);
+    --warning-border: rgba(217, 184, 102, 0.30);
+    --warning-fg: #292536;
+    --danger: #df7995;
+    --danger-soft: rgba(223, 121, 149, 0.12);
+    --danger-border: rgba(223, 121, 149, 0.30);
+    --danger-fg: #292536;
+    --nav: var(--sidebar-bg);
+    --nav-text: var(--sidebar-fg);
+    --info: #84bcdc;
+    --info-soft: rgba(132, 188, 220, 0.12);
+    --info-border: rgba(132, 188, 220, 0.30);
+    --info-fg: #292536;
+    --accent-soft-fg: #292536;
+    --focus-ring: var(--accent-primary);
+    --backdrop: rgba(41, 38, 58, 0.34);
+    --shadow-soft: var(--shadow-card);
+    --font-size-base: 14px;
+    --bg-blur: 0px;
+    --bg-brightness: 1;
+    --bg-image: none;
+    --shell-art-opacity: 0.72;
+    --shell-overlay: rgba(248, 246, 253, 0.12);
+    --page-wash: rgba(248, 246, 253, 0.18);
+    --code-bg: #252132;
+    --code-text: #f4f0f8;
+  }
+
+  html {
+    font-size: var(--font-size-base);
+  }
+
+  body {
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    font-family: "IBM Plex Sans", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    transition:
+      background-color var(--motion-normal) ease,
+      color var(--motion-fast) ease;
+  }
+
+  :root.dark {
+    color-scheme: dark;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    color: var(--accent-contrast);
+    background: var(--accent-soft);
+  }
+
+  .theme-mono h1,
+  .theme-mono h2,
+  .theme-mono .font-display {
+    font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  }
+
+  #root {
+    @apply h-screen w-screen flex flex-col overflow-hidden;
+  }
+}

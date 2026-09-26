@@ -1,0 +1,24 @@
+@layer utilities {
+  .shadow-card-token {
+    box-shadow: var(--shadow-card);
+  }
+
+  .shadow-float-token {
+    box-shadow: var(--shadow-float);
+  }
+
+  .focus-ring-token:focus-visible,
+  .focus-ring-token:focus {
+    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+  }
+
+  .animate-fade-in {
+    animation: fade-in var(--motion-fast) ease-out;
+  }
+  .animate-scale-in {
+    animation: scale-in var(--motion-normal) ease-out;
+  }
+  .animate-msg-in {
+    animation: msg-in var(--motion-normal) ease-out;
+  }
+}

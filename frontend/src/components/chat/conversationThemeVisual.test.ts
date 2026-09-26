@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-// The frontend tsconfig intentionally has no Node typings; Vitest supplies this module at test time.
-// @ts-expect-error -- Node's file reader is test-only and is not bundled into the app.
-import { readFileSync } from "node:fs";
+import { stylesheetText } from "../../styles/stylesheet";
 import chatPageSource from "../../pages/ChatPage.tsx?raw";
 import chatViewSource from "./ChatView.tsx?raw";
 import messageBubbleSource from "./MessageBubble.tsx?raw";
@@ -11,10 +9,7 @@ import agentProgressCardSource from "./AgentProgressCard.tsx?raw";
 import approvalCardSource from "../approval/ApprovalCard.tsx?raw";
 import executionHistorySource from "../../features/execution/ExecutionHistory.tsx?raw";
 
-const indexCssSource = readFileSync(
-  new URL("../../index.css", import.meta.url),
-  "utf8",
-);
+const indexCssSource = stylesheetText;
 
 describe("R1B conversation visual contracts", () => {
   it("marks active conversation mode without changing its data flow", () => {

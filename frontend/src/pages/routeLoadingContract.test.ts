@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-// @ts-expect-error -- Node file access is test-only and not bundled.
-import { readFileSync } from "node:fs";
+import { stylesheetText } from "../styles/stylesheet";
 import workspaceSurfaceSource from "../surfaces/workspace/WorkspaceSurface.tsx?raw";
 import shellSource from "../components/layout/AppShell.tsx?raw";
 import loadingSource from "../components/layout/RouteLoadingSurface.tsx?raw";
 import workspaceLayoutSource from "../components/layout/workspaceLayout.ts?raw";
 
-const stylesSource = readFileSync(new URL("../index.css", import.meta.url), "utf8");
+const stylesSource = stylesheetText;
 
 const lazyPages = [
   "TaskCenterPage",

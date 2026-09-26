@@ -1,0 +1,75 @@
+/* Markdown */
+.prose pre {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.prose code {
+  background: var(--surface-muted);
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875em;
+}
+
+.prose pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.prose table {
+  @apply w-full border-collapse my-3 text-sm;
+}
+
+.prose thead {
+  border-bottom: 2px solid var(--border-soft);
+}
+
+.prose th {
+  background: var(--surface-muted);
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.prose td {
+  border-bottom: 1px solid var(--border-soft);
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+}
+
+.prose tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.prose blockquote {
+  border-left: 4px solid var(--accent-primary);
+  padding-left: 1rem;
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.5rem;
+}
+
+.prose ul {
+  list-style: disc;
+}
+
+.prose ol {
+  list-style: decimal;
+}
+
+.prose a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+}
+
