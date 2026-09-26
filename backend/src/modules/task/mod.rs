@@ -9,6 +9,7 @@
 
 pub mod adapters;
 pub mod api;
+pub mod application;
 pub mod approval;
 pub mod artifact;
 pub mod canvas_view;
