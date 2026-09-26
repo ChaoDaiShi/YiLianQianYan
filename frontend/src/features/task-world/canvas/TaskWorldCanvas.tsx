@@ -162,8 +162,8 @@ function TaskWorldCanvasSurface({
         selectionOnDrag
         selectionMode={SelectionMode.Partial}
         selectNodesOnDrag
-        deleteKeyCode={semanticLocked ? null : ["Backspace", "Delete"]}
-        multiSelectionKeyCode={["Control", "Meta"]}
+        deleteKeyCode={semanticLocked ? null : DELETE_KEYS}
+        multiSelectionKeyCode={MULTI_SELECT_KEYS}
         minZoom={0.1}
         maxZoom={4}
         nodesConnectable={!semanticLocked}
@@ -187,3 +187,7 @@ function TaskWorldCanvasSurface({
 }
 
 const NODE_TYPES = { "task-world": TaskNode };
+// ReactFlow's useKeyPress subscribes by array identity. Keep listeners intact
+// while projection/selection updates occur between keydown and keyup.
+const DELETE_KEYS = ["Backspace", "Delete"];
+const MULTI_SELECT_KEYS = ["Control", "Meta"];

@@ -56,8 +56,10 @@ describe("Task World surface contract", () => {
     expect(canvasSource).toContain("onConnect");
     expect(canvasSource).toContain("onNodesDelete");
     expect(canvasSource).toContain(
-      'deleteKeyCode={semanticLocked ? null : ["Backspace", "Delete"]}',
+      'deleteKeyCode={semanticLocked ? null : DELETE_KEYS}',
     );
+    expect(canvasSource).toContain('const DELETE_KEYS = ["Backspace", "Delete"]');
+    expect(canvasSource).toContain('multiSelectionKeyCode={MULTI_SELECT_KEYS}');
     expect(canvasSource).toContain("nodesConnectable={!semanticLocked}");
     expect(canvasSource).toContain('change.type !== "remove"');
     expect(canvasSource).toContain("fitView");
