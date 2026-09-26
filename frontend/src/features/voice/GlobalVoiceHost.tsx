@@ -31,6 +31,7 @@ import type {
 import { useSpeechPlayback, cleanupVoiceSession } from "./useSpeechPlayback";
 import { useVoiceCapture, type FinalVoiceTranscript } from "./useVoiceCapture";
 import { runVoiceContinuation } from "./voiceContinuation";
+import { runVoiceBargeIn } from "./bargeIn";
 import { useHandsFree } from "./useHandsFree";
 import { shouldSuppressCaptureEcho, type CaptureEchoEvidence } from "./echoEvidence";
 import { synchronizeVoiceContext } from "./voiceContextSync";
@@ -361,35 +362,27 @@ export default function GlobalVoiceHost({
   );
 
   const interruptForBargeIn = useCallback(async (): Promise<GlobalVoiceSession | void> => {
-    dispatchEpochRef.current += 1;
-    const requestEpoch = dispatchEpochRef.current;
-    continuationControllerRef.current?.abort();
-    continuationControllerRef.current = null;
-    playback.interrupt();
-    if (!session) return;
-    if (session.conversational_anchor?.conversation_id !== latestContextRef.current.conversational_anchor?.conversation_id) {
-      throw new Error("正在同步对话，请稍后重新说话。");
-    }
-    const interrupted = await interruptVoiceSession(
-      session.voice_session_id,
-      session.generation,
-    );
-    if (!interrupted) {
-      throw new Error("语音服务未确认打断，未取得新的输入 generation。");
-    }
-    if (dispatchEpochRef.current !== requestEpoch
-      || latestSessionRef.current?.voice_session_id !== session.voice_session_id
-      || latestSessionRef.current?.generation !== session.generation) {
-      throw new Error("旧语音会话的打断响应已丢弃。");
-    }
-    latestSessionRef.current = interrupted;
-    setSnapshot((previous) =>
-      previous
-        ? { ...previous, session: interrupted, lease: null, partial_transcript: null }
-        : previous,
-    );
-    setPresence((previous) => ({ ...previous, interaction: "interrupted" }));
-    return interrupted;
+    return runVoiceBargeIn(session, {
+      bumpEpoch: () => ++dispatchEpochRef.current,
+      readEpoch: () => dispatchEpochRef.current,
+      readLatestSession: () => latestSessionRef.current,
+      readContextAnchorId: () => latestContextRef.current.conversational_anchor?.conversation_id,
+      abortContinuation: () => {
+        continuationControllerRef.current?.abort();
+        continuationControllerRef.current = null;
+      },
+      interruptPlayback: playback.interrupt,
+      interruptVoiceSession,
+      commitSession: (interrupted) => {
+        latestSessionRef.current = interrupted;
+        setSnapshot((previous) =>
+          previous
+            ? { ...previous, session: interrupted, lease: null, partial_transcript: null }
+            : previous,
+        );
+        setPresence((previous) => ({ ...previous, interaction: "interrupted" }));
+      },
+    });
   }, [playback.interrupt, session]);
 
   const capture = useVoiceCapture({
