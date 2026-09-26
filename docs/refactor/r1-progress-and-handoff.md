@@ -38,6 +38,10 @@
 | `7123cba` | R6f | `refactor(frontend): split index.css into cascade-ordered style files` |
 | `f2044b1` | R6g | `refactor(voice): extract the barge-in flow into a testable module` |
 | `e38b696` | R6h | `refactor(voice): extract the final-transcript/continuation turn flow` |
+| `cff1c38` | R9a | `refactor(voice): relocate the voice module under modules/` |
+| `ab61d80` | R9b | `refactor(capability): relocate the capability registry under modules/` |
+| `2b3cf59` | R9c | `refactor(llm): relocate the LLM client under integrations` |
+| `3378a5d` | R9d | `refactor(secret): relocate secret management under integrations` |
 
 Working tree is clean; `main`, `develop`, `v1/release-work`, and `v2` are untouched.
 All commits are pushed to `origin/refactor/v1-architecture-foundation`.
@@ -464,6 +468,89 @@ All four frontend rules hold in the codebase today, so they are errors, not
 warnings. The 600-line baselines (39 backend paths, 6 frontend paths) are
 recorded debt: a file may leave the list by being split; nothing may join it.
 
+## 10a. R9 — post-gate backend relocation (not a mandate stage)
+
+R9 is the continuation of the remaining-work list in §11, not a stage the
+mandate defines. It is labelled R9 so it cannot be confused with a mandate
+stage; the mandate's own stage set ends at R8.
+
+Four relocations, one commit each, all `git mv` + facade:
+
+| Stage | Commit | Move | Files | Baseline |
+|---|---|---|---|---|
+| R9a | `cff1c38` | `voice/` → `modules/voice/` | 4 | `voice/provider.rs`, `voice/runtime.rs` re-pathed |
+| R9b | `ab61d80` | `capability/` → `modules/capability/` | 12 | none over 600 |
+| R9c | `2b3cf59` | `llm/` → `integrations/llm/` | 5 | `llm/client.rs` re-pathed |
+| R9d | `3378a5d` | `secret/` → `integrations/secret/` | 8 | none over 600 |
+
+Every one of the 29 moved files is recorded by git as a **100%-similarity
+rename** — `0 insertions, 0 deletions` — so every moved region is byte-identical
+and `git log -S` / `git blame` still attribute the original authorship. Each
+destination module declares the new path in `modules/mod.rs` /
+`integrations/mod.rs`, and each old path becomes a facade holding one glob
+re-export, so **no call site changed**: all `crate::voice::*`,
+`crate::capability::*`, `crate::llm::*` and `crate::secret::*` references compile
+untouched, including submodule paths such as `crate::voice::provider::MAX_AUDIO_BYTES`
+and the `pub fn record_secret_event` that lives in the secret module root.
+
+### Why relocation was chosen over draining the facades
+
+The remaining-work list had two backend items: relocate the domains (#4) and
+drain the facades (#5). Draining was attempted first on paper and rejected on
+evidence:
+
+- The facades are also the crate's **public API**. `backend/tests/*.rs` import
+  `yilian_backend::task::{...}` and `yilian_backend::server::AppServer`, so
+  draining is not a `backend/src` refactor — it reaches the integration tests
+  too.
+- The cost is **243 references across 97 files** (`crate::task` 115 sites,
+  `crate::server` 51, `crate::workflow` 33, `crate::mcp_runtime` 19, the rest
+  smaller), all for zero behavioural or boundary change: a `pub use` facade is
+  free at runtime and is not a second implementation.
+- Relocation, by contrast, moves 29 files byte-identically for ~10 added lines.
+
+So the facades are left standing, and R9 **adds four more** — the count goes
+8 → 12. That is the honest trade: the strangler scaffolding is not free, and
+draining it is a deliberately separate piece of work rather than a rounding
+error on a relocation.
+
+### R9 verification, and its one gap
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all -- --check` | clean after each of the four stages |
+| `cargo check -p yilian-backend --all-targets --locked` | **exit 0** after each of the four stages; warnings unchanged at the same 3 pre-existing ones |
+| `cargo test --test architecture_boundaries` | **3 passed / 0 failed** after each stage |
+| Moved regions | byte-identical (29 × 100%-similarity renames) |
+| `cargo test --lib` (the unit suite) | **NOT RUN — environmental block**, see below |
+
+**The lib-test binary could not be linked on this machine.** `cargo test --lib`
+fails reproducibly in the codegen/link step with
+`rustc-LLVM ERROR: out of memory / Allocation failed` (exit `0xc0000409`).
+Diagnosis, measured rather than guessed:
+
+```
+CommitLimit : 39.24 GB   (15.24 GB RAM + 24 GB page file)
+CommitUsed  : 36.04 GB   → only ~3.2 GB of commit headroom
+FreePhysical: 3.2–3.7 GB across four attempts
+```
+
+The crate's `codegen-units = 1` test profile needs more commit than that
+headroom allows, and the machine is heavily over-committed by resident
+applications (VS Code ×2, Edge, Notion, Doubao, Claude). This is the same
+memory pressure §2 documents, not a new failure — and it is **not caused by R9**:
+R9 adds ~10 lines and moves files with `git mv`, so the lib-test codegen is the
+same size it was when the R8 gate linked it successfully. Retrying after the
+failing processes exited changed nothing.
+
+What that means for the claim: the four relocations are verified as far as
+`cargo check --all-targets` (which type-checks every `#[cfg(test)]` module) and
+the boundary check can take them, and they are byte-identical moves. They are
+**not** verified by a unit-test run. The rc.2 secret pinning tests in
+`modules/settings/tests.rs` in particular have **not** been re-run since R9d.
+Re-running `cargo test -p yilian-backend --locked` once the machine has memory
+headroom is the outstanding verification step.
+
 ## 11. Remaining work
 
 Ordered by how much is already understood, not by size.
@@ -478,11 +565,15 @@ Ordered by how much is already understood, not by size.
 3. **R3/R4 gaps, inherited.** `modules/task/application` and
    `modules/workflow/application` are unextracted; MCP is relocated but not
    regrouped, and `mcp_transport_config` still lives in `app/state.rs`.
-4. **Backend relocation, the largest remaining slice overall.** `voice`,
-   `capability`, `llm`, `secret`, `agent` and `tools` still sit at
-   `backend/src/`. Nothing is unowned; it is unrelocated.
-5. **The compatibility facades.** Eight of them (§5 of the final report). Each
-   needs its call sites updated and then deleted.
+4. **Backend relocation — done for the product domains (R9a–R9d).** `voice`,
+   `capability`, `llm` and `secret` now live under `modules/` and
+   `integrations/`. `agent` and `tools` remain at the root: the target table
+   assigns them no module home, so moving them would be a naming decision
+   rather than a relocation.
+5. **The compatibility facades — now twelve.** Four were added by R9
+   (`capability.rs`, `llm.rs`, `secret.rs`, `voice.rs`). Each needs its call
+   sites updated and then deleted. See §10a for why draining was not done
+   first.
 6. **`styles/workspace.css` (1536 lines).** One contiguous `@layer components`
    block for the workspace shell and its feature pages. Splitting it further is
    cascade-safe but would produce arbitrarily-named files, because its rules are

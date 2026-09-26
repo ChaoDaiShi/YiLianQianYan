@@ -141,10 +141,20 @@ compiling while the implementation moved.
 | `crate::resource_input` | `modules::resource` | R5a |
 | `crate::memory_skill` | `modules::memory_skill` | R5a |
 | `crate::skill_management` | `modules::memory_skill::store` | R5a |
+| `crate::voice` | `modules::voice` | R9a |
+| `crate::capability` | `modules::capability` | R9b |
+| `crate::llm` | `integrations::llm` | R9c |
+| `crate::secret` | `integrations::secret` | R9d |
 
 Remaining work: update the call sites, then delete the facade. This was the
 strangler strategy mandate §25 prescribes, and it is why no stage ever
 produced hundreds of broken imports.
+
+Draining is deferred, not overlooked — the cost was measured at **243
+references across 97 files**, and the facades are also the crate's public API
+(`backend/tests/*.rs` imports `yilian_backend::task` and
+`yilian_backend::server`). R9 added four more facades rather than draining the
+existing eight; the reasoning is in `r1-progress-and-handoff.md` §10a.
 
 ---
 
@@ -175,7 +185,7 @@ file may leave it by being split, nothing may join it.
 | `api/memories.rs` | 1611 |
 | `integrations/mcp/legacy_stdio.rs` | 1384 |
 | `modules/task/orchestrator.rs` | 1216 |
-| `voice/runtime.rs` | 1195 |
+| `modules/voice/runtime.rs` | 1195 |
 | `db/task.rs` | 1107 |
 | `modules/task/task_supervisor.rs` | 1087 |
 
@@ -265,9 +275,10 @@ MCP is relocated but not regrouped into the mandated
 `protocol/ transport/ runtime/ registry/ result/ security/`, and
 `mcp_transport_config` still lives in `app/state.rs`.
 
-**Backend modules not yet under `modules/`:** `voice` (incl. a 1195-line
-runtime), `capability`, `llm`, `secret`, `agent`, `tools`. These are the larger
-half of the backend by module count and the natural next slice.
+**Backend modules not yet under `modules/`:** `agent` and `tools`. `voice`
+(incl. a 1195-line runtime), `capability`, `llm` and `secret` were relocated by
+R9 — see §14. The target table assigns `agent` and `tools` no module home, so
+moving them is a naming decision rather than a relocation.
 
 **One cross-domain edge is recorded, not fixed:**
 `modules/resource/binding.rs` reads
@@ -398,7 +409,7 @@ from `docs/architecture/ownership.md` rather than from reading the source:
 | Where is Task business logic? | `modules/task` (application layer **not yet extracted**) |
 | Where is MCP transport? | `integrations/mcp/` (`legacy_stdio`) |
 | Where is MCP runtime? | `integrations/mcp/manager.rs` |
-| Where is the voice session owner? | `voice/runtime.rs` — **not yet a module** |
+| Where is the voice session owner? | `modules/voice/runtime.rs` (moved there by R9a) |
 | Where is Memory-to-Skill? | `modules/memory_skill/` |
 | Where is the resource parser? | `modules/resource/parsers/` |
 | Who owns the database? | `db/` — unchanged and unmoved |
@@ -407,7 +418,60 @@ from `docs/architecture/ownership.md` rather than from reading the source:
 The refactor is **not** complete. Within R6, `TaskWorldCanvas`'s 112-line
 surface remains deliberately unsplit; `GlobalVoiceHost`'s orchestrator
 concurrency is now decomposed (R6g/R6h) while the host itself stays 616 lines
-of React glue; R3 and R4 retain their recorded gaps; and roughly half the
-backend is still unrelocated. What is complete is R0–R5, all of R6 except that
-one partial, R7 and R8 — every stage verified green, and the final state
-re-verified after the last change.
+of React glue; R3 and R4 retain their recorded gaps. What is complete is R0–R5,
+all of R6 except that one partial, R7 and R8 — every stage verified green, and
+the final state re-verified after the last change.
+
+---
+
+## 14. R9 — post-gate backend relocation
+
+R9 is **not a mandate stage**. It continues the remaining-work list in
+`r1-progress-and-handoff.md` §11 after the R8 gate had already passed, so the
+gate table in §11 describes the state *before* R9 and was not re-run for it.
+
+Four relocations, one commit each, all `git mv` + facade:
+
+| Stage | Commit | Move | Files |
+|---|---|---|---|
+| R9a | `cff1c38` | `voice/` → `modules/voice/` | 4 |
+| R9b | `ab61d80` | `capability/` → `modules/capability/` | 12 |
+| R9c | `2b3cf59` | `llm/` → `integrations/llm/` | 5 |
+| R9d | `3378a5d` | `secret/` → `integrations/secret/` | 8 |
+
+All 29 moved files are 100%-similarity renames (`0 insertions, 0 deletions`),
+so the moved regions are byte-identical. Each old path keeps a one-glob
+compatibility facade, so **no call site changed** and no route, response shape,
+schema or migration was touched. The compatibility facade count goes 8 → 12.
+
+### R9 verification
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all -- --check` | clean after each stage |
+| `cargo check -p yilian-backend --all-targets --locked` | **exit 0** after each stage; the same 3 pre-existing warnings, no new ones |
+| `cargo test --test architecture_boundaries` | **3 passed / 0 failed** after each stage |
+| Moved regions | byte-identical |
+| `cargo test --lib` | **NOT RUN** — environmental block, described below |
+
+### The one gap, stated plainly
+
+`cargo test --lib` cannot be linked on this machine right now. It fails
+reproducibly in codegen/link with `rustc-LLVM ERROR: out of memory`, exit
+`0xc0000409`. Measured cause: the commit limit is 39.24 GB (15.24 GB RAM + a
+24 GB page file) and **36.04 GB is already committed** by resident
+applications, leaving ~3.2 GB — less than the `codegen-units = 1` test profile
+needs. Four attempts across the session failed identically; retrying after the
+failed rustc processes exited did not help.
+
+This is the memory pressure `r1-progress-and-handoff.md` §2 documents, and it is
+**not** attributable to R9: R9 adds ~10 lines and moves files with `git mv`, so
+the lib-test codegen is the same size it was when the R8 gate linked it.
+
+Consequence for the compatibility conclusion in §1: those six rows still hold,
+because R9 changed no schema, route, secret semantic or persistence path — but
+the *evidence* for the secret row is the byte-identical move plus a clean
+type-check, not a fresh test run. **Re-running
+`cargo test -p yilian-backend --locked` on a machine with memory headroom is
+the outstanding verification step**, and the rc.2 secret pinning tests in
+`modules/settings/tests.rs` should be the first thing confirmed.

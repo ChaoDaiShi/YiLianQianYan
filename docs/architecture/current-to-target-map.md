@@ -1,7 +1,7 @@
 # Current → Target Map
 
 > Where each part of mandate §4 (backend) and §17 (frontend) stands.
-> Last updated at R6h.
+> Last updated at R9d.
 
 Status legend: **done** · **partial** · **not started** · **deviated** (with reason)
 
@@ -14,26 +14,33 @@ Status legend: **done** · **partial** · **not started** · **deviated** (with 
 | `modules/settings/` | done | domain / application / api. R2. |
 | `modules/task/` | partial | Relocated and HTTP-split (R3a/R3b). `application/` service extraction is **not started**; business logic still sits in the route modules (`create_graph` 71, `run_workflow_graph` 157, `dispatch_execution` 66 lines). |
 | `modules/workflow/` | partial | Same as task: relocated and HTTP-split, `application/` not extracted. |
-| `modules/capability/` | not started | `capability/` still at the root. |
+| `modules/capability/` | done | `modules/capability/` — R9b. `capability.rs` is a compatibility facade. |
 | `modules/memory_skill/` | done | candidate / review / version / repository / evidence / sensitivity / validator / service / store. R5c. |
-| `modules/voice/` | not started | `voice/` still at the root (1,195-line `runtime.rs`, 1,067-line `provider.rs`). |
+| `modules/voice/` | done | `modules/voice/` — R9a. `voice.rs` is a compatibility facade; the 1,195-line `runtime.rs` and 1,067-line `provider.rs` moved unchanged. |
 | `modules/resource/` | done | limits / parsers / preview / ingest / binding / model. R5b. |
 | `modules/artifact/` | not started | Artifact handling lives in `modules/task/artifact.rs`. |
 | `modules/approval/` | not started | Approval lives in `modules/task/approval.rs` and `api/approvals.rs`. |
-| `integrations/llm/` | not started | `llm/` still at the root. |
+| `integrations/llm/` | done | `integrations/llm/` — R9c. `llm.rs` is a compatibility facade. |
 | `integrations/mcp/` | partial | Relocated under `integrations/mcp/` (R4) with facades. The mandated `protocol/ transport/ runtime/ registry/ result/ security/` subdivision is **not started**; `mcp_transport_config` still lives in `app/state.rs`. |
-| `integrations/secret/` | not started | `secret/` still at the root. |
+| `integrations/secret/` | done | `integrations/secret/` — R9d. `secret.rs` is a compatibility facade. |
 | `integrations/filesystem/` | not started | No such module; file access is spread across `db/`, `tools/` and `workspace/`. |
 | `db/` | done (as-is) | Deliberately not moved. It owns schema and migrations, and no migration changed during this refactor. |
 | `safety/` | done (as-is) | Deliberately not moved. Protected Kernel. |
 
 ### Estimate of what remains
 
-The backend is roughly **half** migrated by module count. The unrelocated
-root-level domains (`voice`, `capability`, `llm`, `secret`, `agent`, `tools`)
-are the larger half and are the natural next slice. `modules/task/application`
-and the MCP subdivision are the two places where an already-started module is
-incomplete.
+The product domains are relocated. `modules/` holds capability, memory_skill,
+resource, settings, task, voice and workflow; `integrations/` holds llm, mcp
+and secret. Every domain the target table names now has a home, so the
+remaining root-level directories are the ones the table does **not** assign a
+module target: the agent runtime (`agent`, `tools`), the transport layer
+(`api`, `app`) and the kernel/infrastructure the mandate leaves in place
+(`shared`, `db`, `safety`, `config`, `execution`, `interaction`, `isolation`,
+`plugin`, `utils`, `workspace`).
+
+What is left inside started modules: `modules/task/application` and the MCP
+subdivision (`protocol/ transport/ runtime/ registry/ result/ security/`), which
+is also where `mcp_transport_config` still living in `app/state.rs` belongs.
 
 ## Frontend
 
