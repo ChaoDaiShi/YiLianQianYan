@@ -29,13 +29,14 @@ const production = files.filter((file) => !file.path.includes(".test."));
  * Files already above the 600-line budget when these checks were introduced.
  * They are recorded debt, not approval — a file may leave this list by being
  * split, and nothing may join it.
+ *
+ * Left the list in R2: `src/api/legacy.ts` (1,335 → 62, now a re-export surface),
+ * `src/api/taskWorld.ts` (601 → split into `taskWorld/`), and
+ * `src/features/voice/GlobalVoiceHost.tsx` (616 → 576, runtime extracted).
  */
 const LINE_BUDGET = 600;
 const KNOWN_LARGE_FILES = [
-  "src/api/legacy.ts",
-  "src/api/taskWorld.ts",
   "src/components/chat/ChatView.tsx",
-  "src/features/voice/GlobalVoiceHost.tsx",
   "src/pages/PluginsPage.tsx",
 ];
 
