@@ -35,6 +35,7 @@ const evidenceDir = join(repositoryRoot, "target", uiStage === "baseline" ? "ui-
 const browserLog = [];
 const networkLog = [];
 let browser;
+let zoomWorker;
 let page;
 let isolatedRoot;
 let testExitCode = 1;
@@ -127,7 +128,16 @@ try {
   const { existsSync } = await import("node:fs");
   const executablePath = edgePaths.find((path) => existsSync(path));
   if (!executablePath) throw new Error("No supported system Chromium browser was found");
-  browser = await chromium.launch({ executablePath, headless: true });
+  if (uiStage && uiStage !== "baseline") {
+    const extension = join(isolatedRoot, "zoom-extension");
+    await mkdir(extension);
+    await writeFile(join(extension, "manifest.json"), JSON.stringify({manifest_version:3,name:"UI zoom evidence",version:"1.0",permissions:["tabs"],background:{service_worker:"background.js"}}));
+    await writeFile(join(extension, "background.js"), "chrome.runtime.onInstalled.addListener(() => {});");
+    browser = await chromium.launchPersistentContext(join(isolatedRoot,"edge-profile"), {executablePath,headless:true,viewport:{width:1440,height:900},args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`]});
+    zoomWorker = browser.serviceWorkers()[0] ?? await browser.waitForEvent("serviceworker", {timeout:10000});
+  } else {
+    browser = await chromium.launch({ executablePath, headless: true });
+  }
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on("response", (response) => {
     const url = new URL(response.url());
@@ -153,8 +163,9 @@ try {
     await laterSetup.waitFor({ state: "hidden" });
   }
   if (uiStage) {
-    const result = await uiFoundation({ page, backendPort, frontendPort, controlToken, evidenceDir, stage: uiStage });
-    await writeFile(join(evidenceDir, "result.json"), JSON.stringify({status:"passed", ...result}, null, 2));
+    const result = await uiFoundation({ page, backendPort, frontendPort, controlToken, evidenceDir, stage: uiStage, zoomWorker });
+    if (browserErrors.length) throw new Error(`UI browser errors: ${browserErrors.join(" | ")}`);
+    await writeFile(join(evidenceDir, "result.json"), JSON.stringify({status:"passed",browser:executablePath,real_backend:true, ...result}, null, 2));
     process.stdout.write(JSON.stringify(result) + "\n");
     testExitCode = 0;
   } else {
