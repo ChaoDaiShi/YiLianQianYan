@@ -7,8 +7,8 @@ use std::str::FromStr;
 
 use super::Database;
 use crate::execution::{ExecutionContext, ExecutionId};
+use crate::modules::task::*;
 use crate::modules::workflow::WorkflowRunId;
-use crate::task::*;
 use crate::workspace::WorkspaceId;
 
 fn encode_json(value: &impl serde::Serialize) -> Result<String, String> {

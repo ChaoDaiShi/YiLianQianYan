@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::app::state::AppServer;
 use crate::execution::{ExecutionContext, ExecutionId};
 use crate::modules::workflow::application::run_service::execute_for_task_harness;
 use crate::modules::workflow::{
@@ -8,7 +9,6 @@ use crate::modules::workflow::{
     WorkflowRunStatus, WORKFLOW_GRAPH_SCHEMA_VERSION,
 };
 use crate::safety::ControlSession;
-use crate::server::AppServer;
 use tokio_util::sync::CancellationToken;
 
 fn test_server() -> (std::path::PathBuf, Arc<AppServer>) {

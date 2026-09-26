@@ -6,10 +6,10 @@ use axum::http::StatusCode;
 use axum::Json;
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::integrations::llm::client::LlmClient;
 use crate::integrations::llm::types::ChatMessage;
 use crate::modules::voice::{AudioInput, SpeechRequest, VoiceProviderError};
-use crate::server::AppServer;
 
 use crate::modules::settings::domain::policy::supported_voice_provider;
 use crate::modules::settings::domain::readiness::active_runtime_model;
@@ -72,7 +72,7 @@ pub(crate) async fn verify_provider(
     let config = server.config.read().clone();
     let result = match kind {
         "model" => {
-            let model = active_runtime_model(&server, &config);
+            let model = active_runtime_model(&server.db, &config);
             let client = LlmClient::new(&model, Arc::clone(&server.secret_resolver));
             client
                 .invoke(

@@ -177,7 +177,7 @@ impl ExecutorResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{ExecutorRef, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind};
+    use crate::modules::task::{ExecutorRef, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind};
     use serde_json::json;
 
     fn node(reference: &str, input: serde_json::Value) -> TaskNode {

@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::json;
 use yilian_backend::db::Database;
-use yilian_backend::shared::event::EventHub;
-use yilian_backend::task::{
+use yilian_backend::modules::task::{
     CanvasViewError, GraphRevision, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind,
     TaskWorldRuntime, TaskWorldRuntimeError,
 };
+use yilian_backend::shared::event::EventHub;
 
 fn temp_database(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("yilian-cycle3-{label}-{}.db", uuid::Uuid::new_v4()))

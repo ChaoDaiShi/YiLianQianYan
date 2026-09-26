@@ -599,7 +599,7 @@ fn retry_policy_for_node(max_attempts: u32) -> Result<ExecutionRetryPolicy, Task
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{GraphRevision, RetryPolicy, TaskEdge, TaskNode, TaskNodeKind};
+    use crate::modules::task::{GraphRevision, RetryPolicy, TaskEdge, TaskNode, TaskNodeKind};
     use serde_json::json;
 
     fn id(raw: &str) -> TaskNodeId {

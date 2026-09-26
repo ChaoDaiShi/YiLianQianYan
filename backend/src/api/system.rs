@@ -10,7 +10,7 @@ use std::{
 };
 use sysinfo::{Disks, System};
 
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 use crate::utils::process::hide_std_command_window;
 
 static GPU_INFO: OnceLock<Vec<serde_json::Value>> = OnceLock::new();

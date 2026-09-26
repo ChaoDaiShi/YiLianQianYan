@@ -10,7 +10,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 
 /// GET /api/skills — list all discovered skills
 pub async fn list_skills(State(server): State<Arc<AppServer>>) -> Json<Vec<serde_json::Value>> {

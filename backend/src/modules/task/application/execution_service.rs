@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 
 use super::super::validation::ValidationPolicy;
 use super::super::{

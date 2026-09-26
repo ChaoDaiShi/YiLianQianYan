@@ -4,8 +4,8 @@
 //! persist a `WorkflowGraphRecord`. Id/name/description defaults are decided
 //! here, not in the transport layer.
 
+use crate::app::state::AppServer;
 use crate::db::WorkflowGraphRecord;
-use crate::server::AppServer;
 
 use super::super::definition::WorkflowGraphDefinition;
 

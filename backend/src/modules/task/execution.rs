@@ -577,7 +577,7 @@ fn bound_text(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{ExecutorRef, TaskGraphId, TaskNodeId};
+    use crate::modules::task::{ExecutorRef, TaskGraphId, TaskNodeId};
     use serde_json::json;
 
     fn context() -> NodeContext {

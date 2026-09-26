@@ -15,8 +15,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::server::AppServer;
-use crate::task::{
+use crate::app::state::AppServer;
+use crate::modules::task::{
     execution_summary, CanvasGroup, CanvasNodeLayout, CanvasView, CanvasViewport, NodeExecutionId,
     RetryPolicy, TaskEdge, TaskGraphId, TaskHarnessError, TaskNode, TaskNodeId, TaskNodeKind,
     TaskWorldRuntimeError, CANVAS_VIEW_SCHEMA_VERSION,

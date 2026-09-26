@@ -14,8 +14,8 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::app::state::AppServer;
 use crate::integrations::mcp::{McpServerRuntime, McpTransportConfig};
-use crate::server::AppServer;
 
 fn server_dto(runtime: &McpServerRuntime) -> serde_json::Value {
     let transport = match &runtime.config {

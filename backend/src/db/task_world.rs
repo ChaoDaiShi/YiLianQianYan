@@ -2,7 +2,7 @@ use super::{
     migrations::{MigrationOwner, ProductMigrationSpec},
     Database,
 };
-use crate::task::{
+use crate::modules::task::{
     GraphRevision, TaskCheckpoint, TaskCheckpointId, TaskExecutionControl,
     TaskExecutionControlState, TaskGraph, TaskGraphId, TaskNodeId, TaskNodeState, TaskSupervisor,
     TaskSupervisorError,
@@ -507,7 +507,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::task::{
+    use crate::modules::task::{
         GraphRevision, TaskGraph, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskSupervisor,
     };
     use rusqlite::Connection;
@@ -538,7 +538,7 @@ mod tests {
                 )
                 .unwrap(),
             ],
-            vec![crate::task::TaskEdge::new(
+            vec![crate::modules::task::TaskEdge::new(
                 node_id("source"),
                 node_id("child"),
             )],

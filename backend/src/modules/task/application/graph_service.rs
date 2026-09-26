@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 use crate::utils::text::truncate_chars;
 
 use super::super::planner::{

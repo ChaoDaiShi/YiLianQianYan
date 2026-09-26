@@ -9,8 +9,8 @@ use axum::{extract::State, Json};
 use std::sync::Arc;
 
 use super::settings::{chat_source, embedding_source};
+use crate::app::state::AppServer;
 use crate::integrations::secret::SecretStoreStatus;
-use crate::server::AppServer;
 
 pub async fn status_handler(State(server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
     let config = server.config.read().clone();

@@ -17,11 +17,11 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::engine::{self, AgentEvent};
 use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
+use crate::app::state::{AppServer, CHAT_MEMORY_TOP_K};
 use crate::db::{MessageRow, RetrieveQuery};
 use crate::integrations::llm::client::LlmClient;
 use crate::integrations::llm::usage::DatabaseUsageRecorder;
 use crate::safety::SecurityExecutionGateway;
-use crate::server::{AppServer, CHAT_MEMORY_TOP_K};
 use crate::utils::text::truncate_chars;
 
 #[derive(Debug, Deserialize)]

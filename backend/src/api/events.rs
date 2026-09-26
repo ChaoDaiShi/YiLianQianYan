@@ -1,4 +1,4 @@
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 use crate::shared::event::YiEvent;
 use axum::{
     extract::State,

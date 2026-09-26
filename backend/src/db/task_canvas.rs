@@ -2,7 +2,7 @@ use super::{
     migrations::{MigrationOwner, ProductMigrationSpec},
     Database,
 };
-use crate::task::{
+use crate::modules::task::{
     CanvasView, CanvasViewError, TaskCheckpointSummary, TaskGraph, TaskGraphId,
     TaskRevisionSummary, TaskSupervisor, MAX_TASK_REVISION_HISTORY,
 };
@@ -190,7 +190,7 @@ impl Database {
         let view_revision = positive_u64(stored_view_revision, "view revision")?;
         let graph_revision_seen = positive_u64(stored_graph_revision, "graph revision seen")?;
         let view = CanvasView {
-            schema_version: crate::task::CANVAS_VIEW_SCHEMA_VERSION,
+            schema_version: crate::modules::task::CANVAS_VIEW_SCHEMA_VERSION,
             graph_id: graph.id.clone(),
             view_revision,
             graph_revision_seen,
@@ -221,11 +221,11 @@ impl Database {
         supervisor: &TaskSupervisor,
         updated_at: i64,
         change_summary: &str,
-        executions: &[crate::task::NodeExecution],
+        executions: &[crate::modules::task::NodeExecution],
     ) -> Result<(), super::TaskWorldPersistenceError> {
         let graph = supervisor.graph();
-        let checkpoint = crate::task::TaskCheckpoint {
-            id: crate::task::TaskCheckpointId::generate(),
+        let checkpoint = crate::modules::task::TaskCheckpoint {
+            id: crate::modules::task::TaskCheckpointId::generate(),
             graph_id: graph.id.clone(),
             graph_revision: graph.revision,
             graph: graph.clone(),

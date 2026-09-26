@@ -7,6 +7,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::db::Database;
+use crate::modules::task::{TaskStatusProjection, TaskWorldRuntime};
 use crate::modules::voice::{
     VoiceApprovalDecision, VoiceContinuation, VoiceDispatchError, VoiceDispatchHook,
     VoiceDispatchOutcome, VoiceDispatchRequest,
@@ -21,7 +22,6 @@ use crate::shared::interaction::{
     InteractionTarget, TargetResolution,
 };
 use crate::shared::voice::{VoiceInputLease, VoiceInputOwner, VoiceTurn};
-use crate::task::{TaskStatusProjection, TaskWorldRuntime};
 
 use super::{InteractionContext, InteractionDecision, InteractionRouter, TaskNarrator};
 
@@ -196,8 +196,8 @@ impl InteractionVoiceDispatch {
             && payload.get("node_id").is_none()
         {
             let graph_id = payload.get("graph_id").and_then(Value::as_str)?;
-            let graph_id = crate::task::TaskGraphId::new(graph_id.to_string()).ok()?;
-            let current = crate::task::TaskCommandService::new(self.task_world.clone())
+            let graph_id = crate::modules::task::TaskGraphId::new(graph_id.to_string()).ok()?;
+            let current = crate::modules::task::TaskCommandService::new(self.task_world.clone())
                 .current(&graph_id, request.accepted.created_at)
                 .ok()?;
             payload["node_id"] = Value::String(current.current_node_id?);

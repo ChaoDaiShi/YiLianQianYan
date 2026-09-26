@@ -3004,7 +3004,7 @@ mod tests {
     // ── Subagent delegation through the runtime dynamic-tool fallback ──
 
     fn subagent_gateway() -> SecurityExecutionGateway {
-        let definition = crate::server::DiscoveredSubagent {
+        let definition = crate::app::state::DiscoveredSubagent {
             name: "researcher".to_string(),
             description: "研究助手".to_string(),
             path: ".agents/agents/researcher/AGENT.md".to_string(),

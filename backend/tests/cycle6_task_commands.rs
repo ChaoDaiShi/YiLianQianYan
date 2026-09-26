@@ -3,16 +3,16 @@
 use std::path::Path;
 
 use serde_json::json;
+use yilian_backend::app::state::AppServer;
 use yilian_backend::db::Database;
-use yilian_backend::safety::ControlSession;
-use yilian_backend::server::AppServer;
-use yilian_backend::shared::command::{CommandRequest, CommandRouter, CommandStatus};
-use yilian_backend::shared::event::EventHub;
-use yilian_backend::task::validation::ValidationPolicy;
-use yilian_backend::task::{
+use yilian_backend::modules::task::validation::ValidationPolicy;
+use yilian_backend::modules::task::{
     GraphRevision, NodeExecutionStatus, RetryPolicy, TaskCommandService, TaskExecutionControlState,
     TaskGraph, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntime,
 };
+use yilian_backend::safety::ControlSession;
+use yilian_backend::shared::command::{CommandRequest, CommandRouter, CommandStatus};
+use yilian_backend::shared::event::EventHub;
 
 fn id(raw: &str) -> TaskNodeId {
     TaskNodeId::new(raw).expect("valid node id")
@@ -86,7 +86,7 @@ fn pause_persists_blocks_new_dispatch_and_preserves_verified_nodes() {
     let detail = runtime.get_graph_detail(&graph).expect("detail loads");
     assert_eq!(
         detail.nodes[0].status,
-        yilian_backend::task::TaskNodeStatus::Succeeded
+        yilian_backend::modules::task::TaskNodeStatus::Succeeded
     );
     assert!(
         service

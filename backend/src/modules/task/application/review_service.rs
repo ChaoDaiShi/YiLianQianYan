@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 
 use super::super::planner::{LlmTaskPlanner, TaskGraphReview, TaskPlannerError};
 use super::super::task_graph::TaskGraphId;

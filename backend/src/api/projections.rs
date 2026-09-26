@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 
 #[derive(Deserialize)]

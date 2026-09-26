@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::task::{TaskExecutionControlState, TaskStatusProjection};
+use crate::modules::task::{TaskExecutionControlState, TaskStatusProjection};
 
 const MAX_NARRATION_CHARS: usize = 1_024;
 const MAX_NARRATION_LABEL_CHARS: usize = 256;

@@ -1,5 +1,5 @@
 use serde_json::json;
-use yilian_backend::task::{
+use yilian_backend::modules::task::{
     CanvasView, GraphRevision, TaskGraph, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind,
 };
 

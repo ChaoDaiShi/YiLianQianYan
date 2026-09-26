@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::task::model::TaskId;
+use crate::modules::task::model::TaskId;
 
 /// Memory category, mirroring the persisted `Memory.category` string values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

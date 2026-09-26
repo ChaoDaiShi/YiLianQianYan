@@ -116,7 +116,7 @@ async fn build_returns_empty_context_when_no_memories() {
 // Phase 2 — learning loop tests.
 // ============================================================
 
-use crate::task::model::TaskId;
+use crate::modules::task::model::TaskId;
 
 fn candidate(content: &str, category: MemoryCategory, confidence: f32) -> MemoryCandidate {
     MemoryCandidate::new(
@@ -301,7 +301,7 @@ async fn writer_skips_duplicate_across_runs() {
 // Phase 2 Closure — deterministic reflection + dedup + secret + retrieval.
 // ============================================================
 
-use crate::task::model::TaskStatus;
+use crate::modules::task::model::TaskStatus;
 use tokio_util::sync::CancellationToken;
 
 fn reflection_input(status: TaskStatus) -> ReflectionInput {

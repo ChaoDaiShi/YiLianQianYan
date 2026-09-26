@@ -53,7 +53,7 @@ fn validate_target(conn: &Connection, target: &ResourceTarget) -> Result<(), Str
                 )
                 .optional()
                 .map_err(|_| "任务图不可用")?;
-            let graph: crate::task::TaskGraph =
+            let graph: crate::modules::task::TaskGraph =
                 serde_json::from_str(&json.ok_or("绑定任务图不存在")?).map_err(|_| "任务图无效")?;
             Ok(kind == "graph" || graph.nodes.iter().any(|node| node.id.as_str() == node_id))
         }

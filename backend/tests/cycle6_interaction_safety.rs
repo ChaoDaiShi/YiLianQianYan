@@ -8,13 +8,13 @@ use yilian_backend::db::Database;
 use yilian_backend::interaction::{
     ApprovalVoiceAdapter, ApprovalVoiceDecision, GraphProposalService,
 };
+use yilian_backend::modules::task::{
+    TaskEdge, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntime,
+};
 use yilian_backend::safety::{ApprovalStatus, ApprovalStore};
 use yilian_backend::shared::command::{CommandRequest, CommandRouter, CommandStatus};
 use yilian_backend::shared::event::EventHub;
 use yilian_backend::shared::interaction::{InteractionTarget, TargetResolution};
-use yilian_backend::task::{
-    TaskEdge, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntime,
-};
 use yilian_backend::tools::RiskLevel;
 
 fn pending(store: &ApprovalStore, conversation_id: &str, tool_call_id: &str) -> String {

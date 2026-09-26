@@ -1,9 +1,16 @@
 //! Provider readiness — the redacted `configured`/`source` projection the UI
 //! reads. Never carries secret material.
+//!
+//! This is a domain module, so it names the two things it actually needs — the
+//! database and the secret resolver — rather than the composition root. Taking
+//! `&AppServer` here would make the domain layer depend on `app`, which the
+//! dependency rules forbid; the boundary check enforces it.
+
+use std::sync::Arc;
 
 use crate::config::types::AppConfig;
+use crate::db::Database;
 use crate::integrations::secret::{SecretResolver, SecretSource};
-use crate::server::AppServer;
 
 use crate::modules::settings::application::secret_lifecycle::chat_source;
 use crate::modules::settings::domain::policy::{supported_voice_provider, valid_provider_url};
@@ -60,12 +67,13 @@ pub(crate) async fn voice_tts_source(
 }
 
 pub(crate) async fn build_provider_readiness(
-    server: &AppServer,
+    db: &Database,
+    resolver: &Arc<SecretResolver>,
     config: &AppConfig,
 ) -> ProviderReadiness {
     // Keep the same precedence as chat_handler: the active profile is the
     // runtime model, while legacy settings are only its fallback.
-    let active = server.db.get_active_llm_model().ok().flatten();
+    let active = db.get_active_llm_model().ok().flatten();
     let (runtime_model, provider, model) = match active {
         Some(profile) => {
             let provider = profile.provider.clone();
@@ -82,9 +90,9 @@ pub(crate) async fn build_provider_readiness(
         model: runtime_model.clone(),
         ..config.clone()
     };
-    let (_, model_configured) = chat_source(&server.secret_resolver, &runtime_config).await;
-    let (_, stt_configured) = voice_stt_source(&server.secret_resolver, config).await;
-    let (_, tts_configured) = voice_tts_source(&server.secret_resolver, config).await;
+    let (_, model_configured) = chat_source(resolver, &runtime_config).await;
+    let (_, stt_configured) = voice_stt_source(resolver, config).await;
+    let (_, tts_configured) = voice_tts_source(resolver, config).await;
 
     ProviderReadiness {
         model: ProviderReadinessItem {
@@ -117,12 +125,10 @@ pub(crate) async fn build_provider_readiness(
 }
 
 pub(crate) fn active_runtime_model(
-    server: &AppServer,
+    db: &Database,
     config: &AppConfig,
 ) -> crate::config::types::ModelConfig {
-    server
-        .db
-        .get_active_llm_model()
+    db.get_active_llm_model()
         .ok()
         .flatten()
         .map(|profile| profile.to_model_config())

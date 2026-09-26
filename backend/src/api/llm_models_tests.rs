@@ -11,6 +11,7 @@ use axum::{
 use secrecy::SecretString;
 use tower::ServiceExt;
 
+use crate::app::state::AppServer;
 use crate::db::LlmModelInput;
 use crate::integrations::llm::client::LlmError;
 use crate::integrations::secret::{
@@ -18,7 +19,6 @@ use crate::integrations::secret::{
     SecretStoreStatus,
 };
 use crate::safety::{ControlSession, CONTROL_SESSION_HEADER};
-use crate::server::AppServer;
 
 #[test]
 fn provider_connection_errors_are_normalized_without_response_details() {

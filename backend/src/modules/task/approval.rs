@@ -13,11 +13,11 @@
 // ============================================================
 
 use crate::db::Database;
+use crate::modules::task::model::*;
+use crate::modules::task::timeline::TimelineService;
 use crate::safety::approval::ApprovalStore;
 use crate::safety::execution_gateway::SecurityExecutionGateway;
 use crate::safety::{SecurityExecutionRequest, SecuritySubject};
-use crate::task::model::*;
-use crate::task::timeline::TimelineService;
 
 pub async fn resolve_task_agent_approval(
     gateway: &SecurityExecutionGateway,

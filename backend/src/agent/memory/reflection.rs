@@ -15,7 +15,7 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use super::candidate::{MemoryCandidate, MemoryCategory};
-use crate::task::model::{TaskId, TaskStatus};
+use crate::modules::task::model::{TaskId, TaskStatus};
 use crate::utils::text::truncate_chars;
 
 /// Hard cap on the number of candidates produced per task execution.

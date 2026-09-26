@@ -10,12 +10,12 @@ use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::modules::voice::{
     AudioInput, MiniMaxSttProvider, VoiceDispatchError, VoiceDispatchOnceError, VoiceProviderError,
     VoiceRuntimeError,
 };
 use crate::safety::ApprovalStatus;
-use crate::server::AppServer;
 use crate::shared::interaction::{ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface};
 use crate::shared::voice::{VoiceInputOwner, VoiceTurn};
 

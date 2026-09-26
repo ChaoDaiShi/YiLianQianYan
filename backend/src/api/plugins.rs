@@ -11,9 +11,9 @@ use secrecy::SecretString;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::db::McpServer;
 use crate::integrations::secret::{mcp_env_ref, SecretRef, SecretStore, MAX_SECRET_VALUE_BYTES};
-use crate::server::AppServer;
 
 type ApiError = (StatusCode, String);
 

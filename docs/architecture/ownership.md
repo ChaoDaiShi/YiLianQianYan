@@ -106,17 +106,25 @@ voice contracts.
 ## Infrastructure
 
 - `integrations/mcp` — MCP protocol, transport, runtime, registry, result
-  handling. **Currently relocated but not regrouped**: the mandated
-  `protocol/ transport/ runtime/ registry/ result/ security/` subdivision is
-  unstarted, and `mcp_transport_config` still lives in `app/state.rs`.
+  handling. Subdivided in R2 / S3 into `protocol/ transport/ runtime/ registry/
+  result/ security/` plus `config.rs`, which is where `mcp_transport_config`
+  now lives (it was in `app/state.rs`).
 - `db/` — schema and migrations. Migration namespaces: Shared `0–999`,
   v1 `1000–1999`. There is **no v2 namespace in this branch**; v2 owns its own.
   Architecture work adds no migration.
 - `integrations/llm`, `secret`, `isolation` — provider, secret and sandbox
   adapters.
 
+## Retired compatibility facades
+
+R1 left twelve glob shims at `backend/src/` so moved call sites kept compiling.
+They are gone as of R2 / S4. A reference to `crate::server::*`, `crate::task::*`,
+`crate::secret::*` or any of the other nine is stale — the owning module is
+listed in [compatibility-facades.md](compatibility-facades.md).
+
 ## Not yet under `modules/`
 
-`voice/`, `capability/`, `safety/`, `db/`, `agent/`, `tools/` still sit at
-`backend/src/`. They are unrelocated, not unowned. Relocating them is the
-largest remaining structural work and is deliberately not attempted here.
+`safety/`, `db/`, `agent/` and `tools/` still sit at `backend/src/`. They are
+unrelocated, not unowned. `voice/`, `capability/` and the `integrations/*`
+adapters were relocated by R9; moving the remaining four is the largest
+structural work still open and is deliberately not attempted by R2.

@@ -16,13 +16,13 @@ use crate::integrations::mcp::McpRuntimeManager;
 use crate::integrations::secret::{OsSecretStore, SecretResolver, SecretStore};
 use crate::interaction::{ApprovalVoiceAdapter, InteractionVoiceDispatch};
 use crate::isolation::ManagedProcessRegistry;
+use crate::modules::task::{TaskCommandService, TaskPresenceAdapter, TaskWorldRuntime};
 use crate::modules::voice::GlobalVoiceSessionRuntime;
 use crate::safety::{approval::ApprovalStore, AuditRecorder, ControlSession};
 use crate::shared::command::CommandRouter;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;
 use crate::shared::resource::ResourceService;
-use crate::task::{TaskCommandService, TaskPresenceAdapter, TaskWorldRuntime};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
 
@@ -59,7 +59,7 @@ impl AppServer {
         let db = Database::new(db_path).map_err(|e| e.to_string())?;
         // v0.6 recovery: any execution left "running" by a previous process must
         // not pretend to keep running — mark interrupted and block its task.
-        if let Ok(report) = crate::task::recovery::recover_interrupted(&db) {
+        if let Ok(report) = crate::modules::task::recovery::recover_interrupted(&db) {
             if report.interrupted_executions > 0 || report.interrupted_agent_executions > 0 {
                 tracing::warn!(?report, "recovered interrupted task executions on startup");
             }

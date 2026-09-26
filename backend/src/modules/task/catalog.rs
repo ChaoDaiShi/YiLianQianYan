@@ -58,10 +58,10 @@ impl TaskProjectionProvider for TaskWorldProjectionCatalog {
 mod tests {
     use super::*;
     use crate::db::Database;
-    use crate::shared::context::{ContextRequest, TaskProjectionProvider};
-    use crate::task::{
+    use crate::modules::task::{
         GraphRevision, TaskGraph, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskSupervisor,
     };
+    use crate::shared::context::{ContextRequest, TaskProjectionProvider};
     use serde_json::json;
     use std::path::Path;
 

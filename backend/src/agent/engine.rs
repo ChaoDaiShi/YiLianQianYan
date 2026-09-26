@@ -11,13 +11,13 @@ use tokio_util::sync::CancellationToken;
 use super::completion_guard::{evaluate_completion, CompletionCheck};
 use super::state::AgentState;
 use super::verifier::replan_message;
+use crate::app::state::LogBuffer;
 use crate::config::types::AppConfig;
 use crate::integrations::llm::client::LlmClient;
 use crate::integrations::llm::types::ToolCall;
 use crate::safety::approval::ApprovalStore;
 use crate::safety::execution_gateway::SecurityExecutionOutcome;
 use crate::safety::{SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject};
-use crate::server::LogBuffer;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::trait_def::RiskLevel;
 use crate::utils::text::truncate_chars;
@@ -565,10 +565,10 @@ mod tests {
     };
     use crate::agent::state::AgentState;
     use crate::agent::verifier::{VerificationResult, Verifier};
+    use crate::app::state::LogBuffer;
     use crate::config::types::{SandboxConfig, SandboxProfile};
     use crate::integrations::llm::types::{ToolCall, ToolCallFunction};
     use crate::safety::{ApprovalStore, SecurityExecutionGateway};
-    use crate::server::LogBuffer;
     use crate::tools::{Tool, ToolRegistry, ToolResult};
 
     struct CountingTool {

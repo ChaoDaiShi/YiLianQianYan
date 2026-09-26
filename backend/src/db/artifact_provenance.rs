@@ -2,7 +2,7 @@ use super::{
     migrations::{MigrationOwner, ProductMigrationSpec},
     Database,
 };
-use crate::task::{artifact::ArtifactSource, Artifact};
+use crate::modules::task::{artifact::ArtifactSource, Artifact};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 

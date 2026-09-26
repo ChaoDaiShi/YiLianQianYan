@@ -8,10 +8,10 @@ use async_trait::async_trait;
 use secrecy::{ExposeSecret, SecretString};
 
 use super::*;
+use crate::app::state::AppServer;
 use crate::config::types::AppConfig;
 use crate::db::{Database, McpServer};
 use crate::safety::ControlSession;
-use crate::server::AppServer;
 
 fn temp_db(label: &str) -> (std::path::PathBuf, Database) {
     let path =

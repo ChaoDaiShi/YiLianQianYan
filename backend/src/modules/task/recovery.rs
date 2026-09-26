@@ -5,8 +5,8 @@
 // ============================================================
 
 use crate::db::Database;
-use crate::task::model::{TaskEventType, TaskStatus};
-use crate::task::timeline::TimelineService;
+use crate::modules::task::model::{TaskEventType, TaskStatus};
+use crate::modules::task::timeline::TimelineService;
 
 #[derive(Debug, Clone, Default)]
 pub struct RecoveryReport {

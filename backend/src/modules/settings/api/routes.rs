@@ -9,8 +9,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::config::types::AppConfig;
-use crate::server::AppServer;
 
 use crate::modules::settings::application::{provider_test, service, update};
 

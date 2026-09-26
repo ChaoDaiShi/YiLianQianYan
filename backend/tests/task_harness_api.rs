@@ -119,8 +119,8 @@ async fn protected_routes_reject_unconfigured_execution_and_preserve_local_attem
         .as_str()
         .unwrap()
         .contains("executor_ref"));
-    let graph_id = yilian_backend::task::TaskGraphId::new("harness-api").unwrap();
-    let node_id = yilian_backend::task::TaskNodeId::new("node").unwrap();
+    let graph_id = yilian_backend::modules::task::TaskGraphId::new("harness-api").unwrap();
+    let node_id = yilian_backend::modules::task::TaskNodeId::new("node").unwrap();
     assert!(server
         .task_world
         .list_node_executions(&graph_id, &node_id)

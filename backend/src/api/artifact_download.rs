@@ -38,7 +38,7 @@ pub async fn materialize(
     }
 }
 pub async fn download(State(server): State<Arc<AppServer>>, Path(id): Path<String>) -> Response {
-    let id = match crate::task::ArtifactId::new(id) {
+    let id = match crate::modules::task::ArtifactId::new(id) {
         Ok(id) => id,
         Err(_) => return failure("产物标识无效".into()),
     };
@@ -65,7 +65,7 @@ pub async fn download(State(server): State<Arc<AppServer>>, Path(id): Path<Strin
     }
 }
 pub async fn preview(State(server): State<Arc<AppServer>>, Path(id): Path<String>) -> Response {
-    let id = match crate::task::ArtifactId::new(id) {
+    let id = match crate::modules::task::ArtifactId::new(id) {
         Ok(id) => id,
         Err(_) => return failure("产物标识无效".into()),
     };
@@ -101,7 +101,7 @@ fn failure(message: String) -> Response {
     )
         .into_response()
 }
-fn view(artifact: &crate::task::Artifact) -> serde_json::Value {
+fn view(artifact: &crate::modules::task::Artifact) -> serde_json::Value {
     json!({"id":artifact.id.as_str(),"kind":"artifact","name":artifact.name,"workspace_id":artifact.workspace_id.as_str(),"task_id":artifact.task_id.as_str(),"task_execution_id":artifact.task_execution_id.as_str(),"mime_type":artifact.mime_type,"size":artifact.size,"created_at":artifact.created_at,"updated_at":artifact.updated_at})
 }
 

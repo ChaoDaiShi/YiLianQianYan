@@ -9,10 +9,10 @@ use axum::Json;
 use secrecy::SecretString;
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::integrations::secret::{SecretRef, CHAT_KEY_REF, STT_KEY_REF};
 use crate::modules::voice::VoiceProviderError;
 use crate::safety::ControlSession;
-use crate::server::AppServer;
 
 use super::api::routes::{update_handler, verify_provider_handler};
 use super::application::provider_test::normalize_voice_connection_error;

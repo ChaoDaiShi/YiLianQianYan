@@ -13,9 +13,9 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::db::{WorkflowGraphRecord, WorkflowRunQuery};
 use crate::modules::workflow::{WorkflowGraphDefinition, WorkflowRun, WorkflowRunId};
-use crate::server::AppServer;
 
 pub mod dto;
 pub mod graph_routes;

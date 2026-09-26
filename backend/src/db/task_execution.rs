@@ -5,7 +5,7 @@
 //! never erase the previous attempt.
 
 use super::{migrations::MigrationOwner, migrations::ProductMigrationSpec, Database};
-use crate::task::{
+use crate::modules::task::{
     NodeExecution, NodeExecutionError, NodeExecutionId, NodeExecutionStatus, TaskGraphId,
     TaskNodeId,
 };
@@ -166,8 +166,8 @@ fn row_to_execution(
         ));
     }
     let status = parse_status(&status)?;
-    let context: crate::task::NodeContext = decode_json("context_json", &context_json)?;
-    let validation: Option<crate::task::ValidationResult> = validation_json
+    let context: crate::modules::task::NodeContext = decode_json("context_json", &context_json)?;
+    let validation: Option<crate::modules::task::ValidationResult> = validation_json
         .as_deref()
         .map(|value| decode_json("validation_json", value))
         .transpose()?;
@@ -175,7 +175,7 @@ fn row_to_execution(
         .as_deref()
         .map(|value| decode_json("output_json", value))
         .transpose()?;
-    let retry_policy: crate::task::execution::ExecutionRetryPolicy =
+    let retry_policy: crate::modules::task::execution::ExecutionRetryPolicy =
         decode_json("retry_policy_json", &retry_policy_json)?;
     let executor_ref = executor_ref
         .map(|value| {
@@ -471,7 +471,7 @@ fn row_from_sql(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{NodeContext, TaskGraphId, TaskNodeId};
+    use crate::modules::task::{NodeContext, TaskGraphId, TaskNodeId};
     use serde_json::json;
     use std::path::Path;
 

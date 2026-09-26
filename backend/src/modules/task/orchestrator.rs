@@ -21,6 +21,7 @@ use crate::agent::memory::{
     MemoryWriter, ReflectionInput,
 };
 use crate::agent::verifier::DefaultVerifier;
+use crate::app::state::AppServer;
 use crate::config::types::AppConfig;
 use crate::db::Database;
 use crate::execution::ExecutionContext;
@@ -36,7 +37,6 @@ use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGateway
 use crate::safety::{
     ApprovalStore, SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject,
 };
-use crate::server::AppServer;
 
 const MAX_AGENT_CONTEXT_CHARS: usize = 24000;
 const MAX_AGENT_RESULT_SUMMARY_CHARS: usize = 8000;

@@ -2,10 +2,12 @@
 
 use thiserror::Error;
 
+use crate::modules::task::{
+    GraphRevision, TaskGraph, TaskGraphId, TaskWorldRuntime, TaskWorldRuntimeError,
+};
 use crate::shared::interaction::{
     GraphMutationOperation, GraphMutationProposal, GraphProposalValidation,
 };
-use crate::task::{GraphRevision, TaskGraph, TaskGraphId, TaskWorldRuntime, TaskWorldRuntimeError};
 
 const MAX_PROPOSAL_OPERATIONS: usize = 16;
 

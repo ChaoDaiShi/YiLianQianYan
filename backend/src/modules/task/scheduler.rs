@@ -280,7 +280,7 @@ fn is_blocking(status: NodeExecutionStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{GraphRevision, TaskEdge, TaskGraphId, TaskNode, TaskNodeKind};
+    use crate::modules::task::{GraphRevision, TaskEdge, TaskGraphId, TaskNode, TaskNodeKind};
     use serde_json::json;
 
     fn graph(edges: &[(&str, &str)], ids: &[&str]) -> TaskGraph {

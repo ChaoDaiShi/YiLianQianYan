@@ -8,8 +8,8 @@ use axum::{
 };
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::db::Workflow;
-use crate::server::AppServer;
 
 // ── Response types ──
 

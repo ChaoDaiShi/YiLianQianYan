@@ -901,7 +901,7 @@ fn subagent_gateway() -> (Arc<SecurityExecutionGateway>, std::path::PathBuf) {
     let db_path =
         std::env::temp_dir().join(format!("yilian-wf-subagent-{}.db", uuid::Uuid::new_v4()));
     let db = Database::new(&db_path).unwrap();
-    let definition = crate::server::DiscoveredSubagent {
+    let definition = crate::app::state::DiscoveredSubagent {
         name: "researcher".to_string(),
         description: "research".to_string(),
         path: ".agents/agents/researcher/AGENT.md".to_string(),

@@ -12,8 +12,8 @@ use super::model::{
     CapabilityProviderKind, CapabilityRisk, CapabilityRuntimeStatus,
 };
 use super::provider::{CapabilityProvider, CapabilityProviderError};
+use crate::app::state::DiscoveredSubagent;
 use crate::db::Database;
-use crate::server::DiscoveredSubagent;
 use crate::tools::skill::DiscoveredSkill;
 
 fn descriptor(

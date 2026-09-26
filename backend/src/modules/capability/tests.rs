@@ -240,8 +240,8 @@ async fn mcp_provider_only_reports_mcp_prefixed_tools() {
 
 #[tokio::test]
 async fn planner_reference_validation_rejects_missing_and_unready() {
-    use crate::task::model::{TaskPlan, TaskPlanExecutor, TaskPlanStep};
-    use crate::task::planner::validate_plan_references;
+    use crate::modules::task::model::{TaskPlan, TaskPlanExecutor, TaskPlanStep};
+    use crate::modules::task::planner::validate_plan_references;
 
     let ready_agent = descriptor("agent.1", CapabilityKind::Agent);
     let disabled_workflow = {
@@ -264,7 +264,7 @@ async fn planner_reference_validation_rejects_missing_and_unready() {
             title: "t".to_string(),
             instruction: "i".to_string(),
             executor: TaskPlanExecutor::Agent {
-                agent_id: crate::task::model::AgentId::new("1").unwrap(),
+                agent_id: crate::modules::task::model::AgentId::new("1").unwrap(),
             },
         }],
     };
@@ -306,7 +306,7 @@ async fn planner_reference_validation_rejects_missing_and_unready() {
 // ============================================================
 
 use crate::modules::capability::CapabilityRuntimeStatus as CStatus;
-use crate::task::planner::{
+use crate::modules::task::planner::{
     build_planner_capabilities, PlannerCapability, MAX_PLANNER_CAPABILITIES,
 };
 
@@ -404,8 +404,8 @@ fn planner_input_excludes_disabled_capability() {
 
 #[test]
 fn plan_reference_validation_still_rejects_stale_capability() {
-    use crate::task::model::{TaskPlan, TaskPlanExecutor, TaskPlanStep};
-    use crate::task::planner::validate_plan_references;
+    use crate::modules::task::model::{TaskPlan, TaskPlanExecutor, TaskPlanStep};
+    use crate::modules::task::planner::validate_plan_references;
 
     let registry = registry_with(vec![ready_descriptor(
         "agent.1",
@@ -420,7 +420,7 @@ fn plan_reference_validation_still_rejects_stale_capability() {
             title: "t".to_string(),
             instruction: "i".to_string(),
             executor: TaskPlanExecutor::Agent {
-                agent_id: crate::task::model::AgentId::new("1").unwrap(),
+                agent_id: crate::modules::task::model::AgentId::new("1").unwrap(),
             },
         }],
     };

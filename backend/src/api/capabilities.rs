@@ -14,10 +14,10 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::app::state::AppServer;
 use crate::modules::capability::{
     CapabilityId, CapabilityKind, CapabilityProviderKind, CapabilityRuntimeStatus,
 };
-use crate::server::AppServer;
 
 #[derive(Deserialize, Default)]
 pub struct CapabilityQuery {

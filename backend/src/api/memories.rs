@@ -8,10 +8,10 @@ use axum::{
 };
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::db::{CreateMemoryRequest, Memory, MemoryQuery, RetrieveQuery, UpdateMemoryRequest};
 use crate::integrations::llm::client::LlmClient;
 use crate::integrations::llm::types::ChatMessage;
-use crate::server::AppServer;
 
 // ── List / Search ──
 
@@ -641,9 +641,9 @@ pub async fn reindex_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::AppServer;
     use crate::db::MessageRow;
     use crate::safety::ControlSession;
-    use crate::server::AppServer;
 
     fn test_server(label: &str) -> (Arc<AppServer>, std::path::PathBuf, String) {
         let (db_path, server) = {

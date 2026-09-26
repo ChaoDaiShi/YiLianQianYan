@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::db::Database;
-use crate::task::model::{Artifact, ArtifactId, ArtifactType, TaskExecutionId, TaskId};
+use crate::modules::task::model::{Artifact, ArtifactId, ArtifactType, TaskExecutionId, TaskId};
 use crate::utils::text::truncate_chars;
 use crate::workspace::WorkspaceId;
 
@@ -261,7 +261,7 @@ impl ArtifactService {
                 execution_id,
                 workspace_id,
             } => {
-                let id = crate::task::NodeExecutionId::new(execution_id)
+                let id = crate::modules::task::NodeExecutionId::new(execution_id)
                     .map_err(|_| ArtifactError::Db("执行标识无效".into()))?;
                 let execution = self
                     .db
@@ -472,7 +472,7 @@ mod materialization_tests {
                 &graph,
                 &execution.id,
                 json!({"ok":true,"result":"Verified result bytes"}),
-                crate::task::validation::ValidationPolicy::StructuredResult,
+                crate::modules::task::validation::ValidationPolicy::StructuredResult,
                 4,
             )
             .unwrap();

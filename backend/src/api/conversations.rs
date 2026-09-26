@@ -9,8 +9,8 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::db::ConversationSummary;
-use crate::server::AppServer;
 
 // ── List ──
 

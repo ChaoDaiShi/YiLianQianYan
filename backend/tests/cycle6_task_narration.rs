@@ -1,7 +1,7 @@
 //! Narrow Cycle 6 v1 tests for deterministic Task narration.
 
 use yilian_backend::interaction::{NarrationRequest, TaskNarrator};
-use yilian_backend::task::{TaskExecutionControlState, TaskStatusProjection};
+use yilian_backend::modules::task::{TaskExecutionControlState, TaskStatusProjection};
 
 #[test]
 fn mixed_task_projection_becomes_natural_product_text_without_runtime_leaks() {

@@ -567,7 +567,7 @@ fn parse_executor(value: &serde_json::Value) -> Result<TaskPlanExecutor, String>
         .unwrap_or_default();
     match kind {
         "agent" => Ok(TaskPlanExecutor::Agent {
-            agent_id: crate::task::model::AgentId::new(
+            agent_id: crate::modules::task::model::AgentId::new(
                 value
                     .get("agent_id")
                     .and_then(|v| v.as_str())

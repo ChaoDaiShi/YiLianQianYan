@@ -710,12 +710,12 @@ fn activity_label(state: &TaskNodeState, node: &super::TaskNode) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::context::{ContextRequest, TaskProjectionProvider};
-    use crate::shared::contracts::SHARED_SCHEMA_VERSION;
-    use crate::task::{
+    use crate::modules::task::{
         GraphRevision, TaskEdge, TaskGraph, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind,
         TaskSupervisor,
     };
+    use crate::shared::context::{ContextRequest, TaskProjectionProvider};
+    use crate::shared::contracts::SHARED_SCHEMA_VERSION;
     use serde_json::json;
 
     fn graph_id(raw: &str) -> TaskGraphId {
@@ -841,7 +841,7 @@ mod tests {
             }),
         )
         .unwrap()
-        .with_retry_policy(crate::task::RetryPolicy { max_attempts: 3 });
+        .with_retry_policy(crate::modules::task::RetryPolicy { max_attempts: 3 });
         let graph = TaskGraph::new(
             graph_id("detail-graph"),
             GraphRevision::initial(),
@@ -898,13 +898,13 @@ mod tests {
         supervisor
             .attach_command_execution(
                 &node_id("focus"),
-                crate::task::TaskCommandExecution {
+                crate::modules::task::TaskCommandExecution {
                     request_id: "request-1".into(),
                     command: "desktop.app.focus".into(),
                     app_id: "app:code.exe".into(),
                     attempt: 1,
                     graph_revision: GraphRevision::initial(),
-                    status: crate::task::TaskCommandExecutionStatus::Dispatching,
+                    status: crate::modules::task::TaskCommandExecutionStatus::Dispatching,
                     approval_id: None,
                 },
             )
@@ -914,7 +914,7 @@ mod tests {
                 &node_id("focus"),
                 "request-1",
                 "app:code.exe",
-                crate::task::TaskCommandExecutionStatus::WaitingApproval,
+                crate::modules::task::TaskCommandExecutionStatus::WaitingApproval,
                 Some("approval-1".into()),
                 3,
             )

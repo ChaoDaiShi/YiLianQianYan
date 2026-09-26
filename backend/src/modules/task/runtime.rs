@@ -1355,7 +1355,7 @@ impl TaskWorldRuntime {
                 ))
             })?;
             if node.command_binding()?.is_some_and(|binding| {
-                binding.command == crate::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND
+                binding.command == crate::modules::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND
             }) {
                 return Err(TaskWorldRuntimeError::CommandRequiresExecution(
                     node_id.to_string(),
@@ -1416,7 +1416,7 @@ impl TaskWorldRuntime {
             let binding = node.command_binding()?.ok_or_else(|| {
                 TaskWorldRuntimeError::CommandRequiresExecution(node_id.to_string())
             })?;
-            if binding.command != crate::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND {
+            if binding.command != crate::modules::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND {
                 return Err(TaskWorldRuntimeError::CommandRequiresExecution(
                     node_id.to_string(),
                 ));
@@ -1460,13 +1460,13 @@ impl TaskWorldRuntime {
                 "graph_revision": graph_revision.value(),
                 "node_id": node_id.as_str(),
                 "request_id": request_id,
-                "command": crate::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND,
+                "command": crate::modules::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND,
                 "app_id": app_id,
             }),
         );
 
         let result = command_router.execute(CommandRequest::new(
-            crate::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND,
+            crate::modules::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND,
             request_id.clone(),
             "task-world",
             json!({"app_id": app_id}),
@@ -1711,7 +1711,7 @@ impl TaskWorldRuntime {
                         node_id,
                         json!({
                             "summary": "desktop.app.focus verified by independent observation",
-                            "command": crate::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND,
+                            "command": crate::modules::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND,
                             "request_id": original_request_id,
                             "status": "verified",
                         }),
@@ -2231,7 +2231,7 @@ fn parse_focus_result(
         ));
     }
     if object.get("command").and_then(Value::as_str)
-        != Some(crate::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND)
+        != Some(crate::modules::task::executor_ref::DESKTOP_APP_FOCUS_COMMAND)
     {
         return Err(TaskWorldRuntimeError::InvalidCommandResult(
             "desktop.app.focus result command does not match the requested command".to_string(),
@@ -2407,12 +2407,12 @@ fn now() -> i64 {
 mod tests {
     use super::*;
     use crate::db::Database;
-    use crate::shared::context::{ContextRequest, TaskProjectionProvider};
-    use crate::shared::event::EventHub;
-    use crate::task::{
+    use crate::modules::task::{
         GraphRevision, TaskCommandExecutionStatus, TaskGraph, TaskGraphId, TaskNode, TaskNodeId,
         TaskNodeKind, TaskNodeStatus,
     };
+    use crate::shared::context::{ContextRequest, TaskProjectionProvider};
+    use crate::shared::event::EventHub;
     use serde_json::json;
     use std::path::Path;
 

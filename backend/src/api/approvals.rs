@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::engine::{self, AgentEvent, RunOutcome};
 use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
+use crate::app::state::{AppServer, LogBuffer};
 use crate::config::types::AppConfig;
 use crate::db::{Database, MessageRow};
 use crate::integrations::llm::client::LlmClient;
@@ -37,7 +38,6 @@ use crate::safety::{
     AuditEventInput, AuditEventType, SecurityExecutionGateway, SecurityExecutionRequest,
     SecuritySubject,
 };
-use crate::server::{AppServer, LogBuffer};
 use crate::tools::registry::ToolRegistry;
 
 #[derive(Debug, Deserialize)]
@@ -403,7 +403,7 @@ fn task_agent_approval_stream(
 
     let stream = async_stream::stream! {
         let gateway = build_workflow_gateway(&server).await;
-        let result = crate::task::resolve_task_agent_approval(
+        let result = crate::modules::task::resolve_task_agent_approval(
             &gateway,
             &server.approval_store,
             &server.db,
@@ -432,7 +432,7 @@ fn task_agent_approval_stream(
 
                 // Report the real persisted task status.
                 let status = task_id.as_ref()
-                    .and_then(|id| crate::task::TaskId::new(id.clone()).ok())
+                    .and_then(|id| crate::modules::task::TaskId::new(id.clone()).ok())
                     .and_then(|id| server.db.get_task(&id).ok().flatten())
                     .map(|t| t.status.to_string())
                     .unwrap_or_else(|| "failed".to_string());
@@ -479,27 +479,28 @@ async fn cancel_task_agent_approval(
         .as_ref()
         .ok_or_else(|| "审批未绑定 Agent 执行".to_string())?;
 
-    let task_id = crate::task::TaskId::new(task_id.clone()).map_err(|e| e.to_string())?;
-    let execution_id =
-        crate::task::TaskExecutionId::new(execution_id.clone()).map_err(|e| e.to_string())?;
-    let agent_execution_id = crate::task::AgentExecutionId::new(agent_execution_id.clone())
+    let task_id = crate::modules::task::TaskId::new(task_id.clone()).map_err(|e| e.to_string())?;
+    let execution_id = crate::modules::task::TaskExecutionId::new(execution_id.clone())
         .map_err(|e| e.to_string())?;
+    let agent_execution_id =
+        crate::modules::task::AgentExecutionId::new(agent_execution_id.clone())
+            .map_err(|e| e.to_string())?;
 
     let now = chrono::Utc::now().timestamp_millis();
     if let Some(mut agent_execution) = server.db.get_agent_execution(&agent_execution_id)? {
-        agent_execution.status = crate::task::AgentExecutionStatus::Cancelled;
+        agent_execution.status = crate::modules::task::AgentExecutionStatus::Cancelled;
         agent_execution.finished_at = Some(now);
         agent_execution.updated_at = now;
         server.db.update_agent_execution(&agent_execution)?;
     }
     if let Some(mut execution) = server.db.get_task_execution(&execution_id)? {
-        execution.status = crate::task::TaskExecutionStatus::Cancelled;
+        execution.status = crate::modules::task::TaskExecutionStatus::Cancelled;
         execution.finished_at = Some(now);
         execution.updated_at = now;
         server.db.update_task_execution(&execution)?;
     }
     if let Some(mut task) = server.db.get_task(&task_id)? {
-        task.status = crate::task::TaskStatus::Cancelled;
+        task.status = crate::modules::task::TaskStatus::Cancelled;
         task.updated_at = now;
         server.db.update_task(&task)?;
     }

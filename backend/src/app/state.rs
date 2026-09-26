@@ -24,6 +24,7 @@ use crate::modules::capability::{
     AgentProvider, BuiltinToolProvider, CapabilityRegistry, McpToolProvider, SkillProvider,
     SubagentProvider, WorkflowProvider,
 };
+use crate::modules::task::{TaskPresenceAdapter, TaskWorldRuntime};
 use crate::modules::voice::{
     GlobalVoiceSessionRuntime, MiniMaxSttProvider, MiniMaxTtsProvider, OpenAiCompatibleSttProvider,
     OpenAiCompatibleTtsProvider, SpeechToTextProvider, TextToSpeechProvider, VoiceDispatchHook,
@@ -37,7 +38,6 @@ use crate::shared::command::CommandRouter;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;
 use crate::shared::resource::ResourceService;
-use crate::task::{TaskPresenceAdapter, TaskWorldRuntime};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
 

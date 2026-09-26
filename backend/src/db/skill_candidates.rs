@@ -2,7 +2,7 @@ use super::{
     migrations::{MigrationOwner, ProductMigrationSpec},
     Database,
 };
-use crate::task::artifact::ArtifactSource;
+use crate::modules::task::artifact::ArtifactSource;
 use serde::{Deserialize, Serialize};
 
 const SKILL_CANDIDATES: ProductMigrationSpec = ProductMigrationSpec::new(1012,"1012_skill_candidates_versions",MigrationOwner::V1TaskWorld,

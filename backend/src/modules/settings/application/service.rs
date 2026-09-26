@@ -1,7 +1,7 @@
 //! Settings read model — the redacted configuration projection returned by
 //! `GET /api/settings`.
 
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 
 use crate::modules::settings::application::secret_lifecycle::{chat_source, embedding_source};
 use crate::modules::settings::domain::readiness::{
@@ -16,7 +16,7 @@ pub(crate) async fn build_redacted_config(server: &AppServer) -> serde_json::Val
     let (embed_src, embed_configured) = embedding_source(&server.secret_resolver, &config).await;
     let (stt_src, stt_configured) = voice_stt_source(&server.secret_resolver, &config).await;
     let (tts_src, tts_configured) = voice_tts_source(&server.secret_resolver, &config).await;
-    let readiness = build_provider_readiness(server, &config).await;
+    let readiness = build_provider_readiness(&server.db, &server.secret_resolver, &config).await;
 
     if let Some(model) = value
         .get_mut("model")

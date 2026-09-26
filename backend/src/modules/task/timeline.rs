@@ -7,7 +7,7 @@
 // ============================================================
 
 use crate::db::Database;
-use crate::task::model::{TaskEvent, TaskEventType, TaskExecutionId, TaskId};
+use crate::modules::task::model::{TaskEvent, TaskEventType, TaskExecutionId, TaskId};
 use crate::workspace::WorkspaceId;
 
 /// Maximum serialized metadata size (chars) for a single timeline event.

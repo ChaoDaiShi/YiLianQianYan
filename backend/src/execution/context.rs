@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::ExecutionError;
-use crate::task::model::{AgentExecutionId, TaskExecutionId, TaskId};
+use crate::modules::task::model::{AgentExecutionId, TaskExecutionId, TaskId};
 
 /// A validated execution identifier.
 ///

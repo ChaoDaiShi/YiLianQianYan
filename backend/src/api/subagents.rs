@@ -1,7 +1,7 @@
 use axum::{extract::State, Json};
 use std::sync::Arc;
 
-use crate::server::{AppServer, DiscoveredSubagent};
+use crate::app::state::{AppServer, DiscoveredSubagent};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PublicSubagentMetadata {
@@ -34,7 +34,7 @@ pub async fn list_subagents(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::DiscoveredSubagent;
+    use crate::app::state::DiscoveredSubagent;
 
     #[test]
     fn public_metadata_hides_instructions_and_absolute_paths() {

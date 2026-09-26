@@ -415,7 +415,7 @@ fn bound_text(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{
+    use crate::modules::task::{
         ExecutionRetryPolicy, ExecutorRef, GraphRevision, NodeContext, NodeExecutionId,
         TaskGraphId, TaskNodeId,
     };

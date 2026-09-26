@@ -232,8 +232,8 @@ fn bounded_text_list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::execution::MAX_NODE_CONTEXT_ITEM_CHARS;
-    use crate::task::{
+    use crate::modules::task::execution::MAX_NODE_CONTEXT_ITEM_CHARS;
+    use crate::modules::task::{
         GraphRevision, TaskEdge, TaskGraph, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind,
     };
     use serde_json::json;
@@ -316,15 +316,16 @@ fn only_bound_ready_resources_enter_context_with_provenance() {
     let root = std::env::temp_dir().join(format!("bound-context-{}", uuid::Uuid::new_v4()));
     let db = crate::db::Database::new(&root.join("test.db")).unwrap();
     let runtime =
-        crate::task::TaskWorldRuntime::new(&db, crate::shared::event::EventHub::new(4)).unwrap();
-    let graph_id = crate::task::TaskGraphId::new("resource-graph").unwrap();
-    let node_id = crate::task::TaskNodeId::new("node").unwrap();
+        crate::modules::task::TaskWorldRuntime::new(&db, crate::shared::event::EventHub::new(4))
+            .unwrap();
+    let graph_id = crate::modules::task::TaskGraphId::new("resource-graph").unwrap();
+    let node_id = crate::modules::task::TaskNodeId::new("node").unwrap();
     let graph = runtime
         .create_graph(
             graph_id.clone(),
-            vec![crate::task::TaskNode::new(
+            vec![crate::modules::task::TaskNode::new(
                 node_id.clone(),
-                crate::task::TaskNodeKind::Work,
+                crate::modules::task::TaskNodeKind::Work,
                 "Resource task",
                 serde_json::json!({"resources":["unbound-context-must-not-enter"]}),
             )

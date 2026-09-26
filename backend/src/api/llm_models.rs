@@ -7,6 +7,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::config::types::ModelConfig;
 use crate::db::{LlmModelInput, LlmModelRow, LlmUsageInput};
 use crate::integrations::llm::client::{LlmClient, LlmError};
@@ -16,7 +17,6 @@ use crate::integrations::secret::{
     llm_model_key_ref, record_secret_event, SecretKind, SecretRef, SecretSource,
 };
 use crate::safety::AuditEventType;
-use crate::server::AppServer;
 
 const MAX_MODELS: usize = 32;
 
