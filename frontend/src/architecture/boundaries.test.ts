@@ -80,4 +80,19 @@ describe("frontend architecture boundaries", () => {
       .filter((path) => !KNOWN_LARGE_FILES.includes(path));
     expect(added).toEqual([]);
   });
+
+  it("keeps the api compatibility surface free of implementations", () => {
+    // `src/api/legacy.ts` is a re-export surface: `api/client.ts` re-exports it
+    // so pre-existing imports keep resolving to the same function objects.
+    // Declaring anything here again would create a second implementation of a
+    // call the domain module already owns, and the two would drift.
+    const legacy = production.find((file) => file.path === "src/api/legacy.ts");
+    expect(legacy, "src/api/legacy.ts must exist").toBeDefined();
+    const declarations = legacy!.source
+      .split("\n")
+      .filter((line) => /^export (?:async function|function|const|let|class|interface)\b/.test(line)
+        || /^export type \w+ =/.test(line))
+      .map((line) => line.trim());
+    expect(declarations).toEqual([]);
+  });
 });
