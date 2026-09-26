@@ -147,8 +147,13 @@ describe("TaskGraph projection boundary", () => {
     const projection = projectTaskGraph(detail);
     const trail = buildExecutionTrail(projection);
 
-    expect(trail.map((item) => item.nodeId)).toEqual(["review", "prepare", "finish"]);
-    expect(trail[0].node).toBe(projection.nodes.find((node) => node.id === "review"));
+    expect(trail.map((item) => item.nodeId)).toEqual(["prepare", "review", "finish"]);
+    expect(trail[0].node).toBe(projection.nodes[0]);
+    projection.nodes[1].status = "running";
+    projection.nodes[1].state.updated_at = 100;
+    expect(buildExecutionTrail(projection).map((item) => item.nodeId)).toEqual(["prepare", "review", "finish"]);
+    projection.nodes[1].state.updated_at = 200;
+    expect(buildExecutionTrail(projection).map((item) => item.nodeId)).toEqual(["prepare", "review", "finish"]);
   });
 
   it("hides collapsed visual-group members without mutating the semantic graph", () => {

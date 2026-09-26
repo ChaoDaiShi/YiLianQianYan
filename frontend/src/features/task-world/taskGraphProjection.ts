@@ -227,9 +227,7 @@ function defaultPosition(index: number) {
 }
 
 export function buildExecutionTrail(projection: TaskGraphProjection): ExecutionTrailItem[] {
-  return projection.nodes
-    .map((node) => ({ nodeId: node.id, node }))
-    .sort((left, right) => right.node.state.updated_at - left.node.state.updated_at);
+  return projection.nodes.map((node) => ({ nodeId: node.id, node }));
 }
 
 export function isTaskWorldEvent(
