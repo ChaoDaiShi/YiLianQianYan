@@ -2,7 +2,8 @@
 
 > **Branch:** `refactor/v1-architecture-foundation`
 > **Base:** `origin/v1/release-work` @ `78f3755`
-> **Status:** **PARTIAL — R0, R1, R2, R3, R4, R5 complete and verified. R6–R8 not started.**
+> **Status:** **PARTIAL — R0–R5 complete, R6 partially complete (inspector and
+> page split; canvas, settings and voice remain), R7 complete, R8 not started.**
 >
 > This is *not* the `r1-final-report.md` the mandate §44 asks for. That document
 > requires the R8 full gate to have passed. This is an honest handoff so the
@@ -23,6 +24,9 @@
 | `ff5a907` | R5a | `refactor(capability): relocate resource and memory skill under modules` |
 | `70f954f` | R5b | `refactor(capability): split resource module into parsers and use cases` |
 | `f18790f` | R5c | `refactor(capability): split memory skill into review lifecycle layers` |
+| `958ffd6` | R5 | `docs(refactor): record R5 progress` |
+| `0456c03` | R6a | `refactor(frontend): split task inspector into sections` |
+| `c7cdde6` | R6b | `refactor(frontend): extract task world page behaviour into hooks` |
 
 Working tree is clean; `main`, `develop`, `v1/release-work`, and `v2` are untouched.
 All commits are pushed to `origin/refactor/v1-architecture-foundation`.
@@ -303,19 +307,80 @@ schedule for removal. Recorded, not silently fixed.
 
 ---
 
-## 9. Remaining work — R6 to R8
+## 9. R6 — what was done (partial)
 
-### R6 — Frontend
+Two of the six hotspots named in mandate §38.
 
-`features/voice/GlobalVoiceHost.tsx` (895), `pages/SettingsPage.tsx` (726),
-`features/task-world/TaskWorldPage.tsx` (368) + `TaskWorldInspector.tsx` (397),
-`index.css`. No visual redesign. `npm run build` must pass.
+**R6a (`0456c03`) — `TaskWorldInspector.tsx` (397) → `inspector/`.**
+A shell (`TaskInspector.tsx`) plus one file per block: Basic, Executor,
+Acceptance, State, Execution, Resource, Artifact, Dependency, Version. The
+shell owns the shared semantic draft and the single form submit; no section
+reaches for the API. Two documented deviations: `AcceptanceSection` is separate
+because the executor fields sit *between* the description and the criteria in
+the existing form, and merging would have reordered them; `StateSection` is
+separate because the markup already carries two distinct headings.
 
-### R7 — Architecture enforcement
+**R6b (`c7cdde6`) — `TaskWorldPage.tsx` (368) → `hooks/`.**
+`useTaskGraph`, `useCanvasView`, `useTaskEvents`, `useTaskReview`,
+`useTaskCommands`. The page is now 203 lines of composition. Two faithfulness
+notes worth keeping: focus repair is delegated as `onNodesLoaded(nodeIds)` and
+run inline so it still happens before paint (a `useEffect` would flash the
+previous selection), and that callback is memoised with `[]` deps so
+`refreshDetail` keeps a stable identity — an inline arrow re-triggers the
+reload effect into a fetch loop. Effect order and dependency arrays are
+transcribed as written.
 
-`docs/architecture/{module-boundaries,dependency-rules,ownership,current-to-target-map}.md`
-plus a lightweight boundary check. Remember `docs/*` is gitignored — use
-`git add -f`.
+**Contract tests migrated, not weakened.** These are source-text (`?raw`)
+assertions, so a split invalidates their import paths. `taskCorePaths.test.tsx`
+now renders `inspector/TaskInspector`; `taskWorldCanvas.test.ts` reads the page
+shell plus all five hooks, and the inspector shell plus all sections, so every
+string it pinned is still *required to exist on the same surface*.
+
+### R6 — what was NOT done
+
+`TaskWorldCanvas.tsx`, `pages/SettingsPage.tsx` (726) and
+`features/voice/GlobalVoiceHost.tsx` (895), plus the `index.css` split.
+`index.css` is analysed in `docs/architecture/current-to-target-map.md`: a
+feature-grouped split is not order-preserving for this file, and the experiment
+that proved it is recorded there with its built-CSS md5. The canvas, settings
+and voice splits are ordinary work with no known blocker — they were not
+reached before R7/R8.
+
+## 10. R7 — what was done
+
+Four documents under `docs/architecture/` (`docs/*` is gitignored — commit with
+`git add -f`):
+
+- `module-boundaries.md` — module shape, what each module owns, public
+  entrypoints, and the list of compatibility facades still to drain.
+- `dependency-rules.md` — the allowed direction on both sides, the numbered
+  rules, which are machine-checked and which are review obligations.
+- `ownership.md` — per module: purpose, owns, may depend on, must not depend
+  on, entrypoints, persistence, invariants. Plus the Protected Kernel list.
+- `current-to-target-map.md` — mandate §4/§17 target vs. reality, with the
+  `index.css` analysis.
+
+Two lightweight checks, no new dependency:
+
+| Check | Runs under | Covers |
+|---|---|---|
+| `frontend/src/architecture/boundaries.test.ts` | `npm test` | primitives stay dumb; features stay independent; Tauri reached only dynamically outside `surfaces/desktop`; no new file >600 lines |
+| `backend/tests/architecture_boundaries.rs` | `cargo test` | no transport in `modules/*/domain`; no v2 namespace in v1; no new file >600 lines |
+
+All four frontend rules hold in the codebase today, so they are errors, not
+warnings. The 600-line baselines (39 backend paths, 6 frontend paths) are
+recorded debt: a file may leave the list by being split; nothing may join it.
+
+## 11. Remaining work — R6 (rest) and R8
+
+### R6 remainder — Frontend
+
+`features/task-world/TaskWorldCanvas.tsx` (React Flow host, node component,
+projection sync, viewport, drag persistence, selection);
+`pages/SettingsPage.tsx` (726) → section components; and
+`features/voice/GlobalVoiceHost.tsx` (895). All three have the same shape of
+work as R6a/R6b, including the same `?raw` contract-test migration. `index.css`
+is separately deferred (see `current-to-target-map.md`).
 
 ### R8 — Full gate
 
@@ -331,7 +396,7 @@ consider warming it before R8 rather than during it.
 
 ---
 
-## 10. Recorded discrepancies with the mandate
+## 12. Recorded discrepancies with the mandate
 
 | Mandate claim | Reality at base `78f3755` |
 |---|---|
@@ -342,21 +407,31 @@ consider warming it before R8 rather than during it.
 
 ---
 
-## 11. Compatibility conclusion (R0–R5)
+## 13. Compatibility conclusion (R0–R7)
 
 | Check | Result |
 |---|---|
 | Database compatible | **YES** — no schema change, no migration added or renumbered |
 | REST compatible | **YES** — all 178 route paths, methods and handlers unchanged; verified by the passing API test targets |
-| Frontend route compatible | **YES** — no frontend change in R1–R5 |
+| Frontend route compatible | **YES** — no route path or page contract changed in R1–R7 |
 | Secret compatible | **YES** — rc.2 KEEP/REPLACE/DELETE semantics verbatim; pinning tests pass |
 | Existing user data compatible | **YES** — no persistence change |
 | v2 touched | **NO** |
 
-Refactor Gate for R0–R5: **PASS**. The mandate's overall Gate cannot be
+Refactor Gate for R0–R7: **PASS**. The mandate's overall Gate cannot be
 evaluated until R8.
 
 R3, R4 and R5 changed no route path, no response shape, no schema and no
-frontend file, so the R2 conclusions above still hold. All three are
-relocation-and-facade stages: every public surface is reached through the same
-paths as before the move.
+frontend file, so the R2 conclusions above still hold — they are
+relocation-and-facade stages.
+
+R6a/R6b are the first stages to move frontend files. They changed no route path
+and no rendered contract: the inspector and page tests still pass, including
+`taskCorePaths.test.tsx`, which *renders* the inspector rather than only
+reading it. The frontend suite went 90 files / 422 tests → 91 / 426, the
+increase being R7's four boundary tests; no test was deleted or skipped. The
+built stylesheet md5 is unchanged at `5889431e` across all of R6, which is a
+direct check that no styling moved.
+
+R7 added documentation and two test files. It changed no production code on
+either side.
