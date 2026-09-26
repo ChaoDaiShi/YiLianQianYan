@@ -850,19 +850,6 @@ export async function cancelWorkflowApprovalAction(approvalId: string) {
 // Workspace / Task / Multi-Agent Runtime (v0.6)
 // ============================================================
 
-export type WorkspaceStatus = "active" | "archived";
-
-export interface Workspace {
-  id: string;
-  name: string;
-  description: string;
-  root_path?: string | null;
-  status: WorkspaceStatus;
-  created_at: number;
-  updated_at: number;
-  active_tasks?: number;
-}
-
 export type TaskStatus =
   | "draft"
   | "ready"
@@ -990,35 +977,15 @@ export interface AgentTeam {
   updated_at: number;
 }
 
-// ── Workspaces ──
-
-export async function listWorkspaces() {
-  const res = await requestResult<{ workspaces: Workspace[] }>("GET", "/api/workspaces");
-  return res.ok ? ({ ok: true, data: res.data.workspaces } as const) : res;
-}
-
-export async function createWorkspace(data: {
-  name: string;
-  description?: string;
-  root_path?: string;
-}) {
-  return requestResult<Workspace>("POST", "/api/workspaces", data);
-}
-
-export async function getWorkspace(id: string) {
-  return requestResult<Workspace>("GET", `/api/workspaces/${id}`);
-}
-
-export async function updateWorkspace(
-  id: string,
-  data: { name?: string; description?: string; root_path?: string }
-) {
-  return requestResult<Workspace>("PUT", `/api/workspaces/${id}`, data);
-}
-
-export async function deleteWorkspace(id: string) {
-  return requestResult<{ status: string }>("DELETE", `/api/workspaces/${id}`);
-}
+// ── Workspaces ── (implementation in `./workspaces`)
+export {
+  listWorkspaces,
+  createWorkspace,
+  getWorkspace,
+  updateWorkspace,
+  deleteWorkspace,
+} from "./workspaces";
+export type { Workspace, WorkspaceStatus } from "./workspaces";
 
 // ── Tasks ──
 
