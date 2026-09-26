@@ -144,7 +144,42 @@ work around the environment: `Cargo.toml`'s `codegen-units = 1` and
 
 ## 7. Gate results
 
-<!-- GATE_RESULTS -->
+Run once, end to end, in `E:/cargo-target/yilian/arch-r2` (cold — this target
+dir was created for R2, so the numbers are from a clean build, not a warm
+incremental one).
+
+**Rust — 21 test binaries, 988 passed, 0 failed.**
+
+| Binary | Tests |
+|---|---|
+| `yilian-backend` lib | 892 |
+| `yi-lian-qian-yan` main | 5 |
+| `architecture_boundaries` | 3 |
+| `canvas_view` | 2 |
+| `cycle6_contracts` | 5 |
+| `cycle6_conversation_anchor` | 5 |
+| `cycle6_interaction_router` | 6 |
+| `cycle6_interaction_safety` | 8 |
+| `cycle6_minimax_stt` | 10 |
+| `cycle6_task_commands` | 9 |
+| `cycle6_task_narration` | 2 |
+| `cycle6_voice_api` | 7 |
+| `cycle6_voice_provider` | 7 |
+| `cycle6_voice_runtime` | 8 |
+| `runtime_smoke` | 1 |
+| `security_execution` | 10 |
+| `shared_foundation` | 1 |
+| `task_canvas_api` | 1 |
+| `task_canvas_persistence` | 5 |
+| `task_harness_api` | 1 |
+| `yilian-server` main | 0 (binary target, no tests) |
+
+**988 is the same total R1's gate produced** (983 backend + 5 Tauri). No test was
+lost, added, weakened or filtered out across R2 — the count is the check that the
+S1 test-file split and the S6 drain did not drop coverage.
+
+**Frontend — 93 files / 445 tests passed, build succeeded.** 445 is one more than
+the R1 baseline of 444: the new `legacy.ts` boundary check.
 
 ## 8. Known limitations
 
