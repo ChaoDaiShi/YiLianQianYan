@@ -10,6 +10,7 @@ pub mod capability;
 pub mod config;
 pub mod db;
 pub mod execution;
+pub mod integrations;
 pub mod interaction;
 pub mod isolation;
 pub mod llm;

@@ -11,6 +11,7 @@ pub mod cache;
 pub mod header_schema;
 pub mod http;
 pub mod jsonrpc;
+pub mod legacy_stdio;
 pub mod manager;
 pub mod model;
 pub mod prompts;

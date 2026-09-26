@@ -61,12 +61,23 @@ fn mock_stdio_server() {
     }
 }
 
+/// libtest filter for the self-spawned mock server.
+///
+/// Derived from `module_path!()` rather than hardcoded so it survives future
+/// module moves. libtest test names omit the leading crate segment, so the
+/// first path component is dropped.
+fn mock_server_test_filter() -> String {
+    let module = module_path!();
+    let module = module.split_once("::").map_or(module, |(_, rest)| rest);
+    format!("{module}::mock_stdio_server")
+}
+
 fn stdio_config(exe: &std::path::Path) -> McpTransportConfig {
     McpTransportConfig::Stdio {
         command: exe.to_string_lossy().to_string(),
         args: vec![
             "--exact".to_string(),
-            "mcp_runtime::stdio_tests::mock_stdio_server".to_string(),
+            mock_server_test_filter(),
             "--nocapture".to_string(),
         ],
         env: [("YILIAN_MOCK_MCP".to_string(), "1".to_string())]
