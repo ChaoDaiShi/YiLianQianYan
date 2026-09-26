@@ -1,13 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   dispatchVoiceTurn,
   endVoiceSession,
@@ -15,13 +6,28 @@ import {
   getVoiceSession,
   interruptVoiceSession,
   startVoiceSession,
-  type ConversationalAnchor,
-  type FocusedSurface,
   type GlobalVoiceSession,
   type PresenceSnapshot,
   type VoiceRuntimeSnapshot,
-  type VoiceSessionState,
 } from "../../api/voice";
+import { GlobalVoiceContextBridge, mergeVoiceContext } from "./context/VoiceContext";
+import {
+  EMPTY_PRESENCE,
+  contextFromSession,
+  contextMatchesSession,
+  isFinalTranscriptForSession,
+  nextConversationRefresh,
+  normalizeSnapshot,
+  snapshotWithSession,
+  transcriptFromTurn,
+} from "./model/projection";
+import type {
+  ConversationRefreshSignal,
+  GlobalVoiceContextBridgeValue,
+  GlobalVoiceContextPatch,
+  GlobalVoiceContextSnapshot,
+  GlobalVoiceHostProps,
+} from "./model/types";
 import { useSpeechPlayback, cleanupVoiceSession } from "./useSpeechPlayback";
 import { useVoiceCapture, type FinalVoiceTranscript } from "./useVoiceCapture";
 import { runVoiceContinuation } from "./voiceContinuation";
@@ -32,222 +38,24 @@ import { type ChatVoiceControls } from "./ChatVoiceInput";
 import { GlobalVoiceLeaf, type GlobalVoiceProductState } from "./GlobalVoiceLeaf";
 import "./globalVoice.css";
 
-export interface GlobalVoiceHostProps {
-  children: ReactNode;
-  /** Preview data keeps the host deterministic in focused UI tests. */
-  initialSnapshot?: VoiceRuntimeSnapshot | null;
-  initialPresence?: PresenceSnapshot | null;
-  initialExpanded?: boolean;
-  /** Route/surface publishers use this thin bridge to update the active voice context. */
-  contextPatch?: GlobalVoiceContextPatch;
-}
-
-export interface GlobalVoiceContextSnapshot {
-  focused_surface: FocusedSurface;
-  conversational_anchor: ConversationalAnchor | null;
-  active_task: string | null;
-}
-
-export type GlobalVoiceContextPatch = Partial<GlobalVoiceContextSnapshot> & {
-  /** Only conversation lifecycle publishers may explicitly clear the anchor. */
-  anchor_action?: "replace";
-};
-
-export interface ConversationRefreshSignal {
-  conversation_id: string;
-  revision: number;
-}
-
-interface GlobalVoiceContextBridgeValue {
-  context: GlobalVoiceContextSnapshot;
-  conversationRefresh: ConversationRefreshSignal | null;
-  session: GlobalVoiceSession | null;
-  updateContext: (patch: GlobalVoiceContextPatch) => void;
-  chatVoiceControls: ChatVoiceControls | null;
-  requestGlobalVoiceSession: () => void;
-  speakAssistantMessage: (text: string) => void;
-}
-
-const GlobalVoiceContextBridge = createContext<GlobalVoiceContextBridgeValue | null>(null);
-
-export function useGlobalVoiceContext(): GlobalVoiceContextBridgeValue {
-  const value = useContext(GlobalVoiceContextBridge);
-  if (!value) {
-    throw new Error("useGlobalVoiceContext must be used inside GlobalVoiceHost");
-  }
-  return value;
-}
-
-export function mergeVoiceContext(
-  current: GlobalVoiceContextSnapshot,
-  patch: GlobalVoiceContextPatch,
-): GlobalVoiceContextSnapshot {
-  const next = { ...current };
-  for (const key of [
-    "focused_surface",
-    "conversational_anchor",
-    "active_task",
-  ] as const) {
-    if (key === "conversational_anchor" && patch[key] === null && patch.anchor_action !== "replace") continue;
-    if (patch[key] !== undefined) next[key] = patch[key] as never;
-  }
-  return next;
-}
-
-export function nextConversationRefresh(
-  current: ConversationRefreshSignal | null,
-  conversationId: string,
-): ConversationRefreshSignal {
-  const conversation_id = conversationId.trim();
-  if (!conversation_id) throw new Error("conversation identity must not be empty");
-  return {
-    conversation_id,
-    revision: current?.conversation_id === conversation_id ? current.revision + 1 : 1,
-  };
-}
-
-export type VoiceSurfaceHostMode = "standalone" | "desktop-skeleton";
-
-export function resolveVoiceContextForRoute(
-  pathname: string,
-  mode: VoiceSurfaceHostMode,
-): GlobalVoiceContextPatch {
-  if (mode === "desktop-skeleton") return { focused_surface: "workspace" };
-  if (pathname === "/chat" || pathname.startsWith("/chat/")) {
-    return {
-      focused_surface: "conversation",
-    };
-  }
-  if (
-    pathname === "/tasks" ||
-    pathname === "/task-world" ||
-    pathname.startsWith("/task-world/")
-  ) {
-    return {
-      focused_surface: "task_canvas",
-    };
-  }
-  if (pathname === "/memory" || pathname.startsWith("/memory/")) {
-    return {
-      focused_surface: "memory",
-    };
-  }
-  if (pathname === "/capabilities" || pathname.startsWith("/capabilities/")) {
-    return {
-      focused_surface: "capability_center",
-    };
-  }
-  if (pathname === "/system" || pathname === "/logs" || pathname === "/settings") {
-    return {
-      focused_surface: "system",
-    };
-  }
-  return {
-    focused_surface: "workspace",
-  };
-}
-
-const EMPTY_PRESENCE: PresenceSnapshot = {
-  activity: "idle",
-  interaction: "none",
-  attention: "none",
-  source: "global-voice-runtime",
-  updated_at: 0,
-};
-
-export function getVoiceSessionKey(snapshot: VoiceRuntimeSnapshot | null): string {
-  const session = snapshot?.session;
-  return session ? `${session.voice_session_id}:${session.generation}` : "voice:none";
-}
-
-export function isFinalTranscriptForSession(
-  result: FinalVoiceTranscript,
-  session: GlobalVoiceSession | null,
-): boolean {
-  return Boolean(
-    session &&
-      session.voice_session_id === result.sessionId &&
-      session.generation === result.generation,
-  );
-}
-
-export function voiceStatusLabel(
-  status: VoiceSessionState | "acquiring" | "transcribing" | "playing" | "paused" | "error" | "idle",
-): string {
-  switch (status) {
-    case "listening":
-      return "正在听取";
-    case "processing":
-    case "transcribing":
-      return "正在处理";
-    case "speaking":
-    case "playing":
-      return "正在播报";
-    case "acquiring":
-      return "正在准备麦克风";
-    case "paused":
-      return "播报已暂停";
-    case "interrupted":
-      return "已打断";
-    case "error":
-      return "语音错误";
-    case "ended":
-      return "会话已结束";
-    case "stopped":
-      return "已停止";
-    case "cancelled":
-      return "已取消";
-    case "idle":
-    default:
-      return "未启动";
-  }
-}
-
-function normalizeSnapshot(value: VoiceRuntimeSnapshot | null): VoiceRuntimeSnapshot | null {
-  if (!value) return null;
-  const candidate = value as unknown as { snapshot?: VoiceRuntimeSnapshot };
-  return candidate.snapshot ?? value;
-}
-
-function contextFromSession(session: GlobalVoiceSession | null): GlobalVoiceContextSnapshot {
-  return {
-    focused_surface: session?.focused_surface ?? "conversation",
-    conversational_anchor: session?.conversational_anchor ?? null,
-    active_task: session?.active_task ?? null,
-  };
-}
-
-function contextMatchesSession(
-  context: GlobalVoiceContextSnapshot,
-  session: GlobalVoiceSession,
-): boolean {
-  return (
-    context.focused_surface === session.focused_surface &&
-    context.active_task === (session.active_task ?? null) &&
-    context.conversational_anchor?.conversation_id === session.conversational_anchor?.conversation_id &&
-    context.conversational_anchor?.title === session.conversational_anchor?.title &&
-    context.conversational_anchor?.updated_at === session.conversational_anchor?.updated_at
-  );
-}
-
-function snapshotWithSession(
-  previous: VoiceRuntimeSnapshot | null,
-  session: GlobalVoiceSession,
-): VoiceRuntimeSnapshot {
-  return {
-    session,
-    lease: null,
-    partial_transcript: null,
-    final_transcript: previous?.final_transcript ?? null,
-    turns: previous?.turns ?? [],
-    presence: previous?.presence ?? EMPTY_PRESENCE,
-  };
-}
-
-function transcriptFromTurn(snapshot: VoiceRuntimeSnapshot | null): string {
-  const lastTurn = snapshot?.turns[snapshot.turns.length - 1];
-  return snapshot?.final_transcript ?? lastTurn?.final_transcript ?? "";
-}
+// `./GlobalVoiceHost` stays the module's public entry. The context bridge,
+// the pure projections and the route policy now live in `context/` and
+// `model/`; they are re-exported here so every existing import keeps working.
+export {
+  getVoiceSessionKey,
+  isFinalTranscriptForSession,
+  nextConversationRefresh,
+  voiceStatusLabel,
+} from "./model/projection";
+export { mergeVoiceContext, useGlobalVoiceContext } from "./context/VoiceContext";
+export { resolveVoiceContextForRoute } from "./model/routing";
+export type {
+  ConversationRefreshSignal,
+  GlobalVoiceContextPatch,
+  GlobalVoiceContextSnapshot,
+  GlobalVoiceHostProps,
+  VoiceSurfaceHostMode,
+} from "./model/types";
 
 export default function GlobalVoiceHost({
   children,
