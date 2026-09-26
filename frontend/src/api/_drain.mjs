@@ -44,13 +44,21 @@ if (values.length === 0 && types.length === 0) {
 // ── exact spans, with any leading comment, straight from the parser ──
 const source = ts.createSourceFile(legacyPath, legacy, ts.ScriptTarget.Latest, true);
 const wanted = new Set([...values, ...types]);
+// A `const` declaration carries its name on the declaration, not the statement.
+const declaredNames = (statement) =>
+  ts.isVariableStatement(statement)
+    ? statement.declarationList.declarations
+        .map((d) => (ts.isIdentifier(d.name) ? d.name.getText(source) : null))
+        .filter(Boolean)
+    : [statement.name?.getText(source)].filter(Boolean);
+
 const spans = [];
 for (const statement of source.statements) {
-  const name = statement.name?.getText(source);
-  if (!name || !wanted.has(name)) continue;
+  const names = declaredNames(statement).filter((n) => wanted.has(n));
+  if (names.length === 0) continue;
   const comments = ts.getLeadingCommentRanges(legacy, statement.getFullStart()) ?? [];
   const start = comments.length ? comments[0].pos : statement.getStart(source);
-  spans.push({ name, start, end: statement.getEnd() });
+  for (const name of names) spans.push({ name, start, end: statement.getEnd() });
 }
 
 const missing = [...wanted].filter((n) => !spans.some((s) => s.name === n));
