@@ -2,10 +2,18 @@
 //!
 //! These are source-text checks, not a type system. They exist to catch the
 //! regressions a reviewer would otherwise have to remember: a domain layer
-//! reaching for a transport, v1 code reaching into a v2 namespace, or a new
-//! file quietly crossing the line budget.
+//! reaching for a transport, v1 code reaching into a v2 namespace, a file
+//! quietly crossing the line budget, or a compatibility shim growing back.
 //!
-//! See `docs/architecture/dependency-rules.md`.
+//! Deliberately no AST crate: `syn` would be a large dependency for checks that
+//! only need to read text, and these run in the same build as the crate they
+//! police. The cost is that they can be fooled by a string literal — the
+//! `no_removed_facade_paths` check in particular would false-positive on a
+//! literal containing `crate::task::`. No such literal exists; if one is ever
+//! needed, exempt it by path rather than loosening the check.
+//!
+//! See `docs/architecture/dependency-rules.md` and
+//! `docs/architecture/compatibility-facades.md`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -149,5 +157,131 @@ fn no_new_files_above_the_line_budget() {
         "new files above the {LINE_BUDGET}-line budget — split them, or record them \
          deliberately and say why:\n{}",
         added.join("\n")
+    );
+}
+
+/// The twelve crate-root compatibility shims R2 removed. They are *internal
+/// implementation* by `docs/architecture/public-api-policy.md`: re-adding one
+/// would create a second name for an item another module already owns, and the
+/// two would drift. The `pub mod` half of this list matters most — a shim can be
+/// re-added as a module declaration before any call site reaches for it.
+const REMOVED_FACADES: &[&str] = &[
+    "capability",
+    "llm",
+    "mcp",
+    "mcp_runtime",
+    "memory_skill",
+    "resource_input",
+    "secret",
+    "server",
+    "skill_management",
+    "task",
+    "voice",
+    "workflow",
+];
+
+#[test]
+fn no_removed_facade_paths() {
+    let mut violations = Vec::new();
+
+    for (path, source) in rust_sources() {
+        for facade in REMOVED_FACADES {
+            // Anchored by the leading `crate::` / `yilian_backend::` so a nested
+            // path such as `crate::modules::task::` or `crate::integrations::mcp::`
+            // cannot match.
+            for prefix in ["crate::", "yilian_backend::"] {
+                let needle = format!("{prefix}{facade}::");
+                if let Some(line) = source.lines().position(|l| l.contains(&needle)) {
+                    violations.push(format!("{path}:{} mentions `{needle}`", line + 1));
+                }
+            }
+        }
+    }
+
+    // A shim is a module declaration plus a file; catch the declaration in
+    // `lib.rs`, because a dangling `pub mod task;` with no call sites yet is
+    // exactly how the twelve came back the first time.
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = fs::read_to_string(manifest.join("src/lib.rs")).unwrap_or_default();
+    for facade in REMOVED_FACADES {
+        let declaration = format!("pub mod {facade};");
+        if lib.lines().any(|l| l.trim() == declaration) {
+            violations.push(format!("src/lib.rs declares `{declaration}`"));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "a removed compatibility facade is referenced again. The owning module is \
+         listed in docs/architecture/compatibility-facades.md — point the call site \
+         there instead of restoring the shim:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Cross-module glob re-exports that are deliberate.
+///
+/// The house pattern is a module's `mod.rs` re-exporting its own children
+/// (`pub use model::*;`) — that is a module publishing its surface, not a
+/// boundary crossing, and it is not what this check reads.
+///
+/// What it reads is a glob whose path is *absolute* (`pub use crate::…::*`),
+/// which reaches into another module's internals. Those are allowed only when
+/// the path is listed here, and every entry needs a reason.
+const ALLOWED_CROSS_MODULE_GLOBS: &[&str] = &[
+    // Compatibility facades for the pre-R1 `crate::api::task_world` and
+    // `crate::api::workflow_runtime` paths, consumed by `app/router.rs`. Both
+    // re-export another module's own `api` surface, which that module designs
+    // as public — so this is a name-preserving move, not an internals grab.
+    "crate::modules::task::api::*",
+    "crate::modules::workflow::api::*",
+];
+
+#[test]
+fn cross_module_globs_are_allowlisted() {
+    let mut violations = Vec::new();
+
+    for (path, source) in rust_sources() {
+        for line in source.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("pub use ") else {
+                continue;
+            };
+            // The line is `pub use crate::…::*;` — strip the terminator first,
+            // then the glob. Stripping `*` first never matches, because the `;`
+            // is in the way.
+            let rest = rest.trim_end_matches(';').trim();
+            let Some(target) = rest.strip_suffix("::*") else {
+                continue;
+            };
+            let target = target.trim();
+            let absolute = target.starts_with("crate::") || target.starts_with("yilian_backend::");
+            if !absolute {
+                continue;
+            }
+            let glob = format!("{target}::*");
+            if !ALLOWED_CROSS_MODULE_GLOBS.contains(&glob.as_str()) {
+                violations.push(format!("{path}: `pub use {glob};`"));
+            }
+        }
+    }
+
+    // `lib.rs` is the crate's documented surface: it re-exports by name, never
+    // by glob, so `public-api-policy.md` layer B stays explicit.
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = fs::read_to_string(manifest.join("src/lib.rs")).unwrap_or_default();
+    for line in lib.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("pub use ") && trimmed.ends_with("::*;") {
+            violations.push(format!("src/lib.rs: `{trimmed}`"));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "cross-module glob re-export, which re-exports another module's internals. \
+         Either re-export the named items, or add the path to \
+         ALLOWED_CROSS_MODULE_GLOBS with a reason:\n{}",
+        violations.join("\n")
     );
 }
