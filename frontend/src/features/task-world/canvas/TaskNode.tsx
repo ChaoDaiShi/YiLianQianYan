@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import {
   executionStatusLabel,
@@ -12,7 +13,7 @@ import {
  * The `data-*` attributes are the contract the canvas styling and the
  * execution-status assertions read.
  */
-export default function TaskNode({ data, selected }: NodeProps<TaskGraphCanvasNode>) {
+function TaskNode({ data, selected }: NodeProps<TaskGraphCanvasNode>) {
   return (
     <div
       className={`task-world-node ${selected ? "is-selected" : ""}`}
@@ -28,16 +29,16 @@ export default function TaskNode({ data, selected }: NodeProps<TaskGraphCanvasNo
       </div>
       <div className="task-world-node-title">{data.task.title}</div>
       <div className="task-world-node-summary">{data.task.instruction_summary}</div>
-      {data.task.latest_execution && (
-        <span className="task-world-execution-attempt">
-          第 {data.task.latest_execution.attempt} 次尝试
-        </span>
-      )}
-      {data.isRunning && <span className="task-world-running">Running</span>}
+      <div className="task-world-node-execution">
+        <span>{data.task.latest_execution ? `第 ${data.task.latest_execution.attempt} 次尝试` : "\u00a0"}</span>
+        <span>{data.isRunning ? "Running" : "\u00a0"}</span>
+      </div>
       <Handle type="source" position={Position.Right} className="task-world-handle" />
     </div>
   );
 }
+
+export default memo(TaskNode);
 
 function statusLabel(status: TaskGraphCanvasNode["data"]["status"]): string {
   const labels: Record<TaskGraphCanvasNode["data"]["status"], string> = {

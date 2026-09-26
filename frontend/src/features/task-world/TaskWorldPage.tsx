@@ -17,9 +17,8 @@ import {
   type TaskGraphNodeDefinition,
 } from "../../api/taskWorld";
 import { getProviderReadiness } from "../../api/providerConnection";
-import { Button, EmptyState, ErrorState, PageHeader, Panel, Skeleton } from "../../components/ui";
+import { Button, EmptyState, ErrorState, PageHeader, Skeleton } from "../../components/ui";
 import { useGlobalVoiceContext } from "../voice/GlobalVoiceHost";
-import TaskExecutionTrail from "./TaskExecutionTrail";
 import TaskWorldCanvas from "./canvas/TaskWorldCanvas";
 import TaskInspector from "./inspector/TaskInspector";
 import { useCanvasView } from "./hooks/useCanvasView";
@@ -27,7 +26,7 @@ import { useTaskCommands } from "./hooks/useTaskCommands";
 import { useTaskWorldEvents } from "./hooks/useTaskEvents";
 import { useTaskGraph } from "./hooks/useTaskGraph";
 import { useTaskGraphReview } from "./hooks/useTaskReview";
-import { buildAutoLayout, isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
+import { isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
 
 /**
  * Task World page.
@@ -123,7 +122,6 @@ export default function TaskWorldPage() {
       {eventWarning && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]" role="status">实时事件暂不可用：{eventWarning}</p>}
       {modelUnavailable && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]">还没有配置可用的模型服务。 <button type="button" className="underline" onClick={() => navigate("/settings?section=model")}>前往模型设置</button></p>}
       {view && <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-3 py-2" aria-label="画布视图工具">
-        <Button size="sm" variant="secondary" disabled={saving} onClick={() => updateLayouts(buildAutoLayout(projection))}>自动布局</Button>
         <Button size="sm" variant="secondary" disabled={saving || view.selection.filter((nodeId) => !view.groups.some((group) => group.node_ids.includes(nodeId))).length < 2} onClick={createVisualGroup}>创建分组</Button>
         <Button size="sm" variant="secondary" disabled={reviewBusy} onClick={() => void runGraphReview()}>{reviewBusy ? "审查中…" : "AI 审查"}</Button>
         {view.groups.map((group) => <span key={group.id} className="inline-flex items-center gap-1 rounded-full border border-[var(--border-soft)] px-2 py-1 text-xs">
@@ -148,8 +146,6 @@ export default function TaskWorldPage() {
         </div>}
       </section>}
       <div className="task-world-layout min-h-0 flex-1 px-4 pb-4 pt-3">
-        <TaskExecutionTrail projection={projection} focusedNodeId={focusedNodeId} onFocus={setFocusedNodeId} />
-        <Panel padding={false} className="min-h-0 overflow-hidden">
           {view ? <TaskWorldCanvas
             projection={projection}
             view={view}
@@ -163,7 +159,6 @@ export default function TaskWorldPage() {
             onDeleteEdges={(edges) => { const edge = edges[0]; if (edge) void mutate(() => deleteTaskEdge(graphId, edge.source, edge.target, projection.revision)); }}
             semanticLocked={graphLocked}
           /> : <EmptyState title="画布视图不可用" description="真实图已加载，但视觉状态尚未就绪。" className="py-20" />}
-        </Panel>
         <TaskInspector
           graphId={graphId}
           node={selectedNode}

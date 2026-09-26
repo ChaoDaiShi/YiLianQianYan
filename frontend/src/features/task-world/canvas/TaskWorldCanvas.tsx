@@ -5,6 +5,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel as FlowPanel,
   ReactFlow,
   ReactFlowProvider,
   SelectionMode,
@@ -17,13 +18,16 @@ import {
 import "@xyflow/react/dist/style.css";
 import type { CanvasNodeLayout, CanvasViewport, CanvasView } from "../../../api/taskWorld";
 import {
-  toReactFlowModel,
+  buildAutoLayout,
   type TaskGraphCanvasEdge,
   type TaskGraphCanvasNode,
   type TaskGraphProjection,
 } from "../taskGraphProjection";
 import TaskNode from "./TaskNode";
 import { reconcileCanvasNodes } from "./model/reconcileCanvasNodes";
+import { canvasCameraCommand, initialCanvasViewport, type CanvasCameraEvent } from "./model/canvasViewport";
+import TaskExecutionTrail from "../TaskExecutionTrail";
+import { Button, Panel } from "../../../components/ui";
 
 interface TaskWorldCanvasProps {
   projection: TaskGraphProjection;
@@ -41,7 +45,7 @@ interface TaskWorldCanvasProps {
 
 export default function TaskWorldCanvas(props: TaskWorldCanvasProps) {
   return (
-    <ReactFlowProvider>
+    <ReactFlowProvider key={props.projection.graphId}>
       <TaskWorldCanvasSurface {...props} />
     </ReactFlowProvider>
   );
@@ -60,27 +64,48 @@ function TaskWorldCanvasSurface({
   onDeleteEdges,
   semanticLocked = false,
 }: TaskWorldCanvasProps) {
-  const model = useMemo(
-    () => toReactFlowModel(projection, view, focusedNodeId),
-    [focusedNodeId, projection, view],
-  );
+  const incomingEdges = useMemo(() => {
+    const hidden = new Set(view?.groups.filter((group) => group.collapsed).flatMap((group) => group.node_ids));
+    return projection.edges.map((edge) => ({
+      id: `${edge.from}->${edge.to}`, source: edge.from, target: edge.to,
+      type: "smoothstep", hidden: hidden.has(edge.from) || hidden.has(edge.to),
+    }));
+  }, [projection.edges, view?.groups]);
   const [nodes, setNodes] = useState<TaskGraphCanvasNode[]>(() => reconcileCanvasNodes([], projection, view, { focusedNodeId }));
-  const [edges, setEdges] = useState<TaskGraphCanvasEdge[]>(model.edges);
-  const { fitView } = useReactFlow<TaskGraphCanvasNode, TaskGraphCanvasEdge>();
+  const [edges, setEdges] = useState<TaskGraphCanvasEdge[]>(incomingEdges);
+  const [initialViewport] = useState(() => initialCanvasViewport(view?.viewport));
+  const { fitView, zoomTo, getNode } = useReactFlow<TaskGraphCanvasNode, TaskGraphCanvasEdge>();
 
   useEffect(() => {
     setNodes((current) => reconcileCanvasNodes(current, projection, view, { focusedNodeId }));
-    setEdges(model.edges);
-  }, [model, projection, view, focusedNodeId]);
+  }, [projection, view, focusedNodeId]);
 
   useEffect(() => {
-    if (!focusedNodeId || !nodes.some((node) => node.id === focusedNodeId)) return;
-    void fitView({
-      nodes: [{ id: focusedNodeId }],
-      duration: 280,
-      padding: 0.25,
-    });
-  }, [fitView, focusedNodeId, nodes]);
+    setEdges((current) => incomingEdges.map((edge) => ({ ...current.find((item) => item.id === edge.id), ...edge })));
+  }, [incomingEdges]);
+
+  const moveCamera = useCallback((event: CanvasCameraEvent) => {
+    if (event.type === "locate" && (!getNode(event.nodeId) || getNode(event.nodeId)?.hidden)) return;
+    const command = canvasCameraCommand(event);
+    if (command?.kind === "fit") void fitView(command.options);
+    if (command?.kind === "zoom") void zoomTo(command.zoom);
+  }, [fitView, getNode, zoomTo]);
+
+  const selectFromTrail = useCallback((nodeId: string) => {
+    setNodes((current) => current.map((node) => node.selected === (node.id === nodeId)
+      ? node : { ...node, selected: node.id === nodeId }));
+    onFocusNode(nodeId);
+  }, [onFocusNode]);
+  const locateNode = useCallback((nodeId: string) => moveCamera({ type: "locate", nodeId }), [moveCamera]);
+  const autoLayout = useCallback(() => {
+    const layouts = buildAutoLayout(projection);
+    setNodes((current) => reconcileCanvasNodes(current, projection, view, { focusedNodeId, layouts }));
+    onLayoutSave(layouts);
+  }, [focusedNodeId, onLayoutSave, projection, view]);
+  const handleNodeClick = useCallback((_event: React.MouseEvent, node: TaskGraphCanvasNode) => onFocusNode(node.id), [onFocusNode]);
+  const handleSelectionChange = useCallback(({ nodes: selectedNodes }: { nodes: TaskGraphCanvasNode[] }) => {
+    onSelectionChange(selectedNodes.map((node) => node.id));
+  }, [onSelectionChange]);
 
   const handleNodesChange = useCallback((changes: NodeChange<TaskGraphCanvasNode>[]) => {
     const allowed = semanticLocked ? changes.filter((change) => change.type !== "remove") : changes;
@@ -115,6 +140,9 @@ function TaskWorldCanvasSurface({
   );
 
   return (
+    <>
+    <TaskExecutionTrail projection={projection} focusedNodeId={focusedNodeId} onFocus={selectFromTrail} onLocate={locateNode} />
+    <Panel padding={false} className="min-h-0 overflow-hidden">
     <div className="task-world-canvas" data-testid="task-world-canvas">
       <ReactFlow<TaskGraphCanvasNode, TaskGraphCanvasEdge>
         nodes={nodes}
@@ -122,16 +150,15 @@ function TaskWorldCanvasSurface({
         nodeTypes={NODE_TYPES}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
-        onNodeClick={(_event, node) => onFocusNode(node.id)}
+        onNodeClick={handleNodeClick}
         onConnect={semanticLocked ? undefined : onConnect}
         onNodeDragStop={handleNodeDragStop}
         onMoveEnd={handleMoveEnd}
-        onSelectionChange={({ nodes: selectedNodes }) =>
-          onSelectionChange(selectedNodes.map((node) => node.id))
-        }
+        onSelectionChange={handleSelectionChange}
         onNodesDelete={onDeleteNodes}
         onEdgesDelete={onDeleteEdges}
-        fitView
+        defaultViewport={initialViewport}
+        autoPanOnNodeFocus={false}
         selectionOnDrag
         selectionMode={SelectionMode.Partial}
         selectNodesOnDrag
@@ -145,10 +172,17 @@ function TaskWorldCanvasSurface({
         aria-label="无限任务画布"
       >
         <Background gap={24} size={1} color="var(--task-world-grid)" />
-        <Controls showInteractive={false} />
+        <FlowPanel position="top-left" className="flex gap-1" aria-label="画布布局与镜头">
+          <Button size="sm" variant="secondary" onClick={autoLayout}>自动布局</Button>
+          <Button size="sm" variant="secondary" onClick={() => moveCamera({ type: "zoom-100" })}>100%</Button>
+          <Button size="sm" variant="secondary" onClick={() => moveCamera({ type: "fit-all" })}>适应全部</Button>
+        </FlowPanel>
+        <Controls showInteractive={false} showFitView={false} />
         <MiniMap pannable zoomable className="task-world-minimap" />
       </ReactFlow>
     </div>
+    </Panel>
+    </>
   );
 }
 

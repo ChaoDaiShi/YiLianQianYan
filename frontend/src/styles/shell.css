@@ -14,7 +14,8 @@
 
 .task-world-node {
   width: 240px;
-  min-height: 110px;
+  height: 128px;
+  box-sizing: border-box;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--surface-solid) 95%, transparent);
@@ -40,10 +41,12 @@
   color: var(--text-faint);
 }
 
-.task-world-node-title { margin-top: 0.45rem; font-size: 0.875rem; font-weight: 650; }
+.task-world-node-title { margin-top: 0.45rem; font-size: 0.875rem; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-world-node-summary { margin-top: 0.35rem; max-height: 2.5rem; overflow: hidden; font-size: 0.7rem; line-height: 1.25rem; color: var(--text-secondary); }
 .task-world-running { margin-top: 0.5rem; display: inline-flex; border-radius: 999px; background: var(--accent-soft); padding: 0.15rem 0.45rem; font-size: 0.65rem; color: var(--accent-soft-fg); }
 .task-world-handle { width: 8px !important; height: 8px !important; background: var(--accent-primary) !important; }
+.task-world-node-summary { height: 2.5rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.task-world-node-execution { height: 1rem; display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--text-faint); }
 
 .task-world-trail {
   min-height: 0;
@@ -55,6 +58,10 @@
 
 .task-world-trail-heading { display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-soft); padding: 0.75rem; font-size: 0.7rem; font-weight: 700; color: var(--text-faint); }
 .task-world-trail-list { max-height: 100%; overflow-y: auto; padding: 0.4rem; }
+.task-world-trail-item { display: flex; align-items: center; }
+.task-world-trail-item > button:first-child { min-width: 0; flex: 1; }
+.task-world-trail-item > .task-world-trail-locate { width: 2rem; flex: none; justify-content: center; }
+.task-world-trail-list button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: -2px; }
 .task-world-trail-list button { display: flex; width: 100%; align-items: center; gap: 0.45rem; border-radius: var(--radius-sm); padding: 0.55rem; text-align: left; font-size: 0.75rem; color: var(--text-secondary); }
 .task-world-trail-list button:hover,
 .task-world-trail-list button.is-active { background: var(--surface-hover); color: var(--text); }

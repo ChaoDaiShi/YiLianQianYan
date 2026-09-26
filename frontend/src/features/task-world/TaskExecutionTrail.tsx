@@ -8,9 +8,10 @@ interface TaskExecutionTrailProps {
   projection: TaskGraphProjection;
   focusedNodeId: string | null;
   onFocus: (nodeId: string) => void;
+  onLocate: (nodeId: string) => void;
 }
 
-export default function TaskExecutionTrail({ projection, focusedNodeId, onFocus }: TaskExecutionTrailProps) {
+export default function TaskExecutionTrail({ projection, focusedNodeId, onFocus, onLocate }: TaskExecutionTrailProps) {
   const items = buildExecutionTrail(projection);
 
   return (
@@ -21,6 +22,7 @@ export default function TaskExecutionTrail({ projection, focusedNodeId, onFocus 
       </div>
       <div className="task-world-trail-list">
         {items.map((item) => (
+          <div className="task-world-trail-item" key={item.nodeId} data-node-id={item.nodeId}>
           <button
             key={item.nodeId}
             type="button"
@@ -40,6 +42,8 @@ export default function TaskExecutionTrail({ projection, focusedNodeId, onFocus 
               );
             })()}
           </button>
+          <button type="button" className="task-world-trail-locate" aria-label={`定位节点：${item.node.title}`} onClick={() => onLocate(item.nodeId)}>⌖</button>
+          </div>
         ))}
       </div>
     </aside>

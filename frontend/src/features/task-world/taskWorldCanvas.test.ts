@@ -104,7 +104,7 @@ describe("Task World surface contract", () => {
 
   it("offers persisted visual grouping, collapse and auto layout without semantic edits", () => {
     expect(pageSource).toContain("创建分组");
-    expect(pageSource).toContain("自动布局");
+    expect(canvasSource).toContain("自动布局");
     expect(pageSource).toContain("group.collapsed");
     expect(pageSource).toContain("groups:");
   });
