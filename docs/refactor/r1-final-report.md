@@ -451,27 +451,39 @@ schema or migration was touched. The compatibility facade count goes 8 → 12.
 | `cargo fmt --all -- --check` | clean after each stage |
 | `cargo check -p yilian-backend --all-targets --locked` | **exit 0** after each stage; the same 3 pre-existing warnings, no new ones |
 | `cargo test --test architecture_boundaries` | **3 passed / 0 failed** after each stage |
-| Moved regions | byte-identical |
-| `cargo test --lib` | **NOT RUN** — environmental block, described below |
+| Moved regions | byte-identical (29 × 100%-similarity renames) |
+| `cargo test -p yilian-backend --locked` | **21 binaries, 983 passed, 0 failed, 0 ignored** |
+| `cargo test -p yi-lian-qian-yan --locked` | **5 passed / 0 failed** |
 
-### The one gap, stated plainly
+Backend 983 + `src-tauri` 5 = **988**, which is exactly the number the R8 gate
+recorded for `--workspace --all-targets`. R9 is therefore verified to the same
+depth the gate used. The rc.2 secret pinning tests ran and pass, and their
+module paths in the output (`integrations::secret::tests::*`,
+`integrations::llm::client::tests::*`) are themselves evidence that the moved
+tests relocated with their modules.
 
-`cargo test --lib` cannot be linked on this machine right now. It fails
+### The one obstacle, and its workaround
+
+The unit suite did **not** run on the first five attempts. It failed
 reproducibly in codegen/link with `rustc-LLVM ERROR: out of memory`, exit
 `0xc0000409`. Measured cause: the commit limit is 39.24 GB (15.24 GB RAM + a
-24 GB page file) and **36.04 GB is already committed** by resident
-applications, leaving ~3.2 GB — less than the `codegen-units = 1` test profile
-needs. Four attempts across the session failed identically; retrying after the
-failed rustc processes exited did not help.
+24 GB page file) and **36.04 GB was already committed** — spread over 490
+processes plus ~8.0 GB of kernel commit, with no single process above 1.2 GB.
+There was no hog to close and no way to free the ~5 GB needed.
 
-This is the memory pressure `r1-progress-and-handoff.md` §2 documents, and it is
-**not** attributable to R9: R9 adds ~10 lines and moves files with `git mv`, so
-the lib-test codegen is the same size it was when the R8 gate linked it.
+The real cause is the root `Cargo.toml`, which sets `codegen-units = 1` for
+`[profile.dev]` **and** `[profile.dev.package."*"]`, making the lib-test binary
+a single giant LLVM codegen unit. The workaround is a per-invocation override
+that changes no repo file:
 
-Consequence for the compatibility conclusion in §1: those six rows still hold,
-because R9 changed no schema, route, secret semantic or persistence path — but
-the *evidence* for the secret row is the byte-identical move plus a clean
-type-check, not a fresh test run. **Re-running
-`cargo test -p yilian-backend --locked` on a machine with memory headroom is
-the outstanding verification step**, and the rc.2 secret pinning tests in
-`modules/settings/tests.rs` should be the first thing confirmed.
+```bash
+CARGO_PROFILE_TEST_CODEGEN_UNITS=4 \
+CARGO_TARGET_DIR="E:/cargo-target/yilian-arch" \
+cargo test -p yilian-backend --locked
+```
+
+`[profile.test]` applies only to the local crate's own test targets, not to
+dependencies, so this recompiles just the lib-test unit (1m28s) rather than
+rebuilding every dependency. No repo file and no test behaviour changed, and the
+override is unnecessary on an unloaded machine — it is a workaround, not a
+recommended permanent setting.

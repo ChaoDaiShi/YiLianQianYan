@@ -65,7 +65,8 @@ CARGO_TARGET_DIR="E:/cargo-target/yilian-arch" cargo test -p yilian-backend --lo
 | Other drives | C: 18.5 GB · D: 11.7 GB · E: 19.5 GB (all NTFS fixed) · G: 122 GB but **FAT32 removable — unusable for Cargo** |
 |---|---|
 | **RAM** | 15.2 GB total, ~1.7 GB free during a build. The repo's `.cargo/config.toml` `jobs = 1` is **required**, not incidental — parallelizing OOMs. Do not "fix" it. |
-| **Cost** | ~60 min cold, ~3 min incremental. Budget accordingly; keep dev-stage verification focused. |
+| **Commit limit** | 39.24 GB (RAM + a 24 GB page file), of which **36 GB is usually already committed** by ~490 resident processes. The root `Cargo.toml`'s `codegen-units = 1` then makes the lib-test binary one giant LLVM unit that cannot be allocated. If `cargo test` dies with `rustc-LLVM ERROR: out of memory`, see §10a — the fix is `CARGO_PROFILE_TEST_CODEGEN_UNITS=4`, not closing apps. |
+| **Cost** | ~60 min cold, ~3 min incremental (plus ~1.5 min to relink the lib-test unit). Budget accordingly; keep dev-stage verification focused. |
 
 The worktree was created as:
 
@@ -520,36 +521,56 @@ error on a relocation.
 |---|---|
 | `cargo fmt --all -- --check` | clean after each of the four stages |
 | `cargo check -p yilian-backend --all-targets --locked` | **exit 0** after each of the four stages; warnings unchanged at the same 3 pre-existing ones |
-| `cargo test --test architecture_boundaries` | **3 passed / 0 failed** after each stage |
-| Moved regions | byte-identical (29 × 100%-similarity renames) |
-| `cargo test --lib` (the unit suite) | **NOT RUN — environmental block**, see below |
+| `cargo test --lib` (the unit suite) | **892 passed / 0 failed** — after clearing the OOM below |
+| `cargo test -p yilian-backend --locked` | **21 binaries, 983 passed, 0 failed, 0 ignored** |
+| `cargo test -p yi-lian-qian-yan --locked` | **5 passed / 0 failed** |
 
-**The lib-test binary could not be linked on this machine.** `cargo test --lib`
-fails reproducibly in the codegen/link step with
+### The OOM, and how it was worked around
+
+`cargo test --lib` first failed reproducibly in the codegen/link step with
 `rustc-LLVM ERROR: out of memory / Allocation failed` (exit `0xc0000409`).
 Diagnosis, measured rather than guessed:
 
 ```
 CommitLimit : 39.24 GB   (15.24 GB RAM + 24 GB page file)
 CommitUsed  : 36.04 GB   → only ~3.2 GB of commit headroom
-FreePhysical: 3.2–3.7 GB across four attempts
+              spread over 490 processes + ~8.0 GB kernel commit
+FreePhysical: 1.7–3.7 GB across five attempts
 ```
 
-The crate's `codegen-units = 1` test profile needs more commit than that
-headroom allows, and the machine is heavily over-committed by resident
-applications (VS Code ×2, Edge, Notion, Doubao, Claude). This is the same
-memory pressure §2 documents, not a new failure — and it is **not caused by R9**:
-R9 adds ~10 lines and moves files with `git mv`, so the lib-test codegen is the
-same size it was when the R8 gate linked it successfully. Retrying after the
-failing processes exited changed nothing.
+There is no single hog to close — the largest process commits 1.2 GB — so
+freeing "a couple of apps" cannot recover the ~5 GB the unit needs.
 
-What that means for the claim: the four relocations are verified as far as
-`cargo check --all-targets` (which type-checks every `#[cfg(test)]` module) and
-the boundary check can take them, and they are byte-identical moves. They are
-**not** verified by a unit-test run. The rc.2 secret pinning tests in
-`modules/settings/tests.rs` in particular have **not** been re-run since R9d.
-Re-running `cargo test -p yilian-backend --locked` once the machine has memory
-headroom is the outstanding verification step.
+The cause is the root `Cargo.toml`, which sets `codegen-units = 1` for
+`[profile.dev]` **and** `[profile.dev.package."*"]`: the lib-test binary is one
+giant LLVM codegen unit and cannot be allocated under that ceiling. The fix is a
+per-invocation profile override that touches no repo file:
+
+```bash
+CARGO_PROFILE_TEST_CODEGEN_UNITS=4 \
+CARGO_TARGET_DIR="E:/cargo-target/yilian-arch" \
+cargo test -p yilian-backend --locked
+```
+
+`[profile.test]` applies only to the local crate's own test targets, not to
+dependencies (which build under `dev`), so this recompiles just the lib-test
+unit — 1m28s — instead of triggering a full dependency rebuild. No repo file
+changed, no test behaviour changed, and the override is not needed on an
+unloaded machine.
+
+**The counts reconcile exactly.** Backend 983 + `src-tauri` 5 = **988**, which
+is the number the R8 gate recorded for `--workspace --all-targets`. So R9 is
+verified to the same depth the gate used, and the rc.2 secret pinning tests did
+run:
+
+- `modules::settings::tests::empty_key_preserves_secret_across_settings_changes_and_restart`
+- `modules::settings::tests::clear_delete_failure_preserves_each_persisted_secret_reference`
+- `modules::settings::tests::settings_get_never_returns_secret_value`
+- `modules::settings::tests::voice_settings_redact_stt_and_tts_secrets_independently`
+
+Their **module paths in the test output** (`integrations::secret::tests::*`,
+`integrations::llm::client::tests::*`) are themselves evidence that the moved
+tests relocated with their modules and still resolve.
 
 ## 11. Remaining work
 
