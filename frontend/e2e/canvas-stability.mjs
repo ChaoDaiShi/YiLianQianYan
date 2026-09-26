@@ -140,6 +140,7 @@ export async function canvasStability({ page, backendPort, frontendPort, control
   }, "camera move must settle and persist");
   const userCamera = await camera();
   const aPosition = await transform("A");
+  if (await page.getByRole("button", {name:"执行轨迹",exact:true}).count()) await page.getByRole("button", {name:"执行轨迹",exact:true}).click();
   await page.locator('.task-world-trail-item[data-node-id="B"] > button').first().click();
   await until(document, (v) => v.selection.includes("B"), "selection must save");
   assert.equal(await camera(), userCamera);
@@ -167,6 +168,7 @@ export async function canvasStability({ page, backendPort, frontendPort, control
   assert.equal(await camera(), userCamera);
   assert.equal(await transform("A"), aPosition);
   await snapshot("remount restored saved viewport and drag");
+  if (await page.getByRole("button", {name:"执行轨迹",exact:true}).count()) await page.getByRole("button", {name:"执行轨迹",exact:true}).click();
   await page.getByRole("button", { name: "定位节点：C", exact: true }).click();
   await until(camera, (v) => v !== userCamera, "explicit Locate must move camera");
   const locatedCamera = await camera();
@@ -189,6 +191,7 @@ export async function canvasStability({ page, backendPort, frontendPort, control
   await page.keyboard.up("Control");
   await until(document, (v) => v.selection.includes("B") && v.selection.includes("C"), "multi-select must remain available");
   assert.equal(await camera(), beforeGroups.viewport);
+  if (await page.getByRole("button", {name:"更多",exact:true}).count()) await page.getByRole("button", {name:"更多",exact:true}).click();
   await page.getByRole("button", { name: "创建分组", exact: true }).click();
   await page.getByLabel("画布视图工具").getByRole("button", { name: "折叠", exact: true }).click();
   await node("B").waitFor({ state: "detached" });

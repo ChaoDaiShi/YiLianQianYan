@@ -167,7 +167,7 @@ try {
   if (studioStage) {
     const result=await canvasStudio({page,backendPort,frontendPort,controlToken,evidenceDir,stage:studioStage});
     if(browserErrors.length) throw new Error(`Studio browser errors: ${browserErrors.join(" | ")}`);
-    await writeFile(join(evidenceDir,"result.json"),JSON.stringify(result,null,2));
+    await writeFile(join(evidenceDir,"result.json"),JSON.stringify({...result,browser:executablePath,browser_version:browser.version()},null,2));
     process.stdout.write(JSON.stringify(result)+"\n");
     testExitCode=0;
   } else if (uiStage) {

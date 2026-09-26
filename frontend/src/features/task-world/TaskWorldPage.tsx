@@ -47,11 +47,26 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const navigate = useNavigate();
   const [activePanel, setActivePanel] = useState<StudioPanel>(null);
   const panelTrigger = useRef<HTMLElement | null>(null);
-  const changePanel = (panel: StudioPanel) => {
+  const changePanel = useCallback((panel: StudioPanel) => {
     if (panel) panelTrigger.current = document.activeElement as HTMLElement;
     setActivePanel(panel);
     if (!panel) panelTrigger.current?.focus();
-  };
+  }, []);
+  useEffect(() => {
+    if (!activePanel) return;
+    const closePanel = (event: KeyboardEvent) => {
+      // Disabling a focused save button can return focus to body. Preserve
+      // Escape there, while leaving portals (voice/dialogs) to their own host.
+      const target = event.target;
+      if (event.key === "Escape" && !event.defaultPrevented
+        && target instanceof Element
+        && (target === document.body || target.closest(".canvas-studio"))) {
+        changePanel(null);
+      }
+    };
+    window.addEventListener("keydown", closePanel);
+    return () => window.removeEventListener("keydown", closePanel);
+  }, [activePanel, changePanel]);
   const { updateContext } = useGlobalVoiceContext();
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -133,7 +148,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const runSelected = () => { if (canRun && selectedNode) void mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision)); };
 
   return (
-    <div className="canvas-studio page-canvas" onKeyDown={(event) => { if (event.key === "Escape" && activePanel) { event.stopPropagation(); changePanel(null); } }}>
+    <div className="canvas-studio page-canvas">
       <StudioHeader graphId={projection.graphId} revision={view?.view_revision ?? null} pending={canvasSavePending} error={canvasSaveError?.message ?? null} onRetry={retrySave} onBack={()=>navigate("/tasks")} panel={activePanel} onPanel={changePanel}/>
       <div className="studio-workspace task-world-layout">
       {(eventWarning || (saveError && activePanel !== "inspector")) && <div className="studio-notices">
