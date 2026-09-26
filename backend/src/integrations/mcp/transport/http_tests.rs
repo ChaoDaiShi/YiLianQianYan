@@ -11,7 +11,8 @@ use axum::response::IntoResponse;
 use axum::{routing::post, Json, Router};
 use serde_json::{json, Value};
 
-use super::transport::McpTransport;
+use super::super::*;
+use super::McpTransport;
 use super::*;
 
 #[derive(Clone, Default)]
@@ -131,7 +132,7 @@ async fn http_transport_json_response_direct() {
     let addr = start_mock_http().await;
     let transport = HttpTransport::new(format!("{addr}/mcp"), Default::default()).unwrap();
     let mut params = json!({});
-    crate::mcp_runtime::protocol::attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
+    crate::mcp_runtime::attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
     let req = JsonRpcRequest::new(1, "tools/list", Some(params));
     let cancel = tokio_util::sync::CancellationToken::new();
     match transport.send(&req, &cancel).await.unwrap() {

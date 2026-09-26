@@ -12,7 +12,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::model::{
+use super::super::protocol::model::{
     McpPromptDescriptor, McpResourceContent, McpResourceDescriptor, McpResourceTemplate, McpTool,
     MAX_MCP_CACHE_TTL_MS,
 };

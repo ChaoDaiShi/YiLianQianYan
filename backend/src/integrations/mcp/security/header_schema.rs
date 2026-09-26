@@ -8,8 +8,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use super::model::{McpHeaderBinding, McpHeaderValueType, MAX_MCP_SCHEMA_DEPTH};
-use super::protocol::is_valid_header_token;
+use super::super::protocol::model::{McpHeaderBinding, McpHeaderValueType, MAX_MCP_SCHEMA_DEPTH};
+use super::header::is_valid_header_token;
 
 const X_MCP_HEADER: &str = "x-mcp-header";
 

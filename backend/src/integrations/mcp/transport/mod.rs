@@ -1,19 +1,25 @@
-// ============================================================
-// MCP transport behaviour — the trait every transport implements.
-//
-// The stdio and Streamable HTTP implementations live in `stdio.rs` and
-// `http.rs`; the *configuration data* that selects between them lives in
-// `config.rs`, because it is deserialized from the plugin store and must not
-// drag a transport implementation into the caller's dependency graph.
-// ============================================================
+//! MCP transports — the `McpTransport` trait and its two implementations.
+//!
+//! The stdio and Streamable HTTP implementations live in `stdio.rs` and
+//! `http.rs`; the *configuration data* that selects between them lives in
+//! `config.rs`, because it is deserialized from the plugin store and must not
+//! drag a transport implementation into the caller's dependency graph.
+
+pub mod http;
+pub mod stdio;
+
+#[cfg(test)]
+mod http_tests;
+#[cfg(test)]
+mod stdio_tests;
 
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
-use super::model::{McpNegotiationResult, McpProtocolVersion, McpRuntimeError};
+use super::protocol::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
+use super::protocol::model::{McpNegotiationResult, McpProtocolVersion, McpRuntimeError};
 
 /// Optional per-request transport context (HTTP-only extra headers, e.g. the
 /// `Mcp-Param-*` headers derived from `x-mcp-header`).

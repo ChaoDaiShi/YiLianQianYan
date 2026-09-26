@@ -31,7 +31,7 @@ const KNOWN_LARGE_FILES: &[&str] = &[
     "src/db/workflow_runtime.rs",
     "src/integrations/llm/client.rs",
     "src/integrations/mcp/legacy_stdio.rs",
-    "src/integrations/mcp/manager.rs",
+    "src/integrations/mcp/runtime/manager.rs",
     "src/isolation/windows.rs",
     "src/modules/settings/tests.rs",
     "src/modules/task/execution.rs",

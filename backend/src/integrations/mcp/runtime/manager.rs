@@ -13,24 +13,25 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use super::config::McpTransportConfig;
-use super::header_schema::scan_tool_header_bindings;
-use super::http::HttpTransport;
-use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
-use super::model::{
+use super::super::config::McpTransportConfig;
+use super::super::protocol::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
+use super::super::protocol::model::{
     McpInputRequired, McpOperationOutcome, McpPromptDescriptor, McpPromptResult,
     McpProtocolVersion, McpResourceContent, McpResourceDescriptor, McpResourceTemplate,
     McpRuntimeError, McpRuntimeStatus, McpServerCapabilities, McpTool, MAX_MCP_LIST_PAGES,
     MAX_MCP_RESOURCES_PER_SERVER, MAX_MCP_TOOLS_PER_SERVER,
 };
-use super::prompts::{parse_prompt_get, parse_prompt_list};
-use super::protocol::attach_request_metadata;
-use super::resources::{
-    parse_resource_contents, parse_resource_list, parse_resource_template_list,
-};
-use super::stdio::StdioTransport;
-use super::tools::{call_result_text, parse_call_result, parse_tool_list};
-use super::transport::McpTransport;
+use super::super::protocol::version::attach_request_metadata;
+use super::super::registry::prompts::parse_prompt_list;
+use super::super::registry::resources::{parse_resource_list, parse_resource_template_list};
+use super::super::registry::tools::parse_tool_list;
+use super::super::result::prompt::parse_prompt_get;
+use super::super::result::resource::parse_resource_contents;
+use super::super::result::tool_call::{call_result_text, parse_call_result};
+use super::super::security::header_schema::scan_tool_header_bindings;
+use super::super::transport::http::HttpTransport;
+use super::super::transport::stdio::StdioTransport;
+use super::super::transport::McpTransport;
 
 pub struct McpServerRuntime {
     pub server_id: String,
@@ -442,14 +443,18 @@ impl McpRuntimeManager {
             .iter()
             .find(|t| t.name == tool_name)
             .map(|tool| {
-                super::header_schema::extract_header_values(&arguments, &tool.header_bindings).map(
-                    |values| {
-                        values
-                            .into_iter()
-                            .map(|(name, value)| (super::protocol::param_header(&name), value))
-                            .collect::<std::collections::BTreeMap<_, _>>()
-                    },
+                super::super::security::header_schema::extract_header_values(
+                    &arguments,
+                    &tool.header_bindings,
                 )
+                .map(|values| {
+                    values
+                        .into_iter()
+                        .map(|(name, value)| {
+                            (super::super::security::header::param_header(&name), value)
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>()
+                })
             })
             .transpose()
             .map_err(|e| McpRuntimeError::Protocol(e))?
@@ -460,7 +465,7 @@ impl McpRuntimeManager {
             attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
         }
         let request = JsonRpcRequest::new(self.next_id(), "tools/call", Some(params));
-        let options = super::transport::McpRequestOptions { extra_headers };
+        let options = super::super::transport::McpRequestOptions { extra_headers };
         let message = transport
             .send_with_options(&request, &options, cancel)
             .await?;
@@ -470,7 +475,7 @@ impl McpRuntimeManager {
             JsonRpcMessage::Notification(_) => return Err(McpRuntimeError::InvalidResponse),
         };
         match parse_call_result(&result) {
-            super::model::McpOperationOutcome::Complete(value) => {
+            super::super::protocol::model::McpOperationOutcome::Complete(value) => {
                 let is_error = value
                     .get("isError")
                     .and_then(|v| v.as_bool())
@@ -480,7 +485,7 @@ impl McpRuntimeManager {
                     text: call_result_text(&value),
                 })
             }
-            super::model::McpOperationOutcome::InputRequired(_) => {
+            super::super::protocol::model::McpOperationOutcome::InputRequired(_) => {
                 Err(McpRuntimeError::InputRequired)
             }
         }

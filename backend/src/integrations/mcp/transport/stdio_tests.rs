@@ -9,6 +9,7 @@ use std::sync::Arc;
 use secrecy::SecretString;
 use serde_json::{json, Value};
 
+use super::super::*;
 use super::*;
 use crate::secret::{InMemorySecretStore, SecretRef, SecretResolver, SecretStore};
 

@@ -15,13 +15,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio_util::sync::CancellationToken;
 
-use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
-use super::model::{
+use super::super::protocol::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
+use super::super::protocol::model::{
     McpNegotiationResult, McpProtocolVersion, McpRuntimeError, McpServerCapabilities,
     MAX_MCP_STDIO_LINE_BYTES,
 };
-use super::protocol::attach_request_metadata;
-use super::transport::McpTransport;
+use super::super::protocol::version::attach_request_metadata;
+use super::McpTransport;
 use crate::secret::{SecretRef, SecretResolver};
 use crate::utils::process::hide_tokio_command_window;
 
@@ -173,7 +173,7 @@ impl StdioTransport {
                 Ok(v) => v,
                 Err(_) => continue,
             };
-            let message = match super::jsonrpc::parse_message(&value) {
+            let message = match super::super::protocol::jsonrpc::parse_message(&value) {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -232,7 +232,7 @@ impl StdioTransport {
         match self.read_response(reader, discover.id, &cancel).await {
             Ok(JsonRpcMessage::Success(s)) => Ok((
                 McpProtocolVersion::V2026_07_28,
-                super::model::parse_capabilities(&s.result),
+                super::super::protocol::model::parse_capabilities(&s.result),
             )),
             Ok(JsonRpcMessage::Error(e)) if e.error.code == -32601 => {
                 // "Method not found" is the clear legacy-compatible signal.
@@ -251,7 +251,9 @@ impl StdioTransport {
                 *next_id += 1;
                 self.write_request(stdin, &init).await?;
                 let caps = match self.read_response(reader, init.id, &cancel).await? {
-                    JsonRpcMessage::Success(s) => super::model::parse_capabilities(&s.result),
+                    JsonRpcMessage::Success(s) => {
+                        super::super::protocol::model::parse_capabilities(&s.result)
+                    }
                     _ => McpServerCapabilities::default(),
                 };
                 // Send initialized notification (no id).
@@ -369,7 +371,7 @@ impl McpTransport for StdioTransport {
     async fn send_with_options(
         &self,
         request: &JsonRpcRequest,
-        _options: &super::transport::McpRequestOptions,
+        _options: &super::McpRequestOptions,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError> {
         // stdio has no HTTP headers; options are ignored.

@@ -12,14 +12,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use super::config::validate_mcp_url;
-use super::jsonrpc::{parse_message, JsonRpcMessage, JsonRpcRequest};
-use super::model::{
+use super::super::config::validate_mcp_url;
+use super::super::protocol::jsonrpc::{parse_message, JsonRpcMessage, JsonRpcRequest};
+use super::super::protocol::model::{
     McpRuntimeError, MAX_MCP_REQUEST_BYTES, MAX_MCP_RESPONSE_BYTES, MAX_MCP_SSE_EVENTS_PER_REQUEST,
     MAX_MCP_SSE_EVENT_BYTES,
 };
-use super::protocol::{encode_header_value, reject_crlf, MODERN_MCP_VERSION};
-use super::transport::McpTransport;
+use super::super::protocol::version::MODERN_MCP_VERSION;
+use super::super::security::header::{encode_header_value, reject_crlf};
+use super::McpTransport;
 
 pub const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -79,7 +80,7 @@ impl HttpTransport {
     async fn send_inner(
         &self,
         request: &JsonRpcRequest,
-        options: &super::transport::McpRequestOptions,
+        options: &super::McpRequestOptions,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError> {
         let body = request.to_bounded_string(MAX_MCP_REQUEST_BYTES)?;
@@ -265,24 +266,26 @@ impl McpTransport for HttpTransport {
     async fn connect(
         &self,
         cancel: &CancellationToken,
-    ) -> Result<super::model::McpNegotiationResult, McpRuntimeError> {
+    ) -> Result<super::super::protocol::model::McpNegotiationResult, McpRuntimeError> {
         // Modern Streamable HTTP is always 2026-07-28. Discover capabilities.
         // Fail closed: a discover failure must NOT assume tools=true.
         let mut params = serde_json::json!({});
-        super::protocol::attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
+        super::super::protocol::version::attach_request_metadata(
+            &mut params,
+            env!("CARGO_PKG_VERSION"),
+        );
         let discover = JsonRpcRequest::new(0, "server/discover", Some(params));
         match self
-            .send_inner(
-                &discover,
-                &super::transport::McpRequestOptions::default(),
-                cancel,
-            )
+            .send_inner(&discover, &super::McpRequestOptions::default(), cancel)
             .await
         {
-            Ok(JsonRpcMessage::Success(s)) => Ok(super::model::McpNegotiationResult {
-                protocol_version: super::model::McpProtocolVersion::V2026_07_28,
-                capabilities: super::model::parse_capabilities(&s.result),
-            }),
+            Ok(JsonRpcMessage::Success(s)) => {
+                Ok(super::super::protocol::model::McpNegotiationResult {
+                    protocol_version:
+                        super::super::protocol::model::McpProtocolVersion::V2026_07_28,
+                    capabilities: super::super::protocol::model::parse_capabilities(&s.result),
+                })
+            }
             Ok(JsonRpcMessage::Error(e)) => Err(McpRuntimeError::ServerError(e.error.message)),
             Ok(JsonRpcMessage::Notification(_)) => Err(McpRuntimeError::InvalidResponse),
             Err(e) => Err(e),
@@ -292,7 +295,7 @@ impl McpTransport for HttpTransport {
     async fn send_with_options(
         &self,
         request: &JsonRpcRequest,
-        options: &super::transport::McpRequestOptions,
+        options: &super::McpRequestOptions,
         cancel: &CancellationToken,
     ) -> Result<JsonRpcMessage, McpRuntimeError> {
         self.send_inner(request, options, cancel).await
@@ -302,7 +305,7 @@ impl McpTransport for HttpTransport {
         // No persistent connection to close for request-scoped HTTP.
     }
 
-    fn protocol_version(&self) -> super::model::McpProtocolVersion {
-        super::model::McpProtocolVersion::V2026_07_28
+    fn protocol_version(&self) -> super::super::protocol::model::McpProtocolVersion {
+        super::super::protocol::model::McpProtocolVersion::V2026_07_28
     }
 }

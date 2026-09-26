@@ -1,30 +1,8 @@
 // ============================================================
-// MCP prompts wire helpers — parse list/get results.
+// MCP `prompts/get` results — MRTR-aware outcome.
 // ============================================================
 
-use super::model::{
-    McpInputRequired, McpOperationOutcome, McpPromptDescriptor, McpPromptResult, McpRuntimeError,
-};
-
-pub fn parse_prompt_list(
-    result: &serde_json::Value,
-) -> Result<(Vec<McpPromptDescriptor>, Option<String>), McpRuntimeError> {
-    let items = result
-        .get("prompts")
-        .and_then(|p| p.as_array())
-        .ok_or(McpRuntimeError::InvalidResponse)?;
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        if let Ok(d) = serde_json::from_value::<McpPromptDescriptor>(item.clone()) {
-            out.push(d);
-        }
-    }
-    let next = result
-        .get("nextCursor")
-        .and_then(|c| c.as_str())
-        .map(str::to_string);
-    Ok((out, next))
-}
+use super::super::protocol::model::{McpInputRequired, McpOperationOutcome, McpPromptResult};
 
 /// Parse a `prompts/get` result into an MRTR-aware outcome.
 pub fn parse_prompt_get(result: &serde_json::Value) -> McpOperationOutcome<McpPromptResult> {
