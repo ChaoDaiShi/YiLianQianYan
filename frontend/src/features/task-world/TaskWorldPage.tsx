@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -8,51 +8,43 @@ import {
   createTaskCheckpoint,
   deleteTaskEdge,
   deleteTaskNode,
-  getCanvasView,
-  getTaskGraphDetail,
   restoreTaskCheckpoint,
-  reviewTaskGraph,
-  saveCanvasView,
+  rerunTaskFromNode,
   startTaskExecution,
   startTaskNode,
-  rerunTaskFromNode,
   updateTaskNode,
   type ApiError,
-  type CanvasNodeLayout,
-  type CanvasView,
-  type CanvasViewport,
   type TaskGraphNodeDefinition,
-  type TaskGraphDetail,
-  type TaskGraphReview,
-  type TaskGraphReviewSuggestion,
 } from "../../api/taskWorld";
 import { getProviderReadiness } from "../../api/providerConnection";
-import { subscribeToEvents } from "../../api/events";
 import { Button, EmptyState, ErrorState, PageHeader, Panel, Skeleton } from "../../components/ui";
+import { useGlobalVoiceContext } from "../voice/GlobalVoiceHost";
 import TaskExecutionTrail from "./TaskExecutionTrail";
 import TaskWorldCanvas from "./TaskWorldCanvas";
 import TaskInspector from "./inspector/TaskInspector";
-import { buildAutoLayout, isActiveExecution, isTaskWorldEvent, projectTaskGraph } from "./taskGraphProjection";
-import { createCanvasViewWriteQueue } from "./canvasViewWriter";
-import { useGlobalVoiceContext } from "../voice/GlobalVoiceHost";
+import { useCanvasView } from "./hooks/useCanvasView";
+import { useTaskCommands } from "./hooks/useTaskCommands";
+import { useTaskWorldEvents } from "./hooks/useTaskEvents";
+import { useTaskGraph } from "./hooks/useTaskGraph";
+import { useTaskGraphReview } from "./hooks/useTaskReview";
+import { buildAutoLayout, isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
 
+/**
+ * Task World page.
+ *
+ * Owns routing, the shared UI state the sections agree on (focus, saving,
+ * save failure), and the composition of canvas, trail and inspector. All the
+ * behaviour lives in `hooks/` and all the presentation in `inspector/` and
+ * `TaskWorldCanvas`.
+ */
 export default function TaskWorldPage() {
   const { graphId = "" } = useParams();
   const navigate = useNavigate();
   const { updateContext } = useGlobalVoiceContext();
-  const [detail, setDetail] = useState<TaskGraphDetail | null>(null);
-  const [view, setView] = useState<CanvasView | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-  const [error, setError] = useState<ApiError | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<ApiError | null>(null);
-  const [eventWarning, setEventWarning] = useState<string | null>(null);
-  const [review, setReview] = useState<TaskGraphReview | null>(null);
-  const [reviewBusy, setReviewBusy] = useState(false);
-  const [reviewError, setReviewError] = useState("");
   const [modelUnavailable, setModelUnavailable] = useState(false);
-  const detailSequence = useRef(0);
-  const viewRef = useRef<CanvasView | null>(null);
 
   useEffect(() => {
     updateContext({
@@ -61,43 +53,30 @@ export default function TaskWorldPage() {
     });
   }, [graphId, updateContext]);
 
-  const acceptView = useCallback((incoming: CanvasView) => {
-    const current = viewRef.current;
-    if (
-      current
-      && current.graph_id === incoming.graph_id
-      && current.view_revision > incoming.view_revision
-    ) return;
-    viewRef.current = incoming;
-    setView(incoming);
+  const handleNodesLoaded = useCallback((nodeIds: string[]) => {
+    setFocusedNodeId((current) => current && nodeIds.includes(current) ? current : nodeIds[0] || null);
   }, []);
 
-  const refreshDetail = useCallback(async () => {
-    if (!graphId) return;
-    const sequence = ++detailSequence.current;
-    const result = await getTaskGraphDetail(graphId);
-    if (sequence !== detailSequence.current) return;
-    if (result.ok) {
-      setDetail(result.data);
-      setError(null);
-      setFocusedNodeId((current) => current && result.data.nodes.some((node) => node.id === current) ? current : result.data.nodes[0]?.id || null);
-    } else {
-      setError(result.error);
-    }
-  }, [graphId]);
-
-  const refreshView = useCallback(async () => {
-    if (!graphId) return;
-    const result = await getCanvasView(graphId);
-    if (result.ok) acceptView(result.data);
-    else setError(result.error);
-  }, [acceptView, graphId]);
+  const { detail, error, setError, refreshDetail } = useTaskGraph(graphId, handleNodesLoaded);
+  const clearFocus = useCallback(() => setFocusedNodeId(null), []);
+  const {
+    view,
+    refreshView,
+    updateLayouts,
+    updateViewport,
+    updateSelection,
+    createVisualGroup,
+    toggleVisualGroup,
+    removeVisualGroup,
+  } = useCanvasView(graphId, setError, setSaveError, focusedNodeId, clearFocus);
 
   const reload = useCallback(async () => {
     await Promise.all([refreshDetail(), refreshView()]);
   }, [refreshDetail, refreshView]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  const mutate = useTaskCommands(reload, setSaving, setSaveError);
 
   useEffect(() => {
     let active = true;
@@ -107,22 +86,20 @@ export default function TaskWorldPage() {
     return () => { active = false; };
   }, []);
 
-  useEffect(() => {
-    if (!graphId) return;
-    const controller = subscribeToEvents((event) => {
-      if (!isTaskWorldEvent(event, graphId)) return;
-      // Running is intentionally treated as invalidation: the authoritative
-      // projection is refreshed rather than reproducing TaskSupervisor in React.
-      if (event.type === "task.node.running") void refreshDetail();
-      else if (event.type === "task.canvas.updated") void refreshView();
-      else void refreshDetail();
-    }, (streamError) => setEventWarning(streamError.message));
-    return () => controller.abort();
-  }, [graphId, refreshDetail, refreshView]);
+  const eventWarning = useTaskWorldEvents(graphId, refreshDetail, refreshView);
 
   const projection = useMemo(() => detail ? projectTaskGraph(detail) : null, [detail]);
   const selectedNode = projection?.nodes.find((node) => node.id === focusedNodeId) || null;
   const graphLocked = detail?.nodes.some((node) => isActiveExecution(node.latest_execution?.status)) || false;
+
+  const {
+    review,
+    setReview,
+    reviewBusy,
+    reviewError,
+    runGraphReview,
+    acceptReviewSuggestion,
+  } = useTaskGraphReview(graphId, projection, reload, mutate, setModelUnavailable);
 
   // A small refresh repairs missed events while an execution is in flight.
   useEffect(() => {
@@ -131,148 +108,6 @@ export default function TaskWorldPage() {
     }, 2000);
     return () => window.clearInterval(timer);
   }, [graphLocked, refreshDetail]);
-
-  const mutate = useCallback(async (operation: () => Promise<{ ok: true; data: unknown } | { ok: false; error: ApiError }>) => {
-    setSaving(true);
-    setSaveError(null);
-    const result = await operation();
-    setSaving(false);
-    if (!result.ok) {
-      setSaveError(result.error);
-      if (result.error.code === "stale_revision" || result.error.code === "stale_view_revision") await reload();
-      return false;
-    }
-    await reload();
-    return true;
-  }, [reload]);
-
-  const viewWriter = useMemo(() => createCanvasViewWriteQueue({
-    readCurrent: () => viewRef.current,
-    acceptCurrent: acceptView,
-    save: (next) => saveCanvasView(graphId, next),
-    onError: async (writeError) => {
-      setSaveError(writeError);
-      if (writeError.code === "stale_view_revision") await refreshView();
-    },
-  }), [acceptView, graphId, refreshView]);
-
-  const persistView = useCallback((update: (current: CanvasView) => CanvasView) => {
-    setSaveError(null);
-    void viewWriter.enqueue(update);
-  }, [viewWriter]);
-
-  const updateLayouts = useCallback((changed: CanvasNodeLayout[]) => {
-    persistView((current) => {
-      const changedById = new Map(changed.map((layout) => [layout.node_id, layout]));
-      const node_layouts = current.node_layouts.map((layout) => changedById.get(layout.node_id) || layout);
-      for (const layout of changed) if (!node_layouts.some((item) => item.node_id === layout.node_id)) node_layouts.push(layout);
-      return { ...current, node_layouts };
-    });
-  }, [persistView]);
-
-  const updateViewport = useCallback((viewport: CanvasViewport) => {
-    persistView((current) => (
-      current.viewport.x === viewport.x
-      && current.viewport.y === viewport.y
-      && current.viewport.zoom === viewport.zoom
-        ? current
-        : { ...current, viewport }
-    ));
-  }, [persistView]);
-
-  const updateSelection = useCallback((selection: string[]) => {
-    persistView((current) => selection.join("\0") === current.selection.join("\0")
-      ? current
-      : { ...current, selection });
-  }, [persistView]);
-
-  const createVisualGroup = useCallback(() => {
-    if (!view) return;
-    const alreadyGrouped = new Set(view.groups.flatMap((group) => group.node_ids));
-    const node_ids = view.selection.filter((nodeId) => !alreadyGrouped.has(nodeId));
-    if (node_ids.length < 2) return;
-    persistView((current) => ({
-      ...current,
-      selection: [],
-      groups: [...current.groups, {
-        id: `group-${crypto.randomUUID()}`,
-        title: `分组 ${current.groups.length + 1}`,
-        node_ids,
-        collapsed: false,
-      }],
-    }));
-  }, [persistView, view]);
-
-  const toggleVisualGroup = useCallback((groupId: string) => {
-    const group = view?.groups.find((candidate) => candidate.id === groupId);
-    if (group && !group.collapsed && focusedNodeId && group.node_ids.includes(focusedNodeId)) {
-      setFocusedNodeId(null);
-    }
-    persistView((current) => ({
-      ...current,
-      groups: current.groups.map((candidate) => candidate.id === groupId
-        ? { ...candidate, collapsed: !candidate.collapsed }
-        : candidate),
-    }));
-  }, [focusedNodeId, persistView, view]);
-
-  const removeVisualGroup = useCallback((groupId: string) => {
-    persistView((current) => ({
-      ...current,
-      groups: current.groups.filter((group) => group.id !== groupId),
-    }));
-  }, [persistView]);
-
-  const runGraphReview = useCallback(async () => {
-    if (!projection || reviewBusy) return;
-    const readiness = await getProviderReadiness();
-    if (!readiness?.model.available) {
-      setModelUnavailable(true);
-      setReviewError("还没有配置可用的模型服务。");
-      return;
-    }
-    setModelUnavailable(false);
-    setReviewBusy(true);
-    setReviewError("");
-    const result = await reviewTaskGraph(graphId, projection.revision);
-    setReviewBusy(false);
-    if (result.ok) setReview(result.data);
-    else {
-      setReview(null);
-      setReviewError(result.error.message);
-      if (result.error.code === "stale_revision") await reload();
-    }
-  }, [graphId, projection, reload, reviewBusy]);
-
-  const acceptReviewSuggestion = useCallback(async (suggestion: TaskGraphReviewSuggestion) => {
-    if (!projection || !review) return;
-    if (projection.revision !== review.reviewed_revision) {
-      setReviewError("任务图已更新，旧审查建议未应用；请重新审查。");
-      setReview(null);
-      return;
-    }
-    const node = projection.nodes.find((candidate) => candidate.id === suggestion.node_id);
-    if (!node) {
-      setReviewError("建议引用的节点已不存在，请重新审查。");
-      setReview(null);
-      return;
-    }
-    const input: Record<string, unknown> = {
-      instruction: suggestion.instruction,
-      acceptance_criteria: suggestion.acceptance_criteria,
-    };
-    if (node.executor_ref) input.executor_ref = node.executor_ref;
-    const accepted = await mutate(() => updateTaskNode(graphId, node.id, review.reviewed_revision, {
-      kind: node.kind,
-      title: suggestion.title,
-      input,
-      retry_policy: node.retry_policy || { max_attempts: 1 },
-    }));
-    if (accepted) {
-      setReview(null);
-      setReviewError("图已按该建议更新；如需继续，请基于新版本重新执行 AI 审查。");
-    }
-  }, [graphId, mutate, projection, review]);
 
   if (!graphId) return <ErrorState title="任务图地址无效" description="缺少 graph id。" />;
   if (error && !detail) return <ErrorState title="任务图暂时无法加载" description={error.message} action={<Button onClick={() => void reload()}>重试</Button>} />;

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import canvasSource from "./TaskWorldCanvas.tsx?raw";
-import pageSource from "./TaskWorldPage.tsx?raw";
+import pageShellSource from "./TaskWorldPage.tsx?raw";
+import useTaskGraphSource from "./hooks/useTaskGraph.ts?raw";
+import useCanvasViewSource from "./hooks/useCanvasView.ts?raw";
+import useTaskEventsSource from "./hooks/useTaskEvents.ts?raw";
+import useTaskReviewSource from "./hooks/useTaskReview.ts?raw";
+import useTaskCommandsSource from "./hooks/useTaskCommands.ts?raw";
 import trailSource from "./TaskExecutionTrail.tsx?raw";
 import inspectorShellSource from "./inspector/TaskInspector.tsx?raw";
 import basicSectionSource from "./inspector/BasicSection.tsx?raw";
@@ -12,6 +17,17 @@ import resourceSectionSource from "./inspector/ResourceSection.tsx?raw";
 import artifactSectionSource from "./inspector/ArtifactSection.tsx?raw";
 import dependencySectionSource from "./inspector/DependencySection.tsx?raw";
 import versionSectionSource from "./inspector/VersionSection.tsx?raw";
+
+// The page is composition plus its behaviour hooks. These assertions are about
+// the surface's behaviour wherever it now lives, so they read all of it.
+const pageSource = [
+  pageShellSource,
+  useTaskGraphSource,
+  useCanvasViewSource,
+  useTaskEventsSource,
+  useTaskReviewSource,
+  useTaskCommandsSource,
+].join("\n");
 
 // The inspector is one surface split across its shell and its sections; these
 // assertions are about that surface, so they read all of it.
