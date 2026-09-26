@@ -1,6 +1,6 @@
 use crate::{
-    server::AppServer,
-    task::artifact::{ArtifactService, ArtifactSource},
+    app::state::AppServer,
+    modules::task::artifact::{ArtifactService, ArtifactSource},
 };
 use axum::{
     extract::{Path, State},
@@ -109,8 +109,8 @@ fn view(artifact: &crate::task::Artifact) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::{
+        modules::task::{NodeExecutionStatus, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind},
         safety::{ControlSession, CONTROL_SESSION_HEADER},
-        task::{NodeExecutionStatus, TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind},
         workspace::{Workspace, WorkspaceId},
     };
     use axum::{

@@ -284,7 +284,7 @@ impl ArtifactService {
                         .get("workflow_run_id")
                         .and_then(serde_json::Value::as_str)
                         .ok_or_else(|| ArtifactError::Db("工作流输出缺少真实运行关联".into()))?;
-                    let run_id = crate::workflow::WorkflowRunId::new(run_id)
+                    let run_id = crate::modules::workflow::WorkflowRunId::new(run_id)
                         .map_err(|_| ArtifactError::Db("工作流运行标识无效".into()))?;
                     self.workflow_output(&run_id, reference.as_str().strip_prefix("workflow://"))?
                 } else {
@@ -311,7 +311,7 @@ impl ArtifactService {
 
     fn workflow_output(
         &self,
-        run_id: &crate::workflow::WorkflowRunId,
+        run_id: &crate::modules::workflow::WorkflowRunId,
         expected_graph: Option<&str>,
     ) -> Result<String, ArtifactError> {
         let stored = self
@@ -319,14 +319,14 @@ impl ArtifactService {
             .get_workflow_run(run_id)
             .map_err(ArtifactError::Db)?
             .ok_or_else(|| ArtifactError::Db("工作流结果记录不存在".into()))?;
-        if stored.run.status != crate::workflow::WorkflowRunStatus::Completed
+        if stored.run.status != crate::modules::workflow::WorkflowRunStatus::Completed
             || expected_graph.is_some_and(|expected| expected != stored.workflow_graph_id)
         {
             return Err(ArtifactError::Db("工作流结果与已验证来源不一致".into()));
         }
         let mut output = String::new();
         for node in &stored.run.node_states {
-            if node.status != crate::workflow::NodeRunStatus::Completed {
+            if node.status != crate::modules::workflow::NodeRunStatus::Completed {
                 continue;
             }
             if let Some(result) = &node.result {
@@ -420,8 +420,8 @@ impl ArtifactService {
 mod materialization_tests {
     use super::*;
     use crate::{
+        modules::task::{TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntime},
         shared::event::EventHub,
-        task::{TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntime},
         workspace::Workspace,
     };
     use serde_json::json;

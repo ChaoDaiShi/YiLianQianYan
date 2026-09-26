@@ -2,11 +2,11 @@
 // Legacy stdio client — handshake, pagination, error and config tests.
 // ============================================================
 
+use super::super::spawn::resolve_env;
 use super::super::*;
 use super::*;
 use crate::db::McpServer;
 use std::time::Duration;
-use super::super::spawn::resolve_env;
 
 // ── 1. initialize request is correct ──
 

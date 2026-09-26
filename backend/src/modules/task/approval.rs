@@ -93,7 +93,7 @@ pub async fn resolve_task_agent_approval(
                 AgentExecutionStatus::Completed,
                 TaskExecutionStatus::Completed,
                 TaskStatus::Completed,
-                Some(crate::workflow::safe_tool_result_summary(
+                Some(crate::modules::workflow::safe_tool_result_summary(
                     &tool_result.content,
                 )),
             ),

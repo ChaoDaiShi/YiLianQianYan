@@ -132,7 +132,7 @@ async fn http_transport_json_response_direct() {
     let addr = start_mock_http().await;
     let transport = HttpTransport::new(format!("{addr}/mcp"), Default::default()).unwrap();
     let mut params = json!({});
-    crate::mcp_runtime::attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
+    crate::integrations::mcp::attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
     let req = JsonRpcRequest::new(1, "tools/list", Some(params));
     let cancel = tokio_util::sync::CancellationToken::new();
     match transport.send(&req, &cancel).await.unwrap() {

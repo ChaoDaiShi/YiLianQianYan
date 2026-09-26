@@ -7,6 +7,10 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::db::Database;
+use crate::modules::voice::{
+    VoiceApprovalDecision, VoiceContinuation, VoiceDispatchError, VoiceDispatchHook,
+    VoiceDispatchOutcome, VoiceDispatchRequest,
+};
 use crate::safety::{ApprovalStatus, ApprovalStore};
 use crate::shared::command::{
     CommandError, CommandRequest, CommandResult, CommandRouter, CommandStatus,
@@ -18,10 +22,6 @@ use crate::shared::interaction::{
 };
 use crate::shared::voice::{VoiceInputLease, VoiceInputOwner, VoiceTurn};
 use crate::task::{TaskStatusProjection, TaskWorldRuntime};
-use crate::voice::{
-    VoiceApprovalDecision, VoiceContinuation, VoiceDispatchError, VoiceDispatchHook,
-    VoiceDispatchOutcome, VoiceDispatchRequest,
-};
 
 use super::{InteractionContext, InteractionDecision, InteractionRouter, TaskNarrator};
 

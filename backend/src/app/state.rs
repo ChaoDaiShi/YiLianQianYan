@@ -14,15 +14,20 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::definition::parse_agent_definition;
-use crate::capability::{
-    AgentProvider, BuiltinToolProvider, CapabilityRegistry, McpToolProvider, SkillProvider,
-    SubagentProvider, WorkflowProvider,
-};
 use crate::config::types::{AppConfig, ModelConfig};
 use crate::db::Database;
 use crate::integrations::mcp::config::mcp_transport_config;
+use crate::integrations::mcp::McpRuntimeManager;
 use crate::isolation::SharedManagedProcessRegistry;
-use crate::mcp_runtime::McpRuntimeManager;
+use crate::modules::capability::{
+    AgentProvider, BuiltinToolProvider, CapabilityRegistry, McpToolProvider, SkillProvider,
+    SubagentProvider, WorkflowProvider,
+};
+use crate::modules::voice::{
+    GlobalVoiceSessionRuntime, MiniMaxSttProvider, MiniMaxTtsProvider, OpenAiCompatibleSttProvider,
+    OpenAiCompatibleTtsProvider, SpeechToTextProvider, TextToSpeechProvider, VoiceDispatchHook,
+    VoiceProviderError,
+};
 use crate::safety::{
     approval::ApprovalStore, grant::GrantEffect, grant::GrantResource, grant::GrantSource,
     AuditRecorder, ControlSession, PermissionId,
@@ -35,11 +40,6 @@ use crate::shared::resource::ResourceService;
 use crate::task::{TaskPresenceAdapter, TaskWorldRuntime};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
-use crate::voice::{
-    GlobalVoiceSessionRuntime, MiniMaxSttProvider, MiniMaxTtsProvider, OpenAiCompatibleSttProvider,
-    OpenAiCompatibleTtsProvider, SpeechToTextProvider, TextToSpeechProvider, VoiceDispatchHook,
-    VoiceProviderError,
-};
 
 /// Number of relevant memories injected into the chat system prompt.
 pub const CHAT_MEMORY_TOP_K: usize = 8;
@@ -459,7 +459,7 @@ impl AppServer {
             .collect();
 
         for runtime in self.mcp_runtime_manager.list_servers() {
-            if runtime.status != crate::mcp_runtime::McpRuntimeStatus::Ready
+            if runtime.status != crate::integrations::mcp::McpRuntimeStatus::Ready
                 || !runtime.capabilities.tools
             {
                 continue;
@@ -467,10 +467,10 @@ impl AppServer {
             let Some(db_server) = db_servers.get(&runtime.server_id) else {
                 continue;
             };
-            let local_tools: Vec<crate::mcp::McpTool> = runtime
+            let local_tools: Vec<crate::integrations::mcp::legacy_stdio::McpTool> = runtime
                 .tools
                 .iter()
-                .map(|t| crate::mcp::McpTool {
+                .map(|t| crate::integrations::mcp::legacy_stdio::McpTool {
                     name: t.name.clone(),
                     description: t.description.clone(),
                     input_schema: t.input_schema.clone(),
@@ -527,7 +527,9 @@ impl AppServer {
         *self.capability_registry.write() = None;
     }
 
-    pub fn managed_skill_store(&self) -> Option<crate::skill_management::ManagedSkillStore> {
+    pub fn managed_skill_store(
+        &self,
+    ) -> Option<crate::modules::memory_skill::store::ManagedSkillStore> {
         let workspace = std::path::PathBuf::from(&self.workspace_root);
         let workspace_canonical = workspace.canonicalize().ok()?;
         let config = self.config.read();
@@ -554,9 +556,11 @@ impl AppServer {
                 let canonical = candidate.canonicalize().ok()?;
                 canonical
                     .starts_with(&workspace_canonical)
-                    .then(|| crate::skill_management::ManagedSkillStore::new(candidate))
+                    .then(|| crate::modules::memory_skill::store::ManagedSkillStore::new(candidate))
             } else if candidate.starts_with(&workspace) {
-                Some(crate::skill_management::ManagedSkillStore::new(candidate))
+                Some(crate::modules::memory_skill::store::ManagedSkillStore::new(
+                    candidate,
+                ))
             } else {
                 None
             }
@@ -629,16 +633,16 @@ impl AppServer {
             .iter()
             .map(|s| (*s).clone())
             .collect();
-        let providers: Vec<Arc<dyn crate::capability::CapabilityProvider>> = vec![
+        let providers: Vec<Arc<dyn crate::modules::capability::CapabilityProvider>> = vec![
             Arc::new(BuiltinToolProvider::new(Arc::clone(&tool_registry))),
             Arc::new(McpToolProvider::new(Arc::clone(&tool_registry))),
             Arc::new(SubagentProvider::new(self.subagents.clone())),
             Arc::new(AgentProvider::new(self.db.clone_connection())),
             Arc::new(WorkflowProvider::new(self.db.clone_connection())),
             Arc::new(SkillProvider::new(skills)),
-            Arc::new(crate::capability::McpRuntimeProvider::new(Arc::clone(
-                &self.mcp_runtime_manager,
-            ))),
+            Arc::new(crate::modules::capability::McpRuntimeProvider::new(
+                Arc::clone(&self.mcp_runtime_manager),
+            )),
         ];
         let registry = Arc::new(CapabilityRegistry::new(providers));
         let _report = registry.refresh().await;

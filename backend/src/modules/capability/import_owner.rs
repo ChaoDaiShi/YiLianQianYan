@@ -5,7 +5,7 @@
 //! as executable code here.
 
 use super::import_store::Package;
-use crate::skill_management::ManagedSkillStore;
+use crate::modules::memory_skill::store::ManagedSkillStore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -166,7 +166,7 @@ pub fn is_active(store: &ManagedSkillStore, package: &Package) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::import_store::markdown_package;
+    use crate::modules::capability::import_store::markdown_package;
 
     #[test]
     fn activation_is_owned_visible_and_reversible() {

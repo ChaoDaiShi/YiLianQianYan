@@ -7,14 +7,14 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::modules::voice::{
+    VoiceDispatchError, VoiceDispatchHook, VoiceDispatchOutcome, VoiceDispatchRequest,
+};
 use crate::shared::event::{EventHub, YiEvent};
 use crate::shared::interaction::{ContextAnchorSnapshot, FocusedSurface};
 use crate::shared::voice::{
     GlobalVoiceSession, PresenceActivity, PresenceAttention, PresenceInteraction, PresenceSnapshot,
     VoiceInputLease, VoiceInputOwner, VoiceSessionState, VoiceTurn,
-};
-use crate::voice::{
-    VoiceDispatchError, VoiceDispatchHook, VoiceDispatchOutcome, VoiceDispatchRequest,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -711,7 +711,7 @@ impl GlobalVoiceSessionRuntime {
             // fails after beginning a side effect.
             state.last_accepted = None;
             let mut outcome = dispatch?;
-            if let Some(crate::voice::VoiceContinuation::Approval {
+            if let Some(crate::modules::voice::VoiceContinuation::Approval {
                 approval_id,
                 decision,
                 ..
@@ -724,8 +724,8 @@ impl GlobalVoiceSessionRuntime {
                         attestation.dispatched_lease_id = Some(accepted.lease_id.clone());
                         attestation.dispatched_decision = Some(
                             match decision {
-                                crate::voice::VoiceApprovalDecision::Approve => "approve",
-                                crate::voice::VoiceApprovalDecision::Reject => "reject",
+                                crate::modules::voice::VoiceApprovalDecision::Approve => "approve",
+                                crate::modules::voice::VoiceApprovalDecision::Reject => "reject",
                             }
                             .to_string(),
                         );

@@ -14,7 +14,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::mcp_runtime::{McpServerRuntime, McpTransportConfig};
+use crate::integrations::mcp::{McpServerRuntime, McpTransportConfig};
 use crate::server::AppServer;
 
 fn server_dto(runtime: &McpServerRuntime) -> serde_json::Value {
@@ -121,10 +121,10 @@ pub async fn read_resource(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     {
-        crate::mcp_runtime::McpOperationOutcome::Complete(contents) => {
+        crate::integrations::mcp::McpOperationOutcome::Complete(contents) => {
             Ok(Json(serde_json::json!({ "contents": contents })))
         }
-        crate::mcp_runtime::McpOperationOutcome::InputRequired(ir) => {
+        crate::integrations::mcp::McpOperationOutcome::InputRequired(ir) => {
             Ok(Json(serde_json::json!({ "input_required": ir })))
         }
     }
@@ -161,10 +161,10 @@ pub async fn get_prompt(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     {
-        crate::mcp_runtime::McpOperationOutcome::Complete(result) => {
+        crate::integrations::mcp::McpOperationOutcome::Complete(result) => {
             Ok(Json(serde_json::json!(result)))
         }
-        crate::mcp_runtime::McpOperationOutcome::InputRequired(ir) => {
+        crate::integrations::mcp::McpOperationOutcome::InputRequired(ir) => {
             Ok(Json(serde_json::json!({ "input_required": ir })))
         }
     }

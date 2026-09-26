@@ -426,9 +426,9 @@ mod tests {
     use crate::{
         agent::engine::AgentEvent,
         api::build_router,
+        app::state::AppServer,
         db::MessageRow,
         safety::{ControlSession, CONTROL_SESSION_HEADER},
-        server::AppServer,
     };
 
     type CapturedRequests = Arc<Mutex<Vec<Value>>>;

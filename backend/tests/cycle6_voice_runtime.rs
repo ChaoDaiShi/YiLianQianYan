@@ -1,11 +1,11 @@
 //! Narrow Cycle 6 v2 tests for the global voice lifecycle.
 
+use yilian_backend::modules::voice::runtime::{GlobalVoiceSessionRuntime, VoiceRuntimeError};
 use yilian_backend::shared::event::EventHub;
 use yilian_backend::shared::interaction::{
     ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface,
 };
 use yilian_backend::shared::voice::{VoiceInputOwner, VoiceSessionState};
-use yilian_backend::voice::runtime::{GlobalVoiceSessionRuntime, VoiceRuntimeError};
 
 fn runtime() -> GlobalVoiceSessionRuntime {
     GlobalVoiceSessionRuntime::new(EventHub::new(32))

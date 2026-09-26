@@ -14,7 +14,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::capability::{
+use crate::modules::capability::{
     CapabilityId, CapabilityKind, CapabilityProviderKind, CapabilityRuntimeStatus,
 };
 use crate::server::AppServer;
@@ -133,8 +133,8 @@ pub enum InspectImportRequest {
 pub async fn inspect_import(
     State(server): State<Arc<AppServer>>,
     Json(request): Json<InspectImportRequest>,
-) -> Result<Json<crate::capability::import_store::ImportPreview>, ImportError> {
-    use crate::capability::{import_archive, import_store};
+) -> Result<Json<crate::modules::capability::import_store::ImportPreview>, ImportError> {
+    use crate::modules::capability::{import_archive, import_store};
     use base64::Engine;
     let package = match request {
         InspectImportRequest::Markdown {
@@ -201,12 +201,12 @@ pub struct RemoveImportRequest {
 
 fn public_import(
     server: &AppServer,
-    record: crate::capability::import_store::InstalledPackage,
+    record: crate::modules::capability::import_store::InstalledPackage,
 ) -> serde_json::Value {
     let runtime_ready = record.installed
         && record.enabled
         && server.managed_skill_store().is_some_and(|store| {
-            crate::capability::import_owner::is_active(&store, &record.package)
+            crate::modules::capability::import_owner::is_active(&store, &record.package)
         });
     let runtime_status = if !record.installed {
         "uninstalled"
@@ -223,10 +223,10 @@ fn public_import(
 }
 
 fn restore_runtime(
-    saved: Option<crate::capability::import_owner::ActivationSnapshot>,
+    saved: Option<crate::modules::capability::import_owner::ActivationSnapshot>,
 ) -> Result<(), String> {
     saved
-        .map(crate::capability::import_owner::restore)
+        .map(crate::modules::capability::import_owner::restore)
         .unwrap_or(Ok(()))
 }
 
@@ -235,8 +235,8 @@ fn change_import_owned(
     id: &str,
     revision: u64,
     action: &str,
-) -> Result<crate::capability::import_store::InstalledPackage, String> {
-    use crate::capability::{import_owner, import_store};
+) -> Result<crate::modules::capability::import_store::InstalledPackage, String> {
+    use crate::modules::capability::{import_owner, import_store};
 
     let current = import_store::get(&server.db, id)?.ok_or("package_not_found")?;
     if current.revision != revision {
@@ -277,7 +277,7 @@ pub async fn confirm_import(
     State(server): State<Arc<AppServer>>,
     Json(request): Json<ConfirmImportRequest>,
 ) -> Result<Json<serde_json::Value>, ImportError> {
-    use crate::capability::{import_owner, import_store};
+    use crate::modules::capability::{import_owner, import_store};
 
     let now = chrono::Utc::now().timestamp_millis();
     let preview =
@@ -311,7 +311,7 @@ pub async fn confirm_import(
 pub async fn list_imports(
     State(server): State<Arc<AppServer>>,
 ) -> Result<Json<serde_json::Value>, ImportError> {
-    crate::capability::import_store::list(&server.db)
+    crate::modules::capability::import_store::list(&server.db)
         .map(|records| {
             Json(serde_json::json!({"imports":records.into_iter().map(|record| public_import(&server, record)).collect::<Vec<_>>()}))
         })

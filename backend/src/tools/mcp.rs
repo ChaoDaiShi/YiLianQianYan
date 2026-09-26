@@ -23,7 +23,7 @@
 use async_trait::async_trait;
 
 use crate::db::McpServer;
-use crate::mcp::McpTool;
+use crate::integrations::mcp::legacy_stdio::McpTool;
 use crate::safety::{
     DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
     ToolSecurityDescriptor,
@@ -68,7 +68,7 @@ pub struct McpToolAdapter {
     server: McpServer,
     /// Optional managed-runtime backend. When set, execution goes through the
     /// McpRuntimeManager instead of the legacy stdio executor.
-    manager: Option<std::sync::Arc<crate::mcp_runtime::McpRuntimeManager>>,
+    manager: Option<std::sync::Arc<crate::integrations::mcp::McpRuntimeManager>>,
 }
 
 // Manual Debug: never print the full server config (may contain command/env/secrets).
@@ -128,7 +128,7 @@ impl McpToolAdapter {
     /// executor.
     pub fn with_manager(
         mut self,
-        manager: std::sync::Arc<crate::mcp_runtime::McpRuntimeManager>,
+        manager: std::sync::Arc<crate::integrations::mcp::McpRuntimeManager>,
     ) -> Self {
         self.manager = Some(manager);
         self
@@ -327,7 +327,13 @@ impl Tool for McpToolAdapter {
             };
         }
         // Legacy stdio path (compatibility).
-        match crate::mcp::call_stdio_tool(&self.server, &self.remote_tool_name, args).await {
+        match crate::integrations::mcp::legacy_stdio::call_stdio_tool(
+            &self.server,
+            &self.remote_tool_name,
+            args,
+        )
+        .await
+        {
             Ok(result) => result,
             Err(error) => {
                 let safe = crate::utils::text::truncate_chars(&error.to_string(), 500);
@@ -361,7 +367,7 @@ pub fn register_discovered_mcp_tools_with_manager(
     occupied_names: &mut std::collections::HashSet<String>,
     server: &McpServer,
     tools: &[McpTool],
-    manager: Option<std::sync::Arc<crate::mcp_runtime::McpRuntimeManager>>,
+    manager: Option<std::sync::Arc<crate::integrations::mcp::McpRuntimeManager>>,
 ) -> usize {
     let mut registered = 0usize;
     for tool in tools {

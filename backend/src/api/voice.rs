@@ -10,14 +10,14 @@ use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::modules::voice::{
+    AudioInput, MiniMaxSttProvider, VoiceDispatchError, VoiceDispatchOnceError, VoiceProviderError,
+    VoiceRuntimeError,
+};
 use crate::safety::ApprovalStatus;
 use crate::server::AppServer;
 use crate::shared::interaction::{ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface};
 use crate::shared::voice::{VoiceInputOwner, VoiceTurn};
-use crate::voice::{
-    AudioInput, MiniMaxSttProvider, VoiceDispatchError, VoiceDispatchOnceError, VoiceProviderError,
-    VoiceRuntimeError,
-};
 
 pub async fn presence_handler(State(server): State<Arc<AppServer>>) -> impl IntoResponse {
     Json(server.presence())
@@ -324,14 +324,14 @@ pub async fn transcribe_handler(
     let Some(media_type) = header_string(&headers, CONTENT_TYPE.as_str()) else {
         return bad_request("invalid_audio", "audio media type is required");
     };
-    if body.is_empty() || body.len() > crate::voice::provider::MAX_AUDIO_BYTES {
+    if body.is_empty() || body.len() > crate::modules::voice::provider::MAX_AUDIO_BYTES {
         return bad_request("invalid_audio", "audio size is outside the accepted range");
     }
     if let Err(error) = server
         .voice_runtime
         .validate_input(&session_id, generation, &lease_id)
     {
-        return runtime_json::<crate::voice::runtime::VoiceRuntimeSnapshot>(Err(error));
+        return runtime_json::<crate::modules::voice::runtime::VoiceRuntimeSnapshot>(Err(error));
     }
     let provider = match server.stt_provider() {
         Ok(provider) => provider,
@@ -361,7 +361,9 @@ pub async fn transcribe_handler(
     ) {
         Ok(accepted) => accepted,
         Err(error) => {
-            return runtime_json::<crate::voice::runtime::AcceptedFinalTranscript>(Err(error))
+            return runtime_json::<crate::modules::voice::runtime::AcceptedFinalTranscript>(Err(
+                error,
+            ))
         }
     };
     (
@@ -391,7 +393,9 @@ pub async fn dispatch_handler(
     ) {
         Ok(accepted) => accepted,
         Err(error) => {
-            return runtime_json::<crate::voice::runtime::AcceptedFinalTranscript>(Err(error))
+            return runtime_json::<crate::modules::voice::runtime::AcceptedFinalTranscript>(Err(
+                error,
+            ))
         }
     };
     let Some(hook) = server.voice_dispatch_hook() else {
@@ -447,14 +451,14 @@ pub async fn transcribe_partial_handler(
     let Some(media_type) = header_string(&headers, CONTENT_TYPE.as_str()) else {
         return bad_request("invalid_audio", "audio media type is required");
     };
-    if body.is_empty() || body.len() > crate::voice::provider::MAX_AUDIO_BYTES {
+    if body.is_empty() || body.len() > crate::modules::voice::provider::MAX_AUDIO_BYTES {
         return bad_request("invalid_audio", "audio size is outside the accepted range");
     }
     if let Err(error) = server
         .voice_runtime
         .validate_input(&session_id, generation, &lease_id)
     {
-        return runtime_json::<crate::voice::runtime::VoiceRuntimeSnapshot>(Err(error));
+        return runtime_json::<crate::modules::voice::runtime::VoiceRuntimeSnapshot>(Err(error));
     }
     let provider = match server.stt_provider() {
         Ok(provider) => provider,
@@ -498,7 +502,7 @@ pub async fn transcribe_partial_handler(
     ) {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            return runtime_json::<crate::voice::runtime::VoiceRuntimeSnapshot>(Err(error))
+            return runtime_json::<crate::modules::voice::runtime::VoiceRuntimeSnapshot>(Err(error))
         }
     };
     (
@@ -536,7 +540,7 @@ pub async fn speak_handler(
         Err(error) => return provider_error(error),
     };
     let audio = match provider
-        .synthesize(&crate::voice::provider::SpeechRequest {
+        .synthesize(&crate::modules::voice::provider::SpeechRequest {
             text: request.text,
             voice: request.voice.unwrap_or_default(),
             language: request.language,

@@ -31,5 +31,5 @@ pub fn call_result_text(result: &serde_json::Value) -> String {
             }
         }
     }
-    crate::workflow::safe_tool_result_summary(text.trim())
+    crate::modules::workflow::safe_tool_result_summary(text.trim())
 }

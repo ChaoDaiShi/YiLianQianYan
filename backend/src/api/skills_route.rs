@@ -84,8 +84,10 @@ pub struct UpdateSkillRequest {
     pub content: String,
 }
 
-fn management_error(error: crate::skill_management::SkillManagementError) -> (StatusCode, String) {
-    use crate::skill_management::SkillManagementError;
+fn management_error(
+    error: crate::modules::memory_skill::store::SkillManagementError,
+) -> (StatusCode, String) {
+    use crate::modules::memory_skill::store::SkillManagementError;
     let status = match error {
         SkillManagementError::EmptyName
         | SkillManagementError::UnsafeName
@@ -102,7 +104,7 @@ fn management_error(error: crate::skill_management::SkillManagementError) -> (St
 
 fn managed_store(
     server: &AppServer,
-) -> Result<crate::skill_management::ManagedSkillStore, (StatusCode, String)> {
+) -> Result<crate::modules::memory_skill::store::ManagedSkillStore, (StatusCode, String)> {
     server.managed_skill_store().ok_or_else(|| {
         (
             StatusCode::CONFLICT,

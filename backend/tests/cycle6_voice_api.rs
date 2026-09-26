@@ -15,15 +15,17 @@ use tower::ServiceExt;
 use yilian_backend::{
     api,
     config::types::{VoiceConfig, VoiceSttConfig, VoiceTtsConfig},
+    integrations::secret::{InMemorySecretStore, SecretRef, SecretStore, VOICE_KEY_REF},
+    modules::voice::{
+        VoiceDispatchError, VoiceDispatchHook, VoiceDispatchOutcome, VoiceDispatchRequest,
+    },
     safety::{ControlSession, CONTROL_SESSION_HEADER},
-    secret::{InMemorySecretStore, SecretRef, SecretStore, VOICE_KEY_REF},
     shared::{
         interaction::{
             ContextAnchorSnapshot, InteractionIntent, InteractionSource, TargetResolution,
         },
         voice::{VoiceInputLease, VoiceInputOwner, VoiceTurn},
     },
-    voice::{VoiceDispatchError, VoiceDispatchHook, VoiceDispatchOutcome, VoiceDispatchRequest},
     AppServer,
 };
 

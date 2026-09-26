@@ -5,7 +5,9 @@
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
-use super::error::{McpError, MAX_MESSAGES_PER_RESPONSE, MAX_TOOL_LIST_PAGES, MCP_PROTOCOL_VERSION};
+use super::error::{
+    McpError, MAX_MESSAGES_PER_RESPONSE, MAX_TOOL_LIST_PAGES, MCP_PROTOCOL_VERSION,
+};
 use super::types::{McpCallResult, McpInitializeInfo, McpTool};
 
 // ── Protocol session ──

@@ -41,7 +41,7 @@ pub async fn ingest_handler(
         .unwrap_or("application/octet-stream")
         .to_string();
     if let Err(message) =
-        crate::resource_input::validate_upload(&query.name, &mime_type, body.len(), 1)
+        crate::modules::resource::validate_upload(&query.name, &mime_type, body.len(), 1)
     {
         return input_error(StatusCode::BAD_REQUEST, message);
     }
@@ -51,7 +51,7 @@ pub async fn ingest_handler(
     let service = server.resource_service.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        crate::resource_input::ingest_resource(&service, &query.name, &mime_type, &body)
+        crate::modules::resource::ingest_resource(&service, &query.name, &mime_type, &body)
     })
     .await;
     match result {
@@ -79,7 +79,7 @@ pub async fn preview_handler(
     let service = server.resource_service.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        crate::resource_input::resource_preview(&service, &id)
+        crate::modules::resource::resource_preview(&service, &id)
     })
     .await;
     match result {

@@ -167,11 +167,11 @@ async fn cancellation_and_pause_stop_real_workflow_after_inflight_model_returns(
         assert_eq!(runs.len(), 1);
         assert_eq!(
             runs[0].run.status,
-            crate::workflow::WorkflowRunStatus::Cancelled
+            crate::modules::workflow::WorkflowRunStatus::Cancelled
         );
         assert_ne!(
             runs[0].run.node_states[1].status,
-            crate::workflow::NodeRunStatus::Completed
+            crate::modules::workflow::NodeRunStatus::Completed
         );
         assert_eq!(
             server

@@ -34,9 +34,11 @@ fn pending(store: &ApprovalStore, conversation_id: &str, tool_call_id: &str) -> 
 #[test]
 fn voice_approval_without_display_attestation_stays_pending() {
     use yilian_backend::interaction::InteractionVoiceDispatch;
+    use yilian_backend::modules::voice::{
+        AcceptedFinalTranscript, VoiceDispatchHook, VoiceDispatchRequest,
+    };
     use yilian_backend::shared::interaction::{ConversationalAnchor, FocusedSurface};
     use yilian_backend::shared::voice::{GlobalVoiceSession, VoiceInputOwner};
-    use yilian_backend::voice::{AcceptedFinalTranscript, VoiceDispatchHook, VoiceDispatchRequest};
 
     let database = Database::new(Path::new(":memory:")).unwrap();
     let conversation = database.create_conversation("voice approval").unwrap();
@@ -80,12 +82,12 @@ fn voice_approval_without_display_attestation_stays_pending() {
 #[test]
 fn voice_approval_with_current_display_attestation_returns_one_continuation() {
     use yilian_backend::interaction::InteractionVoiceDispatch;
-    use yilian_backend::shared::interaction::{ConversationalAnchor, FocusedSurface};
-    use yilian_backend::shared::voice::{GlobalVoiceSession, VoiceInputOwner};
-    use yilian_backend::voice::{
+    use yilian_backend::modules::voice::{
         AcceptedFinalTranscript, VoiceApprovalAttestation, VoiceApprovalDecision,
         VoiceContinuation, VoiceDispatchHook, VoiceDispatchRequest,
     };
+    use yilian_backend::shared::interaction::{ConversationalAnchor, FocusedSurface};
+    use yilian_backend::shared::voice::{GlobalVoiceSession, VoiceInputOwner};
 
     let database = Database::new(Path::new(":memory:")).unwrap();
     let conversation = database.create_conversation("voice approval").unwrap();

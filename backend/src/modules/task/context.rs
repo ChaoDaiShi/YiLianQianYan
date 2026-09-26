@@ -131,7 +131,7 @@ impl NodeContextBuilder {
             .or(optional_text(input, "instruction")?)
             .unwrap_or_else(|| node.title.clone());
         let resources = if let Some(database) = &self.resource_database {
-            crate::resource_input::bound_node_resources(
+            crate::modules::resource::bound_node_resources(
                 database,
                 graph.id.as_str(),
                 node.id.as_str(),
@@ -338,7 +338,7 @@ fn only_bound_ready_resources_enter_context_with_provenance() {
         root.join("resources"),
         crate::shared::event::EventHub::new(4),
     );
-    let resource = crate::resource_input::ingest_resource(
+    let resource = crate::modules::resource::ingest_resource(
         &service,
         "bound.txt",
         "text/plain",
@@ -346,7 +346,8 @@ fn only_bound_ready_resources_enter_context_with_provenance() {
     )
     .unwrap();
     let failed =
-        crate::resource_input::ingest_resource(&service, "bad.txt", "text/plain", &[255]).unwrap();
+        crate::modules::resource::ingest_resource(&service, "bad.txt", "text/plain", &[255])
+            .unwrap();
     db.bind_resources(
         &crate::db::ResourceTarget::Node {
             graph_id: graph_id.to_string(),

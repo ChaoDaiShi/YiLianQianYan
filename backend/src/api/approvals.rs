@@ -28,6 +28,9 @@ use crate::config::types::AppConfig;
 use crate::db::{Database, MessageRow};
 use crate::llm::client::LlmClient;
 use crate::llm::types::ChatMessage;
+use crate::modules::workflow::{
+    cancel_workflow_approval, resolve_workflow_approval, WorkflowRunId,
+};
 use crate::safety::approval::{ApprovalError, PendingApproval};
 use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGatewayError};
 use crate::safety::{
@@ -36,7 +39,6 @@ use crate::safety::{
 };
 use crate::server::{AppServer, LogBuffer};
 use crate::tools::registry::ToolRegistry;
-use crate::workflow::{cancel_workflow_approval, resolve_workflow_approval, WorkflowRunId};
 
 #[derive(Debug, Deserialize)]
 pub struct ApprovalDecisionRequest {
@@ -191,7 +193,7 @@ async fn execute_approved_tool(
 }
 
 /// How to route an approval decision. Workflow-bound approvals resume a
-/// [`crate::workflow::WorkflowRun`]; task-agent approvals execute the original
+/// [`crate::modules::workflow::WorkflowRun`]; task-agent approvals execute the original
 /// call through the gateway and finalize the agent step; everything else
 /// resumes a Chat Agent.
 enum ApprovalTarget {
@@ -1168,21 +1170,21 @@ mod tests {
     };
 
     use crate::{
+        app::state::AppServer,
         db::{SecurityAuditEvent, SecurityAuditQuery},
         execution::{ExecutionContext, ExecutionId},
+        modules::workflow::{
+            NodeRunStatus, WorkflowGraphDefinition, WorkflowNodeConfig, WorkflowNodeDefinition,
+            WorkflowNodeId, WorkflowNodeKind, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
+            WORKFLOW_GRAPH_SCHEMA_VERSION,
+        },
         safety::execution_gateway::SecurityExecutionOutcome,
         safety::ControlSession,
-        server::AppServer,
         shared::{
             interaction::{ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface},
             voice::{VoiceInputOwner, VoiceSessionState},
         },
         tools::{trait_def::RiskLevel, Tool, ToolRegistry, ToolResult},
-        workflow::{
-            NodeRunStatus, WorkflowGraphDefinition, WorkflowNodeConfig, WorkflowNodeDefinition,
-            WorkflowNodeId, WorkflowNodeKind, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
-            WORKFLOW_GRAPH_SCHEMA_VERSION,
-        },
     };
 
     struct TempDatabase(PathBuf);
@@ -1479,7 +1481,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             outcome.continuation,
-            Some(crate::voice::VoiceContinuation::Approval { .. })
+            Some(crate::modules::voice::VoiceContinuation::Approval { .. })
         ));
 
         assert!(consume_spoken_attested(
@@ -1592,7 +1594,7 @@ mod tests {
     // ── MCP runtime integration ──
 
     use crate::db::McpServer;
-    use crate::mcp::McpTool;
+    use crate::integrations::mcp::legacy_stdio::McpTool;
     use crate::tools::McpToolAdapter;
 
     fn mcp_server(id: &str, command: Option<&str>) -> McpServer {

@@ -14,9 +14,9 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use crate::{
+    app::state::AppServer,
     db::SecurityAuditQuery,
     safety::{AuditEventInput, AuditEventType, ControlSession, CONTROL_SESSION_HEADER},
-    server::AppServer,
 };
 
 use super::build_router;

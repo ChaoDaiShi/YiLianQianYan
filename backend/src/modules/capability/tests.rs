@@ -305,7 +305,7 @@ async fn planner_reference_validation_rejects_missing_and_unready() {
 // Planner capability-aware discovery tests.
 // ============================================================
 
-use crate::capability::CapabilityRuntimeStatus as CStatus;
+use crate::modules::capability::CapabilityRuntimeStatus as CStatus;
 use crate::task::planner::{
     build_planner_capabilities, PlannerCapability, MAX_PLANNER_CAPABILITIES,
 };

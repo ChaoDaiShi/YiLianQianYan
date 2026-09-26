@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::llm::client::LlmClient;
 use crate::llm::types::ChatMessage;
+use crate::modules::voice::{AudioInput, SpeechRequest, VoiceProviderError};
 use crate::server::AppServer;
-use crate::voice::{AudioInput, SpeechRequest, VoiceProviderError};
 
 use crate::modules::settings::domain::policy::supported_voice_provider;
 use crate::modules::settings::domain::readiness::active_runtime_model;

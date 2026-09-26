@@ -30,11 +30,11 @@ impl JsonRpcRequest {
     pub fn to_bounded_string(
         &self,
         max_bytes: usize,
-    ) -> Result<String, crate::mcp_runtime::McpRuntimeError> {
+    ) -> Result<String, crate::integrations::mcp::McpRuntimeError> {
         let text = serde_json::to_string(self)
-            .map_err(|e| crate::mcp_runtime::McpRuntimeError::Protocol(e.to_string()))?;
+            .map_err(|e| crate::integrations::mcp::McpRuntimeError::Protocol(e.to_string()))?;
         if text.len() > max_bytes {
-            return Err(crate::mcp_runtime::McpRuntimeError::RequestTooLarge);
+            return Err(crate::integrations::mcp::McpRuntimeError::RequestTooLarge);
         }
         Ok(text)
     }

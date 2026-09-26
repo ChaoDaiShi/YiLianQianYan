@@ -100,7 +100,7 @@ impl Database {
         target: &ResourceTarget,
         resources: &[String],
     ) -> Result<Vec<ResourceBinding>, String> {
-        if resources.is_empty() || resources.len() > crate::resource_input::MAX_INPUT_FILES {
+        if resources.is_empty() || resources.len() > crate::modules::resource::MAX_INPUT_FILES {
             return Err("一次最多绑定 8 个资源".into());
         }
         self.initialize_resource_bindings()?;
@@ -115,7 +115,7 @@ impl Database {
             .map(|item| item.resource_id.clone())
             .collect::<std::collections::BTreeSet<_>>();
         ids.extend(resources.iter().cloned());
-        if ids.len() > crate::resource_input::MAX_INPUT_FILES {
+        if ids.len() > crate::modules::resource::MAX_INPUT_FILES {
             return Err("此目标最多绑定 8 个资源".into());
         }
         for resource in resources {
@@ -175,8 +175,8 @@ impl Database {
 mod tests {
     use super::*;
     use crate::{
+        modules::task::{TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntime},
         shared::{event::EventHub, resource::ResourceService},
-        task::{TaskGraphId, TaskNode, TaskNodeId, TaskNodeKind, TaskWorldRuntime},
     };
     #[test]
     fn resource_bindings_are_explicit_independent_and_bounded() {

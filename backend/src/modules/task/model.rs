@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::execution::ExecutionContext;
-use crate::workflow::WorkflowRunId;
+use crate::modules::workflow::WorkflowRunId;
 use crate::workspace::WorkspaceId;
 
 // ── Identifiers ──

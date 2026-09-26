@@ -173,10 +173,10 @@ fn collect_system_info() -> serde_json::Value {
 pub async fn get_preferences(
     State(server): State<Arc<AppServer>>,
 ) -> Result<
-    Json<crate::capability::system_preferences::Preferences>,
+    Json<crate::modules::capability::system_preferences::Preferences>,
     (StatusCode, Json<serde_json::Value>),
 > {
-    crate::capability::system_preferences::load(&server.db)
+    crate::modules::capability::system_preferences::load(&server.db)
         .map(Json)
         .map_err(|message| {
             (
@@ -188,12 +188,12 @@ pub async fn get_preferences(
 
 pub async fn put_preferences(
     State(server): State<Arc<AppServer>>,
-    Json(value): Json<crate::capability::system_preferences::Preferences>,
+    Json(value): Json<crate::modules::capability::system_preferences::Preferences>,
 ) -> Result<
-    Json<crate::capability::system_preferences::Preferences>,
+    Json<crate::modules::capability::system_preferences::Preferences>,
     (StatusCode, Json<serde_json::Value>),
 > {
-    crate::capability::system_preferences::save(&server.db, value)
+    crate::modules::capability::system_preferences::save(&server.db, value)
         .map(Json)
         .map_err(|message| {
             (

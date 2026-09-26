@@ -17,9 +17,9 @@ use super::model::{
     MAX_TASK_PLAN_STEP_INSTRUCTION_CHARS, MAX_TASK_PLAN_STEP_TITLE_CHARS,
     MAX_TASK_PLAN_SUMMARY_CHARS,
 };
-use crate::capability::{CapabilityKind, CapabilityRegistry};
 use crate::llm::client::LlmClient;
 use crate::llm::types::ChatMessage;
+use crate::modules::capability::{CapabilityKind, CapabilityRegistry};
 use crate::secret::SecretResolver;
 use crate::utils::text::truncate_chars;
 use std::sync::Arc;
@@ -137,9 +137,9 @@ pub fn validate_plan_structure(plan: &TaskPlan) -> Result<(), String> {
 /// up front rather than deferring the failure to execution time.
 pub fn validate_plan_references(
     plan: &TaskPlan,
-    registry: &crate::capability::CapabilityRegistry,
+    registry: &crate::modules::capability::CapabilityRegistry,
 ) -> Result<(), String> {
-    use crate::capability::{CapabilityId, CapabilityRuntimeStatus};
+    use crate::modules::capability::{CapabilityId, CapabilityRuntimeStatus};
 
     for step in &plan.steps {
         let id = match &step.executor {
@@ -172,7 +172,9 @@ pub fn build_planner_capabilities(registry: &CapabilityRegistry) -> Vec<PlannerC
                 CapabilityKind::Agent | CapabilityKind::Workflow | CapabilityKind::Subagent
             )
         })
-        .filter(|d| d.enabled && d.status == crate::capability::CapabilityRuntimeStatus::Ready)
+        .filter(|d| {
+            d.enabled && d.status == crate::modules::capability::CapabilityRuntimeStatus::Ready
+        })
         .filter_map(|d| {
             let (executor_type, executor_ref) = match d.kind {
                 CapabilityKind::Agent => {

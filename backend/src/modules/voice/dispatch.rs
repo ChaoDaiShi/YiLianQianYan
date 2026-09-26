@@ -6,9 +6,9 @@
 
 use serde::Serialize;
 
+use crate::modules::voice::runtime::AcceptedFinalTranscript;
 use crate::shared::command::CommandResult;
 use crate::shared::voice::{GlobalVoiceSession, VoiceTurn};
-use crate::voice::runtime::AcceptedFinalTranscript;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

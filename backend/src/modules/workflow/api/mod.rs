@@ -14,8 +14,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::db::{WorkflowGraphRecord, WorkflowRunQuery};
+use crate::modules::workflow::{WorkflowGraphDefinition, WorkflowRun, WorkflowRunId};
 use crate::server::AppServer;
-use crate::workflow::{WorkflowGraphDefinition, WorkflowRun, WorkflowRunId};
 
 pub mod dto;
 pub mod graph_routes;

@@ -410,4 +410,3 @@ fn call_stdio_tool_rejects_non_object_arguments() {
         .unwrap_err();
     assert!(matches!(err, McpError::InvalidToolCall(_)));
 }
-

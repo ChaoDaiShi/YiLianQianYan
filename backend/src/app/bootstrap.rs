@@ -12,9 +12,10 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::db::Database;
+use crate::integrations::mcp::McpRuntimeManager;
 use crate::interaction::{ApprovalVoiceAdapter, InteractionVoiceDispatch};
 use crate::isolation::ManagedProcessRegistry;
-use crate::mcp_runtime::McpRuntimeManager;
+use crate::modules::voice::GlobalVoiceSessionRuntime;
 use crate::safety::{approval::ApprovalStore, AuditRecorder, ControlSession};
 use crate::secret::{OsSecretStore, SecretResolver, SecretStore};
 use crate::shared::command::CommandRouter;
@@ -24,7 +25,6 @@ use crate::shared::resource::ResourceService;
 use crate::task::{TaskCommandService, TaskPresenceAdapter, TaskWorldRuntime};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::skill::SkillDiscovery;
-use crate::voice::GlobalVoiceSessionRuntime;
 
 use super::state::{AppServer, LogBuffer};
 

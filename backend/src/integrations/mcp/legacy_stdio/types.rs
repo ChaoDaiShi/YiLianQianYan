@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::tools::trait_def::ToolResult;
 
-
 use super::error::MAX_MCP_TOOL_RESULT_CHARS;
 
 // ── Result types ──

@@ -142,7 +142,7 @@ impl PublicMcpServer {
     /// truthful non-ready state when the server is disabled or not registered.
     fn with_runtime_summary(
         mut self,
-        runtime: Option<&crate::mcp_runtime::McpServerRuntime>,
+        runtime: Option<&crate::integrations::mcp::McpServerRuntime>,
     ) -> Self {
         if !self.enabled {
             self.runtime_status = "disabled".to_string();
@@ -327,7 +327,7 @@ pub async fn create_mcp(
     server.mcp_runtime_manager.register_server(
         server_cfg.id.clone(),
         server_cfg.name.clone(),
-        crate::server::mcp_transport_config(&server_cfg),
+        crate::integrations::mcp::config::mcp_transport_config(&server_cfg),
     );
     if server_cfg.enabled {
         let _ = server
@@ -417,7 +417,7 @@ pub async fn update_mcp(
         server.mcp_runtime_manager.register_server(
             updated.id.clone(),
             updated.name.clone(),
-            crate::server::mcp_transport_config(&updated),
+            crate::integrations::mcp::config::mcp_transport_config(&updated),
         );
         let _ = server.mcp_runtime_manager.refresh_server(&id).await;
     }
@@ -471,7 +471,7 @@ pub async fn toggle_mcp(
         server.mcp_runtime_manager.register_server(
             toggled.id.clone(),
             toggled.name.clone(),
-            crate::server::mcp_transport_config(&toggled),
+            crate::integrations::mcp::config::mcp_transport_config(&toggled),
         );
         let _ = server.mcp_runtime_manager.refresh_server(&id).await;
     } else {
@@ -504,7 +504,7 @@ pub async fn test_mcp(
     server.mcp_runtime_manager.register_server(
         mcp.id.clone(),
         mcp.name.clone(),
-        crate::server::mcp_transport_config(&mcp),
+        crate::integrations::mcp::config::mcp_transport_config(&mcp),
     );
     match server.mcp_runtime_manager.refresh_server(&id).await {
         Ok(()) => {

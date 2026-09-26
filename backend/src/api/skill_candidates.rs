@@ -1,4 +1,7 @@
-use crate::{memory_skill::MemorySkillService, server::AppServer, task::artifact::ArtifactSource};
+use crate::{
+    app::state::AppServer, modules::memory_skill::MemorySkillService,
+    modules::task::artifact::ArtifactSource,
+};
 use axum::{
     extract::{Path, State},
     http::StatusCode,

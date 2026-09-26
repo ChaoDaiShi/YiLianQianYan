@@ -245,8 +245,8 @@ impl CapabilityProvider for SkillProvider {
 
 // ── MCP Runtime provider (resources / templates / prompts) ──
 
-use crate::capability::CapabilityRuntimeStatus as CapStatus;
-use crate::mcp_runtime::{McpRuntimeManager, McpRuntimeStatus as McpStatus};
+use crate::integrations::mcp::{McpRuntimeManager, McpRuntimeStatus as McpStatus};
+use crate::modules::capability::CapabilityRuntimeStatus as CapStatus;
 
 fn digest8(s: &str) -> String {
     let hex = crate::safety::sha256_hex(s.as_bytes());

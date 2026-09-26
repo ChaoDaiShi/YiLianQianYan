@@ -21,22 +21,22 @@ use crate::agent::memory::{
     MemoryWriter, ReflectionInput,
 };
 use crate::agent::verifier::DefaultVerifier;
-use crate::capability::CapabilityRegistry;
 use crate::config::types::AppConfig;
 use crate::db::Database;
 use crate::execution::ExecutionContext;
 use crate::llm::client::LlmClient;
 use crate::llm::types::ChatMessage;
+use crate::modules::capability::CapabilityRegistry;
+use crate::modules::workflow::{
+    LlmWorkflowAgentExecutor, SecurityGatewayNodeExecutor, WorkflowAgentExecutor, WorkflowRun,
+    WorkflowRunId, WorkflowRunner,
+};
 use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGatewayError};
 use crate::safety::{
     ApprovalStore, SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject,
 };
 use crate::secret::SecretResolver;
 use crate::server::AppServer;
-use crate::workflow::{
-    LlmWorkflowAgentExecutor, SecurityGatewayNodeExecutor, WorkflowAgentExecutor, WorkflowRun,
-    WorkflowRunId, WorkflowRunner,
-};
 
 const MAX_AGENT_CONTEXT_CHARS: usize = 24000;
 const MAX_AGENT_RESULT_SUMMARY_CHARS: usize = 8000;
@@ -330,7 +330,7 @@ impl TaskOrchestrator {
             .await;
 
         match (result, run.status) {
-            (Ok(()), crate::workflow::WorkflowRunStatus::Completed) => {
+            (Ok(()), crate::modules::workflow::WorkflowRunStatus::Completed) => {
                 self.timeline.record(
                     &task.workspace_id,
                     &task.id,
@@ -344,10 +344,12 @@ impl TaskOrchestrator {
                     .await;
                 Ok(())
             }
-            (Ok(()), crate::workflow::WorkflowRunStatus::WaitingApproval) => {
+            (Ok(()), crate::modules::workflow::WorkflowRunStatus::WaitingApproval) => {
                 Err("approval_paused".to_string())
             }
-            (Ok(()), crate::workflow::WorkflowRunStatus::Cancelled) => Err("cancelled".to_string()),
+            (Ok(()), crate::modules::workflow::WorkflowRunStatus::Cancelled) => {
+                Err("cancelled".to_string())
+            }
             _ => Err("workflow failed or ended unexpectedly".to_string()),
         }
     }
@@ -364,7 +366,7 @@ impl TaskOrchestrator {
             .find(|s| {
                 matches!(
                     run.definition.nodes.iter().find(|n| n.id == s.node_id),
-                    Some(n) if n.kind == crate::workflow::WorkflowNodeKind::Output
+                    Some(n) if n.kind == crate::modules::workflow::WorkflowNodeKind::Output
                 )
             })
             .and_then(|s| s.result.as_ref())
@@ -649,7 +651,7 @@ impl TaskOrchestrator {
                                 "tool_call_id": call.id,
                                 "tool_name": call.function.name,
                                 "ok": tool_result.ok,
-                                "content": crate::workflow::safe_tool_result_summary(&tool_result.content),
+                                "content": crate::modules::workflow::safe_tool_result_summary(&tool_result.content),
                             }));
                         }
                         Ok(SecurityExecutionOutcome::RequiresApproval { risk_level, reason }) => {

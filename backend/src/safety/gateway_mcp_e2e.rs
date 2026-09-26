@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 
 use crate::config::types::{SandboxConfig, SandboxProfile};
 use crate::db::{Database, McpServer};
-use crate::mcp_runtime::{McpRuntimeManager, McpRuntimeStatus, McpTransportConfig};
+use crate::integrations::mcp::{McpRuntimeManager, McpRuntimeStatus, McpTransportConfig};
 use crate::safety::execution_gateway::{
     SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest,
 };
@@ -163,7 +163,7 @@ async fn gateway_stack(db: Arc<Database>) -> (SecurityExecutionGateway, Arc<Atom
         created_at: 0,
         updated_at: 0,
     };
-    let legacy_tool = crate::mcp::McpTool {
+    let legacy_tool = crate::integrations::mcp::legacy_stdio::McpTool {
         name: runtime.tools[0].name.clone(),
         description: runtime.tools[0].description.clone(),
         input_schema: runtime.tools[0].input_schema.clone(),
