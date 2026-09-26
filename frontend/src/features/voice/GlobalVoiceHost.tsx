@@ -15,8 +15,6 @@ import {
   EMPTY_PRESENCE,
   contextFromSession,
   contextMatchesSession,
-  isFinalTranscriptForSession,
-  nextConversationRefresh,
   normalizeSnapshot,
   snapshotWithSession,
   transcriptFromTurn,
@@ -32,8 +30,9 @@ import { useSpeechPlayback, cleanupVoiceSession } from "./useSpeechPlayback";
 import { useVoiceCapture, type FinalVoiceTranscript } from "./useVoiceCapture";
 import { runVoiceContinuation } from "./voiceContinuation";
 import { runVoiceBargeIn } from "./bargeIn";
+import { runFinalTranscriptFlow, type TurnFlowRuntime } from "./turnFlow";
 import { useHandsFree } from "./useHandsFree";
-import { shouldSuppressCaptureEcho, type CaptureEchoEvidence } from "./echoEvidence";
+import { type CaptureEchoEvidence } from "./echoEvidence";
 import { synchronizeVoiceContext } from "./voiceContextSync";
 import { type ChatVoiceControls } from "./ChatVoiceInput";
 import { GlobalVoiceLeaf, type GlobalVoiceProductState } from "./GlobalVoiceLeaf";
@@ -235,130 +234,51 @@ export default function GlobalVoiceHost({
     void endSessionRef.current();
   }, []);
 
-  const handleFinalTranscript = useCallback(
-    async (result: FinalVoiceTranscript) => {
-      const current = latestSessionRef.current;
-      const dispatchEpoch = dispatchEpochRef.current;
-      if (!current || !isFinalTranscriptForSession(result, current)
-        || current.conversational_anchor?.conversation_id !== latestContextRef.current.conversational_anchor?.conversation_id) {
-        setNotice("这段语音来自旧会话，已安全丢弃。");
-        finishChatOwnedSession();
-        return;
-      }
-      const echoEvidence = captureEchoRef.current;
+  const turnFlowRuntime = useMemo<TurnFlowRuntime>(() => ({
+    readEpoch: () => dispatchEpochRef.current,
+    readLatestSession: () => latestSessionRef.current,
+    readContextAnchorId: () => latestContextRef.current.conversational_anchor?.conversation_id,
+    readContextIdentityEpoch: () => contextIdentityEpochRef.current,
+    readChatDraft: () => chatDraftCaptureRef.current,
+    takeEchoEvidence: () => {
+      const evidence = captureEchoRef.current;
       captureEchoRef.current = null;
-      if (shouldSuppressCaptureEcho(result, echoEvidence, contextIdentityEpochRef.current, performance.now())) {
-        setNotice("已忽略疑似播报回声，请重新说话。");
-        finishChatOwnedSession();
-        return;
-      }
-      if (chatDraftCaptureRef.current) {
-        setSnapshot((previous) =>
-          previous
-            ? {
-                ...previous,
-                lease: null,
-                partial_transcript: null,
-                final_transcript: result.text,
-                session: { ...current, state: "listening", updated_at: Date.now() },
-              }
-            : previous,
-        );
-        for (const listener of chatFinalSubscribersRef.current) listener(result.text);
-        finishChatOwnedSession();
-        return;
-      }
-      setSnapshot((previous) =>
-        previous
-          ? {
-              ...previous,
-              lease: null,
-              partial_transcript: null,
-              final_transcript: result.text,
-              session: { ...current, state: "processing", updated_at: Date.now() },
-            }
-          : previous,
-      );
-      const routed = await dispatchVoiceTurn({
-        session_id: result.sessionId,
-        generation: result.generation,
-        lease_id: result.leaseId,
-        final_transcript: result.text,
-      });
-      if (!routed) {
-        setNotice("最终语音已接收，但交互路由暂不可用。");
-        return;
-      }
-      const latest = latestSessionRef.current;
-      if (
-        dispatchEpochRef.current !== dispatchEpoch ||
-        !latest ||
-        latest.voice_session_id !== result.sessionId ||
-        latest.generation !== result.generation
-      ) {
-        return;
-      }
-      setTargetDescription(
-        routed.turn.resolved_target.status === "resolved" ? "服务端已解析" : "服务端未解析",
-      );
-      setIntentDescription(
-        routed.turn.intent.kind === "conversation_turn" ? "会话对话（服务端）" : "服务端意图",
-      );
-      setSnapshot((previous) =>
-        previous
-          ? {
-              ...previous,
-              turns: [...previous.turns, routed.turn],
-            }
-          : previous,
-      );
-      let narration = routed.narration ?? null;
-      if (routed.continuation) {
-        const continuation = routed.continuation;
-        setAwaitingConfirmation(continuation.kind === "approval");
-        continuationControllerRef.current?.abort();
-        const continuationController = new AbortController();
-        continuationControllerRef.current = continuationController;
-        try {
-          const continuationResult = await runVoiceContinuation(continuation, {
-            signal: continuationController.signal,
-            isCurrent: () => dispatchEpochRef.current === dispatchEpoch
-              && latestSessionRef.current?.voice_session_id === result.sessionId
-              && latestSessionRef.current?.generation === result.generation
-              && latestContextRef.current.conversational_anchor?.conversation_id === current.conversational_anchor?.conversation_id,
-          });
-          narration = continuationResult.narration;
-          if (continuation.kind === "conversation") {
-            setConversationRefresh((previous) => (
-              nextConversationRefresh(previous, continuation.conversation_id)
-            ));
-          }
-        } catch (error) {
-          if (!continuationController.signal.aborted) {
-            setNotice(error instanceof Error ? error.message : "语音 continuation 执行失败");
-          }
-          return;
-        } finally {
-          setAwaitingConfirmation(false);
-          if (continuationControllerRef.current === continuationController) {
-            continuationControllerRef.current = null;
-          }
-        }
-      }
-      const afterContinuation = latestSessionRef.current;
-      if (
-        dispatchEpochRef.current !== dispatchEpoch ||
-        !afterContinuation ||
-        afterContinuation.voice_session_id !== result.sessionId ||
-        afterContinuation.generation !== result.generation
-      ) {
-        return;
-      }
-      if (narration && current.attention_mode !== "silent") {
-        await playbackRef.current.speak(narration);
+      return evidence;
+    },
+    now: () => Date.now(),
+    monotonicNow: () => performance.now(),
+    forEachChatFinal: (deliver) => {
+      for (const listener of chatFinalSubscribersRef.current) deliver(listener);
+    },
+    setNotice,
+    setSnapshot,
+    setTargetDescription,
+    setIntentDescription,
+    setConversationRefresh,
+    setAwaitingConfirmation,
+    finishChatOwnedSession,
+    abortContinuation: () => {
+      continuationControllerRef.current?.abort();
+      continuationControllerRef.current = null;
+    },
+    beginContinuation: () => {
+      const controller = new AbortController();
+      continuationControllerRef.current = controller;
+      return controller;
+    },
+    endContinuation: (controller) => {
+      if (continuationControllerRef.current === controller) {
+        continuationControllerRef.current = null;
       }
     },
-    [finishChatOwnedSession, playback],
+    dispatchVoiceTurn,
+    runContinuation: runVoiceContinuation,
+    speak: (text) => playbackRef.current.speak(text),
+  }), [finishChatOwnedSession]);
+
+  const handleFinalTranscript = useCallback(
+    (result: FinalVoiceTranscript) => runFinalTranscriptFlow(result, turnFlowRuntime),
+    [turnFlowRuntime],
   );
 
   const interruptForBargeIn = useCallback(async (): Promise<GlobalVoiceSession | void> => {

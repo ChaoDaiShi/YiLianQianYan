@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { VoiceRuntimeSnapshot } from "../../api/voice";
 import hostSource from "./GlobalVoiceHost.tsx?raw";
+import turnFlowSource from "./turnFlow.ts?raw";
 import captureSource from "./useVoiceCapture.ts?raw";
 import playbackSource from "./useSpeechPlayback.ts?raw";
 import {
@@ -281,10 +282,11 @@ describe("GlobalVoiceHost contract", () => {
   });
 
   it("routes trusted continuations before speaking and keeps the dispatch epoch guard", () => {
-    expect(hostSource).toContain("runVoiceContinuation");
-    expect(hostSource).toContain("routed.continuation");
-    expect(hostSource).toContain("dispatchEpochRef.current !== dispatchEpoch");
-    expect(hostSource).toContain("continuationResult.narration");
+    expect(hostSource).toContain("runContinuation: runVoiceContinuation");
+    expect(turnFlowSource).toContain("routed.continuation");
+    expect(turnFlowSource).toContain("runtime.readEpoch() !== dispatchEpoch");
+    expect(turnFlowSource).toContain("await runtime.runContinuation");
+    expect(turnFlowSource).toContain("continuationResult.narration");
   });
 
   it("interrupts the active audio object before capture can enter listening", () => {
