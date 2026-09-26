@@ -2,8 +2,9 @@
 
 > **Branch:** `refactor/v1-architecture-foundation`
 > **Base:** `origin/v1/release-work` @ `78f3755`
-> **Status:** **PARTIAL — R0–R5 complete, R6 partially complete (inspector and
-> page split; canvas, settings and voice remain), R7 complete, R8 not started.**
+> **Status:** **R0–R8 executed and verified. R6 is partially complete by
+> decision: `index.css` is deferred on evidence and `GlobalVoiceHost`'s
+> orchestrator is deliberately unsplit. Both are argued in the final report.**
 >
 > This is *not* the `r1-final-report.md` the mandate §44 asks for. That document
 > requires the R8 full gate to have passed. This is an honest handoff so the
@@ -27,6 +28,13 @@
 | `958ffd6` | R5 | `docs(refactor): record R5 progress` |
 | `0456c03` | R6a | `refactor(frontend): split task inspector into sections` |
 | `c7cdde6` | R6b | `refactor(frontend): extract task world page behaviour into hooks` |
+| `4ca7954` | R6c | `refactor(frontend): move canvas under canvas/ and extract TaskNode` |
+| `85f25c2` | R7 | `chore(architecture): enforce module boundaries` |
+| `736ea3e` | R7 | `docs(refactor): record R6 partial and R7 progress` |
+| `41fb035` | R7 | `chore(architecture): enforce module boundaries` (baseline corrections) |
+| `019c0e0` | R8 | `docs(refactor): add R1 final architecture report` |
+| `82118ab` | R6d | `refactor(frontend): split settings page into sections` |
+| `d94221e` | R6e | `refactor(frontend): extract voice model, routing and context from the host` |
 
 Working tree is clean; `main`, `develop`, `v1/release-work`, and `v2` are untouched.
 All commits are pushed to `origin/refactor/v1-architecture-foundation`.
@@ -307,9 +315,12 @@ schedule for removal. Recorded, not silently fixed.
 
 ---
 
-## 9. R6 — what was done (partial)
+## 9. R6 — what was done
 
-Two of the six hotspots named in mandate §38.
+Of the six hotspots named in mandate §38: three are done (`TaskWorldInspector`,
+`TaskWorldPage`, `SettingsPage`), two are partial by decision
+(`TaskWorldCanvas`, `GlobalVoiceHost`), and one is deferred on evidence
+(`index.css`).
 
 **R6a (`0456c03`) — `TaskWorldInspector.tsx` (397) → `inspector/`.**
 A shell (`TaskInspector.tsx`) plus one file per block: Basic, Executor,
@@ -330,21 +341,51 @@ previous selection), and that callback is memoised with `[]` deps so
 reload effect into a fetch loop. Effect order and dependency arrays are
 transcribed as written.
 
+**R6c (`4ca7954`) — `TaskWorldCanvas.tsx` (198) → `canvas/`, partial.**
+`canvas/TaskNode.tsx` takes the React Flow node renderer and its `statusLabel`
+map — a real component boundary. The remaining 112-line surface stays intact:
+at that size it is one coherent React Flow integration, and carving it into
+`useCanvasProjectionSync` / `useCanvasViewport` / `useCanvasPersistence` would
+be slicing by line count (§23) with no render test to catch a regression.
+
+**R6d (`82118ab`) — `SettingsPage.tsx` (726) → 364 lines.**
+Content moved to `features/settings/{model,sections}/`: `config.ts` (defaults,
+section list, appearance modes), `mapping.ts` (the redacted comparison
+projection and secret-source labels), `types.ts`, and nine section components.
+The page keeps the config state, the save/clear flows that carry the rc.2
+secret semantics, and the `?section=` deep link. It also **stays at
+`pages/SettingsPage.tsx`**: §20 puts it under `features/settings/pages/`, but
+route pages live in `pages/` throughout this repo, and moving one would both
+create a second convention and churn the route table plus three `?raw` contract
+tests for no behavioural gain.
+
+**R6e (`d94221e`) — `GlobalVoiceHost.tsx` (895) → 703 lines, partial.**
+The exported types, ~170 lines of pure projections and the route policy moved
+to `features/voice/{model,context}/`, with `./GlobalVoiceHost` re-exporting
+everything so all four importers compile untouched. The 640-line orchestrator
+was **not** split into §21's hooks: it carries ~16 epoch/identity `useRef`
+guards shared *across* the state machines those hooks would separate, a
+barge-in path that re-checks the epoch after every `await`, and echo
+suppression keyed to the context epoch. That is a concurrency redesign, not a
+file move, and `GlobalVoiceHost.test.tsx` renders to static markup so it cannot
+catch a mistake there. It remains on the over-600 baseline rather than being
+quietly dropped from it.
+
 **Contract tests migrated, not weakened.** These are source-text (`?raw`)
 assertions, so a split invalidates their import paths. `taskCorePaths.test.tsx`
 now renders `inspector/TaskInspector`; `taskWorldCanvas.test.ts` reads the page
-shell plus all five hooks, and the inspector shell plus all sections, so every
-string it pinned is still *required to exist on the same surface*.
+shell plus all five hooks and the inspector shell plus all sections;
+`systemSettingsContract.test.ts` reads the settings page plus `model/` and all
+nine section files. Every string each test pinned — including the negative
+assertions — is still *required to exist on the same surface*.
 
 ### R6 — what was NOT done
 
-`TaskWorldCanvas.tsx`, `pages/SettingsPage.tsx` (726) and
-`features/voice/GlobalVoiceHost.tsx` (895), plus the `index.css` split.
-`index.css` is analysed in `docs/architecture/current-to-target-map.md`: a
+`index.css`. It is analysed in `docs/architecture/current-to-target-map.md`: a
 feature-grouped split is not order-preserving for this file, and the experiment
-that proved it is recorded there with its built-CSS md5. The canvas, settings
-and voice splits are ordinary work with no known blocker — they were not
-reached before R7/R8.
+that proved it is recorded there with its built-CSS md5. It is deferred until a
+built-CSS diff or visual snapshot can guard it — the method for that is written
+down and ready.
 
 ## 10. R7 — what was done
 
@@ -371,16 +412,28 @@ All four frontend rules hold in the codebase today, so they are errors, not
 warnings. The 600-line baselines (39 backend paths, 6 frontend paths) are
 recorded debt: a file may leave the list by being split; nothing may join it.
 
-## 11. Remaining work — R6 (rest) and R8
+## 11. Remaining work
 
-### R6 remainder — Frontend
+Ordered by how much is already understood, not by size.
 
-`features/task-world/TaskWorldCanvas.tsx` (React Flow host, node component,
-projection sync, viewport, drag persistence, selection);
-`pages/SettingsPage.tsx` (726) → section components; and
-`features/voice/GlobalVoiceHost.tsx` (895). All three have the same shape of
-work as R6a/R6b, including the same `?raw` contract-test migration. `index.css`
-is separately deferred (see `current-to-target-map.md`).
+1. **`index.css` (3389 lines).** Deferred on evidence. The safe shape is known:
+   move the *unlayered* blocks to JS imports in `main.tsx` while the `@layer`
+   blocks stay in the Tailwind-processed file, then prove it with a built-CSS
+   diff against md5 `5889431e`. A feature-grouped split is not available.
+2. **`GlobalVoiceHost`'s orchestrator (703 lines, ~640 of them the component).**
+   Needs a concurrency-aware decomposition, not a file move — see §9. It needs
+   an interaction test for barge-in and continuation *first*, or the change is
+   unverifiable.
+3. **`TaskWorldCanvas`'s surface (112 lines).** Only worth splitting if the
+   hooks fall out along real seams; at present they do not.
+4. **R3/R4 gaps, inherited.** `modules/task/application` and
+   `modules/workflow/application` are unextracted; MCP is relocated but not
+   regrouped, and `mcp_transport_config` still lives in `app/state.rs`.
+5. **Backend relocation, the largest remaining slice.** `voice`, `capability`,
+   `llm`, `secret`, `agent` and `tools` still sit at `backend/src/`. Nothing is
+   unowned; it is unrelocated.
+6. **The compatibility facades.** Eight of them (§5 of the final report). Each
+   needs its call sites updated and then deleted.
 
 ### R8 — Full gate
 
@@ -407,7 +460,7 @@ consider warming it before R8 rather than during it.
 
 ---
 
-## 13. Compatibility conclusion (R0–R7)
+## 13. Compatibility conclusion (R0–R8)
 
 | Check | Result |
 |---|---|
@@ -418,8 +471,17 @@ consider warming it before R8 rather than during it.
 | Existing user data compatible | **YES** — no persistence change |
 | v2 touched | **NO** |
 
-Refactor Gate for R0–R7: **PASS**. The mandate's overall Gate cannot be
-evaluated until R8.
+Refactor Gate for R0–R8: **PASS**. R8 ran the full gate — fmt, check
+`--workspace`, test `--workspace --all-targets` (21 binaries, 988 passed), check
+`-p yi-lian-qian-yan`, `npm test` (91 files / 426 passed), `npm run build`, and
+the real-backend E2E — all green. After R6d/R6e changed frontend files, the
+frontend gates and the E2E were re-run against the final commit rather than
+assumed; no Rust source changed in between. Full detail in the final report.
+
+R6d and R6e are the second and third frontend stages to move files. Neither
+changed a route path or a rendered contract: `npm test` stayed at 91 files, the
+E2E passed against the rewritten Settings page at all three viewports, and the
+built stylesheet md5 is still `5889431e`.
 
 R3, R4 and R5 changed no route path, no response shape, no schema and no
 frontend file, so the R2 conclusions above still hold — they are

@@ -72,8 +72,9 @@ frontend/src/features/task-world/
 └── (taskGraphProjection, canvasViewWriter, TaskExecutionTrail at root)
 ```
 
-Frontend churn was small and contained: **22 files changed in total** across
-the entire refactor — 17 added, 1 deleted, 3 modified, 1 renamed.
+Frontend churn stayed contained: **41 files changed in total** across the
+entire refactor — 33 added, 1 deleted, 6 modified, 1 renamed. No route path,
+no page contract and no stylesheet rule changed.
 
 ---
 
@@ -178,9 +179,12 @@ file may leave it by being split, nothing may join it.
 | `db/task.rs` | 1107 |
 | `modules/task/task_supervisor.rs` | 1087 |
 
-**Frontend — 6 files:** `api/legacy.ts` (1335), `pages/PluginsPage.tsx` (973),
-`features/voice/GlobalVoiceHost.tsx` (895), `pages/SettingsPage.tsx` (726),
-`components/chat/ChatView.tsx` (623), `api/taskWorld.ts` (601).
+**Frontend — 5 files:** `api/legacy.ts` (1335), `pages/PluginsPage.tsx` (973),
+`features/voice/GlobalVoiceHost.tsx` (703), `components/chat/ChatView.tsx`
+(623), `api/taskWorld.ts` (601).
+
+`SettingsPage.tsx` left this list during R6 (726 → 364). `GlobalVoiceHost.tsx`
+did not, and is still on it deliberately — see §8.
 
 ---
 
@@ -195,8 +199,8 @@ Honest list, each with its reason.
 | `TaskWorldInspector.tsx` (397) | done — `inspector/` (R6a) |
 | `TaskWorldPage.tsx` (368) | done — 203 lines + `hooks/` (R6b) |
 | `TaskWorldCanvas.tsx` (198) | **partial** — `TaskNode` extracted, both under `canvas/`. The remaining 112-line surface was deliberately *not* split into `useCanvasProjectionSync` / `useCanvasViewport` / `useCanvasPersistence`: at that size it is one coherent React Flow integration and splitting it would be slicing by line count (mandate §23), with no render test to catch a regression. |
-| `pages/SettingsPage.tsx` (726) | **not started** — ordinary §20 work, no blocker |
-| `features/voice/GlobalVoiceHost.tsx` (895) | **not started** — ordinary §21 work, no blocker |
+| `pages/SettingsPage.tsx` (726) | done — **364 lines**, content in `features/settings/{model,sections}/` (R6d) |
+| `features/voice/GlobalVoiceHost.tsx` (895) | **partial** — **703 lines**. The types, ~170 lines of pure projections and the route policy moved to `features/voice/{model,context}/` (R6e). The 640-line orchestrator was **not** split into the mandated hooks; see below. |
 | `index.css` (3389) | **not started — blocked by evidence** (below) |
 
 **`index.css` cannot be safely split by feature, and this was tested rather
@@ -212,6 +216,29 @@ baseline exactly. Since §22 itself says "只移动现有规则" and there is **
 visual regression test** in the suite, the split is deferred until a
 built-CSS diff or visual snapshot can guard it. The method is ready and
 documented in `current-to-target-map.md`.
+
+**Why `GlobalVoiceHost`'s orchestrator was not split (R6e).** §21 asks for
+`runtime/GlobalVoiceProvider` plus four hooks. The body carries ~16 `useRef`
+epoch/identity guards (dispatch, context identity, capture start) that are
+*shared across* the state machines those hooks would separate, a barge-in path
+that aborts in-flight work and re-checks the epoch after every `await`,
+continuation abort controllers, and echo suppression keyed to the context
+epoch. Extracting them is a redesign of the concurrency model, not a file move —
+and the available tests cannot catch a mistake: `GlobalVoiceHost.test.tsx`
+renders to static markup, exercising neither the async paths nor the guards.
+Two of §21's targets already exist as separate files (`useVoiceCapture.ts`,
+`useSpeechPlayback.ts`) and the UI is already out in `GlobalVoiceLeaf.tsx`; what
+remains is the orchestrator. The consequence is stated rather than hidden:
+`GlobalVoiceHost.tsx` is still over 600 lines and **stays on the boundary
+check's baseline**.
+
+**SettingsPage's route entry also stayed in `pages/`.** §20 places it at
+`features/settings/pages/`. Route-level pages live in `pages/` throughout this
+repository (the surface lazily imports all thirteen from there); moving one
+would create a second convention and churn the route table plus three `?raw`
+contract tests for no behavioural gain. §20's actual requirement — "SettingsPage
+变为 composition page" — is met, and `features/settings/` now exists with
+`model/` and `sections/`.
 
 **R3 and R4 remain incomplete in the ways their handoff recorded.**
 `modules/task/application` and `modules/workflow/application` service
@@ -294,6 +321,21 @@ sequentially with nothing else executing, using
 `CARGO_TARGET_DIR=E:/cargo-target/yilian-arch` and the repo's required
 `jobs = 1`.
 
+### Re-verification after R6d/R6e
+
+R6d and R6e changed frontend files *after* the gate above, so the gate was
+re-checked against the final state rather than assumed:
+
+- **No Rust source changed** between the gate commit and the final commit
+  (`git diff --stat 41fb035..HEAD -- backend/ src-tauri/` is empty), so gates
+  1–4 still describe the same Rust source.
+- **`npm test`**: 91 files / **426 passed**, re-run on the final commit.
+- **`npm run build`**: passes; built CSS md5 still `5889431e`.
+- **Real-backend E2E**: re-run and **passed** — and this one mattered, because
+  the E2E drives the real Settings page at three viewports
+  (`1280x720`, `1366x768`, `1920x1080`), which is exactly the surface R6d
+  rewrote.
+
 ---
 
 ## 12. Process notes, recorded honestly
@@ -341,6 +383,7 @@ from `docs/architecture/ownership.md` rather than from reading the source:
 | Who owns the database? | `db/` — unchanged and unmoved |
 | What may a module depend on? | `docs/architecture/ownership.md` per module, enforced in part by two checks |
 
-The refactor is **not** complete. R6 has three hotspots outstanding, R3/R4 have
-their recorded gaps, and roughly half the backend is still unrelocated. What is
-complete is R0–R5, R6a–R6c, R7 and R8, all verified green.
+The refactor is **not** complete. Within R6, `index.css` is deferred on
+evidence and `GlobalVoiceHost`'s orchestrator is deliberately unsplit; R3 and
+R4 retain their recorded gaps; and roughly half the backend is still
+unrelocated. What is complete is R0–R5, R6a–R6e, R7 and R8, all verified green.
