@@ -13,6 +13,7 @@
 // untouched: this is a new, separate model for the executable runtime.
 // ============================================================
 
+pub mod api;
 pub mod definition;
 pub mod executor;
 pub mod resume;

@@ -8,6 +8,7 @@
 // ============================================================
 
 pub mod adapters;
+pub mod api;
 pub mod approval;
 pub mod artifact;
 pub mod canvas_view;
