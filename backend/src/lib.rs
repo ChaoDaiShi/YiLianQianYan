@@ -16,6 +16,7 @@ pub mod llm;
 pub mod mcp;
 pub mod mcp_runtime;
 pub mod memory_skill;
+pub mod modules;
 pub mod plugin;
 pub mod resource_input;
 pub mod safety;
