@@ -656,3 +656,14 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .task-world-inspector { min-width: 0; overflow-y: auto; }
 .task-world-canvas .react-flow__panel.top.left { display: flex; flex-wrap: wrap; max-width: calc(100% - 30px); }
 .task-world-canvas .react-flow__controls-button { width: 32px; height: 32px; }
+
+.system-settings-layout { grid-template-columns: clamp(180px, 12vw, 220px) minmax(0, 1fr); }
+.system-settings-content { padding: var(--page-padding-block) var(--page-padding-inline); }
+.settings-form { width: 100%; max-width: var(--content-form-max); }
+.system-settings-nav button { min-height: 40px; font-size: var(--font-size-control); }
+.system-settings-content h3 { font-size: var(--font-size-title-sm); line-height: var(--line-height-title); }
+.system-setting-row { grid-template-columns: minmax(0, 1fr) minmax(180px, 420px); }
+@media (max-width: 900px) {
+  .system-setting-row { grid-template-columns: minmax(0, 1fr); }
+  .system-settings-nav { flex-shrink: 0; max-width: 100%; }
+}

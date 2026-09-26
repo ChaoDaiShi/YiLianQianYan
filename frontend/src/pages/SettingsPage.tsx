@@ -344,8 +344,8 @@ export default function SettingsPage() {
         </nav>
 
         {/* Section content */}
-        <div className="system-settings-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-6 pb-16 scrollbar-thin">
-          <div className="max-w-2xl space-y-6">
+        <div className="system-settings-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-thin">
+          <div className="settings-form space-y-6">
             {renderSection()}
             <section className="settings-save-card rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
