@@ -4,6 +4,8 @@
 //! persistence. Modules interact through application services, commands,
 //! events and projections — never by reaching into each other's internals.
 
+pub mod memory_skill;
+pub mod resource;
 pub mod settings;
 pub mod task;
 pub mod workflow;
