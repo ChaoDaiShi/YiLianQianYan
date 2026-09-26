@@ -48,20 +48,20 @@ or additional publishing capability.
 
 ## Boundaries and implementation plan
 
-1. [ ] Capture the current real Canvas at 1280/1366/1920/2560, write geometry and
+1. [x] Capture the current real Canvas at 1280/1366/1920/2560, write geometry and
    screenshots to ignored target/canvas-studio. Add a reusable Edge scenario.
-2. [ ] Compose Studio header and optional panels in TaskWorldPage. Extract
+2. [x] Compose Studio header and optional panels in TaskWorldPage. Extract
    presentation-only header/toolbar/extension components. Preserve graph hooks,
    keyed provider lifetime and queue/reconcile/camera model implementations.
-3. [ ] Add node presentation mapping and focused semantic tests. Restyle cards,
+3. [x] Add node presentation mapping and focused semantic tests. Restyle cards,
    edges and scoped studio CSS. Add only save-status notifications at hook level;
    do not modify writer ordering, retry, rebase or persistence payloads.
-4. [ ] Adapt E2E navigation to explicitly open previously permanent panels; retain
+4. [x] Adapt E2E navigation to explicitly open previously permanent panels; retain
    all existing Canvas Stability assertions. Add panel-toggle, real save-state,
    tool reachability, responsive and position/camera geometry assertions.
-5. [ ] Run focused checks while editing, then one final frontend test/build gate,
+5. [x] Run focused checks while editing, then one final frontend test/build gate,
    architecture checks, real backend core + Canvas stability + Studio matrix.
-6. [ ] Inspect actual screenshots, record before/after metrics, changed files,
+6. [x] Inspect actual screenshots, record before/after metrics, changed files,
    limitations and evidence paths in the final report; stop after delivery.
 
 No Backend/Cargo/REST/schema/migration/Secret/v2 changes. No global theme redesign,
@@ -69,3 +69,5 @@ new dependencies, arbitrary node resizing or bundle splitting. User explicitly
 requested analysis, a concrete proposal and immediate implementation; no additional
 design approval checkpoint is required. No push or merge is inferred for this new
 task; small local commits are explicitly requested.
+
+Acceptance and measured results: [C2 report](canvas-studio-c2-report.md).

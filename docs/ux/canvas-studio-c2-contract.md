@@ -12,6 +12,9 @@
    issue camera commands.
 5. Re-entering a graph restores its saved viewport. Collapsing auxiliary panels
    does not recreate ReactFlow or discard Inspector drafts.
+   Escape closes a panel and returns focus to its trigger, including when a
+   temporarily disabled save button has returned focus to document.body.
+   Keyboard events in external voice/dialog portals remain owned by those hosts.
 6. Every card stays 240x128 before/during/after execution. Existing node IDs,
    saved layouts, graph-order Trail and group semantics are unchanged.
 7. Save labels reflect actual queue notifications: saving, synced revision, or
@@ -28,3 +31,5 @@
 Evidence: existing queue/reconcile/camera tests, unchanged stability assertions
 (only explicit panel opening added), plus real backend + system Edge Studio
 screenshots, geometry, toolbar/panel tests and final result JSON in ignored target.
+
+Exact runs, commands, evidence paths and limits: [C2 report](canvas-studio-c2-report.md).
