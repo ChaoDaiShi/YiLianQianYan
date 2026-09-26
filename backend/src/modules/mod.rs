@@ -5,3 +5,5 @@
 //! events and projections — never by reaching into each other's internals.
 
 pub mod settings;
+pub mod task;
+pub mod workflow;
