@@ -41,13 +41,18 @@ was made.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Database compatible | **YES** | No file under `backend/src/db/` changed. No migration added, renumbered, edited or re-owned. |
+| Database compatible | **YES** | `backend/src/db/migrations.rs` is untouched, and no migration was added, renumbered, edited or re-owned. Ten other `db/` files changed by **+25 / −25 lines** — import paths only (`use crate::task::*` → `use crate::modules::task::*`). No query, table or row shape changed. |
 | REST compatible | **YES** | Route-path set unchanged: **178 handlers**, no method, path or handler-signature change in any R2 commit. |
 | Frontend route compatible | **YES** | `surfaces/workspace/WorkspaceSurface.tsx` untouched. |
 | Secret compatible | **YES** | KEEP / REPLACE / DELETE moved verbatim in R1 and untouched in R2; the four pinning tests pass. |
 | Existing user data compatible | **YES** | No schema, migration, storage-root or file-format change. |
 | v2 touched | **NO** | `v1_does_not_reach_into_v2` passes. |
 | Behavior changed | **NO** — except one deliberate fix, §4. | |
+
+An earlier revision of this table claimed no file under `db/` changed. That was
+wrong: ten did. The correction above is the accurate statement, and it is the
+kind of claim worth re-deriving rather than asserting — `git diff --stat` against
+the R1 base is the check.
 
 ---
 
@@ -112,16 +117,24 @@ This makes layer 3 mechanical: an unpublished crate cannot attract a dependent
 who mistakes a `pub` path for a contract. If a Rust SDK is ever wanted, the
 policy says to build a separate `yilian-sdk` and **not** to restore the facades.
 
-## 6. Validation
+## 6. Validation — two gates
 
-Full gate, run **once**, in the isolated target dir:
+They answer different questions. The first proves behaviour and direction from
+the inside; the second proves the product actually runs.
+
+`CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2"` throughout. That directory
+was created for R2 and is **not shared** with the other worktree — see §10.
+
+---
+
+## 6a. Unit / Integration Architecture Gate
 
 ```bash
-CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2" cargo fmt --all -- --check
-CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2" cargo check --workspace --all-targets --locked
-CARGO_PROFILE_TEST_CODEGEN_UNITS=4 \
-  CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2" cargo test --workspace --all-targets --locked
-CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2" cargo check -p yi-lian-qian-yan
+export CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2"
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
+CARGO_PROFILE_TEST_CODEGEN_UNITS=4 cargo test --workspace --all-targets --locked
+cargo check -p yi-lian-qian-yan --locked
 cd frontend && npm test && npm run build
 ```
 
@@ -135,14 +148,65 @@ work around the environment: `Cargo.toml`'s `codegen-units = 1` and
 |---|---|
 | `cargo fmt --check` | PASS |
 | `cargo check --workspace --all-targets` | PASS |
-| `cargo test --workspace --all-targets` | see §7 |
+| `cargo test --workspace --all-targets` | 21 binaries · 988 passed · 0 failed (§7a) |
 | `cargo check -p yi-lian-qian-yan` | PASS |
 | `npm test` | 93 files / 445 tests PASS |
 | `npm run build` | PASS |
-| Backend architecture boundaries | 3 PASS |
-| Frontend architecture boundaries | 5 PASS (4 + the new `legacy.ts` check) |
+| Backend architecture boundaries | 5 PASS |
+| Frontend architecture boundaries | 5 PASS |
 
-## 7. Gate results
+## 6b. Real Application E2E
+
+```bash
+cd frontend && npm run test:e2e     # node e2e/core-paths.mjs
+```
+
+**It does not need a Tauri bundle.** It spawns the real backend binary at
+`<worktree>/target/debug/yilian-server.exe` — a path hardcoded in the script,
+not derived from `CARGO_TARGET_DIR` — plus a Vite dev server, then drives a real
+system Chromium (Edge or Chrome) with `playwright-core`. The one prerequisite is
+the binary in that location:
+
+```bash
+cp "E:/cargo-target/yilian/arch-r2/debug/yilian-server.exe" target/debug/
+```
+
+It uses an isolated temp data dir and workspace, free ports, and a fixed control
+token, so it does not touch real user data.
+
+Result at this HEAD:
+
+```json
+{"status":"passed","graphs_created":2,
+ "settings_viewports":["1280x720","1366x768","1920x1080"],
+ "real_backend":true,
+ "browser":"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"}
+```
+
+What that pass actually covers, in order — this is the list to check when
+deciding whether an E2E is meaningful for a change:
+
+1. Backend `/api/health` and the frontend `/tasks` route both come up.
+2. The first-run setup dialog is dismissed if present.
+3. Two task canvases are created and get **distinct graph identities** — the
+   script fails if the second URL equals the first.
+4. A task node is added, `.task-world-node` renders, auto-layout runs, and the
+   task centre shows the expected graph count after each creation.
+5. `/capabilities` renders the managed-skill heading and the protected managed
+   import route is reachable.
+6. `/system` renders the monitor heading.
+7. `/chat` opens the voice surface and the voice pill renders.
+8. `/settings?section=model` is checked at **1280×720, 1366×768 and 1920×1080**:
+   no horizontal overflow, the save button is visible and clickable, and the
+   voice pill does not overlap it.
+9. **Zero browser console errors or page errors** across the whole run.
+
+Steps 3, 8 and 9 are the ones with teeth: canvas identity, cross-viewport
+layout regression, and a silent runtime error that a unit test cannot see.
+
+---
+
+## 7a. Unit / Integration Architecture Gate results
 
 Run once, end to end, in `E:/cargo-target/yilian/arch-r2` (cold — this target
 dir was created for R2, so the numbers are from a clean build, not a warm
@@ -154,7 +218,7 @@ incremental one).
 |---|---|
 | `yilian-backend` lib | 892 |
 | `yi-lian-qian-yan` main | 5 |
-| `architecture_boundaries` | 3 |
+| `architecture_boundaries` | 3 → **5** after the closure checks in §7c |
 | `canvas_view` | 2 |
 | `cycle6_contracts` | 5 |
 | `cycle6_conversation_anchor` | 5 |
@@ -180,6 +244,62 @@ S1 test-file split and the S6 drain did not drop coverage.
 
 **Frontend — 93 files / 445 tests passed, build succeeded.** 445 is one more than
 the R1 baseline of 444: the new `legacy.ts` boundary check.
+
+## 7b. Real Application E2E result
+
+```json
+{"status":"passed","graphs_created":2,
+ "settings_viewports":["1280x720","1366x768","1920x1080"],
+ "real_backend":true,
+ "browser":"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"}
+```
+
+Run against the tree at `93b332b`, which is the same tree the §7a gate passed on,
+and again on the closure tree after `a528b4e`. A real `yilian-server.exe` built
+from that tree, a real Vite server, and a real Edge: two canvases created with
+distinct identities, the node and auto-layout path exercised, capabilities /
+system / chat surfaces rendered, settings checked at three viewports, and zero
+browser console errors.
+
+`a528b4e` touches only `backend/tests/architecture_boundaries.rs`, an
+integration-test target outside the lib and bin, so it cannot change the server
+binary's behaviour. That is why one E2E run covers both — a claim about *what
+changed*, not a licence to skip the E2E for the next real change.
+
+The E2E closes the gap the earlier revision of this report flagged: the unit gate
+cannot see a runtime console error, a cross-viewport layout regression, or a
+graph identity collision.
+
+**One unreproduced failure, recorded rather than dropped.** An invocation of
+`npm test && npm run build && npm run test:e2e` chained into a single command
+failed after `npm run test:e2e` had already passed standalone. The diagnostic
+output was not captured, so the cause is **not known**. Subsequent runs passed:
+the standalone re-run, and a re-run of the same chained form. No process was left
+listening on 9420 or 1420, and no stray `yilian-server` / `node` existed
+afterwards.
+
+So the observed record is **four passes and one failure**, with the failure
+unexplained. The E2E is not proven flaky and not proven stable. If it fails
+again, capture the `[backend tail]` / `[frontend tail]` output the script prints
+before rethrowing — that is what would identify it. Treating this as a known
+flake would be wrong; treating it as green would be worse.
+
+## 7c. Closure boundary checks
+
+Added after the two gates, so they are not in the §7a run above. Both were
+verified to **fail** before being trusted — see the commit message.
+
+| Check | Guards | Result |
+|---|---|---|
+| `no_removed_facade_paths` | the 12 removed shims have 0 references in `src/`, and `lib.rs` declares none | PASS |
+| `cross_module_globs_are_allowlisted` | every `pub use crate::…::*` is on an explicit allowlist; `lib.rs` never globs | PASS |
+
+`architecture_boundaries` is therefore **5 tests**, not the 3 in the §7a table.
+The two new checks are source-text and dependency-free; `syn` was rejected as a
+large dependency for checks that only read text.
+
+Current state: **5 backend boundary tests + 5 frontend boundary tests, all
+passing.**
 
 ## 8. Known limitations
 

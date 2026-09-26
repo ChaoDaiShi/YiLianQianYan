@@ -3,9 +3,12 @@
 > **Branch:** `refactor/v1-architecture-semantic`
 > **Base:** `refactor/v1-architecture-foundation` @
 > `669db21558b222fb1e5290cd1b27915938a1120a` (R1, frozen)
-> **Status:** S0–S6 done and verified; S7 gate run once, PASS.
+> **Status:** S0–S7 done and verified. Both closure gates PASS —
+> Unit/Integration Architecture Gate and Real Application E2E, reported
+> separately in §8b.
 > Final report: `r2-final-report.md`. Companion documents:
-> `r1-final-report.md`, `../architecture/compatibility-facades.md`,
+> `r1-final-report.md`, `../architecture/baseline-v1.md` (the frozen
+> architecture this line converged on), `../architecture/compatibility-facades.md`,
 > `../architecture/public-api-policy.md`, `../architecture/module-catalog.md`.
 
 R1 answered *where code lives*. R2 answers *what is responsible for what*, and
@@ -126,12 +129,11 @@ The echo-evidence guard had been written out twice (in `startCapture` and in the
 hands-free `capture.start` wrapper) with identical conditions; it is one
 `recordEchoEvidence` call now.
 
-## 7. S6 — Frontend API (partial)
+## 7. S6 — Frontend API (done)
 
-**Done:** `src/core/api/http.ts` holds `API_BASE`, `request`, `requestResult`,
+**S6a.** `src/core/api/http.ts` holds `API_BASE`, `request`, `requestResult`,
 `ApiResult`/`ApiFailure`, sharing one `jsonInit` helper so the control-session
 header is attached in exactly one place. `api/transport.ts` points at it.
-`api/legacy.ts` 1,335 → 1,269 lines and re-exports the core.
 
 One boundary wart, recorded not hidden: `core/api/http.ts` imports
 `controlSessionHeaders` from `api/controlSession.ts` (a core → api edge).
@@ -139,43 +141,58 @@ One boundary wart, recorded not hidden: `core/api/http.ts` imports
 `vi.mock("./controlSession", ...)` calls depend on that path; re-exporting it
 from `core/` would silently stop those mocks applying to the HTTP core.
 
-**Remaining (S6b/S6c):**
+**S6b.** Nine domains moved out of `legacy.ts` into their entrypoints:
+`conversations`, `chat`, `system` (settings, models, tools, health, logs,
+security grants, isolation), `plugins` (MCP, subagents, skills), `memory`,
+`workflows`, `tasks` (+ agents/teams), `workspaces`, `capabilities`.
 
-- `src/api/legacy.ts` still holds every domain body. `legacy.ts` is already
-  sectioned by `// ── Domain ──` comments that line up with the domain
-  entrypoints (`conversations.ts`, `settings`/`system.ts`, `plugins.ts`,
-  `workflows.ts`, `tasks.ts`, `memory.ts`, `capabilities.ts`, `workspaces.ts`,
-  `skills`). Draining = move each section body into its entrypoint, import
-  `request`/`requestResult` from `core/api/http.ts`, and delete the re-export
-  line. `api/client.ts` (`export * from "./legacy"`) is the compatibility facade
-  and is the last thing to shrink.
-- `src/api/taskWorld.ts` (601 lines) needs the same treatment; it is the other
-  entry in the frontend `KNOWN_LARGE_FILES` list.
-- `features/voice/GlobalVoiceHost.tsx` is now 576 lines (under the budget) and
-  may be removed from `KNOWN_LARGE_FILES` whenever the list is next touched.
-- Optional S6b: split `pages/PluginsPage.tsx` (no visual redesign).
+**S6c.** `api/legacy.ts` is **62 lines of re-exports and declares nothing** —
+1,335 → 62. `api/taskWorld.ts` (601 lines) became
+`api/taskWorld/{types,transport,calls,index}.ts`; `index.ts` re-exports, so
+`from "../api/taskWorld"` resolves unchanged for all ten call sites.
 
-**How to verify a step:** `npx tsc --noEmit`, then
-`npx vitest run src/api` — `api/domainBoundary.test.ts` asserts that the
-`client.ts` facade and the named domain entrypoints are the *same function
-objects*, so it catches a half-moved section that leaves two copies.
+Three things worth carrying forward:
+
+- **Ownership comes from the entrypoint's name list, not from the section
+  comments.** `legacy.ts`'s `// ── Health ──` marker covered the chat/SSE block,
+  and the workflow-graph and workflow-run calls sat under it too. Cutting by
+  section left `listWorkflowGraphs` behind; `domainBoundary.test.ts` caught it
+  because it asserts the `client.ts` facade and the domain entrypoint are the
+  *same function objects*.
+- **Item boundaries need a parser, not brace counting.** A signature with a
+  balanced-brace parameter object (`updateWorkflowGraph`) and a union type whose
+  members end in `;` (`WorkflowApprovalEvent`) both make a text heuristic stop
+  early and silently truncate. Two attempts corrupted `legacy.ts` that way; the
+  drain helper was rewritten to use `ts.createSourceFile` spans.
+- **A new boundary check keeps `legacy.ts` a surface**: it fails if the file
+  declares a function, const, class, interface or alias again. That is the
+  invariant that matters — a second implementation would compile, and the two
+  would drift silently.
+
+`features/voice/GlobalVoiceHost.tsx` is 576 lines and `pages/PluginsPage.tsx`
+splitting was optional in S6 and was **not** done. Both are noted in
+`r2-final-report.md` §8.
+
+**How to verify a step:** `npx tsc --noEmit`, then `npx vitest run src/api`.
 
 ## 8. Verification used
 
-Focused per stage, not the full gate:
+### 8a. Per-stage — focused, not the full gate
 
 ```bash
-CARGO_PROFILE_TEST_CODEGEN_UNITS=16 CARGO_TARGET_DIR="E:/cargo-target/yilian-arch" \
+CARGO_PROFILE_TEST_CODEGEN_UNITS=16 CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2" \
   cargo check --workspace --all-targets --locked
 # then, to run tests, build and invoke the reported executable directly:
-CARGO_PROFILE_TEST_CODEGEN_UNITS=16 CARGO_TARGET_DIR="E:/cargo-target/yilian-arch" \
+CARGO_PROFILE_TEST_CODEGEN_UNITS=16 CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2" \
   cargo test -p yilian-backend --locked --lib --no-run 2>&1 | grep Executable
 ```
 
-**Read the `CARGO_TARGET_DIR` section of §9 before trusting a `cargo test`
-result.**
+**Read §9's first hazard before trusting a `cargo test` result** — it describes
+the shared target dir that made a `cargo test` run another worktree's binary.
+The isolated dir in the commands above is the fix; the direct-executable pattern
+is the second line of defence.
 
-Totals reached at S5 and re-confirmed after every stage:
+Totals reached at S5, re-confirmed after every later stage:
 
 | Suite | Result |
 |---|---|
@@ -186,35 +203,80 @@ Totals reached at S5 and re-confirmed after every stage:
 | frontend | 93 files / 444 tests passed |
 | `npm run build` | succeeds |
 
+### 8b. Closure — two gates, run once each
+
+They answer different questions and are reported separately in
+`r2-final-report.md` §6a/§6b.
+
+**Unit / Integration Architecture Gate** — behaviour and dependency direction
+from the inside. Full commands in `r2-final-report.md` §6a. Result: fmt PASS,
+check PASS, **21 Rust test binaries · 988 passed · 0 failed**, Tauri check PASS,
+frontend **93 files / 445 tests** PASS, build PASS, backend boundaries **5**
+PASS, frontend boundaries **5** PASS.
+
+**Real Application E2E** — the product actually running. `npm run test:e2e`,
+which spawns the real `yilian-server.exe` plus Vite and drives a real Chromium.
+Result: `{"status":"passed","graphs_created":2,"settings_viewports":["1280x720","1366x768","1920x1080"],"real_backend":true}`.
+
+**It does not need a Tauri bundle.** The only prerequisite is the server binary
+at `<worktree>/target/debug/yilian-server.exe` — a hardcoded path, not derived
+from `CARGO_TARGET_DIR`:
+
+```bash
+cp "E:/cargo-target/yilian/arch-r2/debug/yilian-server.exe" target/debug/
+```
+
 Route-path set unchanged throughout (178 handlers; no method, path or handler
-signature touched). No migration, schema or secret-semantics change.
+signature touched). No migration, schema or secret-semantics change. Ten `db/`
+files changed by **import path only** (+25 / −25); `migrations.rs` untouched.
 
 ## 9. Environment hazards
 
-Two, both cost real time to rediscover.
+Three, each of which cost real time to rediscover.
 
-**The shared target dir can run another worktree's test binary.**
-`E:/cargo-target/yilian-arch` is shared with the other worktree
-(`F:/项目开发/忆涟千言/YiLianQianYan`, branch
-`prep/shared-foundation-v1-v2`, the flat pre-R1 layout). `cargo test` can
-occasionally execute *that* worktree's binary. Symptom: `0 passed; N filtered
-out` for a filter that should match, or pre-R1 test names (`mcp::tests::…`,
-`mcp_runtime::tests::…`, `workflow::tests::…`) instead of
-`integrations::mcp::legacy_stdio::tests::…`, `modules::workflow::tests::…`.
+**1. Never share a Cargo target dir with the other worktree.**
+`E:/cargo-target/yilian-arch` is shared with
+`F:/项目开发/忆涟千言/YiLianQianYan` (branch `prep/shared-foundation-v1-v2`, the
+flat pre-R1 layout). With a shared dir, `cargo test` can execute *that*
+worktree's test binary. Symptom: `0 passed; N filtered out` for a filter that
+should match, or pre-R1 test names (`mcp::tests::…`, `mcp_runtime::tests::…`,
+`workflow::tests::…`) instead of `integrations::mcp::legacy_stdio::tests::…`,
+`modules::workflow::tests::…`. It bit the S3c verification once.
 
-Defeat it by building, then running the reported executable directly:
+The fix, applied in R2's closure, is a target dir this line owns:
+
+```bash
+export CARGO_TARGET_DIR="E:/cargo-target/yilian/arch-r2"
+```
+
+Second line of defence, if a result ever looks wrong — build, then run the
+reported executable directly, which bypasses cargo's binary selection:
 
 ```bash
 cargo test -p yilian-backend --locked --lib --no-run 2>&1 | grep Executable
-"E:/cargo-target/yilian-arch/debug/deps/yilian_backend-<hash>.exe" modules::task
+"E:/cargo-target/yilian/arch-r2/debug/deps/yilian_backend-<hash>.exe" modules::task
 ```
 
-**`codegen-units = 1` plus a nearly-full commit limit.**
+The isolated dir is cold, so the first build is long. Do not "save time" by
+pointing back at the shared one.
+
+**2. `codegen-units = 1` plus a nearly-full commit limit.**
 `rustc-LLVM ERROR: out of memory` / exit `0xc0000409` on the lib-test unit. Pass
-`CARGO_PROFILE_TEST_CODEGEN_UNITS=16` (or `4`) per invocation; it applies only to
+`CARGO_PROFILE_TEST_CODEGEN_UNITS=4` per invocation; it applies only to
 `[profile.test]`, recompiles just the local test unit, and changes no repo file.
 Do not "fix" `.cargo/config.toml` (`jobs = 1` is deliberate) or the root
 `Cargo.toml` profile.
+
+**3. The E2E wants the server binary at a path `CARGO_TARGET_DIR` does not
+control.** `frontend/e2e/core-paths.mjs` spawns
+`<worktree>/target/debug/yilian-server.exe`. With an isolated target dir, that
+file has to be copied into place once:
+
+```bash
+cp "E:/cargo-target/yilian/arch-r2/debug/yilian-server.exe" target/debug/
+```
+
+`target/` is gitignored, so this stages nothing.
 
 ## 10. What R2 did not do
 
