@@ -1,9 +1,10 @@
-import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { spawn, execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { canvasStability } from "./canvas-stability.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..");
 const frontendRoot = resolve(import.meta.dirname, "..");
@@ -28,16 +29,20 @@ const edgePaths = [
 
 const processes = [];
 const logs = new Map();
+const evidenceDir = join(repositoryRoot, "target", "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
+const browserLog = [];
+const networkLog = [];
 let browser;
+let page;
 let isolatedRoot;
+let testExitCode = 1;
 
 function capture(child, label) {
-  const output = [];
-  logs.set(label, output);
-  for (const stream of [child.stdout, child.stderr]) {
+  for (const [name, stream] of [["stdout", child.stdout], ["stderr", child.stderr]]) {
+    const output = [];
+    logs.set(`${label}-${name}`, output);
     stream?.on("data", (chunk) => {
       output.push(chunk.toString());
-      if (output.length > 80) output.shift();
     });
   }
   processes.push(child);
@@ -77,6 +82,7 @@ async function stop(child) {
 }
 
 try {
+  await mkdir(evidenceDir, { recursive: true });
   await portIsFree(backendPort);
   await portIsFree(frontendPort);
   isolatedRoot = await mkdtemp(join(tmpdir(), "yilian-v1-e2e-"));
@@ -120,10 +126,15 @@ try {
   const executablePath = edgePaths.find((path) => existsSync(path));
   if (!executablePath) throw new Error("No supported system Chromium browser was found");
   browser = await chromium.launch({ executablePath, headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  page.on("response", (response) => {
+    const url = new URL(response.url());
+    if (url.pathname.startsWith("/api/task-world/")) networkLog.push({ path: url.pathname, method: response.request().method(), status: response.status() });
+  });
   const browserErrors = [];
-  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("pageerror", (error) => { browserErrors.push(error.message); browserLog.push({ type: "pageerror", message: error.message }); });
   page.on("console", (message) => {
+    browserLog.push({ type: message.type(), message: message.text() });
     if (message.type() === "error") browserErrors.push(message.text());
   });
 
@@ -139,6 +150,8 @@ try {
     await laterSetup.click();
     await laterSetup.waitFor({ state: "hidden" });
   }
+  const checkedViewports = [];
+  if (!process.env.YILIAN_E2E_CANVAS_ONLY) {
   await page.getByRole("button", { name: "新建任务画布" }).click();
   await page.waitForURL(/\/task-world\/[^/]+$/);
   const firstGraphUrl = page.url();
@@ -165,7 +178,6 @@ try {
   await page.goto(`http://127.0.0.1:${frontendPort}/chat`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "与小涟语音对话" }).click();
   await page.locator('[data-testid="voice-pill"]').waitFor();
-  const checkedViewports = [];
   for (const viewport of [
     { width: 1280, height: 720 },
     { width: 1366, height: 768 },
@@ -194,23 +206,48 @@ try {
     if (overlaps) throw new Error(`Voice pill covers Settings save at ${viewport.width}x${viewport.height}`);
     checkedViewports.push(`${viewport.width}x${viewport.height}`);
   }
-
-  if (browserErrors.length) {
-    throw new Error(`Browser errors: ${browserErrors.join(" | ")}`);
   }
-  process.stdout.write(JSON.stringify({
+
+  const canvasResult = await canvasStability({ page, backendPort, frontendPort, controlToken, evidenceDir });
+  // The scenario deliberately provokes exactly one real stale revision. Match
+  // that observed response to Chromium's network diagnostic, not to page errors.
+  const expectedConflicts = browserErrors.filter((message) => message === "Failed to load resource: the server responded with a status of 409 (Conflict)");
+  if (expectedConflicts.length !== canvasResult.stale_responses) throw new Error("Unexpected conflict diagnostics");
+  const unexpectedErrors = browserErrors.filter((message) => !expectedConflicts.includes(message));
+  if (unexpectedErrors.length) {
+    throw new Error(`Browser errors: ${unexpectedErrors.join(" | ")}`);
+  }
+  const result = {
     status: "passed",
-    graphs_created: 2,
+    graphs_created: process.env.YILIAN_E2E_CANVAS_ONLY ? 1 : 3,
     settings_viewports: checkedViewports,
     real_backend: true,
     browser: executablePath,
-  }) + "\n");
+    canvas_stability: canvasResult,
+    evidence: evidenceDir,
+  };
+  await writeFile(join(evidenceDir, "result.json"), JSON.stringify(result, null, 2));
+  process.stdout.write(JSON.stringify(result) + "\n");
+  testExitCode = 0;
 } catch (error) {
+  await page?.screenshot({ path: join(evidenceDir, "failure.png"), fullPage: true }).catch(() => {});
+  await writeFile(join(evidenceDir, "failure.txt"), error.stack || String(error));
   for (const [label, output] of logs) {
     process.stderr.write(`\n[${label} tail]\n${output.join("")}\n`);
   }
   throw error;
 } finally {
+  for (const [label, output] of logs) await writeFile(join(evidenceDir, `${label}.log`), output.join(""));
+  await writeFile(join(evidenceDir, "browser-console.json"), JSON.stringify(browserLog, null, 2));
+  await writeFile(join(evidenceDir, "task-network.json"), JSON.stringify(networkLog, null, 2));
+  await writeFile(join(evidenceDir, "exit-code.txt"), String(testExitCode));
+  if (process.platform === "win32") {
+    try {
+      const diagnostic = execFileSync("powershell.exe", ["-NoProfile", "-Command", `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $ports = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in @(9420,1420,${backendPort},${frontendPort}) } | Select-Object LocalAddress,LocalPort,OwningProcess; $processes = Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath; @{ ports = @($ports); processes = @($processes) } | ConvertTo-Json -Depth 4`], { windowsHide: true, encoding: "utf8", timeout: 15_000 });
+      await writeFile(join(evidenceDir, "ports-and-processes.json"), diagnostic);
+    } catch (error) { await writeFile(join(evidenceDir, "diagnostic-error.txt"), String(error)); }
+  }
+  process.stderr.write(`E2E evidence: ${evidenceDir}\n`);
   await browser?.close().catch(() => {});
   for (const child of processes.reverse()) await stop(child);
   if (isolatedRoot) await rm(isolatedRoot, { recursive: true, force: true });
