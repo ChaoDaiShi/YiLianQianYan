@@ -14,9 +14,9 @@
 // ============================================================
 
 pub mod api;
+pub mod application;
 pub mod definition;
 pub mod executor;
-pub mod resume;
 pub mod run;
 pub mod runner;
 pub mod state_machine;
@@ -24,6 +24,8 @@ pub mod validation;
 
 #[cfg(test)]
 mod tests;
+
+pub use application::approval_service::{cancel_workflow_approval, resolve_workflow_approval};
 
 pub use definition::{
     WorkflowCondition, WorkflowEdgeDefinition, WorkflowGraphDefinition, WorkflowNodeConfig,
@@ -34,7 +36,6 @@ pub use executor::{
     LlmWorkflowAgentExecutor, NodeExecutionOutcome, SecurityGatewayNodeExecutor,
     WorkflowAgentExecutor, WorkflowExecutionError, WorkflowNodeExecutor,
 };
-pub use resume::{cancel_workflow_approval, resolve_workflow_approval};
 pub use run::{
     safe_tool_result_summary, NodeRunResult, NodeRunState, NodeRunStatus, WorkflowRun,
     WorkflowRunError, WorkflowRunId, WorkflowRunStatus, MAX_WORKFLOW_NODE_RESULT_CHARS,

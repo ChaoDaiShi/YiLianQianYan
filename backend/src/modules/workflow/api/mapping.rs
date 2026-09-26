@@ -1,5 +1,28 @@
 use super::*;
 
+use crate::modules::workflow::application::graph_service::GraphServiceError;
+use crate::modules::workflow::application::run_service::RunServiceError;
+
+pub(crate) fn graph_service_error(error: GraphServiceError) -> (StatusCode, String) {
+    match error {
+        GraphServiceError::Invalid(message) => (StatusCode::BAD_REQUEST, message),
+        GraphServiceError::NotFound => (StatusCode::NOT_FOUND, "工作流图不存在".to_string()),
+        GraphServiceError::Read(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
+        GraphServiceError::Persist(message) => (StatusCode::BAD_REQUEST, message),
+    }
+}
+
+pub(crate) fn run_service_error(error: RunServiceError) -> (StatusCode, String) {
+    match error {
+        RunServiceError::InvalidId(message) => (StatusCode::BAD_REQUEST, message),
+        RunServiceError::GraphNotFound => (StatusCode::NOT_FOUND, "工作流图不存在".to_string()),
+        RunServiceError::RunNotFound => (StatusCode::NOT_FOUND, "工作流运行不存在".to_string()),
+        RunServiceError::InvalidRun(message) => (StatusCode::BAD_REQUEST, message),
+        RunServiceError::Read(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
+        RunServiceError::Persist(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
 pub(crate) fn run_view(graph_id: &str, run: &WorkflowRun) -> serde_json::Value {
     serde_json::json!({
         "run_id": run.run_id.as_str(),

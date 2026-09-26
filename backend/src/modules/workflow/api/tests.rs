@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::execution::{ExecutionContext, ExecutionId};
+use crate::modules::workflow::application::run_service::execute_for_task_harness;
 use crate::safety::ControlSession;
 use crate::server::AppServer;
 use crate::workflow::{

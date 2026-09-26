@@ -80,7 +80,7 @@ impl WorkflowExecutionProvider for ExistingWorkflowProvider {
         workflow_id: &str,
         context: &NodeContext,
     ) -> Result<Option<Value>, AdapterError> {
-        crate::api::workflow_runtime::execute_for_task_harness(
+        crate::modules::workflow::application::run_service::execute_for_task_harness(
             Arc::clone(&self.server),
             workflow_id,
             self.cancel.clone(),
