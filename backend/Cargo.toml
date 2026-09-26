@@ -2,6 +2,11 @@
 name = "yilian-backend"
 version = "1.0.0-rc.2"
 edition = "2021"
+# Application-internal crate: nothing in this repository runs `cargo publish`,
+# and no third party consumes `yilian_backend` as a library. See
+# docs/architecture/public-api-policy.md — the supported contracts are the
+# REST / command / event / projection surfaces, not Rust module paths.
+publish = false
 
 [lib]
 name = "yilian_backend"

@@ -3,9 +3,10 @@
 > **Branch:** `refactor/v1-architecture-semantic`
 > **Base:** `refactor/v1-architecture-foundation` @
 > `669db21558b222fb1e5290cd1b27915938a1120a` (R1, frozen)
-> **Status:** S0–S5 done and verified. **S6 partial.** S7 not started.
-> Companion documents: `r1-final-report.md`, `r1-progress-and-handoff.md`,
-> `../architecture/compatibility-facades.md`, `../architecture/current-to-target-map.md`.
+> **Status:** S0–S6 done and verified; S7 gate run once, PASS.
+> Final report: `r2-final-report.md`. Companion documents:
+> `r1-final-report.md`, `../architecture/compatibility-facades.md`,
+> `../architecture/public-api-policy.md`, `../architecture/module-catalog.md`.
 
 R1 answered *where code lives*. R2 answers *what is responsible for what*, and
 closes the migration scaffolding R1 left behind. Same product; no route, schema,
@@ -15,20 +16,18 @@ migration or secret semantic changes.
 
 ## 1. Stage status
 
-| Stage | Scope | Status | Commit |
+| Stage | Scope | Status | Commits |
 |---|---|---|---|
 | S0 | Close the R1 docs against final code facts | done | `a3bb59e` |
 | S1 | `modules/task/application/` services | done | `ceb03e7` |
 | S2 | `modules/workflow/application/` services | done | `5fc6478` |
-| S3 | MCP internal modularisation + `legacy_stdio` split | done | `e8df56d`, `171db97`, `f091c2c` |
+| S3 | MCP modularisation + `legacy_stdio` split | done | `e8df56d`, `171db97`, `f091c2c` |
 | S4 | Compatibility facade convergence | done | `e3a19e1`, `8773b42`, `d2c8ad4` |
 | S5 | Voice runtime isolation | done | `0e7e99b` |
 | S6a | Frontend HTTP core | done | `9ca9ad6` |
-| S6b | Drain `api/legacy.ts` into domain entrypoints | **not started** | — |
-| S6c | Decompose `api/taskWorld.ts` | **not started** | — |
-| S7 | Full gate + R2 report set | **not started** | — |
-
-Eleven commits on the branch.
+| S6b | Drain `api/legacy.ts` into domain entrypoints | done | 9 domains, `a058dee` … `59bfc42` |
+| S6c | `legacy.ts` → re-export surface; split `taskWorld` | done | `e9646de`, `587f108`, `a0165be` |
+| S7 | Full gate + R2 report set | done | see `r2-final-report.md` |
 
 ---
 
