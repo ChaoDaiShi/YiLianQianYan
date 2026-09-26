@@ -12,13 +12,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+use super::config::validate_mcp_url;
 use super::jsonrpc::{parse_message, JsonRpcMessage, JsonRpcRequest};
 use super::model::{
     McpRuntimeError, MAX_MCP_REQUEST_BYTES, MAX_MCP_RESPONSE_BYTES, MAX_MCP_SSE_EVENTS_PER_REQUEST,
     MAX_MCP_SSE_EVENT_BYTES,
 };
 use super::protocol::{encode_header_value, reject_crlf, MODERN_MCP_VERSION};
-use super::transport::{validate_mcp_url, McpTransport};
+use super::transport::McpTransport;
 
 pub const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(120);

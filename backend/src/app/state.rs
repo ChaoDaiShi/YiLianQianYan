@@ -20,8 +20,9 @@ use crate::capability::{
 };
 use crate::config::types::{AppConfig, ModelConfig};
 use crate::db::Database;
+use crate::integrations::mcp::config::mcp_transport_config;
 use crate::isolation::SharedManagedProcessRegistry;
-use crate::mcp_runtime::{McpRuntimeManager, McpTransportConfig};
+use crate::mcp_runtime::McpRuntimeManager;
 use crate::safety::{
     approval::ApprovalStore, grant::GrantEffect, grant::GrantResource, grant::GrantSource,
     AuditRecorder, ControlSession, PermissionId,
@@ -44,32 +45,6 @@ use crate::voice::{
 pub const CHAT_MEMORY_TOP_K: usize = 8;
 /// Per-memory character cap when rendering into the system prompt.
 pub const CHAT_MEMORY_MAX_CHARS: usize = 500;
-
-/// Convert a legacy DB MCP server row into a runtime transport config.
-pub(crate) fn mcp_transport_config(server: &crate::db::McpServer) -> McpTransportConfig {
-    let env_map: std::collections::BTreeMap<String, String> = server
-        .env
-        .as_ref()
-        .and_then(|e| e.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
-    match server.transport.as_str() {
-        "http" | "streamable_http" => McpTransportConfig::StreamableHttp {
-            url: server.url.clone().unwrap_or_default(),
-            headers_from_env: env_map,
-        },
-        _ => McpTransportConfig::Stdio {
-            command: server.command.clone().unwrap_or_default(),
-            args: server.args.clone().unwrap_or_default(),
-            env: env_map,
-            env_secret_refs: server.env_secret_refs.clone(),
-        },
-    }
-}
 
 /// A single log entry
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

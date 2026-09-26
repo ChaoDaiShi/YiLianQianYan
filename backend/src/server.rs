@@ -11,4 +11,4 @@ pub use crate::app::state::{
     AppServer, DiscoveredSubagent, LogBuffer, LogEntry, CHAT_MEMORY_MAX_CHARS, CHAT_MEMORY_TOP_K,
 };
 
-pub(crate) use crate::app::state::mcp_transport_config;
+pub(crate) use crate::integrations::mcp::config::mcp_transport_config;

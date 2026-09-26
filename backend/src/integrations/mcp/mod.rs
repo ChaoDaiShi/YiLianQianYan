@@ -8,6 +8,7 @@
 // ============================================================
 
 pub mod cache;
+pub mod config;
 pub mod header_schema;
 pub mod http;
 pub mod jsonrpc;
@@ -29,6 +30,7 @@ mod stdio_tests;
 mod tests;
 
 pub use cache::{CacheScope, McpCache, McpCacheValue};
+pub use config::{validate_mcp_url, McpTransportConfig};
 pub use header_schema::{extract_header_values, scan_tool_header_bindings};
 pub use http::HttpTransport;
 pub use jsonrpc::{
@@ -53,4 +55,4 @@ pub use protocol::{
 pub use resources::{parse_resource_contents, parse_resource_list, parse_resource_template_list};
 pub use stdio::StdioTransport;
 pub use tools::{call_result_text, parse_call_result, parse_tool_list};
-pub use transport::{validate_mcp_url, McpTransportConfig};
+pub use transport::{McpRequestOptions, McpTransport};

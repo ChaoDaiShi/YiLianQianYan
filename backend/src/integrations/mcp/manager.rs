@@ -13,6 +13,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use super::config::McpTransportConfig;
 use super::header_schema::scan_tool_header_bindings;
 use super::http::HttpTransport;
 use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
@@ -29,7 +30,7 @@ use super::resources::{
 };
 use super::stdio::StdioTransport;
 use super::tools::{call_result_text, parse_call_result, parse_tool_list};
-use super::transport::{McpTransport, McpTransportConfig};
+use super::transport::McpTransport;
 
 pub struct McpServerRuntime {
     pub server_id: String,
