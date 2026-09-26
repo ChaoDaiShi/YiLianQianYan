@@ -1,7 +1,14 @@
 // ============================================================
 // Legacy API implementation — frozen behind domain entrypoints and client facade
+//
+// The HTTP core (`API_BASE`, `request`, `requestResult`, `ApiResult`) now lives
+// in `src/core/api/http.ts` and is re-exported below, so every existing import
+// keeps working. Draining the rest of this file into the domain entrypoints is
+// the remaining work.
 // ============================================================
 
+import { API_BASE, request, requestResult } from "../core/api/http";
+import type { ApiResult } from "../core/api/http";
 import { controlSessionHeaders } from "./controlSession";
 import type {
   AppConfig,
@@ -11,40 +18,8 @@ import type {
   LlmUsageReport,
 } from "../types";
 
-export const API_BASE =
-  (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ||
-  "http://127.0.0.1:9420";
-
-export async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown
-): Promise<T | null> {
-  try {
-    const opts: RequestInit = {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        ...controlSessionHeaders(),
-      },
-    };
-    if (body !== undefined) {
-      opts.body = JSON.stringify(body);
-    }
-    const res = await fetch(`${API_BASE}${path}`, opts);
-    if (!res.ok) {
-      console.error(`API ${method} ${path}: ${res.status}`);
-      return null;
-    }
-    if (res.status === 204) return {} as T;
-    const text = await res.text();
-    if (!text) return {} as T;
-    return JSON.parse(text) as T;
-  } catch (e) {
-    console.error(`API ${method} ${path} failed:`, e);
-    return null;
-  }
-}
+export { API_BASE, request, requestResult } from "../core/api/http";
+export type { ApiFailure, ApiResult } from "../core/api/http";
 
 // ── Conversations ──
 
@@ -739,47 +714,6 @@ export type WorkflowApprovalEvent =
       workflow_node_id?: string | null;
       error: string;
     };
-
-export type ApiResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; status: number; error: string };
-
-/** Like `request`, but surfaces backend validation errors to the caller. */
-async function requestResult<T>(
-  method: string,
-  path: string,
-  body?: unknown
-): Promise<ApiResult<T>> {
-  try {
-    const opts: RequestInit = {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        ...controlSessionHeaders(),
-      },
-    };
-    if (body !== undefined) opts.body = JSON.stringify(body);
-    const res = await fetch(`${API_BASE}${path}`, opts);
-    const text = await res.text();
-    if (!res.ok) {
-      let error = `HTTP ${res.status}`;
-      try {
-        const parsed = JSON.parse(text) as { error?: string; message?: string };
-        if (parsed && typeof parsed === "object") {
-          const msg = parsed.error || parsed.message;
-          if (msg) error = String(msg);
-        }
-      } catch {
-        if (text.trim()) error = text.trim();
-      }
-      return { ok: false, status: res.status, error };
-    }
-    if (!text) return { ok: true, data: {} as T };
-    return { ok: true, data: JSON.parse(text) as T };
-  } catch (e) {
-    return { ok: false, status: 0, error: String(e) };
-  }
-}
 
 export async function listWorkflowGraphs(): Promise<ApiResult<WorkflowGraphRecord[]>> {
   const res = await requestResult<{ graphs: WorkflowGraphRecord[] }>(
