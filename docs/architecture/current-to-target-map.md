@@ -1,7 +1,7 @@
 # Current → Target Map
 
 > Where each part of mandate §4 (backend) and §17 (frontend) stands.
-> Last updated at R7.
+> Last updated at R6h.
 
 Status legend: **done** · **partial** · **not started** · **deviated** (with reason)
 
@@ -43,7 +43,7 @@ incomplete.
 | `core/{api,events,commands,auth,types}` | deviated | Lives in `api/` and `types/`. `api/client.ts` is the shared HTTP core; `api/*` is already split per domain. |
 | `features/task-world/` | partial | `canvas/`, `inspector/` (R6a) and `hooks/` (R6b) exist. `TaskWorldCanvas.tsx` is **not** split into `canvas/{TaskWorldCanvas,TaskNode,CanvasToolbar,viewport,layout}`; `model/` and `execution/` are not created (`taskGraphProjection.ts` and `TaskExecutionTrail.tsx` stay at the feature root). |
 | `features/settings/` | not started | `pages/SettingsPage.tsx` (726 lines) is unmoved. |
-| `features/voice/` | not started | `features/voice/GlobalVoiceHost.tsx` (895 lines) is unmoved; the other voice files are already feature-local. |
+| `features/voice/` | partial | `features/voice/GlobalVoiceHost.tsx` (616 lines) is the host; its orchestrator concurrency (barge-in and final-transcript/continuation) is extracted into `bargeIn.ts` and `turnFlow.ts` as pure runtime-injected functions (R6g/R6h), covered by 18 interaction tests. The remaining host body is React glue and stays on the over-600 baseline. |
 | `features/*` (conversation, capability, memory-skill, resource, artifact) | partial | `features/` exists with capabilities, execution, llm, mcp, memory, resources, security, skills, task-world, tasks, voice. Conversation still lives in `components/chat/`. |
 | `surfaces/workspace/` | done | `surfaces/workspace/` exists; `surfaces/desktop/` holds the Tauri-specific surface. |
 | `ui/{primitives,layout,feedback}` | deviated | Primitives live in `components/ui/`, layout in `components/layout/`. The boundary rule is enforced by name-independent path checks. |

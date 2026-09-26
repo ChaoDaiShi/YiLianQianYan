@@ -180,11 +180,12 @@ file may leave it by being split, nothing may join it.
 | `modules/task/task_supervisor.rs` | 1087 |
 
 **Frontend — 5 files:** `api/legacy.ts` (1335), `pages/PluginsPage.tsx` (973),
-`features/voice/GlobalVoiceHost.tsx` (703), `components/chat/ChatView.tsx`
+`features/voice/GlobalVoiceHost.tsx` (616), `components/chat/ChatView.tsx`
 (623), `api/taskWorld.ts` (601).
 
 `SettingsPage.tsx` left this list during R6 (726 → 364). `GlobalVoiceHost.tsx`
-did not, and is still on it deliberately — see §8.
+did not, and is still on it deliberately — see §8. Its orchestrator concurrency
+was extracted (R6g/R6h), but the host remains 616 lines of React glue.
 
 ---
 
@@ -200,7 +201,7 @@ Honest list, each with its reason.
 | `TaskWorldPage.tsx` (368) | done — 203 lines + `hooks/` (R6b) |
 | `TaskWorldCanvas.tsx` (198) | **partial** — `TaskNode` extracted, both under `canvas/`. The remaining 112-line surface was deliberately *not* split into `useCanvasProjectionSync` / `useCanvasViewport` / `useCanvasPersistence`: at that size it is one coherent React Flow integration and splitting it would be slicing by line count (mandate §23), with no render test to catch a regression. |
 | `pages/SettingsPage.tsx` (726) | done — **364 lines**, content in `features/settings/{model,sections}/` (R6d) |
-| `features/voice/GlobalVoiceHost.tsx` (895) | **partial** — **703 lines**. The types, ~170 lines of pure projections and the route policy moved to `features/voice/{model,context}/` (R6e). The 640-line orchestrator was **not** split into the mandated hooks; see below. |
+| `features/voice/GlobalVoiceHost.tsx` (895) | **done for its concurrency** — **616 lines**. The types, ~170 lines of pure projections and the route policy moved to `features/voice/{model,context}/` (R6e); the orchestrator's concurrency-critical flows (barge-in and final-transcript/continuation) moved to `bargeIn.ts` and `turnFlow.ts` as pure runtime-injected functions (R6g/R6h), covered by 18 interaction tests. The remaining host body is React glue and stays on the over-600 baseline. |
 | `index.css` (3389) | done — `index.css` is a **28-line manifest holding no rules**; the rules live in ten files under `src/styles/`, split by cascade layer (R6f). Built CSS is byte-identical. |
 
 **`index.css` was split by cascade layer, not by feature.** Feature grouping is
@@ -226,20 +227,28 @@ This is the concrete reason the split was refused until a guard existed, and it
 is why `current-to-target-map.md` says the import order in `index.css` must not
 be rearranged.
 
-**Why `GlobalVoiceHost`'s orchestrator was not split (R6e).** §21 asks for
-`runtime/GlobalVoiceProvider` plus four hooks. The body carries ~16 `useRef`
-epoch/identity guards (dispatch, context identity, capture start) that are
-*shared across* the state machines those hooks would separate, a barge-in path
-that aborts in-flight work and re-checks the epoch after every `await`,
-continuation abort controllers, and echo suppression keyed to the context
-epoch. Extracting them is a redesign of the concurrency model, not a file move —
-and the available tests cannot catch a mistake: `GlobalVoiceHost.test.tsx`
-renders to static markup, exercising neither the async paths nor the guards.
-Two of §21's targets already exist as separate files (`useVoiceCapture.ts`,
-`useSpeechPlayback.ts`) and the UI is already out in `GlobalVoiceLeaf.tsx`; what
-remains is the orchestrator. The consequence is stated rather than hidden:
-`GlobalVoiceHost.tsx` is still over 600 lines and **stays on the boundary
-check's baseline**.
+**Why `GlobalVoiceHost`'s orchestrator was not split as §21's hooks (R6e), and
+how it was then decomposed (R6g/R6h).** §21 asks for `runtime/GlobalVoiceProvider`
+plus four hooks. The body carries ~16 `useRef` epoch/identity guards (dispatch,
+context identity, capture start) that are *shared across* the state machines
+those hooks would separate, a barge-in path that aborts in-flight work and
+re-checks the epoch after every `await`, continuation abort controllers, and
+echo suppression keyed to the context epoch. Splitting those into hooks is a
+redesign of the concurrency model, not a file move — and at the time the
+available tests could not catch a mistake: `GlobalVoiceHost.test.tsx` renders to
+static markup, exercising neither the async paths nor the guards.
+
+That is why the decomposition was done by *extraction instead of hook-splitting*.
+The two flows that carry the cross-`await` guards are now pure functions of an
+injected runtime — `runVoiceBargeIn` (`bargeIn.ts`) and
+`runFinalTranscriptFlow` (`turnFlow.ts`) — so the concurrency is testable with
+controllable promises and the guards' behaviour is pinned by 18 interaction
+tests. Two of §21's targets already exist as separate files (`useVoiceCapture.ts`,
+`useSpeechPlayback.ts`) and the UI is already out in `GlobalVoiceLeaf.tsx`; the
+orchestrator now delegates to the extracted flows. The consequence is stated
+rather than hidden: `GlobalVoiceHost.tsx` is still over 600 lines (616) and
+**stays on the boundary check's baseline** — but the concurrency logic that the
+baseline entry was protecting is out and covered.
 
 **SettingsPage's route entry also stayed in `pages/`.** §20 places it at
 `features/settings/pages/`. Route-level pages live in `pages/` throughout this
@@ -330,20 +339,23 @@ sequentially with nothing else executing, using
 `CARGO_TARGET_DIR=E:/cargo-target/yilian-arch` and the repo's required
 `jobs = 1`.
 
-### Re-verification after R6d/R6e
+### Re-verification after R6d–R6h
 
-R6d and R6e changed frontend files *after* the gate above, so the gate was
+R6d through R6h changed frontend files *after* the gate above, so the gate was
 re-checked against the final state rather than assumed:
 
 - **No Rust source changed** between the gate commit and the final commit
   (`git diff --stat 41fb035..HEAD -- backend/ src-tauri/` is empty), so gates
   1–4 still describe the same Rust source.
-- **`npm test`**: 91 files / **426 passed**, re-run on the final commit.
+- **`npm test`**: **93 files / 444 passed**, re-run on the final commit. The
+  growth over the gate's 91 / 426 is R6g/R6h's 18 interaction tests (6 barge-in,
+  12 turn-flow); no test was deleted or weakened.
 - **`npm run build`**: passes; built CSS md5 still `5889431e`.
 - **Real-backend E2E**: re-run and **passed** — and this one mattered, because
   the E2E drives the real Settings page at three viewports
   (`1280x720`, `1366x768`, `1920x1080`), which is exactly the surface R6d
-  rewrote.
+  rewrote. R6g/R6h changed no route or rendered markup, so the E2E conclusion is
+  unchanged by them.
 
 ---
 
@@ -392,8 +404,10 @@ from `docs/architecture/ownership.md` rather than from reading the source:
 | Who owns the database? | `db/` — unchanged and unmoved |
 | What may a module depend on? | `docs/architecture/ownership.md` per module, enforced in part by two checks |
 
-The refactor is **not** complete. Within R6, `GlobalVoiceHost`'s orchestrator
-and `TaskWorldCanvas`'s surface are deliberately unsplit; R3 and R4 retain their
-recorded gaps; and roughly half the backend is still unrelocated. What is
-complete is R0–R5, all of R6 except those two partials, R7 and R8 — every stage
-verified green, and the final state re-verified after the last change.
+The refactor is **not** complete. Within R6, `TaskWorldCanvas`'s 112-line
+surface remains deliberately unsplit; `GlobalVoiceHost`'s orchestrator
+concurrency is now decomposed (R6g/R6h) while the host itself stays 616 lines
+of React glue; R3 and R4 retain their recorded gaps; and roughly half the
+backend is still unrelocated. What is complete is R0–R5, all of R6 except that
+one partial, R7 and R8 — every stage verified green, and the final state
+re-verified after the last change.

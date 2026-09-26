@@ -36,6 +36,8 @@
 | `82118ab` | R6d | `refactor(frontend): split settings page into sections` |
 | `d94221e` | R6e | `refactor(frontend): extract voice model, routing and context from the host` |
 | `7123cba` | R6f | `refactor(frontend): split index.css into cascade-ordered style files` |
+| `f2044b1` | R6g | `refactor(voice): extract the barge-in flow into a testable module` |
+| `e38b696` | R6h | `refactor(voice): extract the final-transcript/continuation turn flow` |
 
 Working tree is clean; `main`, `develop`, `v1/release-work`, and `v2` are untouched.
 All commits are pushed to `origin/refactor/v1-architecture-foundation`.
@@ -369,7 +371,9 @@ barge-in path that re-checks the epoch after every `await`, and echo
 suppression keyed to the context epoch. That is a concurrency redesign, not a
 file move, and `GlobalVoiceHost.test.tsx` renders to static markup so it cannot
 catch a mistake there. It remains on the over-600 baseline rather than being
-quietly dropped from it.
+quietly dropped from it. **This was resolved by R6g/R6h below**, which extract
+the concurrency-critical flows into pure modules with an interaction test each —
+the exact test the R6e decision said did not exist.
 
 **Contract tests migrated, not weakened.** These are source-text (`?raw`)
 assertions, so a split invalidates their import paths. `taskCorePaths.test.tsx`
@@ -399,11 +403,41 @@ cannot sprawl again; and CSS is **not** covered by the automated boundary check
 (it reads `.ts`/`.tsx` only), so the md5 diff is the only guard for a future
 style change.
 
+**R6g (`f2044b1`) + R6h (`e38b696`) — `GlobalVoiceHost`'s orchestrator concurrency, extracted.**
+
+The R6e decision held that the 640-line orchestrator could not be split without
+a concurrency redesign *and* an interaction test that static-markup rendering
+cannot provide. Both now exist, so the decomposition the handoff §11 item #1
+called for is done — by extraction, not by moving the component.
+
+The two flows that carry the cross-`await` epoch/identity guards were pulled out
+as pure functions of an injected runtime (`(result, runtime) => …`):
+
+- **`bargeIn.ts`** — `runVoiceBargeIn`, the bump-epoch → abort → interrupt →
+  commit sequence with its stale-response and sync-anchor fail-closed checks.
+- **`turnFlow.ts`** — `runFinalTranscriptFlow`, the validate → echo → dispatch →
+  re-check-epoch → continuation (abortable) → re-check-epoch → speak sequence.
+
+Each runtime interface is a port: the host injects its `useRef` guards and
+setters; the flow itself has no React and no globals, so the concurrency is
+testable with controllable promises. Eighteen interaction tests drive the flows
+across `await` boundaries: a stale generation or changed conversation is
+dropped, echo suppresses the assistant's own playback, a dispatch that resolves
+after a newer epoch is discarded, a continuation aborted by a newer barge-in is
+silently dropped while a non-abort failure surfaces a notice, and `silent`
+attention mode never speaks.
+
+`GlobalVoiceHost.tsx` is now **616 lines** — 703 before, and the remaining body
+is React glue (refs, effects, render). It is *still* over 600, so it **stays on
+the boundary baseline** rather than being quietly dropped from it; the
+concurrency logic, however, is out and covered. The host contract test that
+pinned source strings now reads `bargeIn.ts` / `turnFlow.ts` where the strings
+moved, without weakening any assertion.
+
 ### R6 — what was NOT done
 
-Nothing in R6 remains unattempted. Two hotspots are partial by decision
-(`TaskWorldCanvas`'s 112-line surface and `GlobalVoiceHost`'s 640-line
-orchestrator), both argued above.
+One hotspot remains partial by decision: `TaskWorldCanvas`'s 112-line surface
+(argued above). `GlobalVoiceHost`'s orchestrator is now decomposed (R6g/R6h).
 
 ## 10. R7 — what was done
 
@@ -434,10 +468,11 @@ recorded debt: a file may leave the list by being split; nothing may join it.
 
 Ordered by how much is already understood, not by size.
 
-1. **`GlobalVoiceHost`'s orchestrator (703 lines, ~640 of them the component).**
-   Needs a concurrency-aware decomposition, not a file move — see §9. It needs
-   an interaction test for barge-in and continuation *first*, or the change is
-   unverifiable. This is the largest single piece of frontend debt left.
+1. **`GlobalVoiceHost`'s orchestrator — done (R6g/R6h).** The barge-in and
+   final-transcript/continuation flows are extracted into `bargeIn.ts` and
+   `turnFlow.ts` as pure runtime-injected functions, with 18 interaction tests.
+   The host itself is 616 lines of React glue and stays on the over-600
+   baseline; the concurrency logic is out and covered.
 2. **`TaskWorldCanvas`'s surface (112 lines).** Only worth splitting if the
    hooks fall out along real seams; at present they do not.
 3. **R3/R4 gaps, inherited.** `modules/task/application` and
@@ -505,11 +540,15 @@ the real-backend E2E — all green. After R6d/R6e changed frontend files, the
 frontend gates and the E2E were re-run against the final commit rather than
 assumed; no Rust source changed in between. Full detail in the final report.
 
-R6d, R6e and R6f are the frontend stages that moved files. None changed a route
-path or a rendered contract: `npm test` stayed at 91 files, the E2E passed
-against the rewritten Settings page at all three viewports, and the built
-stylesheet md5 is still `5889431e` — which for R6f is not merely consistent but
-is the proof that the split moved nothing.
+R6d–R6h are the frontend stages that moved files. None changed a route
+path or a rendered contract: `npm test` stayed green across all of them (and
+grew to **93 files / 444 tests** with R6g/R6h's 18 interaction tests), the E2E
+passed against the rewritten Settings page at all three viewports, and the
+built stylesheet md5 is still `5889431e` — which for R6f is not merely
+consistent but is the proof that the split moved nothing. R6g/R6h changed no
+route and no rendered markup either: they extract the voice host's async
+concurrency into pure modules, and the host's static-markup contract test still
+passes against the same surface.
 
 R3, R4 and R5 changed no route path, no response shape, no schema and no
 frontend file, so the R2 conclusions above still hold — they are
