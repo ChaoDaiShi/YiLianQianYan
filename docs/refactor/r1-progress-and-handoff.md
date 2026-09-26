@@ -2,7 +2,7 @@
 
 > **Branch:** `refactor/v1-architecture-foundation`
 > **Base:** `origin/v1/release-work` @ `78f3755`
-> **Status:** **PARTIAL — R0, R1, R2, R3, R4 complete and verified. R5–R8 not started.**
+> **Status:** **PARTIAL — R0, R1, R2, R3, R4, R5 complete and verified. R6–R8 not started.**
 >
 > This is *not* the `r1-final-report.md` the mandate §44 asks for. That document
 > requires the R8 full gate to have passed. This is an honest handoff so the
@@ -20,6 +20,9 @@
 | `cacf187` | R3a | `refactor(task): relocate task and workflow under modules` |
 | `024c4d4` | R3b | `refactor(task): separate task and workflow boundaries` |
 | `fa8955d` | R4 | `refactor(mcp): unify MCP under integrations` |
+| `ff5a907` | R5a | `refactor(capability): relocate resource and memory skill under modules` |
+| `70f954f` | R5b | `refactor(capability): split resource module into parsers and use cases` |
+| `f18790f` | R5c | `refactor(capability): split memory skill into review lifecycle layers` |
 
 Working tree is clean; `main`, `develop`, `v1/release-work`, and `v2` are untouched.
 All commits are pushed to `origin/refactor/v1-architecture-foundation`.
@@ -61,13 +64,18 @@ fresh worktree already has it).
 
 Both stages were verified with the same commands, against the E: target dir:
 
-| Command | R1 | R2 | R3 | R4 |
-|---|---|---|---|---|
-| `cargo check -p yilian-backend --all-targets --locked` | pass | pass | pass | pass |
-| `cargo fmt --all -- --check` | clean | clean | clean | clean |
-| `cargo test -p yilian-backend --locked` | 892 + 20 targets, 0 failed | same | same | same |
-| New warnings introduced | 0 | 0 | 0 | 0 |
-| Pre-existing warnings remaining | 3 | 3 | 3 | 3 |
+| Command | R1 | R2 | R3 | R4 | R5 |
+|---|---|---|---|---|---|
+| `cargo check -p yilian-backend --all-targets --locked` | pass | pass | pass | pass | pass |
+| `cargo fmt --all -- --check` | clean | clean | clean | clean | clean |
+| `cargo test -p yilian-backend --locked` | 892 + 20 targets, 0 failed | same | same | same | same |
+| New warnings introduced | 0 | 0 | 0 | 0 | 0 |
+| Pre-existing warnings remaining | 3 | 3 | 3 | 3 | 3 |
+
+R5 verification was staged: each of R5a/R5b/R5c got its own
+`cargo check --all-targets` plus focused tests, and only the final `--check` on
+formatting. The lib test count is 892 before and after, confirmed by the filter
+arithmetic each run (`passed + filtered out = 892`).
 
 Pre-existing warnings, unchanged by this work:
 `apply_product_migration` never used, `validate_shared_version` never used,
@@ -82,6 +90,11 @@ Moved tests confirmed executed, not skipped:
   `modules::workflow::api::tests::*` (7), plus 169 task/workflow module tests.
 - R4 — 62 `integrations::mcp::*` tests. **Two of these initially failed** after
   the move (see §7); the fix is part of the R4 commit.
+- R5 — 10 relocated/moved tests: `modules::resource::limits::tests` (1) +
+  `modules::resource::preview::tests` (4) + `modules::memory_skill::tests` (3) +
+  `modules::memory_skill::store::tests` (2), plus the consumers
+  `modules::task::context` (4), `db::resource_bindings` (1),
+  `api::skills_route` (1) and `capability::import_owner` (1).
 
 ---
 
@@ -232,23 +245,65 @@ fit for `integrations/mcp/`.
 
 ---
 
-## 8. Remaining work — R5 to R8
+## 8. R5 — what was done
 
-### R5 — Resource + Memory Skill
+Three commits, because relocating first is what made the splits reviewable.
 
-`resource_input.rs` (386) + `resource_input/documents.rs` (226) →
-`modules/resource/parsers/`; `memory_skill.rs` (615) + `skill_management.rs`
-(220) → `modules/memory_skill/`.
+**R5a (`ff5a907`) — relocate.** `resource_input` + `resource_input/documents.rs`
+and `memory_skill` / `skill_management` moved under `modules/` by `git mv`
+(4 renames) with facades at the old paths, so all 12 call sites compiled
+untouched. `skill_management.rs` was renamed to
+`modules/memory_skill/store.rs` — the file holds `ManagedSkillStore`, and the
+mandate's module group now owns it explicitly.
 
-- Unlike R4, these are already single homes, so a pure relocation buys only
-  consistency. The mandated value is the **internal** split:
-  `parsers/{text,markdown,csv,image,pdf,docx,xlsx}.rs` and
-  `memory_skill/{candidate,evidence,sensitivity,validator,review,version,service,repository}.rs`.
-- `resource_input/documents.rs` already has `docx`/`xlsx`/`pdf` functions with
-  `pub(super)` visibility — that is the seed of `parsers/`.
-- Parsers take bounded bytes and return normalized content; they must not
-  modify a Task.
-- Do not name anything `CapabilityEvolutionEngine` — that is v1.2.
+**R5b (`70f954f`) — resource.**
+
+```
+modules/resource/
+├── mod.rs      limits.rs   model.rs
+├── ingest.rs   binding.rs  preview.rs
+└── parsers/    mod, text, image, pdf, docx, xlsx, archive
+```
+
+Two deliberate deviations from mandate §16, both recorded in the code:
+
+- **`archive.rs` added.** `zip_entries` (entry/size/expanded-bytes caps) was
+  already shared by `docx` and `xlsx` inside `documents.rs`. Leaving it in
+  either parser would make one import from the other.
+- **`markdown.rs` / `csv.rs` not created.** Every `text/*` type the upload
+  policy canonicalises — plain text, Markdown, CSV/TSV, code — shares one
+  extraction path today: strict UTF-8 decoding. Separate files would contain
+  only a forward to `text::parse`, which §23/§34 forbid. `parsers/text.rs`
+  documents the decision where a future format would be added.
+
+**R5c (`f18790f`) — memory skill.** 615 lines became eight layers
+(`candidate`, `review`, `version`, `repository`, `evidence`, `sensitivity`,
+`validator`, `service`) plus `store` and `tests`. An inherent
+`impl MemorySkillService` block is legal in any module of the crate, so the
+lifecycle reads `candidate -> review -> version` without a second type. The
+struct fields became `pub(crate)`; external visibility is unchanged.
+
+### R5 — what was *not* changed
+
+- No route, response shape, schema, migration or frontend file.
+- The secret-adjacent guarantees were transcribed verbatim: unconfirmed install
+  refused, stale revision refused, `status != "validated"` not confirmable,
+  evidence and lesson re-screened on every transition, `checked_current`
+  refusing an externally edited rule instead of trusting the database, and a
+  failed commit restoring the previous file content.
+- Nothing was named `CapabilityEvolutionEngine`.
+
+### R5 — boundary debt this exposed
+
+`modules/resource/binding.rs` reads `modules::task::execution::MAX_NODE_CONTEXT_ITEM_CHARS`.
+That is a resource -> task compile-time dependency on a task constant, found
+while splitting and left as-is because R5 is relocation, not redesign. It is
+the one cross-domain edge the R7 boundary check will need to either allow or
+schedule for removal. Recorded, not silently fixed.
+
+---
+
+## 9. Remaining work — R6 to R8
 
 ### R6 — Frontend
 
@@ -276,31 +331,32 @@ consider warming it before R8 rather than during it.
 
 ---
 
-## 9. Recorded discrepancies with the mandate
+## 10. Recorded discrepancies with the mandate
 
 | Mandate claim | Reality at base `78f3755` |
 |---|---|
 | §27 — migration namespaces are Shared `0–999`, v1 `1000–1999`, v2 `2000–2999` | Only `Shared` and `V1TaskWorld` exist in `db/migrations.rs`. There is **no** v2 namespace. Nothing was added or renumbered. |
-| §7 — hotspots include `memory_skill.rs`, `resource_input.rs` | Present, but as single files (615 / 386 lines) with `resource_input/documents.rs` alongside — not directories as §16 implies. |
+| §7 — hotspots include `memory_skill.rs`, `resource_input.rs` | Present, but as single files (615 / 386 lines) with `resource_input/documents.rs` alongside — not directories as §16 implies. **Resolved by R5.** |
 | §8 — `server.rs` < 200–300 lines | Achieved a 13-line facade, which is stricter than the target. |
+| §16 — `parsers/{text,markdown,csv,image,pdf,docx,xlsx}.rs` | `archive.rs` added (shared OOXML container reader); `markdown.rs` and `csv.rs` deliberately omitted — see §8. |
 
 ---
 
-## 10. Compatibility conclusion (R0–R4 only)
+## 11. Compatibility conclusion (R0–R5)
 
 | Check | Result |
 |---|---|
 | Database compatible | **YES** — no schema change, no migration added or renumbered |
 | REST compatible | **YES** — all 178 route paths, methods and handlers unchanged; verified by the passing API test targets |
-| Frontend route compatible | **YES** — no frontend change in R1/R2 |
+| Frontend route compatible | **YES** — no frontend change in R1–R5 |
 | Secret compatible | **YES** — rc.2 KEEP/REPLACE/DELETE semantics verbatim; pinning tests pass |
 | Existing user data compatible | **YES** — no persistence change |
 | v2 touched | **NO** |
 
-Refactor Gate for R0–R4: **PASS**. The mandate's overall Gate cannot be
+Refactor Gate for R0–R5: **PASS**. The mandate's overall Gate cannot be
 evaluated until R8.
 
-R3 and R4 changed no route path, no response shape, no schema and no frontend
-file, so the R2 conclusions above still hold. Both are relocation-and-facade
-stages: every public surface is reached through the same paths as before the
-move.
+R3, R4 and R5 changed no route path, no response shape, no schema and no
+frontend file, so the R2 conclusions above still hold. All three are
+relocation-and-facade stages: every public surface is reached through the same
+paths as before the move.
