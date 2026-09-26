@@ -23,6 +23,7 @@ import {
   type TaskGraphProjection,
 } from "../taskGraphProjection";
 import TaskNode from "./TaskNode";
+import { reconcileCanvasNodes } from "./model/reconcileCanvasNodes";
 
 interface TaskWorldCanvasProps {
   projection: TaskGraphProjection;
@@ -63,14 +64,14 @@ function TaskWorldCanvasSurface({
     () => toReactFlowModel(projection, view, focusedNodeId),
     [focusedNodeId, projection, view],
   );
-  const [nodes, setNodes] = useState<TaskGraphCanvasNode[]>(model.nodes);
+  const [nodes, setNodes] = useState<TaskGraphCanvasNode[]>(() => reconcileCanvasNodes([], projection, view, { focusedNodeId }));
   const [edges, setEdges] = useState<TaskGraphCanvasEdge[]>(model.edges);
   const { fitView } = useReactFlow<TaskGraphCanvasNode, TaskGraphCanvasEdge>();
 
   useEffect(() => {
-    setNodes(model.nodes);
+    setNodes((current) => reconcileCanvasNodes(current, projection, view, { focusedNodeId }));
     setEdges(model.edges);
-  }, [model]);
+  }, [model, projection, view, focusedNodeId]);
 
   useEffect(() => {
     if (!focusedNodeId || !nodes.some((node) => node.id === focusedNodeId)) return;
