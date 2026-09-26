@@ -26,7 +26,7 @@ export default function PermissionSettings({
         <div className="rounded-lg border border-[var(--border)] px-3 py-3 space-y-1">
           <h4 className="text-sm font-medium">Windows 隔离能力</h4>
           {isolationRows(isolation).map(([label, active]) => <div key={label} className="flex items-center justify-between text-xs"><span className="text-[var(--text-muted)]">{label}</span><Badge tone={active ? "success" : "default"}>{active ? "Active" : "Not enabled"}</Badge></div>)}
-          <p className="text-[11px] text-[var(--text-faint)] mt-2">当前安全边界由 Windows 令牌降权、Job Object 和应用层资源授权共同组成；Restricting-SID、OS 命名空间、GUI 沙箱与容器级隔离尚未启用。</p>
+          <p className="text-meta text-[var(--text-faint)] mt-2">当前安全边界由 Windows 令牌降权、Job Object 和应用层资源授权共同组成；Restricting-SID、OS 命名空间、GUI 沙箱与容器级隔离尚未启用。</p>
         </div>
       )}
       <div>

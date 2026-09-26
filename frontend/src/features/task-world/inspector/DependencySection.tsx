@@ -51,7 +51,7 @@ export default function DependencySection({
         >
           依赖
         </h3>
-        <span className="text-[11px] text-[var(--text-faint)]">
+        <span className="text-meta text-[var(--text-faint)]">
           {incomingDependencies.length} 条入边
         </span>
       </div>

@@ -48,7 +48,7 @@ export default function ExecutionSection({
           Task Harness 执行
         </h3>
         {execution_status && (
-          <span className="text-[11px] text-[var(--text-secondary)]">
+          <span className="text-meta text-[var(--text-secondary)]">
             {executionStatusLabel(execution_status)}
           </span>
         )}

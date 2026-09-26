@@ -79,7 +79,7 @@
 }
 
 @media (max-width: 720px) {
-  .task-world-layout { grid-template-columns: 1fr; overflow-y: auto; }
+  .task-world-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(320px, 1fr) auto; overflow-y: auto; }
   .task-world-trail { max-height: 10rem; }
   .task-world-canvas { min-height: 320px; }
 }
@@ -684,3 +684,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .knowledge-capability-grid { grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
 .memory-overview-copy p, .knowledge-capability-action p { font-size: var(--font-size-secondary); }
 .knowledge-capability-grid strong, .capability-card h3 { font-size: var(--font-size-body); }
+
+.task-world-canvas .react-flow__attribution { font-size: var(--font-size-caption); }
+
+.capability-row-stack { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); align-content: start; }

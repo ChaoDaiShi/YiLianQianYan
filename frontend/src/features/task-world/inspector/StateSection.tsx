@@ -27,7 +27,7 @@ export default function StateSection({ node }: StateSectionProps) {
       )}
       {node.resources.length > 0 && (
         <div className="mt-3">
-          <p className="text-[11px] text-[var(--text-faint)]">资源引用</p>
+          <p className="text-meta text-[var(--text-faint)]">资源引用</p>
           <ul className="mt-1 space-y-1 text-xs text-[var(--text-secondary)]">
             {node.resources.map((resource) => (
               <li key={resource.id} className="truncate">

@@ -144,7 +144,7 @@ export default function TaskInspector({
     <Panel className="task-world-inspector h-full min-h-0 overflow-y-auto" data-testid="task-world-inspector">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+          <p className="text-meta font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
             Inspector
           </p>
           <h2 className="mt-1 truncate text-base font-semibold text-[var(--text)]">{node.title}</h2>

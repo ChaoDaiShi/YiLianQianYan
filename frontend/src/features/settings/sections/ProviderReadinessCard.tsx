@@ -35,9 +35,9 @@ export default function ProviderReadinessCard({
           const item = readiness[kind];
           return <div key={kind} className="min-w-0 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2">
             <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{labels[kind]}</span><Badge tone={item.available ? "success" : "default"}>{item.available ? "已就绪" : "未就绪"}</Badge></div>
-            <p className="mt-1 truncate text-[11px] text-[var(--text-muted)]">{item.provider || "未指定 Provider"} · {item.model || "未指定模型"}</p>
-            <div className="mt-1 flex items-center justify-between gap-2"><p className="text-[11px] text-[var(--text-faint)]">凭据：{item.configured ? "已配置" : "未配置"}</p><Button variant="secondary" size="sm" disabled={testing !== null} onClick={() => kind === "tts" && onPreviewTts ? onPreviewTts() : onVerify(kind)}>{testing === kind ? "测试中…" : kind === "tts" ? "试听声音" : "测试连接"}</Button></div>
-            {results[kind] ? <p className="mt-1 text-[11px] text-[var(--text-muted)]" role="status">{results[kind]}</p> : null}
+            <p className="mt-1 truncate text-meta text-[var(--text-muted)]">{item.provider || "未指定 Provider"} · {item.model || "未指定模型"}</p>
+            <div className="mt-1 flex items-center justify-between gap-2"><p className="text-meta text-[var(--text-faint)]">凭据：{item.configured ? "已配置" : "未配置"}</p><Button variant="secondary" size="sm" disabled={testing !== null} onClick={() => kind === "tts" && onPreviewTts ? onPreviewTts() : onVerify(kind)}>{testing === kind ? "测试中…" : kind === "tts" ? "试听声音" : "测试连接"}</Button></div>
+            {results[kind] ? <p className="mt-1 text-meta text-[var(--text-muted)]" role="status">{results[kind]}</p> : null}
           </div>;
         })}
       </div>

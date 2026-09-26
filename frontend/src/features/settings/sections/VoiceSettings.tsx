@@ -53,7 +53,7 @@ export default function VoiceSettings({
         <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
           <div>
             <p className="text-xs font-medium text-[var(--text)]">{config.voice.stt.api_key_configured ? "STT 凭据已配置" : "STT 凭据未配置"}</p>
-            <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{secretSourceLabel(config.voice.stt.api_key_source)}</p>
+            <p className="mt-0.5 text-meta text-[var(--text-muted)]">{secretSourceLabel(config.voice.stt.api_key_source)}</p>
           </div>
           <div className="flex gap-2">{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => onReplaceVoiceKey("stt")}>替换密钥</Button> : null}{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void onClearVoiceSecret("stt")}>清除密钥</Button> : null}</div>
         </div>
@@ -77,7 +77,7 @@ export default function VoiceSettings({
         <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
           <div>
             <p className="text-xs font-medium text-[var(--text)]">{config.voice.tts.api_key_configured ? "TTS 凭据已配置" : "TTS 凭据未配置"}</p>
-            <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{secretSourceLabel(config.voice.tts.api_key_source)}</p>
+            <p className="mt-0.5 text-meta text-[var(--text-muted)]">{secretSourceLabel(config.voice.tts.api_key_source)}</p>
           </div>
           <div className="flex gap-2">{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => onReplaceVoiceKey("tts")}>替换密钥</Button> : null}{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void onClearVoiceSecret("tts")}>清除密钥</Button> : null}</div>
         </div>

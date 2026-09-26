@@ -5,3 +5,9 @@
   .monitor-toolbox-card { grid-column: span var(--card-w); grid-row: span var(--card-h); }
   .monitor-toolbox-free .monitor-toolbox-card { grid-column: var(--card-x) / span var(--card-w); grid-row: var(--card-y) / span var(--card-h); }
 }
+
+/* Grid mode gains a third default card at wide desktop widths. Free placement
+   retains its persisted four-column coordinate space. */
+@media (min-width: 1600px) {
+  .monitor-toolbox-grid:not(.monitor-toolbox-free) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
