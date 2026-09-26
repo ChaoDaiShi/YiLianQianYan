@@ -2,7 +2,7 @@
 
 > **Branch:** `refactor/v1-architecture-foundation`
 > **Base:** `origin/v1/release-work` @ `78f3755`
-> **Status:** **PARTIAL — R0, R1, R2 complete and verified. R3–R8 not started.**
+> **Status:** **PARTIAL — R0, R1, R2, R3, R4 complete and verified. R5–R8 not started.**
 >
 > This is *not* the `r1-final-report.md` the mandate §44 asks for. That document
 > requires the R8 full gate to have passed. This is an honest handoff so the
@@ -17,8 +17,12 @@
 | `63836ce` | R0 | `docs(refactor): inventory current architecture` |
 | `ffeaf84` | R1 | `refactor(app): split application composition` |
 | `aa42219` | R2 | `refactor(settings): isolate settings domain` |
+| `cacf187` | R3a | `refactor(task): relocate task and workflow under modules` |
+| `024c4d4` | R3b | `refactor(task): separate task and workflow boundaries` |
+| `fa8955d` | R4 | `refactor(mcp): unify MCP under integrations` |
 
 Working tree is clean; `main`, `develop`, `v1/release-work`, and `v2` are untouched.
+All commits are pushed to `origin/refactor/v1-architecture-foundation`.
 
 ---
 
@@ -57,12 +61,13 @@ fresh worktree already has it).
 
 Both stages were verified with the same commands, against the E: target dir:
 
-| Command | R1 | R2 |
-|---|---|---|
-| `cargo check -p yilian-backend --all-targets --locked` | pass | pass |
-| `cargo fmt --all -- --check` | clean | clean |
-| `cargo test -p yilian-backend --locked` | 892 + 20 targets, 0 failed | 892 + 20 targets, 0 failed |
-| New warnings introduced | 0 (3 pre-existing remain) | 0 (3 pre-existing remain) |
+| Command | R1 | R2 | R3 | R4 |
+|---|---|---|---|---|
+| `cargo check -p yilian-backend --all-targets --locked` | pass | pass | pass | pass |
+| `cargo fmt --all -- --check` | clean | clean | clean | clean |
+| `cargo test -p yilian-backend --locked` | 892 + 20 targets, 0 failed | same | same | same |
+| New warnings introduced | 0 | 0 | 0 | 0 |
+| Pre-existing warnings remaining | 3 | 3 | 3 | 3 |
 
 Pre-existing warnings, unchanged by this work:
 `apply_product_migration` never used, `validate_shared_version` never used,
@@ -73,6 +78,10 @@ Moved tests confirmed executed, not skipped:
   `app::state::tests::runtime_registry_includes_builtins_and_executable_subagent`
 - R2 — 11 tests: `modules::settings::tests::*`, including the four that pin the
   rc.2 secret semantics.
+- R3 — 13 HTTP tests moved: `modules::task::api::tests::*` (6) +
+  `modules::workflow::api::tests::*` (7), plus 169 task/workflow module tests.
+- R4 — 62 `integrations::mcp::*` tests. **Two of these initially failed** after
+  the move (see §7); the fix is part of the R4 commit.
 
 ---
 
@@ -165,43 +174,81 @@ KEEP/REPLACE/DELETE helpers. The four pinning tests still pass:
 
 ---
 
-## 6. Remaining work — R3 to R8
+## 6. R3 — what was done
 
-Unchanged from the mandate; recorded here with the concrete entry points found
-during R0/R1/R2 so the next session does not have to re-derive them.
+Two commits, because relocating first was what made the split sane.
 
-### R3 — Task + Workflow HTTP (largest remaining backend stage)
+**R3a (`cacf187`) — relocate.** R2 created `modules/` but only `settings` used
+it, leaving one domain at `modules/settings` and the rest at `backend/src/`.
+`task/` (30 files) and `workflow/` (10 files) moved under `modules/` by
+`git mv` — 39 renames, zero content changes — with `task.rs` / `workflow.rs`
+becoming facades. All 39 `crate::task` and 11 `crate::workflow` importers
+compiled untouched. Revisit the convention question this settles: **the project
+now uses `modules/<domain>/`, and remaining root-level domain dirs
+(`voice/`, `capability/`, `skill_management.rs`, `db/`, `safety/`) are
+inconsistent with it.**
 
-| File | Lines | Notes |
-|---|---|---|
-| `api/task_world.rs` | 1514 | → `modules/task/{domain,application,api}` |
-| `api/workflow_runtime.rs` | 810 | → `modules/workflow/{domain,application,api}` |
+**R3b (`024c4d4`) — split the HTTP files.**
 
-- Route registration for both already lives in `app/router.rs` — only the
-  handler modules move.
-- Do **not** touch `TaskGraph` semantics, `TaskSupervisor`, or workflow
-  behaviour. Reuse the existing `TaskSupervisor` / `TaskGraph` / `Execution` /
-  `Validation` / `Planner`.
-- The security chain `Workflow → SecurityExecutionGateway → Approval →
-  Execution → Verification` must survive intact.
-- Expect `modules/task/` and `modules/workflow/` to be new, while the existing
-  `task/` and `workflow/` dirs stay put — decide the relocation policy first
-  (see §5 above), because R3 is where the mixed-tree problem becomes acute.
+```
+modules/task/api/      graph_routes, node_routes, canvas_routes, review_routes,
+                       execution_routes, command_routes, dto, shared, mod, tests
+modules/workflow/api/  graph_routes, run_routes, mapping, dto, mod, tests
+```
 
-### R4 — MCP
+Both legacy paths (`api/task_world.rs`, `api/workflow_runtime.rs`) are facades.
+Largest source file 294 lines; tests 595. Domain semantics, route paths and
+response shapes are unchanged; all 13 moved HTTP tests pass, including the
+cancellation and security-chain ones.
 
-`mcp.rs` (1384) + `mcp_runtime/` (16 files) → `integrations/mcp/`.
-Notably `mcp_transport_config` currently lives in `app/state.rs` and is a
-natural fit for `integrations/mcp/` — move it there.
-Only stdio exists today; do not add a transport. Keep `McpToolDescriptor`
-generic (no GIS types).
+**Not done in R3:** the `modules/task/application/*` and
+`modules/workflow/application/*` service extraction of mandate §10/§12. Business
+logic still lives in the route modules (`create_graph` 71 lines,
+`run_workflow_graph` 157 lines, `dispatch_execution` 66 lines). This is the
+largest remaining piece of R3 and needs real design, not a move.
+
+## 7. R4 — what was done
+
+`fa8955d`. MCP lived in two parallel homes: `mcp.rs` (1384) and `mcp_runtime/`
+(16 files, 3199). Both relocated under `integrations/mcp/` with facades, so all
+4 `crate::mcp::*` and 9 `crate::mcp_runtime::*` call sites were untouched.
+16 renames. `http.rs` already existed — no transport was added.
+
+**Regression found and fixed during R4 — worth knowing for R5/R6.**
+`stdio_tests.rs` self-spawns the test binary with a hardcoded libtest filter
+string (`"mcp_runtime::stdio_tests::mock_stdio_server"`). After the move the
+filter matched nothing, the child ran zero tests and exited, and both stdio
+tests failed with `Transport("stdio EOF")`. It is now derived from
+`module_path!()` so it survives future moves.
+
+> **When moving any module, grep for its old path used as a *string*, not just
+> as a `use`:** `grep -rn '"<old::module::path>'`. A compile-clean move can
+> still silently disable a self-spawning test.
+
+**Not done in R4:** the internal `protocol/ transport/ runtime/ registry/
+result/ security/` subdivision of mandate §13. The files are relocated, not
+regrouped. `mcp_transport_config` still sits in `app/state.rs` and is a natural
+fit for `integrations/mcp/`.
+
+---
+
+## 8. Remaining work — R5 to R8
 
 ### R5 — Resource + Memory Skill
 
 `resource_input.rs` (386) + `resource_input/documents.rs` (226) →
 `modules/resource/parsers/`; `memory_skill.rs` (615) + `skill_management.rs`
-(220) → `modules/memory_skill/`. Do not name anything
-`CapabilityEvolutionEngine` — that is v1.2.
+(220) → `modules/memory_skill/`.
+
+- Unlike R4, these are already single homes, so a pure relocation buys only
+  consistency. The mandated value is the **internal** split:
+  `parsers/{text,markdown,csv,image,pdf,docx,xlsx}.rs` and
+  `memory_skill/{candidate,evidence,sensitivity,validator,review,version,service,repository}.rs`.
+- `resource_input/documents.rs` already has `docx`/`xlsx`/`pdf` functions with
+  `pub(super)` visibility — that is the seed of `parsers/`.
+- Parsers take bounded bytes and return normalized content; they must not
+  modify a Task.
+- Do not name anything `CapabilityEvolutionEngine` — that is v1.2.
 
 ### R6 — Frontend
 
@@ -229,7 +276,7 @@ consider warming it before R8 rather than during it.
 
 ---
 
-## 7. Recorded discrepancies with the mandate
+## 9. Recorded discrepancies with the mandate
 
 | Mandate claim | Reality at base `78f3755` |
 |---|---|
@@ -239,7 +286,7 @@ consider warming it before R8 rather than during it.
 
 ---
 
-## 8. Compatibility conclusion (R0–R2 only)
+## 10. Compatibility conclusion (R0–R4 only)
 
 | Check | Result |
 |---|---|
@@ -250,5 +297,10 @@ consider warming it before R8 rather than during it.
 | Existing user data compatible | **YES** — no persistence change |
 | v2 touched | **NO** |
 
-Refactor Gate for R0–R2: **PASS**. The mandate's overall Gate cannot be
+Refactor Gate for R0–R4: **PASS**. The mandate's overall Gate cannot be
 evaluated until R8.
+
+R3 and R4 changed no route path, no response shape, no schema and no frontend
+file, so the R2 conclusions above still hold. Both are relocation-and-facade
+stages: every public surface is reached through the same paths as before the
+move.
