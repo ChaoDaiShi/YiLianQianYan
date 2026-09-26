@@ -83,5 +83,5 @@ as necessary, not sufficient.
   are recorded by path in both checks; that list is recorded debt, not approval.
   A file leaves the list by being split. Nothing joins it.
 
-Files legitimately above 600 lines today (39 backend, 6 frontend) are the
+Files legitimately above 600 lines today (38 backend, 6 frontend) are the
 largest remaining refactor targets; they are listed in the final report.

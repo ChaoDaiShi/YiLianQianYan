@@ -42,7 +42,6 @@ const KNOWN_LARGE_FILES: &[&str] = &[
     "src/modules/task/projection.rs",
     "src/modules/task/runtime.rs",
     "src/modules/task/task_supervisor.rs",
-    "src/modules/task/tests.rs",
     "src/modules/workflow/tests.rs",
     "src/safety/descriptor.rs",
     "src/safety/execution_gateway.rs",
