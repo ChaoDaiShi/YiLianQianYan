@@ -32,10 +32,10 @@ import { runVoiceContinuation } from "./voiceContinuation";
 import { runVoiceBargeIn } from "./bargeIn";
 import { runFinalTranscriptFlow, type TurnFlowRuntime } from "./turnFlow";
 import { useHandsFree } from "./useHandsFree";
-import { type CaptureEchoEvidence } from "./echoEvidence";
 import { synchronizeVoiceContext } from "./voiceContextSync";
 import { type ChatVoiceControls } from "./ChatVoiceInput";
 import { GlobalVoiceLeaf, type GlobalVoiceProductState } from "./GlobalVoiceLeaf";
+import { useGlobalVoiceRuntime } from "./runtime/useGlobalVoiceRuntime";
 import "./globalVoice.css";
 
 // `./GlobalVoiceHost` stays the module's public entry. The context bridge,
@@ -78,7 +78,7 @@ export default function GlobalVoiceHost({
   );
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [conversationRefresh, setConversationRefresh] = useState<ConversationRefreshSignal | null>(null);
-  const captureEchoRef = useRef<CaptureEchoEvidence | null>(null);
+  const runtime = useGlobalVoiceRuntime(initialSnapshot?.session ?? null);
   const chatDraftCaptureRef = useRef(false);
   const chatOwnedSessionRef = useRef<string | null>(null);
   const pendingChatCaptureRef = useRef(false);
@@ -87,37 +87,27 @@ export default function GlobalVoiceHost({
   const manualSpeechOwnedSessionRef = useRef<string | null>(null);
   const manualSpeechStartedRef = useRef(false);
   const endSessionRef = useRef<() => Promise<void>>(async () => undefined);
-  const captureStartEpochRef = useRef(0);
   const invalidateContextRef = useRef<() => void>(() => undefined);
   const localContextTouchedRef = useRef(false);
-  const contextIdentityEpochRef = useRef(0);
-  const dispatchEpochRef = useRef(0);
-  const continuationControllerRef = useRef<AbortController | null>(null);
-  const latestSessionRef = useRef<GlobalVoiceSession | null>(initialSnapshot?.session ?? null);
   const [voiceContext, setVoiceContext] = useState<GlobalVoiceContextSnapshot>(() =>
     contextFromSession(initialSnapshot?.session ?? null),
   );
-  const latestContextRef = useRef(voiceContext);
-  latestContextRef.current = voiceContext;
+  runtime.commitContext(voiceContext);
 
   const updateContext = useCallback((patch: GlobalVoiceContextPatch) => {
     localContextTouchedRef.current = true;
-    const next = mergeVoiceContext(latestContextRef.current, patch);
-    if (next.conversational_anchor?.conversation_id !== latestContextRef.current.conversational_anchor?.conversation_id) {
-      contextIdentityEpochRef.current += 1;
-      captureStartEpochRef.current += 1;
-      captureEchoRef.current = null;
-      dispatchEpochRef.current += 1;
-      continuationControllerRef.current?.abort();
-      continuationControllerRef.current = null;
+    const previous = runtime.readContext();
+    const next = mergeVoiceContext(previous, patch);
+    if (next.conversational_anchor?.conversation_id !== previous.conversational_anchor?.conversation_id) {
+      runtime.bumpIdentityEpoch();
       invalidateContextRef.current();
     }
-    latestContextRef.current = next;
+    runtime.commitContext(next);
     setVoiceContext(next);
-  }, []);
+  }, [runtime]);
 
   const session = snapshot?.session ?? null;
-  latestSessionRef.current = session;
+  runtime.commitSession(session);
   const finalTranscript = transcriptFromTurn(snapshot);
 
   useEffect(() => {
@@ -171,20 +161,20 @@ export default function GlobalVoiceHost({
   useEffect(() => {
     if (!session || contextMatchesSession(voiceContext, session)) return;
     const controller = new AbortController();
-    const epoch = dispatchEpochRef.current;
+    const epoch = runtime.readEpoch();
     void synchronizeVoiceContext({
       session,
       signal: controller.signal,
-      getContext: () => latestContextRef.current,
-      isCurrent: () => dispatchEpochRef.current === epoch
-        && latestSessionRef.current?.voice_session_id === session.voice_session_id
-        && latestSessionRef.current?.generation === session.generation,
+      getContext: () => runtime.readContext(),
+      isCurrent: () => runtime.readEpoch() === epoch
+        && runtime.readLatestSession()?.voice_session_id === session.voice_session_id
+        && runtime.readLatestSession()?.generation === session.generation,
     }).then((updated) => {
       if (!updated || controller.signal.aborted) return;
       setSnapshot((previous) => {
         if (
-          controller.signal.aborted || dispatchEpochRef.current !== epoch
-          || !contextMatchesSession(latestContextRef.current, updated) ||
+          controller.signal.aborted || runtime.readEpoch() !== epoch
+          || !contextMatchesSession(runtime.readContext(), updated) ||
           !previous?.session ||
           previous.session.voice_session_id !== session.voice_session_id ||
           previous.session.generation !== session.generation
@@ -194,13 +184,14 @@ export default function GlobalVoiceHost({
         return { ...previous, session: updated };
       });
     }).catch((error) => {
-      if (controller.signal.aborted || dispatchEpochRef.current !== epoch) return;
+      if (controller.signal.aborted || runtime.readEpoch() !== epoch) return;
       setNotice(error instanceof Error ? error.message : "语音上下文同步失败。");
     });
     return () => controller.abort();
   }, [
     session,
     voiceContext,
+    runtime,
   ]);
 
   const setVoiceError = useCallback((message: string) => {
@@ -216,15 +207,12 @@ export default function GlobalVoiceHost({
   const playbackRef = useRef(playback);
   playbackRef.current = playback;
   useEffect(() => () => {
-    dispatchEpochRef.current += 1;
-    captureStartEpochRef.current += 1;
-    captureEchoRef.current = null;
+    runtime.invalidateInFlight();
     chatDraftCaptureRef.current = false;
     pendingChatCaptureRef.current = false;
     chatFinalSubscribersRef.current.clear();
     pendingManualSpeechRef.current = null;
-    continuationControllerRef.current?.abort();
-  }, []);
+  }, [runtime]);
 
   const finishChatOwnedSession = useCallback(() => {
     chatDraftCaptureRef.current = false;
@@ -235,16 +223,12 @@ export default function GlobalVoiceHost({
   }, []);
 
   const turnFlowRuntime = useMemo<TurnFlowRuntime>(() => ({
-    readEpoch: () => dispatchEpochRef.current,
-    readLatestSession: () => latestSessionRef.current,
-    readContextAnchorId: () => latestContextRef.current.conversational_anchor?.conversation_id,
-    readContextIdentityEpoch: () => contextIdentityEpochRef.current,
+    readEpoch: runtime.readEpoch,
+    readLatestSession: runtime.readLatestSession,
+    readContextAnchorId: () => runtime.readContext().conversational_anchor?.conversation_id,
+    readContextIdentityEpoch: runtime.readIdentityEpoch,
     readChatDraft: () => chatDraftCaptureRef.current,
-    takeEchoEvidence: () => {
-      const evidence = captureEchoRef.current;
-      captureEchoRef.current = null;
-      return evidence;
-    },
+    takeEchoEvidence: runtime.takeEchoEvidence,
     now: () => Date.now(),
     monotonicNow: () => performance.now(),
     forEachChatFinal: (deliver) => {
@@ -257,24 +241,13 @@ export default function GlobalVoiceHost({
     setConversationRefresh,
     setAwaitingConfirmation,
     finishChatOwnedSession,
-    abortContinuation: () => {
-      continuationControllerRef.current?.abort();
-      continuationControllerRef.current = null;
-    },
-    beginContinuation: () => {
-      const controller = new AbortController();
-      continuationControllerRef.current = controller;
-      return controller;
-    },
-    endContinuation: (controller) => {
-      if (continuationControllerRef.current === controller) {
-        continuationControllerRef.current = null;
-      }
-    },
+    abortContinuation: runtime.abortContinuation,
+    beginContinuation: runtime.beginContinuation,
+    endContinuation: runtime.endContinuation,
     dispatchVoiceTurn,
     runContinuation: runVoiceContinuation,
     speak: (text) => playbackRef.current.speak(text),
-  }), [finishChatOwnedSession]);
+  }), [finishChatOwnedSession, runtime]);
 
   const handleFinalTranscript = useCallback(
     (result: FinalVoiceTranscript) => runFinalTranscriptFlow(result, turnFlowRuntime),
@@ -283,18 +256,15 @@ export default function GlobalVoiceHost({
 
   const interruptForBargeIn = useCallback(async (): Promise<GlobalVoiceSession | void> => {
     return runVoiceBargeIn(session, {
-      bumpEpoch: () => ++dispatchEpochRef.current,
-      readEpoch: () => dispatchEpochRef.current,
-      readLatestSession: () => latestSessionRef.current,
-      readContextAnchorId: () => latestContextRef.current.conversational_anchor?.conversation_id,
-      abortContinuation: () => {
-        continuationControllerRef.current?.abort();
-        continuationControllerRef.current = null;
-      },
+      bumpEpoch: runtime.bumpEpoch,
+      readEpoch: runtime.readEpoch,
+      readLatestSession: runtime.readLatestSession,
+      readContextAnchorId: () => runtime.readContext().conversational_anchor?.conversation_id,
+      abortContinuation: runtime.abortContinuation,
       interruptPlayback: playback.interrupt,
       interruptVoiceSession,
       commitSession: (interrupted) => {
-        latestSessionRef.current = interrupted;
+        runtime.commitSession(interrupted);
         setSnapshot((previous) =>
           previous
             ? { ...previous, session: interrupted, lease: null, partial_transcript: null }
@@ -303,7 +273,7 @@ export default function GlobalVoiceHost({
         setPresence((previous) => ({ ...previous, interaction: "interrupted" }));
       },
     });
-  }, [playback.interrupt, session]);
+  }, [playback.interrupt, runtime, session]);
 
   const capture = useVoiceCapture({
     session,
@@ -321,24 +291,22 @@ export default function GlobalVoiceHost({
   useHandsFree({
     enabled: handsFreeEnabled && session?.state !== "ended",
     sessionId: session?.voice_session_id ?? null,
-    identityEpoch: contextIdentityEpochRef.current,
+    identityEpoch: runtime.readIdentityEpoch(),
     playing: playback.state.status === "playing" || playback.state.status === "synthesizing",
     capture: {
       ...capture,
       start: async (reason, stream) => {
-        const operationEpoch = ++captureStartEpochRef.current;
-        const identityEpoch = contextIdentityEpochRef.current;
+        const operation = runtime.beginCaptureOperation();
         chatDraftCaptureRef.current = false;
-        captureEchoRef.current = null;
         // Snapshot only actual audio playback, before barge-in releases it.
         const overlap = playbackRef.current.captureOverlap();
         const handle = await capture.start(reason, stream);
-        if (overlap && handle?.lease && operationEpoch === captureStartEpochRef.current
-          && identityEpoch === contextIdentityEpochRef.current
-          && overlap.sessionId === handle.lease.sessionId
-          && overlap.playbackGeneration + 1 === handle.lease.generation) {
-          captureEchoRef.current = { ...overlap, ...handle.lease, identityEpoch };
-        }
+        runtime.recordEchoEvidence(
+          overlap,
+          handle?.lease ?? null,
+          operation.operationEpoch,
+          operation.identityEpoch,
+        );
         return handle;
       },
     },
@@ -346,36 +314,30 @@ export default function GlobalVoiceHost({
   });
 
   const startSession = useCallback(async (showGlobalConversation = true): Promise<GlobalVoiceSession | null> => {
-    captureStartEpochRef.current += 1;
-    captureEchoRef.current = null;
-    dispatchEpochRef.current += 1;
-    const requestEpoch = dispatchEpochRef.current;
-    continuationControllerRef.current?.abort();
-    continuationControllerRef.current = null;
+    runtime.beginCaptureOperation();
+    const requestEpoch = runtime.bumpEpoch();
+    runtime.abortContinuation();
     playback.interrupt();
     const started = await startVoiceSession(voiceContext.focused_surface);
-    if (dispatchEpochRef.current !== requestEpoch) return null;
+    if (runtime.readEpoch() !== requestEpoch) return null;
     if (!started) {
       setNotice("语音会话未能启动，请检查后端与语音配置。");
       return null;
     }
     setNotice(null);
     if (showGlobalConversation) setGlobalConversationEnabled(true);
-    latestSessionRef.current = started;
+    runtime.commitSession(started);
     setSnapshot((previous) => snapshotWithSession(previous, started));
     setPresence((previous) => ({ ...previous, activity: "working", interaction: "listening" }));
     return started;
-  }, [playback, voiceContext.focused_surface]);
+  }, [playback, runtime, voiceContext.focused_surface]);
 
   const endSession = useCallback(async () => {
     if (!session) return;
-    captureStartEpochRef.current += 1;
-    captureEchoRef.current = null;
+    runtime.beginCaptureOperation();
     setHandsFreeEnabled(false);
-    dispatchEpochRef.current += 1;
-    const requestEpoch = dispatchEpochRef.current;
-    continuationControllerRef.current?.abort();
-    continuationControllerRef.current = null;
+    const requestEpoch = runtime.bumpEpoch();
+    runtime.abortContinuation();
     await cleanupVoiceSession({
       sessionId: session.voice_session_id,
       generation: session.generation,
@@ -383,7 +345,7 @@ export default function GlobalVoiceHost({
       interruptPlayback: playback.interrupt,
       endSession: async (sessionId, generation) => {
         const ended = await endVoiceSession(sessionId, generation);
-        if (ended && dispatchEpochRef.current === requestEpoch) {
+        if (ended && runtime.readEpoch() === requestEpoch) {
           setSnapshot((previous) =>
             previous
               ? {
@@ -407,23 +369,21 @@ export default function GlobalVoiceHost({
     manualSpeechStartedRef.current = false;
     setGlobalConversationEnabled(false);
     setNotice(null);
-  }, [capture.cancel, playback.interrupt, session]);
+  }, [capture.cancel, playback.interrupt, runtime, session]);
   endSessionRef.current = endSession;
 
   const startCapture = useCallback(async (chatDraft = false) => {
-    const operationEpoch = ++captureStartEpochRef.current;
-    const identityEpoch = contextIdentityEpochRef.current;
+    const operation = runtime.beginCaptureOperation();
     chatDraftCaptureRef.current = chatDraft;
-    captureEchoRef.current = null;
     const overlap = playbackRef.current.captureOverlap();
     const handle = await capture.start("user-click");
-    if (overlap && handle?.lease && operationEpoch === captureStartEpochRef.current
-      && identityEpoch === contextIdentityEpochRef.current
-      && overlap.sessionId === handle.lease.sessionId
-      && overlap.playbackGeneration + 1 === handle.lease.generation) {
-      captureEchoRef.current = { ...overlap, ...handle.lease, identityEpoch };
-    }
-  }, [capture]);
+    runtime.recordEchoEvidence(
+      overlap,
+      handle?.lease ?? null,
+      operation.operationEpoch,
+      operation.identityEpoch,
+    );
+  }, [capture, runtime]);
 
   const subscribeChatFinal = useCallback((listener: (text: string) => void) => {
     chatFinalSubscribersRef.current.add(listener);
