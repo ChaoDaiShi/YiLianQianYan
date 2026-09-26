@@ -1,0 +1,16 @@
+{
+  "--font-size-caption": "12px",
+  "--font-size-meta": "13px",
+  "--font-size-secondary": "14px",
+  "--font-size-control": "14px",
+  "--font-size-body": "16px",
+  "--font-size-reading": "17px",
+  "--font-size-title-sm": "18px",
+  "--font-size-title-md": "22px",
+  "--font-size-title-lg": "28px",
+  "--line-height-caption": "1.4",
+  "--line-height-meta": "1.4",
+  "--line-height-body": "1.55",
+  "--line-height-reading": "1.65",
+  "--line-height-title": "1.3"
+}

@@ -32,7 +32,7 @@ export function applyThemeToDom(
 }
 
 export function buildThemeVariables(
-  theme: ThemeConfig,
+  _theme: ThemeConfig,
   scheme: ColorScheme,
 ): Record<string, string> {
   const semantic = CYRENE_SEMANTIC_TOKENS[scheme];
@@ -59,7 +59,7 @@ export function buildThemeVariables(
     "--backdrop": scheme === "dark"
       ? "rgba(5,4,10,0.58)"
       : "rgba(41,38,58,0.34)",
-    "--font-size-base": `${theme.fontSize}px`,
+    "--font-size-base": "var(--font-size-body)",
     "--bg-blur": "0px",
     "--bg-brightness": "1",
   };

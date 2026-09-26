@@ -6,6 +6,8 @@ describe("Cyrene appearance modes", () => {
   it("uses system mode for a new installation", () => {
     expect(DEFAULT_THEME.presetId).toBe("cyrene-ripple");
     expect(DEFAULT_THEME.mode).toBe("system");
+    expect(DEFAULT_THEME.fontSize).toBe(16);
+    expect(normalizeStoredTheme({ fontSize: 14 }).fontSize).toBe(16);
   });
 
   it.each([

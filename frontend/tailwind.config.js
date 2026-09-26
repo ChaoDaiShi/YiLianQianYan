@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+const typography = JSON.parse(readFileSync(new URL("./src/theme/typography.json", import.meta.url), "utf8"));
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
@@ -52,5 +55,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [({ addBase }) => addBase({ ":root": typography })],
 };

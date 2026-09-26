@@ -88,7 +88,7 @@
     --focus-ring: var(--accent-primary);
     --backdrop: rgba(41, 38, 58, 0.34);
     --shadow-soft: var(--shadow-card);
-    --font-size-base: 14px;
+    --font-size-base: var(--font-size-body);
     --bg-blur: 0px;
     --bg-brightness: 1;
     --bg-image: none;
@@ -104,6 +104,8 @@
   }
 
   body {
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
     background-color: var(--bg-app);
     color: var(--text-primary);
     font-family: "IBM Plex Sans", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
