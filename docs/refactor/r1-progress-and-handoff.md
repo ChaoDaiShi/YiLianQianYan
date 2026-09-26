@@ -35,6 +35,7 @@
 | `019c0e0` | R8 | `docs(refactor): add R1 final architecture report` |
 | `82118ab` | R6d | `refactor(frontend): split settings page into sections` |
 | `d94221e` | R6e | `refactor(frontend): extract voice model, routing and context from the host` |
+| `7123cba` | R6f | `refactor(frontend): split index.css into cascade-ordered style files` |
 
 Working tree is clean; `main`, `develop`, `v1/release-work`, and `v2` are untouched.
 All commits are pushed to `origin/refactor/v1-architecture-foundation`.
@@ -317,10 +318,9 @@ schedule for removal. Recorded, not silently fixed.
 
 ## 9. R6 — what was done
 
-Of the six hotspots named in mandate §38: three are done (`TaskWorldInspector`,
-`TaskWorldPage`, `SettingsPage`), two are partial by decision
-(`TaskWorldCanvas`, `GlobalVoiceHost`), and one is deferred on evidence
-(`index.css`).
+Of the six hotspots named in mandate §38: four are done
+(`TaskWorldInspector`, `TaskWorldPage`, `SettingsPage`, `index.css`), and two
+are partial by decision (`TaskWorldCanvas`, `GlobalVoiceHost`).
 
 **R6a (`0456c03`) — `TaskWorldInspector.tsx` (397) → `inspector/`.**
 A shell (`TaskInspector.tsx`) plus one file per block: Basic, Executor,
@@ -379,13 +379,31 @@ shell plus all five hooks and the inspector shell plus all sections;
 nine section files. Every string each test pinned — including the negative
 assertions — is still *required to exist on the same surface*.
 
+**R6f (`7123cba`) — `index.css` (3389) → a 28-line manifest.**
+The rules moved to ten files under `src/styles/`, split **by cascade layer**
+rather than by feature: a feature grouping is not order-preserving for this
+file, because the rules are interleaved by feature across layers. Splitting by
+layer keeps every block contiguous and every `@layer` block inside the
+Tailwind-processed file. Proved, not asserted: the built stylesheet is
+byte-identical, md5 `5889431e` before and after.
+
+Two attempts failed first, both caught by that md5 guard and neither by review:
+placing `@import` before `@tailwind` (PostCSS's usual requirement) moved the
+unlayered rules ahead of the hoisted output; then extracting by assumed line
+ranges folded three *unlayered* `@media`/`@keyframes` regions into `@layer`
+files and displaced 45 rules. Fixed by enumerating top-level blocks by brace
+depth — which found five unlayered regions rather than the two I had assumed.
+
+Two consequences worth carrying forward: `index.css` now holds no rules, so it
+cannot sprawl again; and CSS is **not** covered by the automated boundary check
+(it reads `.ts`/`.tsx` only), so the md5 diff is the only guard for a future
+style change.
+
 ### R6 — what was NOT done
 
-`index.css`. It is analysed in `docs/architecture/current-to-target-map.md`: a
-feature-grouped split is not order-preserving for this file, and the experiment
-that proved it is recorded there with its built-CSS md5. It is deferred until a
-built-CSS diff or visual snapshot can guard it — the method for that is written
-down and ready.
+Nothing in R6 remains unattempted. Two hotspots are partial by decision
+(`TaskWorldCanvas`'s 112-line surface and `GlobalVoiceHost`'s 640-line
+orchestrator), both argued above.
 
 ## 10. R7 — what was done
 
@@ -416,24 +434,33 @@ recorded debt: a file may leave the list by being split; nothing may join it.
 
 Ordered by how much is already understood, not by size.
 
-1. **`index.css` (3389 lines).** Deferred on evidence. The safe shape is known:
-   move the *unlayered* blocks to JS imports in `main.tsx` while the `@layer`
-   blocks stay in the Tailwind-processed file, then prove it with a built-CSS
-   diff against md5 `5889431e`. A feature-grouped split is not available.
-2. **`GlobalVoiceHost`'s orchestrator (703 lines, ~640 of them the component).**
+1. **`GlobalVoiceHost`'s orchestrator (703 lines, ~640 of them the component).**
    Needs a concurrency-aware decomposition, not a file move — see §9. It needs
    an interaction test for barge-in and continuation *first*, or the change is
-   unverifiable.
-3. **`TaskWorldCanvas`'s surface (112 lines).** Only worth splitting if the
+   unverifiable. This is the largest single piece of frontend debt left.
+2. **`TaskWorldCanvas`'s surface (112 lines).** Only worth splitting if the
    hooks fall out along real seams; at present they do not.
-4. **R3/R4 gaps, inherited.** `modules/task/application` and
+3. **R3/R4 gaps, inherited.** `modules/task/application` and
    `modules/workflow/application` are unextracted; MCP is relocated but not
    regrouped, and `mcp_transport_config` still lives in `app/state.rs`.
-5. **Backend relocation, the largest remaining slice.** `voice`, `capability`,
-   `llm`, `secret`, `agent` and `tools` still sit at `backend/src/`. Nothing is
-   unowned; it is unrelocated.
-6. **The compatibility facades.** Eight of them (§5 of the final report). Each
+4. **Backend relocation, the largest remaining slice overall.** `voice`,
+   `capability`, `llm`, `secret`, `agent` and `tools` still sit at
+   `backend/src/`. Nothing is unowned; it is unrelocated.
+5. **The compatibility facades.** Eight of them (§5 of the final report). Each
    needs its call sites updated and then deleted.
+6. **`styles/workspace.css` (1536 lines).** One contiguous `@layer components`
+   block for the workspace shell and its feature pages. Splitting it further is
+   cascade-safe but would produce arbitrarily-named files, because its rules are
+   interleaved by feature — the same reason `index.css` could not be split by
+   feature. Leave it unless a real seam appears.
+
+### If you touch the stylesheet
+
+Read the header of `frontend/src/index.css` first. The import order there is
+load-bearing, and the only way to check a change is to build and compare
+`dist/assets/index-*.css` against md5 `5889431edc65281a20589a3953c724e2`. Also
+add any new style file to `frontend/src/styles/stylesheet.ts`, or the CSS-facing
+tests will silently stop reading it.
 
 ### R8 — Full gate
 
@@ -478,10 +505,11 @@ the real-backend E2E — all green. After R6d/R6e changed frontend files, the
 frontend gates and the E2E were re-run against the final commit rather than
 assumed; no Rust source changed in between. Full detail in the final report.
 
-R6d and R6e are the second and third frontend stages to move files. Neither
-changed a route path or a rendered contract: `npm test` stayed at 91 files, the
-E2E passed against the rewritten Settings page at all three viewports, and the
-built stylesheet md5 is still `5889431e`.
+R6d, R6e and R6f are the frontend stages that moved files. None changed a route
+path or a rendered contract: `npm test` stayed at 91 files, the E2E passed
+against the rewritten Settings page at all three viewports, and the built
+stylesheet md5 is still `5889431e` — which for R6f is not merely consistent but
+is the proof that the split moved nothing.
 
 R3, R4 and R5 changed no route path, no response shape, no schema and no
 frontend file, so the R2 conclusions above still hold — they are

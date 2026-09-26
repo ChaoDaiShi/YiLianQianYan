@@ -201,21 +201,30 @@ Honest list, each with its reason.
 | `TaskWorldCanvas.tsx` (198) | **partial** — `TaskNode` extracted, both under `canvas/`. The remaining 112-line surface was deliberately *not* split into `useCanvasProjectionSync` / `useCanvasViewport` / `useCanvasPersistence`: at that size it is one coherent React Flow integration and splitting it would be slicing by line count (mandate §23), with no render test to catch a regression. |
 | `pages/SettingsPage.tsx` (726) | done — **364 lines**, content in `features/settings/{model,sections}/` (R6d) |
 | `features/voice/GlobalVoiceHost.tsx` (895) | **partial** — **703 lines**. The types, ~170 lines of pure projections and the route policy moved to `features/voice/{model,context}/` (R6e). The 640-line orchestrator was **not** split into the mandated hooks; see below. |
-| `index.css` (3389) | **not started — blocked by evidence** (below) |
+| `index.css` (3389) | done — `index.css` is a **28-line manifest holding no rules**; the rules live in ten files under `src/styles/`, split by cascade layer (R6f). Built CSS is byte-identical. |
 
-**`index.css` cannot be safely split by feature, and this was tested rather
-than assumed.** The file's rules are interleaved by feature across cascade
-layers (`.task-world-*` at 146–210, `.conversation-*` at 222–370,
+**`index.css` was split by cascade layer, not by feature.** Feature grouping is
+not available for this file: the rules are interleaved by feature across
+cascade layers (`.task-world-*` at 146–210, `.conversation-*` at 222–370,
 `.capability-*` at 1028 and 2035, `.system-*` at 2977+), so grouping by feature
-means *reordering rules within a layer*. Separately, Tailwind v3 hoists
-`@layer` content to its `@tailwind` directives, and PostCSS requires `@import`
-before other statements — placing imports first moves the unlayered rules ahead
-of the hoisted output. The experiment was run: the built stylesheet changed
-(rule order moved, md5 `5889431e` → `0153795f`) and was reverted, restoring the
-baseline exactly. Since §22 itself says "只移动现有规则" and there is **no
-visual regression test** in the suite, the split is deferred until a
-built-CSS diff or visual snapshot can guard it. The method is ready and
-documented in `current-to-target-map.md`.
+means reordering rules within a layer. Splitting by layer keeps every block
+contiguous and every `@layer` block inside the Tailwind-processed file, which is
+what makes the order provable — and it is proved: the built stylesheet is
+byte-identical, md5 `5889431e` before and after.
+
+Two failed attempts preceded it, both caught by that md5 guard rather than by
+review:
+
+- Placing `@import` before `@tailwind` (PostCSS's usual requirement) moved the
+  unlayered rules ahead of Tailwind's hoisted output — md5 `0153795f`. Reverted.
+- Extracting by assumed line ranges folded three *unlayered* `@media` /
+  `@keyframes` regions into `@layer` files, displacing 45 rules. Fixed by
+  enumerating the file's top-level blocks by brace depth instead of guessing,
+  which found five unlayered regions rather than two.
+
+This is the concrete reason the split was refused until a guard existed, and it
+is why `current-to-target-map.md` says the import order in `index.css` must not
+be rearranged.
 
 **Why `GlobalVoiceHost`'s orchestrator was not split (R6e).** §21 asks for
 `runtime/GlobalVoiceProvider` plus four hooks. The body carries ~16 `useRef`
@@ -383,7 +392,8 @@ from `docs/architecture/ownership.md` rather than from reading the source:
 | Who owns the database? | `db/` — unchanged and unmoved |
 | What may a module depend on? | `docs/architecture/ownership.md` per module, enforced in part by two checks |
 
-The refactor is **not** complete. Within R6, `index.css` is deferred on
-evidence and `GlobalVoiceHost`'s orchestrator is deliberately unsplit; R3 and
-R4 retain their recorded gaps; and roughly half the backend is still
-unrelocated. What is complete is R0–R5, R6a–R6e, R7 and R8, all verified green.
+The refactor is **not** complete. Within R6, `GlobalVoiceHost`'s orchestrator
+and `TaskWorldCanvas`'s surface are deliberately unsplit; R3 and R4 retain their
+recorded gaps; and roughly half the backend is still unrelocated. What is
+complete is R0–R5, all of R6 except those two partials, R7 and R8 — every stage
+verified green, and the final state re-verified after the last change.

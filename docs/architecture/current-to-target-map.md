@@ -47,30 +47,41 @@ incomplete.
 | `features/*` (conversation, capability, memory-skill, resource, artifact) | partial | `features/` exists with capabilities, execution, llm, mcp, memory, resources, security, skills, task-world, tasks, voice. Conversation still lives in `components/chat/`. |
 | `surfaces/workspace/` | done | `surfaces/workspace/` exists; `surfaces/desktop/` holds the Tauri-specific surface. |
 | `ui/{primitives,layout,feedback}` | deviated | Primitives live in `components/ui/`, layout in `components/layout/`. The boundary rule is enforced by name-independent path checks. |
-| `styles/{tokens,base,shell,features/*}` | deviated | `index.css` (3,389 lines) is **not split**. See below. |
+| `styles/{tokens,base,shell,features/*}` | done, different shape | `index.css` is a 28-line manifest holding no rules; the rules live in ten files under `src/styles/`, split **by cascade layer** rather than by feature. The built stylesheet is byte-identical. See below. |
 
-### Why `index.css` was not split
+### How `index.css` was split, and why not by feature
 
-Mandate §22 asks for a feature-grouped split. That is not achievable here
-without changing the cascade:
+§22 asks for a feature-grouped split. That is **not available** for this file:
+its rules are interleaved by feature across cascade layers (`.task-world-*` at
+146–210, `.conversation-*` at 222–370, `.capability-*` at 1028 and 2035,
+`.system-*` at 2977+), so grouping by feature means reordering rules within a
+layer.
 
-- The file's rules are **interleaved by feature**, not blocked by it:
-  `.task-world-*` is at lines 146–210, `.conversation-*` at 222–370,
-  `.capability-*` at 1028 and 2035, `.system-*` at 2977+. Grouping by feature
-  means reordering rules within the same cascade layer.
-- Tailwind v3 hoists `@layer` content to its `@tailwind` directives, and the
-  unlayered rules must stay *after* that hoisted output. An `@import`-based
-  split has to place imports **before** `@tailwind` (PostCSS requires it), which
-  moves the unlayered rules ahead of the hoisted output. This was tested, not
-  assumed: the built stylesheet changed (rule order moved, md5
-  `5889431e` → `0153795f`), and it was reverted.
+The split is by **cascade layer instead**, which is order-preserving:
 
-There is also **no visual regression test** in the suite — the CSS-facing tests
-are source-text assertions, so a cascade mistake would ship silently. Given
-§22's own "只移动现有规则" and the bar of "no visual redesign", the split is
-deferred until a built-CSS diff or visual snapshot can guard it. The method is
-ready: build, compare `dist/assets/index-*.css` md5 against the baseline
-`5889431edc65281a20589a3953c724e2`. A provably order-preserving split is
-possible if the unlayered blocks are moved to JS imports in `main.tsx` while
-the `@layer` blocks stay in the Tailwind-processed file — that is the shape to
-attempt next, not a feature-grouped one.
+| File | Holds |
+|---|---|
+| `index.css` | the manifest — `@import` only, no rules |
+| `tailwind.css` | the three `@tailwind` injections |
+| `base.css` | `@layer base` — tokens, theme, resets |
+| `workspace.css` | `@layer components` — shell, nav, feature pages |
+| `capability.css`, `system.css` | `@layer components` |
+| `utilities.css` | `@layer utilities` |
+| `shell.css`, `responsive.css`, `animations.css`, `markdown.css` | **unlayered** |
+
+`index.css` documents the two rules that make it work: `@layer` files are
+hoisted to the injections so their position is free but their relative order is
+not, and the unlayered files must come last because unlayered rules win over
+every layer. **Do not rearrange that import list.**
+
+How it is proved: build and compare `dist/assets/index-*.css` against the
+baseline md5 `5889431edc65281a20589a3953c724e2`. That check earned its keep on
+the first attempt — extracting by assumed line ranges folded three *unlayered*
+`@media`/`@keyframes` regions into layer files, moving 45 rules. Enumerating the
+top-level blocks by brace depth instead of guessing found all five unlayered
+regions.
+
+CSS is **not** covered by the automated boundary check (it reads `.ts`/`.tsx`
+only), so a future CSS edit has no automated guard. The structural safeguard is
+that `index.css` holds no rules, so it cannot sprawl — new CSS must go into a
+named file under `styles/`.
