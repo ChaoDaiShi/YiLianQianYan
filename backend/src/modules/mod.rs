@@ -8,4 +8,5 @@ pub mod memory_skill;
 pub mod resource;
 pub mod settings;
 pub mod task;
+pub mod voice;
 pub mod workflow;

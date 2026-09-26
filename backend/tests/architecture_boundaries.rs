@@ -42,6 +42,8 @@ const KNOWN_LARGE_FILES: &[&str] = &[
     "src/modules/task/projection.rs",
     "src/modules/task/runtime.rs",
     "src/modules/task/task_supervisor.rs",
+    "src/modules/voice/provider.rs",
+    "src/modules/voice/runtime.rs",
     "src/modules/workflow/tests.rs",
     "src/safety/descriptor.rs",
     "src/safety/execution_gateway.rs",
@@ -51,8 +53,6 @@ const KNOWN_LARGE_FILES: &[&str] = &[
     "src/tools/input.rs",
     "src/tools/mcp.rs",
     "src/tools/subagent.rs",
-    "src/voice/provider.rs",
-    "src/voice/runtime.rs",
 ];
 
 fn collect(directory: &Path, collected: &mut Vec<PathBuf>) {
