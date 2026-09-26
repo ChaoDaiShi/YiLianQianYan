@@ -89,6 +89,11 @@
     --backdrop: rgba(41, 38, 58, 0.34);
     --shadow-soft: var(--shadow-card);
     --font-size-base: var(--font-size-body);
+    --page-padding-inline: clamp(16px, 2vw, 36px);
+    --page-padding-block: clamp(12px, 1.5vw, 24px);
+    --content-reading-max: 1040px;
+    --content-form-max: 1180px;
+    --content-dashboard-max: 1600px;
     --bg-blur: 0px;
     --bg-brightness: 1;
     --bg-image: none;

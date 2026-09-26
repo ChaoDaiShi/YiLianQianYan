@@ -7,9 +7,9 @@
   position: fixed;
   z-index: 40;
   left: 50%;
-  bottom: max(18px, env(safe-area-inset-bottom));
+  bottom: max(var(--overlay-dock-gap), env(safe-area-inset-bottom));
   transform: translateX(-50%);
-  width: min(410px, calc(100vw - 24px));
+  width: min(410px, calc(100vw - 2 * var(--overlay-safe-right)));
   color: var(--text-primary);
   font-size: 0.75rem;
   pointer-events: none;
@@ -68,14 +68,14 @@
 }
 
 .global-voice-pill-copy strong {
-  font-size: 0.78rem;
+  font-size: var(--font-size-meta);
   font-weight: 650;
 }
 
 .global-voice-pill-copy span {
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 0.65rem;
+  font-size: var(--font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -87,7 +87,7 @@
   background: var(--surface-muted);
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 0.68rem;
+  font-size: var(--font-size-caption);
   transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 
@@ -232,7 +232,7 @@
 
 @media (max-width: 640px) {
   .global-voice-dock {
-    bottom: max(12px, env(safe-area-inset-bottom));
+    bottom: max(var(--overlay-dock-gap), env(safe-area-inset-bottom));
   }
 
   .global-voice-panel {
@@ -250,7 +250,7 @@
   gap: 6px;
   min-width: 0;
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: var(--font-size-caption);
 }
 
 .chat-voice-entry,
@@ -261,7 +261,7 @@
   background: var(--surface-muted);
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 0.68rem;
+  font-size: var(--font-size-caption);
   line-height: 1;
 }
 
@@ -328,3 +328,5 @@
     transition: none;
   }
 }
+
+.global-voice-expand, .global-voice-controls button { min-height: 32px; }

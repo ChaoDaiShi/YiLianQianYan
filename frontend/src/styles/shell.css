@@ -629,3 +629,18 @@
 .page-header-actions, .page-header-actions > div { min-width: 0; flex-wrap: wrap; }
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: var(--font-size-control); min-width: 0; }
 .ui-input, .ui-textarea { font-size: var(--font-size-body) !important; }
+
+/* The shell and its sibling voice dock share one reserved bottom strip. */
+.global-voice-host {
+  --overlay-safe-bottom: 84px;
+  --overlay-safe-right: 24px;
+  --overlay-dock-gap: 16px;
+}
+.global-voice-host:has(.global-voice-pill) .workspace-region {
+  padding-bottom: var(--overlay-safe-bottom);
+}
+.nav-rail-item-label { font-size: var(--font-size-caption); line-height: var(--line-height-caption); }
+.nav-rail-item svg { width: 20px; height: 20px; flex-shrink: 0; }
+.nav-rail [aria-label="必需安全入口"] { font-size: var(--font-size-caption); }
+.nav-rail [aria-label="必需安全入口"] button { min-height: 32px; min-width: 44px; font-size: var(--font-size-caption); }
+.page-header { margin-inline: var(--page-padding-inline); margin-top: var(--page-padding-block); }

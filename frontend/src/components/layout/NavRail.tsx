@@ -90,7 +90,7 @@ export default function NavRail() {
                     aria-label={item.label}
                     className={({ isActive }) =>
                       cn(
-                        "nav-rail-item relative flex min-h-14 w-16 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] leading-tight transition-colors duration-[var(--motion-fast)] min-[960px]:w-[68px]",
+                        "nav-rail-item relative flex min-h-14 w-16 flex-col items-center justify-center gap-1 rounded-xl px-1 leading-tight transition-colors duration-[var(--motion-fast)] min-[960px]:w-[68px]",
                         isActive
                           ? "bg-[var(--sidebar-active)] font-medium text-white"
                           : "text-[var(--sidebar-text)] opacity-80 hover:bg-white/10 hover:opacity-100",
@@ -100,7 +100,7 @@ export default function NavRail() {
                     {({ isActive }) => (
                       <>
                         <Icon
-                          className="h-[18px] w-[18px]"
+                          className="h-5 w-5"
                           strokeWidth={isActive ? 2.2 : 1.8}
                         />
                         <span
@@ -132,7 +132,7 @@ export default function NavRail() {
         ))}
       </div>
 
-      <div className="flex shrink-0 flex-col items-center gap-1 text-[10px]" aria-label="必需安全入口">
+      <div className="flex shrink-0 flex-col items-center gap-1" aria-label="必需安全入口">
         <button type="button" onClick={() => navigate("/settings")} aria-label="安全 Gateway 与权限设置">安全</button>
         <button type="button" onClick={() => navigate("/system?card=approvals")} aria-label="查看待审批操作">审批</button>
         <button type="button" onClick={() => navigate("/tasks")} aria-label="任务恢复入口">恢复</button>
