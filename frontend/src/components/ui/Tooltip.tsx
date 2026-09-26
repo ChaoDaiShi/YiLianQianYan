@@ -40,7 +40,7 @@ export default function Tooltip({ content, children }: TooltipProps) {
         role="tooltip"
         aria-hidden={!open}
         style={{ top: position.top, left: position.left }}
-        className={`pointer-events-none fixed z-50 -translate-y-1/2 whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--surface-elevated)] px-2 py-1 text-xs text-[var(--text)] shadow-[var(--shadow-float)] transition-opacity duration-[var(--motion-fast)] ${
+        className={`ui-tooltip pointer-events-none fixed z-50 -translate-y-1/2 whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--surface-elevated)] px-2 py-1 text-[var(--text)] shadow-[var(--shadow-float)] transition-opacity duration-[var(--motion-fast)] ${
           open ? "opacity-100" : "opacity-0"
         }`}
       >

@@ -613,3 +613,19 @@
   }
 }
 
+
+/* Shared desktop controls and heading hierarchy. */
+.ui-button { min-height: 36px; font-size: var(--font-size-control); line-height: var(--line-height-caption); }
+.ui-button[data-variant="primary"] { min-height: 40px; }
+.ui-button-sm { min-height: 32px; }
+.ui-button-sm[data-variant="primary"] { min-height: 32px; }
+.ui-input, .ui-textarea { min-width: 0; font-size: var(--font-size-body); line-height: var(--line-height-body); }
+.ui-input { min-height: 40px; }
+.ui-label { font-size: var(--font-size-control); line-height: var(--line-height-body); }
+.ui-hint, .ui-badge, .ui-tooltip { font-size: var(--font-size-caption); line-height: var(--line-height-caption); }
+.page-header { flex-shrink: 0; flex-wrap: wrap; }
+.page-title { font-size: clamp(24px, 1.5vw, var(--font-size-title-lg)); line-height: var(--line-height-title); overflow-wrap: anywhere; }
+.page-description { font-size: var(--font-size-secondary); line-height: var(--line-height-body); }
+.page-header-actions, .page-header-actions > div { min-width: 0; flex-wrap: wrap; }
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: var(--font-size-control); min-width: 0; }
+.ui-input, .ui-textarea { font-size: var(--font-size-body) !important; }

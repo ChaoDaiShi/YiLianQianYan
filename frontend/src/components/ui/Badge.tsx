@@ -23,7 +23,7 @@ export default function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-[var(--radius-sm)] border px-2 py-0.5 text-xs font-medium transition-colors duration-[var(--motion-fast)]",
+        "ui-badge inline-flex items-center gap-1 rounded-[var(--radius-sm)] border px-2 py-0.5 font-medium transition-colors duration-[var(--motion-fast)]",
         tones[tone],
         className
       )}

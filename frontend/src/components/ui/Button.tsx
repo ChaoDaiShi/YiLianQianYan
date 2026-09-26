@@ -18,9 +18,9 @@ const variants: Record<Variant, string> = {
 };
 
 const sizes: Record<Size, string> = {
-  sm: "rounded-[var(--radius-sm)] px-2.5 py-1 text-xs",
-  md: "rounded-[var(--radius-md)] px-3.5 py-2 text-sm",
-  lg: "rounded-[var(--radius-md)] px-5 py-2.5 text-sm",
+  sm: "rounded-[var(--radius-sm)] px-2.5 py-1 ui-button-sm",
+  md: "rounded-[var(--radius-md)] px-3.5 py-2",
+  lg: "rounded-[var(--radius-md)] px-5 py-2.5",
 };
 
 export default function Button({
@@ -34,11 +34,12 @@ export default function Button({
   return (
     <button
       className={cn(
-        "focus-ring-token inline-flex items-center justify-center gap-1.5 font-medium transition-colors duration-[var(--motion-fast)] focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40",
+        "ui-button focus-ring-token inline-flex items-center justify-center gap-1.5 font-medium transition-colors duration-[var(--motion-fast)] focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40",
         variants[variant],
         sizes[size],
         className
       )}
+      data-variant={variant}
       disabled={disabled}
       {...props}
     >
