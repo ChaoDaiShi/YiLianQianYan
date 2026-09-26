@@ -117,7 +117,7 @@
 }
 
 .conversation-message-list .message-column {
-  width: min(100%, 900px);
+  width: min(100%, clamp(860px, 56vw, var(--content-reading-max)));
   margin: 0 auto;
 }
 
@@ -337,7 +337,7 @@
 }
 
 .conversation-composer .composer-card {
-  width: min(820px, 100%);
+  width: min(100%, clamp(860px, 56vw, var(--content-reading-max)));
   margin: 0 auto;
   padding: 0.55rem;
   border-color: rgba(173, 155, 232, 0.22);
@@ -644,3 +644,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .nav-rail [aria-label="必需安全入口"] { font-size: var(--font-size-caption); }
 .nav-rail [aria-label="必需安全入口"] button { min-height: 32px; min-width: 44px; font-size: var(--font-size-caption); }
 .page-header { margin-inline: var(--page-padding-inline); margin-top: var(--page-padding-block); }
+
+.conversation-message-content, .conversation-markdown { font-size: var(--font-size-reading); line-height: var(--line-height-reading); }
+.composer-card textarea { font-size: var(--font-size-body); line-height: var(--line-height-body); }
+.conversation-message-content { overflow-wrap: anywhere; }
+.chat-voice-entry, .chat-voice-microphone { font-size: var(--font-size-caption); min-height: 32px; }

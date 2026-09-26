@@ -73,3 +73,5 @@
   text-decoration: underline;
 }
 
+
+.conversation-markdown code { font-size: var(--font-size-control); }

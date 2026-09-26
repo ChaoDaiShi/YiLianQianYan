@@ -128,7 +128,7 @@ export default function ChatInput({
         />
         <ResourceAttachments items={attachments} onRemove={id => queue.remove(id)} />
         {resourceNotice && (
-          <p className="px-2 pb-1 text-[10px] text-[var(--text-muted)]" role="status">
+          <p className="px-2 pb-1 text-caption text-[var(--text-muted)]" role="status">
             {resourceNotice}
           </p>
         )}
@@ -155,7 +155,7 @@ export default function ChatInput({
               controls={chatVoiceControls}
               onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
             />
-            <p className="truncate text-[10px] text-[var(--text-faint)]">
+            <p className="truncate text-caption text-[var(--text-faint)]">
               Enter 发送 · Shift + Enter 换行
             </p>
           </div>

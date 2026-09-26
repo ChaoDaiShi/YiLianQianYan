@@ -7,6 +7,13 @@ export default {
   darkMode: "class",
   theme: {
     extend: {
+      fontSize: {
+        caption: ["var(--font-size-caption)", "var(--line-height-caption)"],
+        meta: ["var(--font-size-meta)", "var(--line-height-meta)"],
+        control: ["var(--font-size-control)", "var(--line-height-caption)"],
+        body: ["var(--font-size-body)", "var(--line-height-body)"],
+        reading: ["var(--font-size-reading)", "var(--line-height-reading)"],
+      },
       colors: {
         surface: {
           DEFAULT: "var(--bg)",

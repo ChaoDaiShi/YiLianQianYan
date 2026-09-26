@@ -80,7 +80,7 @@ export default function ExecutionSidebar({
         <div>
           <h2 className="text-sm font-semibold">执行轨迹</h2>
           <span className="execution-header-motif" aria-hidden="true" />
-          <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+          <p className="mt-0.5 text-caption text-[var(--text-muted)]">
             {history.length} 个动作 · {completed} 个完成
             {failures > 0 ? ` · ${failures} 个异常` : ""}
           </p>
@@ -114,7 +114,7 @@ export default function ExecutionSidebar({
         <section aria-labelledby="current-action-heading">
           <h3
             id="current-action-heading"
-            className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
+            className="mb-2 text-meta font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
           >
             当前动作
           </h3>
@@ -133,7 +133,7 @@ export default function ExecutionSidebar({
         <section className="mt-5" aria-labelledby="execution-history-heading">
           <h3
             id="execution-history-heading"
-            className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
+            className="mb-2 text-meta font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
           >
             历史记录
           </h3>
