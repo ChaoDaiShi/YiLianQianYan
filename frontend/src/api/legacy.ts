@@ -12,7 +12,6 @@ import type { ApiResult } from "../core/api/http";
 import { controlSessionHeaders } from "./controlSession";
 import type {
   AppConfig,
-  ConversationSummary,
   LlmModel,
   LlmModelPayload,
   LlmUsageReport,
@@ -21,23 +20,8 @@ import type {
 export { API_BASE, request, requestResult } from "../core/api/http";
 export type { ApiFailure, ApiResult } from "../core/api/http";
 
-// ── Conversations ──
-
-export async function listConversations() {
-  return request<ConversationSummary[]>("GET", "/api/conversations");
-}
-
-export async function createConversation(title?: string) {
-  return request<any>("POST", "/api/conversations", { title });
-}
-
-export async function loadConversation(id: string) {
-  return request<any>("GET", `/api/conversations/${id}`);
-}
-
-export async function deleteConversation(id: string) {
-  return request<any>("DELETE", `/api/conversations/${id}`);
-}
+// ── Conversations ── (implementation in `./conversations`)
+export { listConversations, createConversation, loadConversation, deleteConversation } from "./conversations";
 
 // ── Settings ──
 
