@@ -27,7 +27,7 @@ pub enum McpTransportConfig {
         env: BTreeMap<String, String>,
         /// env name → SecretRef (resolved through the SecretResolver at spawn).
         #[serde(default)]
-        env_secret_refs: BTreeMap<String, crate::secret::SecretRef>,
+        env_secret_refs: BTreeMap<String, crate::integrations::secret::SecretRef>,
     },
     StreamableHttp {
         url: String,

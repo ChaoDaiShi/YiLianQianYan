@@ -12,12 +12,12 @@ use secrecy::SecretString;
 use tower::ServiceExt;
 
 use crate::db::LlmModelInput;
-use crate::llm::client::LlmError;
-use crate::safety::{ControlSession, CONTROL_SESSION_HEADER};
-use crate::secret::{
+use crate::integrations::llm::client::LlmError;
+use crate::integrations::secret::{
     llm_model_key_ref, InMemorySecretStore, SecretRef, SecretStore, SecretStoreError,
     SecretStoreStatus,
 };
+use crate::safety::{ControlSession, CONTROL_SESSION_HEADER};
 use crate::server::AppServer;
 
 #[test]

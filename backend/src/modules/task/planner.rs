@@ -17,10 +17,10 @@ use super::model::{
     MAX_TASK_PLAN_STEP_INSTRUCTION_CHARS, MAX_TASK_PLAN_STEP_TITLE_CHARS,
     MAX_TASK_PLAN_SUMMARY_CHARS,
 };
-use crate::llm::client::LlmClient;
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::types::ChatMessage;
+use crate::integrations::secret::SecretResolver;
 use crate::modules::capability::{CapabilityKind, CapabilityRegistry};
-use crate::secret::SecretResolver;
 use crate::utils::text::truncate_chars;
 use std::sync::Arc;
 

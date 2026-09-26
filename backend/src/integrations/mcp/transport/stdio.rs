@@ -22,7 +22,7 @@ use super::super::protocol::model::{
 };
 use super::super::protocol::version::attach_request_metadata;
 use super::McpTransport;
-use crate::secret::{SecretRef, SecretResolver};
+use crate::integrations::secret::{SecretRef, SecretResolver};
 use crate::utils::process::hide_tokio_command_window;
 
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);

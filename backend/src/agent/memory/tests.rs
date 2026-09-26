@@ -6,7 +6,7 @@ use super::context::*;
 use super::*;
 use crate::config::types::ModelConfig;
 use crate::db::{CreateMemoryRequest, Database, Memory, ScoredMemory};
-use crate::secret::{InMemorySecretStore, SecretResolver};
+use crate::integrations::secret::{InMemorySecretStore, SecretResolver};
 use std::sync::Arc;
 
 fn test_resolver() -> Arc<SecretResolver> {

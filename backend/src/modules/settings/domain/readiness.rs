@@ -2,7 +2,7 @@
 //! reads. Never carries secret material.
 
 use crate::config::types::AppConfig;
-use crate::secret::{SecretResolver, SecretSource};
+use crate::integrations::secret::{SecretResolver, SecretSource};
 use crate::server::AppServer;
 
 use crate::modules::settings::application::secret_lifecycle::chat_source;

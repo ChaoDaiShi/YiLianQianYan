@@ -18,8 +18,8 @@ use crate::agent::engine::{self, AgentEvent};
 use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
 use crate::db::{MessageRow, RetrieveQuery};
-use crate::llm::client::LlmClient;
-use crate::llm::usage::DatabaseUsageRecorder;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::usage::DatabaseUsageRecorder;
 use crate::safety::SecurityExecutionGateway;
 use crate::server::{AppServer, CHAT_MEMORY_TOP_K};
 use crate::utils::text::truncate_chars;
@@ -177,10 +177,10 @@ pub async fn chat_handler(
     // Build agent state from history before persisting the current user message.
     let mut agent_state = AgentState::new(system_prompt);
     if let Ok(conv) = db.get_conversation(&conv_id) {
-        let msgs: Vec<crate::llm::types::ChatMessage> = conv
+        let msgs: Vec<crate::integrations::llm::types::ChatMessage> = conv
             .messages
             .iter()
-            .map(|m| crate::llm::types::ChatMessage {
+            .map(|m| crate::integrations::llm::types::ChatMessage {
                 role: m.role.clone(),
                 content: if m.content.is_empty() {
                     None
@@ -236,7 +236,7 @@ pub async fn chat_handler(
             model.provider.clone(),
             model.model.clone(),
             "chat",
-        )) as Arc<dyn crate::llm::client::UsageRecorder>
+        )) as Arc<dyn crate::integrations::llm::client::UsageRecorder>
     });
     let llm_client = LlmClient::new_with_usage_recorder(
         &config.model,

@@ -425,13 +425,13 @@ async fn raw_sqlite_legacy_secrets_migrated_and_plaintext_removed() {
         .unwrap();
     assert_eq!(embed.expose_secret(), "SUPER_SECRET_EMBED_456");
     let voice_stt = store
-        .get(&SecretRef::new(crate::secret::STT_KEY_REF))
+        .get(&SecretRef::new(crate::integrations::secret::STT_KEY_REF))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(voice_stt.expose_secret(), "SUPER_SECRET_VOICE_789");
     let voice_tts = store
-        .get(&SecretRef::new(crate::secret::TTS_KEY_REF))
+        .get(&SecretRef::new(crate::integrations::secret::TTS_KEY_REF))
         .await
         .unwrap()
         .unwrap();

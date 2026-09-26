@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Database;
 use crate::config::types::ModelConfig;
-use crate::secret::SecretRef;
+use crate::integrations::secret::SecretRef;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmModelInput {

@@ -26,8 +26,8 @@ use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
 use crate::config::types::AppConfig;
 use crate::db::{Database, MessageRow};
-use crate::llm::client::LlmClient;
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::types::ChatMessage;
 use crate::modules::workflow::{
     cancel_workflow_approval, resolve_workflow_approval, WorkflowRunId,
 };

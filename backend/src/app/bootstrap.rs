@@ -13,11 +13,11 @@ use tokio::sync::Semaphore;
 
 use crate::db::Database;
 use crate::integrations::mcp::McpRuntimeManager;
+use crate::integrations::secret::{OsSecretStore, SecretResolver, SecretStore};
 use crate::interaction::{ApprovalVoiceAdapter, InteractionVoiceDispatch};
 use crate::isolation::ManagedProcessRegistry;
 use crate::modules::voice::GlobalVoiceSessionRuntime;
 use crate::safety::{approval::ApprovalStore, AuditRecorder, ControlSession};
-use crate::secret::{OsSecretStore, SecretResolver, SecretStore};
 use crate::shared::command::CommandRouter;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;

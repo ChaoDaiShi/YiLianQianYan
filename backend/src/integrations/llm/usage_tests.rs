@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::types::{ChatCompletionRequest, ChatMessage, StreamChunk, Usage};
 use super::usage::DatabaseUsageRecorder;
 use crate::db::{Database, LlmModelInput};
-use crate::llm::client::UsageRecorder;
+use crate::integrations::llm::client::UsageRecorder;
 
 #[test]
 fn stream_chunk_keeps_provider_usage() {

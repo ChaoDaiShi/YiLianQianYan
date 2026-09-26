@@ -24,8 +24,9 @@ use crate::agent::verifier::DefaultVerifier;
 use crate::config::types::AppConfig;
 use crate::db::Database;
 use crate::execution::ExecutionContext;
-use crate::llm::client::LlmClient;
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::types::ChatMessage;
+use crate::integrations::secret::SecretResolver;
 use crate::modules::capability::CapabilityRegistry;
 use crate::modules::workflow::{
     LlmWorkflowAgentExecutor, SecurityGatewayNodeExecutor, WorkflowAgentExecutor, WorkflowRun,
@@ -35,7 +36,6 @@ use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGateway
 use crate::safety::{
     ApprovalStore, SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject,
 };
-use crate::secret::SecretResolver;
 use crate::server::AppServer;
 
 const MAX_AGENT_CONTEXT_CHARS: usize = 24000;

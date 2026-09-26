@@ -6,8 +6,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use std::sync::Arc;
 
-use crate::llm::client::LlmClient;
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::types::ChatMessage;
 use crate::modules::voice::{AudioInput, SpeechRequest, VoiceProviderError};
 use crate::server::AppServer;
 

@@ -9,11 +9,11 @@ use axum::Json;
 use secrecy::SecretString;
 
 use crate::config::types::AppConfig;
-use crate::safety::AuditEventType;
-use crate::secret::{
+use crate::integrations::secret::{
     record_secret_event, SecretKind, SecretRef, CHAT_KEY_REF, EMBEDDING_KEY_REF, STT_KEY_REF,
     TTS_KEY_REF, VOICE_KEY_REF,
 };
+use crate::safety::AuditEventType;
 use crate::server::AppServer;
 
 use crate::modules::settings::application::secret_lifecycle::delete_secret_or_fail;

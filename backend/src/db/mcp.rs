@@ -6,7 +6,7 @@ use super::Database;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::secret::SecretRef;
+use crate::integrations::secret::SecretRef;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServer {

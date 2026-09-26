@@ -9,8 +9,8 @@ use axum::{
 use std::sync::Arc;
 
 use crate::db::{CreateMemoryRequest, Memory, MemoryQuery, RetrieveQuery, UpdateMemoryRequest};
-use crate::llm::client::LlmClient;
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::types::ChatMessage;
 use crate::server::AppServer;
 
 // ── List / Search ──

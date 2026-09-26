@@ -123,7 +123,7 @@ pub struct ModelConfig {
     /// Stable SecretRef for the chat API key (persisted; value lives in the
     /// OS-backed SecretStore).
     #[serde(default)]
-    pub api_key_ref: Option<crate::secret::SecretRef>,
+    pub api_key_ref: Option<crate::integrations::secret::SecretRef>,
     /// Write-only request signal to clear the stored chat API key.
     #[serde(default, skip_serializing)]
     pub clear_api_key: bool,
@@ -148,7 +148,7 @@ pub struct ModelConfig {
     pub embedding_api_key_env: String,
     /// Stable SecretRef for the embedding API key (persisted).
     #[serde(default)]
-    pub embedding_api_key_ref: Option<crate::secret::SecretRef>,
+    pub embedding_api_key_ref: Option<crate::integrations::secret::SecretRef>,
     /// Write-only request signal to clear the stored embedding API key.
     #[serde(default, skip_serializing)]
     pub clear_embedding_api_key: bool,
@@ -231,7 +231,7 @@ pub struct VoiceSttConfig {
     #[serde(default = "default_voice_api_key_env")]
     pub api_key_env: String,
     #[serde(default)]
-    pub api_key_ref: Option<crate::secret::SecretRef>,
+    pub api_key_ref: Option<crate::integrations::secret::SecretRef>,
     #[serde(default)]
     pub clear_api_key: bool,
     #[serde(default = "default_voice_timeout_ms")]
@@ -255,7 +255,7 @@ pub struct VoiceTtsConfig {
     #[serde(default)]
     pub api_key_env: String,
     #[serde(default)]
-    pub api_key_ref: Option<crate::secret::SecretRef>,
+    pub api_key_ref: Option<crate::integrations::secret::SecretRef>,
     #[serde(default)]
     pub clear_api_key: bool,
     #[serde(default = "default_voice_timeout_ms")]
@@ -346,7 +346,7 @@ struct VoiceConfigWire {
     #[serde(default)]
     api_key_env: String,
     #[serde(default)]
-    api_key_ref: Option<crate::secret::SecretRef>,
+    api_key_ref: Option<crate::integrations::secret::SecretRef>,
     #[serde(default)]
     clear_api_key: bool,
     #[serde(default)]

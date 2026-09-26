@@ -9,16 +9,18 @@ use axum::Json;
 use secrecy::SecretString;
 use std::sync::Arc;
 
+use crate::integrations::secret::{SecretRef, CHAT_KEY_REF, STT_KEY_REF};
 use crate::modules::voice::VoiceProviderError;
 use crate::safety::ControlSession;
-use crate::secret::{SecretRef, CHAT_KEY_REF, STT_KEY_REF};
 use crate::server::AppServer;
 
 use super::api::routes::{update_handler, verify_provider_handler};
 use super::application::provider_test::normalize_voice_connection_error;
 use super::application::service::build_redacted_config;
 
-use crate::secret::{InMemorySecretStore, SecretStore, SecretStoreError, SecretStoreStatus};
+use crate::integrations::secret::{
+    InMemorySecretStore, SecretStore, SecretStoreError, SecretStoreStatus,
+};
 
 struct DeleteFailingStore {
     inner: InMemorySecretStore,
@@ -61,7 +63,8 @@ async fn settings_get_never_returns_secret_value() {
         "yilian-settings-redact-{}.db",
         uuid::Uuid::new_v4()
     ));
-    let store: Arc<dyn crate::secret::SecretStore> = Arc::new(InMemorySecretStore::new());
+    let store: Arc<dyn crate::integrations::secret::SecretStore> =
+        Arc::new(InMemorySecretStore::new());
     let server = AppServer::new_with_control_session_and_store(
         &path,
         ".",
@@ -137,7 +140,8 @@ async fn voice_settings_redact_stt_and_tts_secrets_independently() {
         "yilian-settings-voice-split-{}.db",
         uuid::Uuid::new_v4()
     ));
-    let store: Arc<dyn crate::secret::SecretStore> = Arc::new(InMemorySecretStore::new());
+    let store: Arc<dyn crate::integrations::secret::SecretStore> =
+        Arc::new(InMemorySecretStore::new());
     let server = AppServer::new_with_control_session_and_store(
         &path,
         ".",
@@ -145,8 +149,8 @@ async fn voice_settings_redact_stt_and_tts_secrets_independently() {
         Arc::clone(&store),
     )
     .unwrap();
-    let stt_ref = SecretRef::new(crate::secret::STT_KEY_REF);
-    let tts_ref = SecretRef::new(crate::secret::TTS_KEY_REF);
+    let stt_ref = SecretRef::new(crate::integrations::secret::STT_KEY_REF);
+    let tts_ref = SecretRef::new(crate::integrations::secret::TTS_KEY_REF);
     store
         .put(&stt_ref, SecretString::from("STT_SECRET"))
         .await
@@ -262,7 +266,8 @@ async fn settings_get_projects_active_model_provider_readiness_without_secrets()
         "yilian-settings-readiness-{}.db",
         uuid::Uuid::new_v4()
     ));
-    let store: Arc<dyn crate::secret::SecretStore> = Arc::new(InMemorySecretStore::new());
+    let store: Arc<dyn crate::integrations::secret::SecretStore> =
+        Arc::new(InMemorySecretStore::new());
     let server = AppServer::new_with_control_session_and_store(
         &path,
         ".",
@@ -312,7 +317,8 @@ async fn provider_readiness_fails_closed_for_unsupported_voice_provider() {
         "yilian-settings-unsupported-voice-{}.db",
         uuid::Uuid::new_v4()
     ));
-    let store: Arc<dyn crate::secret::SecretStore> = Arc::new(InMemorySecretStore::new());
+    let store: Arc<dyn crate::integrations::secret::SecretStore> =
+        Arc::new(InMemorySecretStore::new());
     let server = AppServer::new_with_control_session_and_store(
         &path,
         ".",
@@ -374,7 +380,8 @@ async fn provider_connection_leaf_rejects_an_unknown_kind_without_a_network_call
         "yilian-settings-provider-leaf-{}.db",
         uuid::Uuid::new_v4()
     ));
-    let store: Arc<dyn crate::secret::SecretStore> = Arc::new(InMemorySecretStore::new());
+    let store: Arc<dyn crate::integrations::secret::SecretStore> =
+        Arc::new(InMemorySecretStore::new());
     let server = Arc::new(
         AppServer::new_with_control_session_and_store(
             &path,
@@ -595,7 +602,8 @@ async fn empty_key_preserves_secret_across_settings_changes_and_restart() {
         "yilian-settings-restart-{}.db",
         uuid::Uuid::new_v4()
     ));
-    let store: Arc<dyn crate::secret::SecretStore> = Arc::new(InMemorySecretStore::new());
+    let store: Arc<dyn crate::integrations::secret::SecretStore> =
+        Arc::new(InMemorySecretStore::new());
     let server = Arc::new(
         AppServer::new_with_control_session_and_store(
             &path,

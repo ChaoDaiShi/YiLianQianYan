@@ -11,7 +11,7 @@ use tracing;
 
 use super::types::*;
 use crate::config::types::ModelConfig;
-use crate::secret::SecretResolver;
+use crate::integrations::secret::SecretResolver;
 
 pub trait UsageRecorder: Send + Sync {
     fn record(&self, usage: &Usage);
@@ -439,7 +439,7 @@ impl LlmClient {
 mod tests {
     use super::*;
     use crate::config::types::ModelConfig;
-    use crate::secret::SecretStore;
+    use crate::integrations::secret::SecretStore;
 
     fn config_for_mock(base_url: &str) -> ModelConfig {
         ModelConfig {
@@ -459,9 +459,9 @@ mod tests {
         }
     }
 
-    fn test_resolver() -> Arc<crate::secret::SecretResolver> {
-        Arc::new(crate::secret::SecretResolver::new(Arc::new(
-            crate::secret::InMemorySecretStore::new(),
+    fn test_resolver() -> Arc<crate::integrations::secret::SecretResolver> {
+        Arc::new(crate::integrations::secret::SecretResolver::new(Arc::new(
+            crate::integrations::secret::InMemorySecretStore::new(),
         )))
     }
 
@@ -639,15 +639,17 @@ mod tests {
     #[tokio::test]
     async fn embed_resolves_secret_ref_from_store() {
         use std::sync::Mutex as StdMutex;
-        let store = Arc::new(crate::secret::InMemorySecretStore::new());
+        let store = Arc::new(crate::integrations::secret::InMemorySecretStore::new());
         store
             .put(
-                &crate::secret::SecretRef::new(crate::secret::EMBEDDING_KEY_REF),
+                &crate::integrations::secret::SecretRef::new(
+                    crate::integrations::secret::EMBEDDING_KEY_REF,
+                ),
                 secrecy::SecretString::from("SECRET_EMBED".to_string()),
             )
             .await
             .unwrap();
-        let resolver = Arc::new(crate::secret::SecretResolver::new(store));
+        let resolver = Arc::new(crate::integrations::secret::SecretResolver::new(store));
 
         let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
         #[derive(Clone)]
@@ -685,8 +687,8 @@ mod tests {
         let mut config = ModelConfig::default();
         config.embedding_model = "test-embed".to_string();
         config.embedding_base_url = addr;
-        config.embedding_api_key_ref = Some(crate::secret::SecretRef::new(
-            crate::secret::EMBEDDING_KEY_REF,
+        config.embedding_api_key_ref = Some(crate::integrations::secret::SecretRef::new(
+            crate::integrations::secret::EMBEDDING_KEY_REF,
         ));
         let client = LlmClient::new(&config, resolver);
         client.embed("hello").await.unwrap();
@@ -700,15 +702,17 @@ mod tests {
     #[tokio::test]
     async fn invoke_resolves_secret_ref_from_store() {
         use std::sync::Mutex as StdMutex;
-        let store = Arc::new(crate::secret::InMemorySecretStore::new());
+        let store = Arc::new(crate::integrations::secret::InMemorySecretStore::new());
         store
             .put(
-                &crate::secret::SecretRef::new(crate::secret::CHAT_KEY_REF),
+                &crate::integrations::secret::SecretRef::new(
+                    crate::integrations::secret::CHAT_KEY_REF,
+                ),
                 secrecy::SecretString::from("SECRET_CHAT".to_string()),
             )
             .await
             .unwrap();
-        let resolver = Arc::new(crate::secret::SecretResolver::new(store));
+        let resolver = Arc::new(crate::integrations::secret::SecretResolver::new(store));
 
         let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
         #[derive(Clone)]
@@ -752,7 +756,9 @@ mod tests {
 
         let mut config = ModelConfig::default();
         config.base_url = addr;
-        config.api_key_ref = Some(crate::secret::SecretRef::new(crate::secret::CHAT_KEY_REF));
+        config.api_key_ref = Some(crate::integrations::secret::SecretRef::new(
+            crate::integrations::secret::CHAT_KEY_REF,
+        ));
         let client = LlmClient::new(&config, resolver);
         let msg = ChatMessage {
             role: "user".to_string(),

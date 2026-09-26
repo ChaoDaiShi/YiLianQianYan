@@ -17,7 +17,7 @@ use tokio::sync::Semaphore;
 use tokio::time::timeout;
 
 use crate::config::types::{VoiceConfig, VoiceSttConfig, VoiceTtsConfig};
-use crate::secret::{SecretRef, SecretResolver, SecretSource};
+use crate::integrations::secret::{SecretRef, SecretResolver, SecretSource};
 
 pub const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 pub const MAX_SPEECH_TEXT_CHARS: usize = 4_096;

@@ -14,12 +14,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use yilian_backend::config::types::{VoiceConfig, VoiceTtsConfig};
+use yilian_backend::integrations::secret::{
+    InMemorySecretStore, SecretRef, SecretResolver, SecretSource, SecretStore,
+};
 use yilian_backend::modules::voice::provider::{
     AudioInput, MiniMaxTtsProvider, OpenAiCompatibleVoiceProvider, SpeechRequest,
     TextToSpeechProvider, VoiceProviderConfig, VoiceProviderError,
-};
-use yilian_backend::secret::{
-    InMemorySecretStore, SecretRef, SecretResolver, SecretSource, SecretStore,
 };
 
 #[derive(Clone, Default)]

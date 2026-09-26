@@ -15,13 +15,13 @@ use super::definition::{WorkflowCondition, WorkflowNodeConfig, WorkflowNodeDefin
 use super::run::{safe_tool_result_summary, NodeRunResult, WorkflowRunError, WorkflowRunId};
 use crate::config::types::ModelConfig;
 use crate::execution::ExecutionContext;
-use crate::llm::client::LlmClient;
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::types::ChatMessage;
+use crate::integrations::secret::SecretResolver;
 use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGatewayError};
 use crate::safety::{
     ApprovalStore, SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject,
 };
-use crate::secret::SecretResolver;
 use crate::tools::RiskLevel;
 
 /// The result of executing a single node.

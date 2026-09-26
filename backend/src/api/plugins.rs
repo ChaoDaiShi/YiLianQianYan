@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::db::McpServer;
-use crate::secret::{mcp_env_ref, SecretRef, SecretStore, MAX_SECRET_VALUE_BYTES};
+use crate::integrations::secret::{mcp_env_ref, SecretRef, SecretStore, MAX_SECRET_VALUE_BYTES};
 use crate::server::AppServer;
 
 type ApiError = (StatusCode, String);

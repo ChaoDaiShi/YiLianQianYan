@@ -9,8 +9,10 @@
 use axum::Json;
 
 use crate::config::types::AppConfig;
+use crate::integrations::secret::{
+    record_secret_event, SecretKind, SecretRef, SecretResolver, SecretSource,
+};
 use crate::safety::AuditEventType;
-use crate::secret::{record_secret_event, SecretKind, SecretRef, SecretResolver, SecretSource};
 use crate::server::AppServer;
 
 pub(crate) async fn delete_secret_or_fail(

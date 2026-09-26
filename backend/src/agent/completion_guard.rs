@@ -1,4 +1,4 @@
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::types::ChatMessage;
 use crate::tools::input::VERIFIED_DESKTOP_TEXT_INPUT_MARKER;
 use std::collections::HashSet;
 
@@ -103,7 +103,7 @@ pub fn evaluate_completion(messages: &[ChatMessage]) -> CompletionCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::types::{ToolCall, ToolCallFunction};
+    use crate::integrations::llm::types::{ToolCall, ToolCallFunction};
 
     fn message(role: &str, content: &str) -> ChatMessage {
         ChatMessage {

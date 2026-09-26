@@ -382,7 +382,7 @@ async fn configured_llm_path_validates_before_persisting() {
 #[tokio::test]
 async fn active_model_profile_drives_planning_and_review() {
     use crate::db::LlmModelInput;
-    use crate::secret::SecretRef;
+    use crate::integrations::secret::SecretRef;
     use secrecy::SecretString;
 
     let server = server();

@@ -23,11 +23,13 @@ use tokio::{
 use tower::ServiceExt;
 
 use yilian_backend::config::types::{VoiceConfig, VoiceSttConfig};
+use yilian_backend::integrations::secret::{
+    InMemorySecretStore, SecretRef, SecretResolver, SecretStore,
+};
 use yilian_backend::modules::voice::provider::{
     AudioInput, MiniMaxSttProvider, SpeechToTextProvider, VoiceProviderError,
 };
 use yilian_backend::safety::{ControlSession, CONTROL_SESSION_HEADER};
-use yilian_backend::secret::{InMemorySecretStore, SecretRef, SecretResolver, SecretStore};
 use yilian_backend::shared::{interaction::FocusedSurface, voice::VoiceInputOwner};
 use yilian_backend::{api, AppServer};
 

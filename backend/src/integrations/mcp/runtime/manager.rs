@@ -92,7 +92,7 @@ pub struct McpRuntimeManager {
     servers: RwLock<HashMap<String, Arc<McpServerRuntime>>>,
     next_id: AtomicI64,
     cache: super::cache::McpCache,
-    resolver: Arc<crate::secret::SecretResolver>,
+    resolver: Arc<crate::integrations::secret::SecretResolver>,
 }
 
 impl Default for McpRuntimeManager {
@@ -103,13 +103,13 @@ impl Default for McpRuntimeManager {
 
 impl McpRuntimeManager {
     pub fn new() -> Self {
-        Self::with_resolver(Arc::new(crate::secret::SecretResolver::new(Arc::new(
-            crate::secret::InMemorySecretStore::new(),
-        ))))
+        Self::with_resolver(Arc::new(crate::integrations::secret::SecretResolver::new(
+            Arc::new(crate::integrations::secret::InMemorySecretStore::new()),
+        )))
     }
 
     /// Construct a manager backed by an explicit SecretResolver (production).
-    pub fn with_resolver(resolver: Arc<crate::secret::SecretResolver>) -> Self {
+    pub fn with_resolver(resolver: Arc<crate::integrations::secret::SecretResolver>) -> Self {
         Self {
             servers: RwLock::new(HashMap::new()),
             next_id: AtomicI64::new(1),

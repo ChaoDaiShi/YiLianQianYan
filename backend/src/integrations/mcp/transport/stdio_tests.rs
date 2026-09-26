@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use super::super::*;
 use super::*;
-use crate::secret::{InMemorySecretStore, SecretRef, SecretResolver, SecretStore};
+use crate::integrations::secret::{InMemorySecretStore, SecretRef, SecretResolver, SecretStore};
 
 /// Acts as a mock MCP server when `YILIAN_MOCK_MCP=1`. Writes directly to the
 /// raw stdout fd (bypassing libtest capture) so the parent can read frames.

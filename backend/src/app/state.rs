@@ -18,6 +18,7 @@ use crate::config::types::{AppConfig, ModelConfig};
 use crate::db::Database;
 use crate::integrations::mcp::config::mcp_transport_config;
 use crate::integrations::mcp::McpRuntimeManager;
+use crate::integrations::secret::{migrate_legacy_secrets, SecretResolver, SecretStore};
 use crate::isolation::SharedManagedProcessRegistry;
 use crate::modules::capability::{
     AgentProvider, BuiltinToolProvider, CapabilityRegistry, McpToolProvider, SkillProvider,
@@ -32,7 +33,6 @@ use crate::safety::{
     approval::ApprovalStore, grant::GrantEffect, grant::GrantResource, grant::GrantSource,
     AuditRecorder, ControlSession, PermissionId,
 };
-use crate::secret::{migrate_legacy_secrets, SecretResolver, SecretStore};
 use crate::shared::command::CommandRouter;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;
@@ -243,7 +243,7 @@ impl AppServer {
 
     /// Migrate legacy plaintext secrets into the SecretStore (write → verify →
     /// clear → persist refs). Must run BEFORE `register_mcp_servers_from_db`.
-    pub async fn migrate_secrets(&self) -> crate::secret::SecretMigrationReport {
+    pub async fn migrate_secrets(&self) -> crate::integrations::secret::SecretMigrationReport {
         let mut config = self.config.write();
         let mut mcp_servers = self.db.list_mcp_servers().unwrap_or_default();
         let report =
