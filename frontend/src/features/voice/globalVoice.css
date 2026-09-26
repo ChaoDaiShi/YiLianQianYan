@@ -11,7 +11,7 @@
   transform: translateX(-50%);
   width: min(410px, calc(100vw - 2 * var(--overlay-safe-right)));
   color: var(--text-primary);
-  font-size: 0.75rem;
+  font-size: var(--font-size-meta);
   pointer-events: none;
 }
 
@@ -123,7 +123,7 @@
 
 .global-voice-eyebrow {
   color: var(--text-faint);
-  font-size: 0.6rem;
+  font-size: var(--font-size-caption);
   font-weight: 700;
   letter-spacing: 0.1em;
 }
@@ -139,7 +139,7 @@
   background: var(--accent-soft);
   padding: 5px 8px;
   color: var(--text-secondary);
-  font-size: 0.64rem;
+  font-size: var(--font-size-caption);
   white-space: nowrap;
 }
 
@@ -160,14 +160,14 @@
 
 .global-voice-context-grid dt {
   color: var(--text-faint);
-  font-size: 0.62rem;
+  font-size: var(--font-size-caption);
 }
 
 .global-voice-context-grid dd {
   overflow: hidden;
   margin-top: 3px;
   color: var(--text-primary);
-  font-size: 0.7rem;
+  font-size: var(--font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -185,7 +185,7 @@
 
 .global-voice-transcript span {
   color: var(--text-faint);
-  font-size: 0.62rem;
+  font-size: var(--font-size-caption);
 }
 
 .global-voice-transcript p {

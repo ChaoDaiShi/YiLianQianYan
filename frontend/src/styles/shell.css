@@ -667,3 +667,20 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   .system-setting-row { grid-template-columns: minmax(0, 1fr); }
   .system-settings-nav { flex-shrink: 0; max-width: 100%; }
 }
+
+/* Dashboard scroll owners span the viewport; their content has a readable limit. */
+.system-center-scroll, .capability-page-body, .memory-page-body, .knowledge-page-body, .task-center-body {
+  padding: var(--page-padding-block) max(var(--page-padding-inline), calc((100% - var(--content-dashboard-max)) / 2));
+}
+.task-center-body { overflow-y: auto; }
+.task-center-body > * { flex-shrink: 0; }
+.task-graph-card-grid { grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
+.capability-card-grid { grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
+.system-monitor-grid { grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); }
+.system-center-scroll h3, .capability-page-body h3 { font-size: var(--font-size-title-sm); line-height: var(--line-height-title); }
+.system-health-meta, .system-detail-grid > div { font-size: var(--font-size-meta); }
+.system-log-message { font-size: var(--font-size-control); }
+.knowledge-capability-panel { width: min(var(--content-form-max), 100%); }
+.knowledge-capability-grid { grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
+.memory-overview-copy p, .knowledge-capability-action p { font-size: var(--font-size-secondary); }
+.knowledge-capability-grid strong, .capability-card h3 { font-size: var(--font-size-body); }

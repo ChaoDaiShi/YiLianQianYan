@@ -63,7 +63,7 @@
 
   .system-health-meta,
   .system-detail-grid > div {
-    font-size: 0.75rem;
+    font-size: var(--font-size-meta);
     color: var(--text-secondary);
   }
 
@@ -154,7 +154,7 @@
     flex-direction: column;
     gap: 0.2rem;
     color: var(--text-secondary);
-    font-size: 0.6875rem;
+    font-size: var(--font-size-caption);
   }
 
   .system-log-filter select {
@@ -164,7 +164,7 @@
     background: var(--surface-solid);
     color: var(--text-primary);
     padding: 0.5rem 0.6rem;
-    font-size: 0.75rem;
+    font-size: var(--font-size-meta);
     outline: none;
   }
 
@@ -216,7 +216,7 @@
     overflow: hidden;
     color: var(--text-secondary);
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 0.6875rem;
+    font-size: var(--font-size-caption);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -224,7 +224,7 @@
   .system-log-message {
     min-width: 0;
     overflow: hidden;
-    font-size: 0.75rem;
+    font-size: var(--font-size-meta);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -254,7 +254,7 @@
     border-top: 1px solid var(--border-soft);
     padding: 0.55rem 0.25rem 0;
     color: var(--text-secondary);
-    font-size: 0.6875rem;
+    font-size: var(--font-size-caption);
   }
 
   .system-log-detail {
@@ -282,20 +282,20 @@
 
   .system-log-detail dt {
     color: var(--text-secondary);
-    font-size: 0.75rem;
+    font-size: var(--font-size-meta);
   }
 
   .system-log-detail dd {
     color: var(--text-primary);
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 0.75rem;
+    font-size: var(--font-size-meta);
     text-align: right;
   }
 
   .system-log-detail section h3 {
     margin-bottom: 0.5rem;
     color: var(--text-secondary);
-    font-size: 0.75rem;
+    font-size: var(--font-size-meta);
     font-weight: 600;
   }
 
@@ -309,7 +309,7 @@
     color: var(--text-primary);
     padding: 0.75rem;
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 0.75rem;
+    font-size: var(--font-size-meta);
     line-height: 1.6;
   }
 

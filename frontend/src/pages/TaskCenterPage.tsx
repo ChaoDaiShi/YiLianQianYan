@@ -213,7 +213,7 @@ export default function TaskCenterPage() {
   };
 
   return (
-    <div className="page-canvas flex h-full min-h-0 flex-col">
+    <div className="task-center-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="任务中心"
         description="管理小昔涟执行过的任务和当前进度"
@@ -225,7 +225,7 @@ export default function TaskCenterPage() {
         }
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 pt-4">
+      <div className="task-center-body flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 pt-4">
         <Panel padding={false} className="shrink-0 overflow-hidden">
           <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
             <div><h2 className="text-sm font-semibold text-[var(--text)]">TaskGraph 控制面</h2><p className="mt-0.5 text-xs text-[var(--text-faint)]">真实语义图与独立画布视图</p></div>
@@ -253,7 +253,7 @@ export default function TaskCenterPage() {
               className="py-8"
             />
           ) : (
-            <div className="grid gap-2 p-2 md:grid-cols-2">
+            <div className="task-graph-card-grid grid gap-2 p-2">
               {taskGraphs.map((graph) => (
                 <button key={graph.id} type="button" onClick={() => navigate(`/task-world/${encodeURIComponent(graph.id)}`)} className="rounded-[var(--radius-md)] border border-[var(--border-soft)] px-3 py-2.5 text-left hover:bg-[var(--surface-hover)]">
                   <span className="block truncate text-sm font-medium text-[var(--text)]">{graph.id}</span>
@@ -323,7 +323,7 @@ export default function TaskCenterPage() {
               </div>
               <span className="text-xs text-[var(--text-faint)]">点击打开</span>
             </div>
-            <div className="grid gap-2 p-2 md:grid-cols-2">
+            <div className="task-graph-card-grid grid gap-2 p-2">
               {visibleConversations.map((conversation) => (
                 <button
                   key={conversation.id}
