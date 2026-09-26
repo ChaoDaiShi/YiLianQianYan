@@ -19,7 +19,7 @@ fn memory_gib(bytes: u64) -> String {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct HealthResponse {
+pub(crate) struct HealthResponse {
     status: &'static str,
     service: &'static str,
     version: &'static str,
