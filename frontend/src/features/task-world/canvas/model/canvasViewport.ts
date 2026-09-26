@@ -1,5 +1,6 @@
 import type { FitViewOptions } from "@xyflow/react";
 import type { CanvasViewport } from "../../../../api/taskWorld";
+import type { TaskGraphCanvasNode } from "../../taskGraphProjection";
 
 export type CanvasCameraEvent =
   | { type: "selection" | "status" | "execution" | "save-response" | "resize" }
@@ -8,7 +9,7 @@ export type CanvasCameraEvent =
 
 /** Pure permission boundary: data/selection events never authorize a camera move. */
 export function canvasCameraCommand(event: CanvasCameraEvent):
-  { kind: "fit"; options: FitViewOptions } | { kind: "zoom"; zoom: number } | null {
+  { kind: "fit"; options: FitViewOptions<TaskGraphCanvasNode> } | { kind: "zoom"; zoom: number } | null {
   switch (event.type) {
     case "fit-all": return { kind: "fit", options: { padding: 0.2 } };
     case "locate": return { kind: "fit", options: { nodes: [{ id: event.nodeId }], padding: 0.25, maxZoom: 1.35 } };

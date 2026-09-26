@@ -38,6 +38,10 @@ import { isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
  */
 export default function TaskWorldPage() {
   const { graphId = "" } = useParams();
+  return <TaskWorldSession key={graphId} graphId={graphId} />;
+}
+
+function TaskWorldSession({ graphId }: { graphId: string }) {
   const navigate = useNavigate();
   const { updateContext } = useGlobalVoiceContext();
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
@@ -60,6 +64,8 @@ export default function TaskWorldPage() {
   const clearFocus = useCallback(() => setFocusedNodeId(null), []);
   const {
     view,
+    canvasSaveError,
+    retrySave,
     refreshView,
     updateLayouts,
     updateViewport,
@@ -120,6 +126,7 @@ export default function TaskWorldPage() {
         actions={<div className="flex gap-2"><Button variant="ghost" size="sm" onClick={() => navigate("/tasks")}><ArrowLeft className="h-4 w-4" />任务中心</Button><Button variant="secondary" size="sm" disabled={saving || graphLocked} onClick={() => void mutate(() => addTaskNode(graphId, projection.revision, { id: crypto.randomUUID(), kind: "work", title: "新任务", input: { instruction: "", acceptance_criteria: [] }, retry_policy: { max_attempts: 1 } }))}>添加任务节点</Button><Button variant="secondary" size="sm" onClick={() => void reload()}><RefreshCw className="h-4 w-4" />刷新</Button></div>}
       />
       {eventWarning && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]" role="status">实时事件暂不可用：{eventWarning}</p>}
+      {canvasSaveError && <p className="mx-4 mt-2 text-xs text-[var(--danger-fg)]" role="alert">{canvasSaveError.message} <button type="button" className="underline" onClick={retrySave}>重试保存画布</button></p>}
       {modelUnavailable && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]">还没有配置可用的模型服务。 <button type="button" className="underline" onClick={() => navigate("/settings?section=model")}>前往模型设置</button></p>}
       {view && <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-3 py-2" aria-label="画布视图工具">
         <Button size="sm" variant="secondary" disabled={saving || view.selection.filter((nodeId) => !view.groups.some((group) => group.node_ids.includes(nodeId))).length < 2} onClick={createVisualGroup}>创建分组</Button>

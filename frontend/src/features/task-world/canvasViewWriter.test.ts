@@ -21,6 +21,76 @@ const initialView: CanvasView = {
 };
 
 describe("canvas view write queue", () => {
+  const stale: ApiResult<CanvasView> = { ok: false, error: { status: 409, code: "stale_view_revision", message: "conflict" } };
+  const move = (view: CanvasView): CanvasView => ({ ...view, node_layouts: [{ node_id: "A", x: 500, y: 40, width: 240, height: 128 }] });
+
+  it("rebases pending x=500 on the latest x=100 document and retries exactly once", async () => {
+    let current = initialView;
+    const latest = { ...initialView, view_revision: 8, selection: ["B"], node_layouts: [{ node_id: "A", x: 100, y: 40, width: 240, height: 128 }] };
+    const writes: CanvasView[] = [];
+    const errors: ApiError[] = [];
+    const queue = createCanvasViewWriteQueue({
+      readCurrent: () => current, acceptCurrent: (view) => { current = view; },
+      loadLatest: async () => ({ ok: true, data: latest }),
+      save: async (view) => { writes.push(view); return writes.length === 1 ? stale : { ok: true, data: { ...view, view_revision: 9 } }; },
+      onError: (error) => { errors.push(error); },
+    });
+    await queue.enqueue(move);
+    expect(writes).toHaveLength(2);
+    expect(writes[1]).toMatchObject({ view_revision: 8, selection: ["B"], node_layouts: [{ node_id: "A", x: 500 }] });
+    expect(current.node_layouts[0].x).toBe(500);
+    expect(errors).toEqual([]);
+  });
+
+  it("retains failed mutations and later writes until an explicit retry", async () => {
+    let current = initialView;
+    let conflict = true;
+    const writes: CanvasView[] = [];
+    const errors: ApiError[] = [];
+    const queue = createCanvasViewWriteQueue({
+      readCurrent: () => current, acceptCurrent: (view) => { current = view; },
+      loadLatest: async () => ({ ok: true, data: { ...current, view_revision: 8 } }),
+      save: async (view) => { writes.push(view); return conflict ? stale : { ok: true, data: { ...view, view_revision: view.view_revision + 1 } }; },
+      onError: (error) => { errors.push(error); },
+    });
+    await queue.enqueue(move);
+    expect(writes).toHaveLength(2);
+    expect(errors[0].message).toBe("画布布局保存发生冲突，请重试");
+    await queue.enqueue((view) => ({ ...view, viewport: { x: 340, y: -120, zoom: 1.35 } }));
+    expect(writes).toHaveLength(2);
+    conflict = false;
+    await queue.retry();
+    expect(current.node_layouts[0].x).toBe(500);
+    expect(current.viewport).toEqual({ x: 340, y: -120, zoom: 1.35 });
+    expect(writes).toHaveLength(4);
+  });
+
+  it("surfaces failed latest-document fetch without retrying an obsolete document", async () => {
+    const onError = vi.fn();
+    const save = vi.fn(async () => stale);
+    const queue = createCanvasViewWriteQueue({
+      readCurrent: () => initialView, acceptCurrent: () => {}, save,
+      loadLatest: async () => ({ ok: false, error: { status: 503, code: "unavailable", message: "offline" } }), onError,
+    });
+    await queue.enqueue(move);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: "unavailable" }));
+  });
+
+  it("does not overwrite a newer SSE document with the stale-fetch response", async () => {
+    let current = initialView;
+    const writes: CanvasView[] = [];
+    const queue = createCanvasViewWriteQueue({
+      readCurrent: () => current,
+      acceptCurrent: (view) => { if (view.view_revision >= current.view_revision) current = view; },
+      loadLatest: async () => { current = { ...initialView, view_revision: 10, selection: ["C"] }; return { ok: true, data: { ...initialView, view_revision: 8 } }; },
+      save: async (view) => { writes.push(view); return writes.length === 1 ? stale : { ok: true, data: { ...view, view_revision: 11 } }; },
+      onError: () => {},
+    });
+    await queue.enqueue(move);
+    expect(writes[1]).toMatchObject({ view_revision: 10, selection: ["C"] });
+  });
+
   it("serializes updates against the latest accepted view revision", async () => {
     let current = initialView;
     const firstSave = deferred<ApiResult<CanvasView>>();
