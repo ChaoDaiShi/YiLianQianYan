@@ -1,14 +1,17 @@
 # R1 Architecture Refactor — Progress and Handoff
 
-> **Branch:** `refactor/v1-architecture-foundation`
-> **Base:** `origin/v1/release-work` @ `78f3755`
-> **Status:** **R0–R8 executed and verified. R6 is partially complete by
-> decision: `index.css` is deferred on evidence and `GlobalVoiceHost`'s
-> orchestrator is deliberately unsplit. Both are argued in the final report.**
+> **Branch:** `refactor/v1-architecture-foundation` — **FROZEN**
+> **Base:** `origin/v1/release-work` @ `78f3755` (v1.0.0-rc.2)
+> **Final HEAD:** `669db21558b222fb1e5290cd1b27915938a1120a`
+> **Status:** **R0–R9 executed and verified.** R1 is closed as the structural
+> baseline: where code lives is settled. R6 is complete except
+> `TaskWorldCanvas`'s 112-line surface, which is deliberately unsplit; R3 and
+> R4 retain the gaps §6/§7 record.
 >
-> This is *not* the `r1-final-report.md` the mandate §44 asks for. That document
-> requires the R8 full gate to have passed. This is an honest handoff so the
-> remaining stages can continue from a green, committed state.
+> Successor work continues on `refactor/v1-architecture-semantic` (branch cut
+> from this HEAD), which owns *what the business logic is responsible for* and
+> the compatibility-facade convergence. Nothing in R2 changes R1's file layout
+> conclusions; R2 consumes them.
 
 ---
 
@@ -42,9 +45,25 @@
 | `ab61d80` | R9b | `refactor(capability): relocate the capability registry under modules/` |
 | `2b3cf59` | R9c | `refactor(llm): relocate the LLM client under integrations` |
 | `3378a5d` | R9d | `refactor(secret): relocate secret management under integrations` |
+| `f900444` | R9 | `docs(refactor): record the R9 backend relocation` |
+| `669db21` | R9 | `docs(refactor): record the R9 verification, and how the OOM was cleared` |
+
+**Final R1 state — the numbers this baseline is closed with:**
+
+| Fact | Value |
+|---|---|
+| Final HEAD | `669db21558b222fb1e5290cd1b27915938a1120a` |
+| Commits since `78f3755` | **33** |
+| Backend tests | **21 binaries, 983 passed, 0 failed** |
+| `src-tauri` tests | **5 passed, 0 failed** |
+| Workspace total | **988** — identical to the R8 gate's recorded count |
+| Frontend tests | **93 files, 444 passed** |
+| `cargo check --all-targets` | exit 0, no new warnings |
+| Built CSS md5 | `5889431edc65281a20589a3953c724e2` (unchanged end-to-end) |
 
 Working tree is clean; `main`, `develop`, `v1/release-work`, and `v2` are untouched.
 All commits are pushed to `origin/refactor/v1-architecture-foundation`.
+`refactor/v1-architecture-semantic` was cut from this HEAD to carry R2.
 
 ---
 
@@ -634,23 +653,34 @@ consider warming it before R8 rather than during it.
 
 ---
 
-## 13. Compatibility conclusion (R0–R8)
+## 13. Compatibility conclusion (R0–R9)
 
 | Check | Result |
 |---|---|
 | Database compatible | **YES** — no schema change, no migration added or renumbered |
-| REST compatible | **YES** — all 178 route paths, methods and handlers unchanged; verified by the passing API test targets |
-| Frontend route compatible | **YES** — no route path or page contract changed in R1–R7 |
-| Secret compatible | **YES** — rc.2 KEEP/REPLACE/DELETE semantics verbatim; pinning tests pass |
+| REST compatible | **YES** — route table byte-unchanged; the API test targets pass |
+| Frontend route compatible | **YES** — no route path or page contract changed in R1–R9 |
+| Secret compatible | **YES** — rc.2 KEEP/REPLACE/DELETE semantics verbatim; the four pinning tests were re-run after R9d and pass |
 | Existing user data compatible | **YES** — no persistence change |
 | v2 touched | **NO** |
 
+Two route counts appear across these documents and both are correct: the
+handoff's R1 section counts **178 registered routes** (path + method pairs),
+while the final report counts **152 unique paths** in the base and 152 at HEAD,
+zero differences. They measure different things.
+
 Refactor Gate for R0–R8: **PASS**. R8 ran the full gate — fmt, check
 `--workspace`, test `--workspace --all-targets` (21 binaries, 988 passed), check
-`-p yi-lian-qian-yan`, `npm test` (91 files / 426 passed), `npm run build`, and
-the real-backend E2E — all green. After R6d/R6e changed frontend files, the
-frontend gates and the E2E were re-run against the final commit rather than
-assumed; no Rust source changed in between. Full detail in the final report.
+`-p yi-lian-qian-yan`, `npm test`, `npm run build`, and the real-backend E2E —
+all green.
+
+R9 ran **after** that gate and was verified separately, to the same depth rather
+than by assumption: `cargo check --all-targets` exit 0 after each of its four
+stages, the boundary check 3/3, and then the full suite — backend **21 binaries /
+983 passed** plus `src-tauri` **5 passed** = **988**, the same total the gate
+recorded. Frontend stayed at **93 files / 444 passed** and the built stylesheet
+md5 never moved. See §10a for R9 and §14 of the final report for its full
+detail.
 
 R6d–R6h are the frontend stages that moved files. None changed a route
 path or a rendered contract: `npm test` stayed green across all of them (and

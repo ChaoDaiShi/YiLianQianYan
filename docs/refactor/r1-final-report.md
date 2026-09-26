@@ -1,9 +1,16 @@
 # R1 Architecture Refactor — Final Report
 
-> **Branch:** `refactor/v1-architecture-foundation`
+> **Branch:** `refactor/v1-architecture-foundation` — **FROZEN**
 > **Base:** `origin/v1/release-work` @ `78f3755` (v1.0.0-rc.2, frozen)
-> **Status:** R0–R8 executed. **Full Gate PASS.** R6 is partially complete and
-> is reported as such below — this is not a claim of total completion.
+> **Final HEAD:** `669db21558b222fb1e5290cd1b27915938a1120a` (33 commits)
+> **Status:** R0–R9 executed. **Full Gate PASS.** R1 answers *where code lives*
+> and is closed at that HEAD. §14 records R9, the post-gate relocation that
+> finished the backend module layout; R6's one remaining partial and the R3/R4
+> gaps are listed in §8.
+>
+> Successor work — *what business logic is responsible for*, plus facade
+> convergence and frontend API decomposition — continues on
+> `refactor/v1-architecture-semantic`.
 >
 > Companion documents: `r1-inventory.md` (R0), `r1-progress-and-handoff.md`
 > (per-stage detail), `../architecture/*.md` (the standing rules).
@@ -419,8 +426,8 @@ The refactor is **not** complete. Within R6, `TaskWorldCanvas`'s 112-line
 surface remains deliberately unsplit; `GlobalVoiceHost`'s orchestrator
 concurrency is now decomposed (R6g/R6h) while the host itself stays 616 lines
 of React glue; R3 and R4 retain their recorded gaps. What is complete is R0–R5,
-all of R6 except that one partial, R7 and R8 — every stage verified green, and
-the final state re-verified after the last change.
+all of R6 except that one partial, R7, R8 and R9 — every stage verified green,
+and the final state re-verified after the last change.
 
 ---
 
