@@ -31,7 +31,7 @@ import { subscribeToEvents } from "../../api/events";
 import { Button, EmptyState, ErrorState, PageHeader, Panel, Skeleton } from "../../components/ui";
 import TaskExecutionTrail from "./TaskExecutionTrail";
 import TaskWorldCanvas from "./TaskWorldCanvas";
-import TaskWorldInspector from "./TaskWorldInspector";
+import TaskInspector from "./inspector/TaskInspector";
 import { buildAutoLayout, isActiveExecution, isTaskWorldEvent, projectTaskGraph } from "./taskGraphProjection";
 import { createCanvasViewWriteQueue } from "./canvasViewWriter";
 import { useGlobalVoiceContext } from "../voice/GlobalVoiceHost";
@@ -329,7 +329,7 @@ export default function TaskWorldPage() {
             semanticLocked={graphLocked}
           /> : <EmptyState title="画布视图不可用" description="真实图已加载，但视觉状态尚未就绪。" className="py-20" />}
         </Panel>
-        <TaskWorldInspector
+        <TaskInspector
           graphId={graphId}
           node={selectedNode}
           expectedRevision={projection.revision}

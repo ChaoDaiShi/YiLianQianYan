@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import TaskWorldInspector from "./TaskWorldInspector";
+import TaskInspector from "./inspector/TaskInspector";
 import type { TaskNodeProjection } from "./taskGraphProjection";
 import pageSource from "./TaskWorldPage.tsx?raw";
 
@@ -13,7 +13,7 @@ function inspector(status: "runnable" | "invalidated", executor_ref: string | nu
     result_summary: null, latest_execution: null, execution_history: [], role: "Task", isRunning: false,
   } as TaskNodeProjection;
   const noop = async () => {};
-  return renderToStaticMarkup(createElement(TaskWorldInspector, {
+  return renderToStaticMarkup(createElement(TaskInspector, {
     graphId: "graph-test", node, expectedRevision: 1, revisions: [], checkpoints: [], dependencyEdges: [], dependencyCandidates: [],
     onSave: noop, onStart: noop, onStartExecution: noop, onRerun: noop, onCheckpoint: noop,
     onRestore: noop, onAddDependency: noop, onRemoveDependency: noop, graphLocked: false,

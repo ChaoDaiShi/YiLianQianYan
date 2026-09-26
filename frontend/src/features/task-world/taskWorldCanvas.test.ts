@@ -2,7 +2,31 @@ import { describe, expect, it } from "vitest";
 import canvasSource from "./TaskWorldCanvas.tsx?raw";
 import pageSource from "./TaskWorldPage.tsx?raw";
 import trailSource from "./TaskExecutionTrail.tsx?raw";
-import inspectorSource from "./TaskWorldInspector.tsx?raw";
+import inspectorShellSource from "./inspector/TaskInspector.tsx?raw";
+import basicSectionSource from "./inspector/BasicSection.tsx?raw";
+import executorSectionSource from "./inspector/ExecutorSection.tsx?raw";
+import acceptanceSectionSource from "./inspector/AcceptanceSection.tsx?raw";
+import stateSectionSource from "./inspector/StateSection.tsx?raw";
+import executionSectionSource from "./inspector/ExecutionSection.tsx?raw";
+import resourceSectionSource from "./inspector/ResourceSection.tsx?raw";
+import artifactSectionSource from "./inspector/ArtifactSection.tsx?raw";
+import dependencySectionSource from "./inspector/DependencySection.tsx?raw";
+import versionSectionSource from "./inspector/VersionSection.tsx?raw";
+
+// The inspector is one surface split across its shell and its sections; these
+// assertions are about that surface, so they read all of it.
+const inspectorSource = [
+  inspectorShellSource,
+  basicSectionSource,
+  executorSectionSource,
+  acceptanceSectionSource,
+  stateSectionSource,
+  executionSectionSource,
+  resourceSectionSource,
+  artifactSectionSource,
+  dependencySectionSource,
+  versionSectionSource,
+].join("\n");
 
 describe("Task World surface contract", () => {
   it("uses React Flow for an infinite, selectable canvas", () => {
