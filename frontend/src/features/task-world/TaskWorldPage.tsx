@@ -20,7 +20,7 @@ import { getProviderReadiness } from "../../api/providerConnection";
 import { Button, EmptyState, ErrorState, PageHeader, Panel, Skeleton } from "../../components/ui";
 import { useGlobalVoiceContext } from "../voice/GlobalVoiceHost";
 import TaskExecutionTrail from "./TaskExecutionTrail";
-import TaskWorldCanvas from "./TaskWorldCanvas";
+import TaskWorldCanvas from "./canvas/TaskWorldCanvas";
 import TaskInspector from "./inspector/TaskInspector";
 import { useCanvasView } from "./hooks/useCanvasView";
 import { useTaskCommands } from "./hooks/useTaskCommands";
