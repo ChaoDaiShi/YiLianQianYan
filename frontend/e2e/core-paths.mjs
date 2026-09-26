@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { uiFoundation, collectGeometry } from "./ui-foundation.mjs";
+import { canvasStudio, studioGeometry } from "./canvas-studio.mjs";
 import { canvasStability } from "./canvas-stability.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..");
@@ -30,8 +31,9 @@ const edgePaths = [
 
 const processes = [];
 const logs = new Map();
+const studioStage = process.env.YILIAN_E2E_STUDIO;
 const uiStage = process.env.YILIAN_E2E_UI_MATRIX;
-const evidenceDir = join(repositoryRoot, "target", uiStage === "baseline" ? "ui-baseline" : uiStage ? "ui-foundation" : "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
+const evidenceDir = join(repositoryRoot, "target", studioStage ? "canvas-studio" : uiStage === "baseline" ? "ui-baseline" : uiStage ? "ui-foundation" : "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
 const browserLog = [];
 const networkLog = [];
 let browser;
@@ -162,7 +164,13 @@ try {
     await laterSetup.click();
     await laterSetup.waitFor({ state: "hidden" });
   }
-  if (uiStage) {
+  if (studioStage) {
+    const result=await canvasStudio({page,backendPort,frontendPort,controlToken,evidenceDir,stage:studioStage});
+    if(browserErrors.length) throw new Error(`Studio browser errors: ${browserErrors.join(" | ")}`);
+    await writeFile(join(evidenceDir,"result.json"),JSON.stringify(result,null,2));
+    process.stdout.write(JSON.stringify(result)+"\n");
+    testExitCode=0;
+  } else if (uiStage) {
     const result = await uiFoundation({ page, backendPort, frontendPort, controlToken, evidenceDir, stage: uiStage, zoomWorker });
     if (browserErrors.length) throw new Error(`UI browser errors: ${browserErrors.join(" | ")}`);
     await writeFile(join(evidenceDir, "result.json"), JSON.stringify({status:"passed",browser:executablePath,real_backend:true, ...result}, null, 2));
@@ -250,6 +258,7 @@ try {
   testExitCode = 0;
   }
 } catch (error) {
+  if (page && studioStage) await writeFile(join(evidenceDir,"failure-studio.json"),JSON.stringify(await studioGeometry(page).catch(()=>({})),null,2));
   if (page) await writeFile(join(evidenceDir, "failure-geometry.json"), JSON.stringify(await collectGeometry(page).catch(() => ({})), null, 2));
   await page?.screenshot({ path: join(evidenceDir, "failure.png"), fullPage: true }).catch(() => {});
   await writeFile(join(evidenceDir, "failure.txt"), error.stack || String(error));
