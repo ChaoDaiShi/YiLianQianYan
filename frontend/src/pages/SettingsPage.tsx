@@ -1,148 +1,38 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Check, Monitor, Moon, Sun, Upload, RotateCcw } from "lucide-react";
+import { Check } from "lucide-react";
 import { getSettings, updateSettings, getIsolationStatus, listSecurityGrants, type IsolationStatus, type SecurityGrant } from "../api/client";
 import { verifyProviderConnection, type ProviderConnectionKind } from "../api/providerConnection";
 import { useTheme } from "../theme";
 import type { AppConfig, ProviderReadinessProjection } from "../types";
-import { PageHeader, Button, Input, Badge } from "../components/ui";
-import { GrantEditor } from "../features/security/GrantEditor";
-import { isolationRows } from "../features/security/grantEditorModel";
-import ModelManagerPanel from "../features/llm/ModelManagerPanel";
+import { PageHeader, Button, Badge } from "../components/ui";
 import { useGlobalVoiceContext } from "../features/voice/GlobalVoiceHost";
+import { defaultConfig, SECTIONS } from "../features/settings/model/config";
+import { comparableConfig } from "../features/settings/model/mapping";
+import type { SectionKey } from "../features/settings/model/types";
+import AgentSettings from "../features/settings/sections/AgentSettings";
+import AppearanceSettings from "../features/settings/sections/AppearanceSettings";
+import CompactionSettings from "../features/settings/sections/CompactionSettings";
+import ModelSettings from "../features/settings/sections/ModelSettings";
+import PermissionSettings from "../features/settings/sections/PermissionSettings";
+import SandboxSettings from "../features/settings/sections/SandboxSettings";
+import SkillPathSettings from "../features/settings/sections/SkillPathSettings";
+import VoiceSettings from "../features/settings/sections/VoiceSettings";
 
-const defaultConfig: AppConfig = {
-  agent: { name: "忆涟千言", system_prompt: "你是一个桌面AI助手...", workspace_root: "" },
-  model: {
-    provider: "openai",
-    name: "deepseek-v4-flash",
-    base_url: "https://api.deepseek.com/v1",
-    api_key: "",
-    api_key_env: "OPENAI_API_KEY",
-    temperature: 0,
-    max_tokens: 16384,
-    invoke_timeout_ms: 120000,
-    embedding_model: "",
-    embedding_base_url: "",
-    embedding_api_key: "",
-    embedding_api_key_env: "",
-  },
-  voice: {
-    stt: {
-      provider: "openai-compatible",
-      base_url: "https://api.openai.com/v1",
-      model: "",
-      language: "zh",
-      api_key: "",
-      api_key_env: "OPENAI_API_KEY",
-      timeout_ms: 60000,
-    },
-    tts: {
-      provider: "minimax",
-      base_url: "https://api.minimax.io",
-      model: "speech-2.8-turbo",
-      voice: "female-shaonv",
-      language: "zh",
-      api_key: "",
-      api_key_env: "",
-      timeout_ms: 60000,
-    },
-  },
-  permissions: { mode: "ask", interrupt_on: ["bash", "write_file", "edit_file", "http_request"] },
-  sandbox: { profile: "workspace-write", writable_paths: [], denied_write_paths: [] },
-  skills: { directories: [], progressive_loading: true },
-  subagents: { directories: [] },
-  compaction: { enabled: true, context_window: 200000, trigger_threshold: 0.8, keep_recent_tokens: 20000 },
-};
-
-type SectionKey = "model" | "voice" | "agent" | "permissions" | "sandbox" | "compaction" | "skills" | "appearance";
-
-const SECTIONS: { key: SectionKey; label: string }[] = [
-  { key: "model", label: "模型" },
-  { key: "voice", label: "语音" },
-  { key: "agent", label: "智能体" },
-  { key: "permissions", label: "权限与安全" },
-  { key: "sandbox", label: "沙箱" },
-  { key: "compaction", label: "压缩" },
-  { key: "skills", label: "技能与子智能体" },
-  { key: "appearance", label: "外观" },
-];
-
-const APPEARANCE_MODES = [
-  {
-    id: "system",
-    label: "跟随系统",
-    description: "自动使用系统的明暗外观",
-    icon: Monitor,
-  },
-  {
-    id: "light",
-    label: "白天",
-    description: "清透的月光白与淡粉紫界面",
-    icon: Sun,
-  },
-  {
-    id: "dark",
-    label: "夜间",
-    description: "低眩光的深紫夜色界面",
-    icon: Moon,
-  },
-] as const;
-
-function ProviderReadinessCard({ readiness, kinds, testing, results, onVerify, onPreviewTts }: { readiness: ProviderReadinessProjection | null; kinds: ProviderConnectionKind[]; testing: ProviderConnectionKind | null; results: Partial<Record<ProviderConnectionKind, string>>; onVerify: (kind: ProviderConnectionKind) => void; onPreviewTts?: () => void }) {
-  if (!readiness) return null;
-  const labels: Record<keyof ProviderReadinessProjection, string> = { model: "模型", stt: "STT", tts: "TTS" };
-  return (
-    <section className="rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4" aria-label="Provider 就绪状态">
-      <h3 className="text-sm font-semibold">Provider 就绪状态</h3>
-      <p className="mt-1 text-xs text-[var(--text-muted)]">仅反映当前运行配置与凭据可解析性，不将其视为外部服务连通性证明。</p>
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        {kinds.map((kind) => {
-          const item = readiness[kind];
-          return <div key={kind} className="min-w-0 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2">
-            <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{labels[kind]}</span><Badge tone={item.available ? "success" : "default"}>{item.available ? "已就绪" : "未就绪"}</Badge></div>
-            <p className="mt-1 truncate text-[11px] text-[var(--text-muted)]">{item.provider || "未指定 Provider"} · {item.model || "未指定模型"}</p>
-            <div className="mt-1 flex items-center justify-between gap-2"><p className="text-[11px] text-[var(--text-faint)]">凭据：{item.configured ? "已配置" : "未配置"}</p><Button variant="secondary" size="sm" disabled={testing !== null} onClick={() => kind === "tts" && onPreviewTts ? onPreviewTts() : onVerify(kind)}>{testing === kind ? "测试中…" : kind === "tts" ? "试听声音" : "测试连接"}</Button></div>
-            {results[kind] ? <p className="mt-1 text-[11px] text-[var(--text-muted)]" role="status">{results[kind]}</p> : null}
-          </div>;
-        })}
-      </div>
-    </section>
-  );
-}
-
-function comparableConfig(config: AppConfig) {
-  return JSON.stringify({
-    ...config,
-    model: {
-      ...config.model,
-      api_key: "",
-      embedding_api_key: "",
-      clear_api_key: undefined,
-      clear_embedding_api_key: undefined,
-    },
-    voice: {
-      ...config.voice,
-      stt: { ...config.voice.stt, api_key: "", clear_api_key: undefined },
-      tts: { ...config.voice.tts, api_key: "", clear_api_key: undefined },
-    },
-  });
-}
-
-function secretSourceLabel(source?: string): string {
-  switch (source) {
-    case "secret_store":
-      return "已安全保存到系统凭据库";
-    case "environment":
-      return "由环境变量提供";
-    case "legacy_pending":
-      return "检测到旧版明文密钥，待迁移";
-    case "none":
-    default:
-      return "未配置";
-  }
-}
-
+/**
+ * Settings page.
+ *
+ * Composition only: it owns the config being edited, the save/clear flows that
+ * carry the rc.2 secret semantics, the deep link (`?section=`) and the shell.
+ * Every section is a separate component under `features/settings/sections/`,
+ * and the config shape, defaults and mappings live in
+ * `features/settings/model/`.
+ *
+ * The credential flows deliberately stay here rather than in a `useSettings`
+ * hook: they are the safety-sensitive part of this surface, and the contract
+ * tests for them are source-text assertions that cannot catch a behavioural
+ * regression introduced by extraction.
+ */
 export default function SettingsPage() {
   const [searchParams] = useSearchParams();
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
@@ -341,8 +231,6 @@ export default function SettingsPage() {
 
   const dirty = comparableConfig(config) !== savedSnapshot;
 
-  // ── Appearance helpers ──
-
   const handleBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -353,313 +241,63 @@ export default function SettingsPage() {
     reader.readAsDataURL(file);
   };
 
-  // ── Render sections ──
-
   const renderSection = () => {
     switch (activeSection) {
       case "model":
         return (
-          <div className="space-y-4">
-            <ProviderReadinessCard readiness={providerReadiness} kinds={["model"]} testing={testingProvider} results={providerTestResults} onVerify={(kind) => void testProvider(kind)} />
-            <ModelManagerPanel
-              legacyModel={{ config, updateField, clearSecret, secretSourceLabel, secretRefreshToken }}
-            />
-          </div>
+          <ModelSettings
+            config={config}
+            updateField={updateField}
+            clearSecret={clearSecret}
+            secretRefreshToken={secretRefreshToken}
+            readiness={providerReadiness}
+            testing={testingProvider}
+            results={providerTestResults}
+            onVerify={(kind) => void testProvider(kind)}
+          />
         );
 
       case "voice":
         return (
-          <div className="space-y-6">
-            <ProviderReadinessCard readiness={providerReadiness} kinds={["stt", "tts"]} testing={testingProvider} results={providerTestResults} onVerify={(kind) => void testProvider(kind)} onPreviewTts={() => void previewTts()} />
-            <p className="text-xs leading-5 text-[var(--text-faint)]">
-              语音识别与语音合成独立配置；两个密钥均只写入系统凭据库，不会在页面中回显。
-            </p>
-
-            <section className="space-y-4 rounded-xl border border-[var(--border-soft)] p-4">
-              <div>
-                <h3 className="font-semibold text-sm text-[var(--text)]">语音识别（STT）</h3>
-                <p className="mt-1 text-xs text-[var(--text-muted)]">将真实麦克风音频转换为最终文本。</p>
-              </div>
-              <Input label="Provider" value={config.voice.stt.provider} onChange={(e) => updateVoiceField("stt", "provider", e.target.value)} placeholder="openai-compatible" />
-              <Input label="API 地址" value={config.voice.stt.base_url} onChange={(e) => updateVoiceField("stt", "base_url", e.target.value)} placeholder="https://api.openai.com/v1" />
-              <Input label="模型" value={config.voice.stt.model} onChange={(e) => updateVoiceField("stt", "model", e.target.value)} placeholder="gpt-4o-mini-transcribe" />
-              <Input label="语言" value={config.voice.stt.language} onChange={(e) => updateVoiceField("stt", "language", e.target.value)} placeholder="zh" />
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
-                <div>
-                  <p className="text-xs font-medium text-[var(--text)]">{config.voice.stt.api_key_configured ? "STT 凭据已配置" : "STT 凭据未配置"}</p>
-                  <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{secretSourceLabel(config.voice.stt.api_key_source)}</p>
-                </div>
-                <div className="flex gap-2">{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => setReplaceVoiceKey((value) => ({ ...value, stt: true }))}>替换密钥</Button> : null}{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void clearVoiceSecret("stt")}>清除密钥</Button> : null}</div>
-              </div>
-              {(!config.voice.stt.api_key_configured || replaceVoiceKey.stt) && <Input label="STT API 密钥" type="password" value={config.voice.stt.api_key} onChange={(e) => updateVoiceField("stt", "api_key", e.target.value)} placeholder="输入后安全保存" />}
-              <Input label="密钥环境变量名" value={config.voice.stt.api_key_env} onChange={(e) => updateVoiceField("stt", "api_key_env", e.target.value)} placeholder="OPENAI_API_KEY" />
-              <Input label="请求超时（毫秒）" type="number" value={String(config.voice.stt.timeout_ms)} onChange={(e) => updateVoiceField("stt", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
-            </section>
-
-            <section className="space-y-4 rounded-xl border border-[var(--border-soft)] p-4">
-              <div>
-                <h3 className="font-semibold text-sm text-[var(--text)]">语音合成（TTS）</h3>
-                <p className="mt-1 text-xs text-[var(--text-muted)]">默认使用 MiniMax 原生语音接口与当前默认音色。</p>
-              </div>
-              <Input label="Provider" value={config.voice.tts.provider} onChange={(e) => updateVoiceField("tts", "provider", e.target.value)} placeholder="minimax" />
-              <Input label="API 地址" value={config.voice.tts.base_url} onChange={(e) => updateVoiceField("tts", "base_url", e.target.value)} placeholder="https://api.minimax.io" />
-              <Input label="模型" value={config.voice.tts.model} onChange={(e) => updateVoiceField("tts", "model", e.target.value)} placeholder="speech-2.8-turbo" />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Input label="默认音色" value={config.voice.tts.voice} onChange={(e) => updateVoiceField("tts", "voice", e.target.value)} placeholder="voice_id" />
-                <Input label="语言" value={config.voice.tts.language} onChange={(e) => updateVoiceField("tts", "language", e.target.value)} placeholder="zh" />
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
-                <div>
-                  <p className="text-xs font-medium text-[var(--text)]">{config.voice.tts.api_key_configured ? "TTS 凭据已配置" : "TTS 凭据未配置"}</p>
-                  <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{secretSourceLabel(config.voice.tts.api_key_source)}</p>
-                </div>
-                <div className="flex gap-2">{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => setReplaceVoiceKey((value) => ({ ...value, tts: true }))}>替换密钥</Button> : null}{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void clearVoiceSecret("tts")}>清除密钥</Button> : null}</div>
-              </div>
-              {(!config.voice.tts.api_key_configured || replaceVoiceKey.tts) && <Input label="TTS API 密钥" type="password" value={config.voice.tts.api_key} onChange={(e) => updateVoiceField("tts", "api_key", e.target.value)} placeholder="输入后安全保存" />}
-              <Input label="密钥环境变量名" value={config.voice.tts.api_key_env} onChange={(e) => updateVoiceField("tts", "api_key_env", e.target.value)} placeholder="留空时使用系统凭据库" />
-              <Input label="请求超时（毫秒）" type="number" value={String(config.voice.tts.timeout_ms)} onChange={(e) => updateVoiceField("tts", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
-            </section>
-
-            <p className="text-xs leading-5 text-[var(--text-muted)]">
-              每个 Provider 独立判断可用性；任一侧配置不完整时，该侧保持 fail closed。
-            </p>
-          </div>
+          <VoiceSettings
+            config={config}
+            updateVoiceField={updateVoiceField}
+            replaceVoiceKey={replaceVoiceKey}
+            onReplaceVoiceKey={(side) => setReplaceVoiceKey((value) => ({ ...value, [side]: true }))}
+            onClearVoiceSecret={clearVoiceSecret}
+            readiness={providerReadiness}
+            testing={testingProvider}
+            results={providerTestResults}
+            onVerify={(kind) => void testProvider(kind)}
+            onPreviewTts={() => void previewTts()}
+          />
         );
 
       case "agent":
-        return (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">智能体配置</h3>
-            <Input label="名称" value={config.agent.name} onChange={(e) => updateField("agent", "name", e.target.value)} />
-            <Input label="工作区根目录" value={config.agent.workspace_root} onChange={(e) => updateField("agent", "workspace_root", e.target.value)} placeholder="默认当前目录" />
-            <div>
-              <label className="block text-sm font-medium mb-1">系统提示词</label>
-              <textarea
-                value={config.agent.system_prompt}
-                onChange={(e) => updateField("agent", "system_prompt", e.target.value)}
-                rows={10}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none font-mono"
-              />
-            </div>
-          </div>
-        );
+        return <AgentSettings config={config} updateField={updateField} />;
 
       case "permissions":
         return (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">权限配置</h3>
-            {isolation && (
-              <div className="rounded-lg border border-[var(--border)] px-3 py-3 space-y-1">
-                <h4 className="text-sm font-medium">Windows 隔离能力</h4>
-                {isolationRows(isolation).map(([label, active]) => <div key={label} className="flex items-center justify-between text-xs"><span className="text-[var(--text-muted)]">{label}</span><Badge tone={active ? "success" : "default"}>{active ? "Active" : "Not enabled"}</Badge></div>)}
-                <p className="text-[11px] text-[var(--text-faint)] mt-2">当前安全边界由 Windows 令牌降权、Job Object 和应用层资源授权共同组成；Restricting-SID、OS 命名空间、GUI 沙箱与容器级隔离尚未启用。</p>
-              </div>
-            )}
-            <div>
-              <label className="block text-sm font-medium mb-1">模式</label>
-              <select
-                value={config.permissions.mode}
-                onChange={(e) => updateField("permissions", "mode", e.target.value)}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
-              >
-                <option value="yolo">YOLO — 自动执行所有操作</option>
-                <option value="ask">Ask — 每次操作前确认</option>
-                <option value="plan">Plan — 仅执行已批准的计划</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">需确认的工具</label>
-              <input
-                type="text"
-                value={config.permissions.interrupt_on.join(", ")}
-                onChange={(e) => updateField("permissions", "interrupt_on", e.target.value.split(",").map((s) => s.trim()).filter(Boolean))}
-                placeholder="bash, write_file, edit_file"
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
-              />
-              <p className="mt-1 text-xs text-[var(--text-muted)]">逗号分隔的工具名称列表</p>
-            </div>
-            <GrantEditor grants={grants} onChanged={refreshGrants} />
-          </div>
+          <PermissionSettings
+            config={config}
+            updateField={updateField}
+            isolation={isolation}
+            grants={grants}
+            onGrantsChanged={refreshGrants}
+          />
         );
 
       case "sandbox":
-        return (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">沙箱配置</h3>
-            <div>
-              <label className="block text-sm font-medium mb-1">配置文件</label>
-              <select
-                value={config.sandbox.profile}
-                onChange={(e) => updateField("sandbox", "profile", e.target.value)}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
-              >
-                <option value="custom">自定义</option>
-                <option value="workspace-write">Workspace Write — 仅工作区可写</option>
-                <option value="read-only">Read Only — 只读</option>
-                <option value="open">Open — 无限制</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">可写路径 (一行一个)</label>
-              <textarea
-                value={config.sandbox.writable_paths.join("\n")}
-                onChange={(e) => updateField("sandbox", "writable_paths", e.target.value.split("\n").filter(Boolean))}
-                rows={3}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">禁止写入路径 (一行一个)</label>
-              <textarea
-                value={config.sandbox.denied_write_paths.join("\n")}
-                onChange={(e) => updateField("sandbox", "denied_write_paths", e.target.value.split("\n").filter(Boolean))}
-                rows={3}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none"
-              />
-            </div>
-          </div>
-        );
+        return <SandboxSettings config={config} updateField={updateField} />;
 
       case "compaction":
-        return (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">对话压缩</h3>
-            <div className="flex items-center gap-3">
-              <label className="text-sm">启用压缩</label>
-              <input
-                type="checkbox"
-                aria-label="启用对话压缩"
-                checked={config.compaction.enabled}
-                onChange={(e) => updateField("compaction", "enabled", e.target.checked)}
-                className="w-4 h-4 rounded accent-[var(--accent)]"
-              />
-            </div>
-            <Input label="上下文窗口 (tokens)" type="number" value={String(config.compaction.context_window)} onChange={(e) => updateField("compaction", "context_window", parseInt(e.target.value) || 0)} />
-            <Input label="触发阈值" type="number" value={String(config.compaction.trigger_threshold)} onChange={(e) => updateField("compaction", "trigger_threshold", parseFloat(e.target.value) || 0)} hint="上下文占用比例超过此值时触发压缩 (0–1)" />
-            <Input label="保留最近 (tokens)" type="number" value={String(config.compaction.keep_recent_tokens)} onChange={(e) => updateField("compaction", "keep_recent_tokens", parseInt(e.target.value) || 0)} hint="压缩时保留最近的 token 数量" />
-          </div>
-        );
+        return <CompactionSettings config={config} updateField={updateField} />;
 
       case "skills":
-        return (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">技能路径</h3>
-            <div>
-              <label className="block text-sm font-medium mb-1">技能目录 (一行一个)</label>
-              <textarea
-                value={config.skills.directories.join("\n")}
-                onChange={(e) => updateField("skills", "directories", e.target.value.split("\n").filter(Boolean))}
-                rows={4}
-                placeholder="./skills"
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none"
-              />
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="text-sm">渐进加载</label>
-              <input
-                type="checkbox"
-                aria-label="启用渐进加载"
-                checked={config.skills.progressive_loading}
-                onChange={(e) => updateField("skills", "progressive_loading", e.target.checked)}
-                className="w-4 h-4 rounded accent-[var(--accent)]"
-              />
-            </div>
-            <div className="border-t border-[var(--border-soft)] pt-4">
-              <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">子智能体目录</h3>
-              <label className="mt-3 block text-sm font-medium mb-1" htmlFor="subagent-directories">目录（每行一个）</label>
-              <textarea
-                id="subagent-directories"
-                aria-label="子智能体目录"
-                value={config.subagents.directories.join("\n")}
-                onChange={(e) => updateField("subagents", "directories", e.target.value.split("\n").filter(Boolean))}
-                rows={4}
-                placeholder="./.agents/agents"
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none"
-              />
-              <p className="mt-1 text-xs text-[var(--text-muted)]">扫描目录中的 AGENT.md 文件定义子智能体</p>
-            </div>
-          </div>
-        );
+        return <SkillPathSettings config={config} updateField={updateField} />;
 
       case "appearance":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">
-                昔涟外观
-              </h3>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-faint)]">
-                保留昔涟 · 涟漪的统一视觉，只切换适合环境的明暗层级。
-              </p>
-            </div>
-            <div
-              className="grid grid-cols-1 gap-3 sm:grid-cols-3"
-              role="radiogroup"
-              aria-label="外观模式"
-            >
-              {APPEARANCE_MODES.map((item) => {
-                const Icon = item.icon;
-                const selected = theme.mode === item.id;
-                return (
-                <button
-                  key={item.id}
-                  onClick={() => theme.setMode(item.id)}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  className={`rounded-xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-soft)] ${
-                    selected
-                      ? "border-[var(--accent-border)] bg-[var(--accent-soft)]"
-                      : "border-[var(--border-soft)] bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)]"
-                  }`}
-                >
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <Icon className="h-4 w-4 text-[var(--accent-primary)]" />
-                    {selected ? <Check className="h-4 w-4 text-[var(--accent-primary)]" /> : null}
-                  </div>
-                  <span className="block text-sm font-medium text-[var(--text-primary)]">
-                    {item.label}
-                  </span>
-                  <span className="mt-1 block text-xs leading-5 text-[var(--text-secondary)]">
-                    {item.description}
-                  </span>
-                </button>
-                );
-              })}
-            </div>
-            {theme.mode === "system" ? (
-              <p className="text-xs text-[var(--text-secondary)]" role="status">
-                当前跟随系统：{theme.resolvedScheme === "dark" ? "夜间" : "白天"}
-              </p>
-            ) : null}
-
-            <div className="border-t border-[var(--divider)] pt-5">
-              <h4 className="text-sm font-medium mb-2">背景</h4>
-              <div className="flex items-center gap-3 flex-wrap">
-                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border)] hover:bg-[var(--panel-hover)] cursor-pointer text-sm transition-colors">
-                  <Upload className="w-4 h-4" />
-                  上传背景图
-                  <input type="file" accept="image/*" onChange={handleBgUpload} className="hidden" />
-                </label>
-                {theme.bgImageUrl && (
-                  <Button variant="secondary" size="sm" onClick={() => theme.setBackgroundImage(null)}>
-                    清除背景
-                  </Button>
-                )}
-              </div>
-              <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
-                背景图片会自动叠加可读性遮罩，不改变风险和验证状态颜色。
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button variant="secondary" size="sm" onClick={theme.resetTheme}>
-                <RotateCcw className="w-4 h-4" />
-                重置默认
-              </Button>
-            </div>
-          </div>
-        );
+        return <AppearanceSettings theme={theme} onBackgroundUpload={handleBgUpload} />;
 
       default:
         return null;

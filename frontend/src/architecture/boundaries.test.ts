@@ -37,7 +37,6 @@ const KNOWN_LARGE_FILES = [
   "src/components/chat/ChatView.tsx",
   "src/features/voice/GlobalVoiceHost.tsx",
   "src/pages/PluginsPage.tsx",
-  "src/pages/SettingsPage.tsx",
 ];
 
 describe("frontend architecture boundaries", () => {

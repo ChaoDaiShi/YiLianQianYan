@@ -1,8 +1,37 @@
 import { describe, expect, it } from "vitest";
-import source from "./SettingsPage.tsx?raw";
+import pageSource from "./SettingsPage.tsx?raw";
+import configSource from "../features/settings/model/config.ts?raw";
+import mappingSource from "../features/settings/model/mapping.ts?raw";
+import agentSettingsSource from "../features/settings/sections/AgentSettings.tsx?raw";
+import appearanceSettingsSource from "../features/settings/sections/AppearanceSettings.tsx?raw";
+import compactionSettingsSource from "../features/settings/sections/CompactionSettings.tsx?raw";
+import modelSettingsSource from "../features/settings/sections/ModelSettings.tsx?raw";
+import permissionSettingsSource from "../features/settings/sections/PermissionSettings.tsx?raw";
+import providerReadinessCardSource from "../features/settings/sections/ProviderReadinessCard.tsx?raw";
+import sandboxSettingsSource from "../features/settings/sections/SandboxSettings.tsx?raw";
+import skillPathSettingsSource from "../features/settings/sections/SkillPathSettings.tsx?raw";
+import voiceSettingsSource from "../features/settings/sections/VoiceSettings.tsx?raw";
 import modelManagerSource from "../features/llm/ModelManagerPanel.tsx?raw";
 import moduleSetupSource from "../components/system/ModuleSetup.tsx?raw";
 import typesSource from "../types/index.ts?raw";
+
+// Settings is one surface split across a composition page, its model and its
+// sections. These assertions are about that surface, so they read all of it —
+// each string below is still required to exist somewhere on the surface.
+const source = [
+  pageSource,
+  configSource,
+  mappingSource,
+  providerReadinessCardSource,
+  agentSettingsSource,
+  appearanceSettingsSource,
+  compactionSettingsSource,
+  modelSettingsSource,
+  permissionSettingsSource,
+  sandboxSettingsSource,
+  skillPathSettingsSource,
+  voiceSettingsSource,
+].join("\n");
 
 describe("Settings contract", () => {
   it("keeps real settings APIs and masked secret controls", () => {
