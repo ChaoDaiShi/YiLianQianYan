@@ -3,8 +3,7 @@ import {
   applyEdgeChanges,
   applyNodeChanges,
   Background,
-  Controls,
-  MiniMap,
+  MarkerType,
   Panel as FlowPanel,
   ReactFlow,
   ReactFlowProvider,
@@ -27,7 +26,9 @@ import TaskNode from "./TaskNode";
 import { reconcileCanvasNodes } from "./model/reconcileCanvasNodes";
 import { canvasCameraCommand, initialCanvasViewport, type CanvasCameraEvent } from "./model/canvasViewport";
 import TaskExecutionTrail from "../TaskExecutionTrail";
-import { Button, Panel } from "../../../components/ui";
+import { X } from "lucide-react";
+import StudioToolbar from "./StudioToolbar";
+import { EntryNodesContext } from "./nodePresentation";
 
 interface TaskWorldCanvasProps {
   projection: TaskGraphProjection;
@@ -41,6 +42,13 @@ interface TaskWorldCanvasProps {
   onDeleteNodes: (nodes: TaskGraphCanvasNode[]) => void;
   onDeleteEdges: (edges: TaskGraphCanvasEdge[]) => void;
   semanticLocked?: boolean;
+  trailOpen: boolean;
+  onCloseTrail: () => void;
+  onAddNode: () => void;
+  canAddNode: boolean;
+  onRunSelected: () => void;
+  canRunSelected: boolean;
+  runLabel: string;
 }
 
 export default function TaskWorldCanvas(props: TaskWorldCanvasProps) {
@@ -63,11 +71,13 @@ function TaskWorldCanvasSurface({
   onDeleteNodes,
   onDeleteEdges,
   semanticLocked = false,
+  trailOpen, onCloseTrail, onAddNode, canAddNode, onRunSelected, canRunSelected, runLabel,
 }: TaskWorldCanvasProps) {
   const incomingEdges = useMemo(() => {
     const hidden = new Set(view?.groups.filter((group) => group.collapsed).flatMap((group) => group.node_ids));
     return projection.edges.map((edge) => ({
       id: `${edge.from}->${edge.to}`, source: edge.from, target: edge.to,
+      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
       type: "smoothstep", hidden: hidden.has(edge.from) || hidden.has(edge.to),
     }));
   }, [projection.edges, view?.groups]);
@@ -139,10 +149,13 @@ function TaskWorldCanvasSurface({
     [onViewportChange],
   );
 
+  const entryNodes = useMemo(() => new Set(projection.nodes.filter(node => !projection.edges.some(edge => edge.to === node.id)).map(node => node.id)), [projection.nodes, projection.edges]);
   return (
-    <>
+    <EntryNodesContext.Provider value={entryNodes}>
+    <section id="studio-trail" className="studio-panel studio-trail" hidden={!trailOpen} aria-label="执行轨迹面板">
+    <div className="studio-panel-heading"><h2>执行轨迹</h2><button type="button" aria-label="关闭执行轨迹" onClick={onCloseTrail}><X size={16}/></button></div>
     <TaskExecutionTrail projection={projection} focusedNodeId={focusedNodeId} onFocus={selectFromTrail} onLocate={locateNode} />
-    <Panel padding={false} className="min-h-0 overflow-hidden">
+    </section>
     <div className="task-world-canvas" data-testid="task-world-canvas">
       <ReactFlow<TaskGraphCanvasNode, TaskGraphCanvasEdge>
         nodes={nodes}
@@ -172,17 +185,12 @@ function TaskWorldCanvasSurface({
         aria-label="无限任务画布"
       >
         <Background gap={24} size={1} color="var(--task-world-grid)" />
-        <FlowPanel position="top-left" className="flex gap-1" aria-label="画布布局与镜头">
-          <Button size="sm" variant="secondary" onClick={autoLayout}>自动布局</Button>
-          <Button size="sm" variant="secondary" onClick={() => moveCamera({ type: "zoom-100" })}>100%</Button>
-          <Button size="sm" variant="secondary" onClick={() => moveCamera({ type: "fit-all" })}>适应全部</Button>
+        <FlowPanel position="bottom-left" className="studio-flow-tools">
+          <StudioToolbar onFit={()=>moveCamera({type:"fit-all"})} onReset={()=>moveCamera({type:"zoom-100"})} onLayout={autoLayout} onAdd={onAddNode} onRun={onRunSelected} canAdd={canAddNode} canRun={canRunSelected} runLabel={runLabel}/>
         </FlowPanel>
-        <Controls showInteractive={false} showFitView={false} />
-        <MiniMap pannable zoomable className="task-world-minimap" />
       </ReactFlow>
     </div>
-    </Panel>
-    </>
+    </EntryNodesContext.Provider>
   );
 }
 

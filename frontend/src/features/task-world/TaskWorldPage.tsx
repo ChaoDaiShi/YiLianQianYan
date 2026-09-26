@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { X, RefreshCw } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   addTaskEdge,
@@ -17,8 +17,10 @@ import {
   type TaskGraphNodeDefinition,
 } from "../../api/taskWorld";
 import { getProviderReadiness } from "../../api/providerConnection";
-import { Button, EmptyState, ErrorState, PageHeader, Skeleton } from "../../components/ui";
+import { Button, EmptyState, ErrorState, Skeleton } from "../../components/ui";
 import { useGlobalVoiceContext } from "../voice/GlobalVoiceHost";
+import StudioHeader, { type StudioPanel } from "./StudioHeader";
+import "./canvas/studio.css";
 import TaskWorldCanvas from "./canvas/TaskWorldCanvas";
 import TaskInspector from "./inspector/TaskInspector";
 import { useCanvasView } from "./hooks/useCanvasView";
@@ -26,7 +28,7 @@ import { useTaskCommands } from "./hooks/useTaskCommands";
 import { useTaskWorldEvents } from "./hooks/useTaskEvents";
 import { useTaskGraph } from "./hooks/useTaskGraph";
 import { useTaskGraphReview } from "./hooks/useTaskReview";
-import { isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
+import { getExecutorAvailability, isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
 
 /**
  * Task World page.
@@ -43,6 +45,13 @@ export default function TaskWorldPage() {
 
 function TaskWorldSession({ graphId }: { graphId: string }) {
   const navigate = useNavigate();
+  const [activePanel, setActivePanel] = useState<StudioPanel>(null);
+  const panelTrigger = useRef<HTMLElement | null>(null);
+  const changePanel = (panel: StudioPanel) => {
+    if (panel) panelTrigger.current = document.activeElement as HTMLElement;
+    setActivePanel(panel);
+    if (!panel) panelTrigger.current?.focus();
+  };
   const { updateContext } = useGlobalVoiceContext();
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -65,6 +74,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const {
     view,
     canvasSaveError,
+    canvasSavePending,
     retrySave,
     refreshView,
     updateLayouts,
@@ -118,15 +128,21 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   if (error && !detail) return <ErrorState title="任务图暂时无法加载" description={error.message} action={<Button onClick={() => void reload()}>重试</Button>} />;
   if (!projection) return <TaskWorldLoading />;
 
+  const addNode = () => { void mutate(() => addTaskNode(graphId, projection.revision, { id: crypto.randomUUID(), kind: "work", title: "新任务", input: { instruction: "", acceptance_criteria: [] }, retry_policy: { max_attempts: 1 } })); };
+  const canRun = !!selectedNode && !saving && !graphLocked && getExecutorAvailability(selectedNode.executor_ref).kind === "configured";
+  const runSelected = () => { if (canRun && selectedNode) void mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision)); };
+
   return (
-    <div className="page-canvas flex h-full min-h-0 flex-col">
-      <PageHeader
-        title={`任务画布 · ${projection.graphId}`}
-        description={`语义图 r${projection.revision} · 画布视图 r${view?.view_revision ?? "—"}`}
-        actions={<div className="flex gap-2"><Button variant="ghost" size="sm" onClick={() => navigate("/tasks")}><ArrowLeft className="h-4 w-4" />任务中心</Button><Button variant="secondary" size="sm" disabled={saving || graphLocked} onClick={() => void mutate(() => addTaskNode(graphId, projection.revision, { id: crypto.randomUUID(), kind: "work", title: "新任务", input: { instruction: "", acceptance_criteria: [] }, retry_policy: { max_attempts: 1 } }))}>添加任务节点</Button><Button variant="secondary" size="sm" onClick={() => void reload()}><RefreshCw className="h-4 w-4" />刷新</Button></div>}
-      />
-      {eventWarning && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]" role="status">实时事件暂不可用：{eventWarning}</p>}
-      {canvasSaveError && <p className="mx-4 mt-2 text-xs text-[var(--danger-fg)]" role="alert">{canvasSaveError.message} <button type="button" className="underline" onClick={retrySave}>重试保存画布</button></p>}
+    <div className="canvas-studio page-canvas" onKeyDown={(event) => { if (event.key === "Escape" && activePanel) { event.stopPropagation(); changePanel(null); } }}>
+      <StudioHeader graphId={projection.graphId} revision={view?.view_revision ?? null} pending={canvasSavePending} error={canvasSaveError?.message ?? null} onRetry={retrySave} onBack={()=>navigate("/tasks")} panel={activePanel} onPanel={changePanel}/>
+      <div className="studio-workspace task-world-layout">
+      {(eventWarning || (saveError && activePanel !== "inspector")) && <div className="studio-notices">
+        {eventWarning && <p className="studio-event-warning" role="status">实时事件暂不可用：{eventWarning}</p>}
+        {saveError && activePanel !== "inspector" && <p className="studio-command-error" role="alert">{saveError.message}</p>}
+      </div>}
+      <aside id="studio-tools" className="studio-panel studio-tools" aria-label="更多画布工具" hidden={activePanel!=="tools"}>
+        <div className="studio-panel-heading"><h2>画布工具</h2><button type="button" aria-label="关闭更多工具" onClick={()=>changePanel(null)}><X size={16}/></button></div>
+        <Button variant="secondary" size="sm" onClick={()=>void reload()}><RefreshCw size={14}/>刷新</Button>
       {modelUnavailable && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]">还没有配置可用的模型服务。 <button type="button" className="underline" onClick={() => navigate("/settings?section=model")}>前往模型设置</button></p>}
       {view && <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-3 py-2" aria-label="画布视图工具">
         <Button size="sm" variant="secondary" disabled={saving || view.selection.filter((nodeId) => !view.groups.some((group) => group.node_ids.includes(nodeId))).length < 2} onClick={createVisualGroup}>创建分组</Button>
@@ -152,7 +168,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
           </article>)}
         </div>}
       </section>}
-      <div className="task-world-layout min-h-0 flex-1 px-4 pb-4 pt-3">
+      </aside>
           {view ? <TaskWorldCanvas
             projection={projection}
             view={view}
@@ -165,7 +181,16 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
             onDeleteNodes={(nodes) => { const node = nodes[0]; if (node) void mutate(() => deleteTaskNode(graphId, node.id, projection.revision)); }}
             onDeleteEdges={(edges) => { const edge = edges[0]; if (edge) void mutate(() => deleteTaskEdge(graphId, edge.source, edge.target, projection.revision)); }}
             semanticLocked={graphLocked}
+            trailOpen={activePanel==="trail"}
+            onCloseTrail={()=>changePanel(null)}
+            onAddNode={addNode}
+            canAddNode={!saving && !graphLocked}
+            onRunSelected={runSelected}
+            canRunSelected={canRun}
+            runLabel={canRun ? `运行：${selectedNode?.title}` : "选择已配置执行器的节点；执行期间不可重复运行"}
           /> : <EmptyState title="画布视图不可用" description="真实图已加载，但视觉状态尚未就绪。" className="py-20" />}
+        <section id="studio-inspector" className="studio-panel studio-inspector" aria-label="节点属性面板" hidden={activePanel!=="inspector"}>
+        <div className="studio-panel-heading"><h2>节点属性</h2><button type="button" aria-label="关闭节点属性" onClick={()=>changePanel(null)}><X size={16}/></button></div>
         <TaskInspector
           graphId={graphId}
           node={selectedNode}
@@ -195,11 +220,12 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
           onAddDependency={(from, to) => mutate(() => addTaskEdge(graphId, projection.revision, from, to)).then(() => undefined)}
           onRemoveDependency={(from, to) => mutate(() => deleteTaskEdge(graphId, from, to, projection.revision)).then(() => undefined)}
         />
+        </section>
       </div>
     </div>
   );
 }
 
 function TaskWorldLoading() {
-  return <div className="grid h-full grid-cols-[180px_1fr_300px] gap-3 p-4"><Skeleton className="h-full" /><Skeleton className="h-full" /><Skeleton className="h-full" /></div>;
+  return <div className="flex h-full flex-col gap-3 p-4"><Skeleton className="h-12" /><Skeleton className="min-h-0 flex-1" /></div>;
 }

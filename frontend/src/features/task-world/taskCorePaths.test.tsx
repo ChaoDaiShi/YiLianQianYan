@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import TaskInspector from "./inspector/TaskInspector";
 import type { TaskNodeProjection } from "./taskGraphProjection";
 import pageSource from "./TaskWorldPage.tsx?raw";
+import toolbarSource from "./canvas/StudioToolbar.tsx?raw";
 
 function inspector(status: "runnable" | "invalidated", executor_ref: string | null) {
   const node = {
@@ -36,6 +37,7 @@ describe("editable TaskGraph core paths", () => {
 
   it("exposes a node creation entry on an empty canvas", () => {
     expect(pageSource).toContain("addTaskNode(");
-    expect(pageSource).toContain("添加任务节点");
+    expect(pageSource).toContain("onAddNode={addNode}");
+    expect(toolbarSource).toContain("添加任务节点");
   });
 });

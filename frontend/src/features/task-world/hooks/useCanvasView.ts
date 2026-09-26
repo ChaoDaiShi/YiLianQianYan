@@ -25,6 +25,7 @@ export function useCanvasView(
 ) {
   const [view, setView] = useState<CanvasView | null>(null);
   const viewRef = useRef<CanvasView | null>(null);
+  const [canvasSavePending, setCanvasSavePending] = useState(false);
   const [canvasSaveError, setCanvasSaveError] = useState<ApiError | null>(null);
 
   const acceptView = useCallback((incoming: CanvasView) => {
@@ -51,14 +52,16 @@ export function useCanvasView(
     save: (next) => saveCanvasView(graphId, next),
     loadLatest: () => getCanvasView(graphId),
     onError: (writeError) => {
+      setCanvasSavePending(false);
       setCanvasSaveError(writeError);
     },
-    onSaved: () => setCanvasSaveError(null),
+    onSaved: () => { setCanvasSavePending(false); setCanvasSaveError(null); },
   }), [acceptView, graphId]);
 
-  const retrySave = useCallback(() => { void viewWriter.retry(); }, [viewWriter]);
+  const retrySave = useCallback(() => { setCanvasSavePending(true); void viewWriter.retry(); }, [viewWriter]);
 
   const persistView = useCallback((update: (current: CanvasView) => CanvasView) => {
+    setCanvasSavePending(true);
     onSaveError(null);
     void viewWriter.enqueue(update);
   }, [onSaveError, viewWriter]);
@@ -128,6 +131,7 @@ export function useCanvasView(
   return {
     view,
     canvasSaveError,
+    canvasSavePending,
     retrySave,
     refreshView,
     updateLayouts,

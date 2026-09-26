@@ -21,6 +21,7 @@ import ExecutionSection from "./ExecutionSection";
 import ExecutorSection from "./ExecutorSection";
 import ResourceSection from "./ResourceSection";
 import StateSection from "./StateSection";
+import ExtensionSlots from "./ExtensionSlots";
 import VersionSection from "./VersionSection";
 
 interface TaskNodeDraft {
@@ -145,7 +146,7 @@ export default function TaskInspector({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-meta font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-            Inspector
+            选中节点
           </p>
           <h2 className="mt-1 truncate text-base font-semibold text-[var(--text)]">{node.title}</h2>
         </div>
@@ -189,10 +190,12 @@ export default function TaskInspector({
           onExecutorRefChange={setExecutorRef}
           availability={availability}
         />
+        <details className="studio-detail"><summary>验收标准</summary>
         <AcceptanceSection
           acceptanceCriteria={acceptanceCriteria}
           onAcceptanceCriteriaChange={setAcceptanceCriteria}
         />
+        </details>
         <Button type="submit" size="sm" disabled={saving || !title.trim()}>
           {saving ? "保存中…" : "保存语义"}
         </Button>
@@ -200,6 +203,7 @@ export default function TaskInspector({
       </form>
       {graphLocked && <p className="mt-2 text-xs text-[var(--text-faint)]">有任务执行尚未结束，请先完成或取消执行后再修改任务图。</p>}
 
+      <details className="studio-detail"><summary>状态与执行记录</summary>
       <StateSection node={node} />
 
       <ExecutionSection
@@ -211,6 +215,8 @@ export default function TaskInspector({
         onRerun={onRerun}
       />
 
+      </details>
+      <details className="studio-detail"><summary>资源与产物</summary>
       <ResourceSection graphId={graphId} nodeId={node.id} />
 
       <ArtifactSection
@@ -218,6 +224,7 @@ export default function TaskInspector({
         completed={latestExecution?.status === "succeeded"}
       />
 
+      </details>
       {node.kind === "approval" && (
         <section className="mt-5 rounded-[var(--radius-md)] border border-[var(--warning-border)] bg-[var(--warning-soft)] p-3 text-xs">
           <p className="font-medium text-[var(--warning-fg)]">等待审批</p>
@@ -228,6 +235,7 @@ export default function TaskInspector({
         </section>
       )}
 
+      <details className="studio-detail"><summary>依赖关系</summary>
       <DependencySection
         node={node}
         dependencyEdges={dependencyEdges}
@@ -240,6 +248,8 @@ export default function TaskInspector({
         graphLocked={graphLocked}
       />
 
+      </details>
+      <details className="studio-detail"><summary>版本与检查点</summary>
       <VersionSection
         revisions={revisions}
         checkpoints={checkpoints}
@@ -250,6 +260,8 @@ export default function TaskInspector({
         saving={saving}
         graphLocked={graphLocked}
       />
+      </details>
+      <ExtensionSlots/>
     </Panel>
   );
 }

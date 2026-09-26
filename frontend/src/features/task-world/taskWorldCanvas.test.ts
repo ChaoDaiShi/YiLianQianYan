@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import canvasShellSource from "./canvas/TaskWorldCanvas.tsx?raw";
+import toolbarSource from "./canvas/StudioToolbar.tsx?raw";
 import taskNodeSource from "./canvas/TaskNode.tsx?raw";
 import pageShellSource from "./TaskWorldPage.tsx?raw";
 import useTaskGraphSource from "./hooks/useTaskGraph.ts?raw";
@@ -20,7 +21,7 @@ import dependencySectionSource from "./inspector/DependencySection.tsx?raw";
 import versionSectionSource from "./inspector/VersionSection.tsx?raw";
 
 // The canvas surface is its React Flow host plus the node component it renders.
-const canvasSource = [canvasShellSource, taskNodeSource].join("\n");
+const canvasSource = [canvasShellSource, taskNodeSource, toolbarSource].join("\n");
 
 // The page is composition plus its behaviour hooks. These assertions are about
 // the surface's behaviour wherever it now lives, so they read all of it.
