@@ -13,7 +13,7 @@ describe("capability presentation", () => {
   it("maps known capability values without inventing unknown values", () => {
     expect(formatCapabilityKind("mcp_tool")).toBe("MCP 工具");
     expect(formatCapabilityProvider("skill_runtime")).toBe("技能运行时");
-    expect(formatCapabilityStatus("ready")).toEqual({ label: "就绪", tone: "success" });
+    expect(formatCapabilityStatus("ready")).toEqual({ label: "可用", tone: "success" });
     expect(formatCapabilityRisk("high")).toEqual({ label: "高风险", tone: "danger" });
     expect(formatCapabilityKind("future_kind")).toBe("future_kind");
   });

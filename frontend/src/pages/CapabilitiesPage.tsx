@@ -23,6 +23,7 @@ import {
 } from "../api/client";
 import { Button, EmptyState, ErrorState, Input, Modal, PageHeader, Skeleton } from "../components/ui";
 import { getCapabilityManagementTarget } from "../features/capabilities/capabilityManagement";
+import { formatToolDisplayName } from "../components/chat/toolDisplay";
 import ManagedImports from "../features/capabilities/ManagedImports";
 
 const KIND_FILTERS: Array<CapabilityKind | "all"> = ["all", "tool", "mcp_tool", "subagent", "agent", "workflow", "skill"];
@@ -110,20 +111,12 @@ export default function CapabilitiesPage() {
     <div className="capability-page page-canvas">
       <PageHeader
         title="能力"
-        description="查看系统能力，并前往真实来源完成新增、编辑或删除。"
-        actions={<><Button variant="secondary" onClick={() => setSourceChooserOpen(true)}><Plus className="h-4 w-4" />新增能力来源</Button><Button onClick={() => void handleRefresh()} disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />刷新能力</Button></>}
+        description="了解忆涟能做什么，查看可用状态与所需权限。"
+        actions={<><Button variant="secondary" onClick={() => setSourceChooserOpen(true)}><Plus className="h-4 w-4" />新增能力来源</Button><Button variant="secondary" onClick={() => void handleRefresh()} disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />刷新能力</Button></>}
       />
 
       <div className="capability-page-body">
-        <div className="mb-3 flex flex-wrap gap-2" aria-label="能力分类">
-          <Button variant="secondary" size="sm" onClick={() => { setKind("skill"); setProvider("all"); }}>Skill</Button>
-          <Button variant="secondary" size="sm" onClick={() => { setKind("mcp_tool"); setProvider("mcp"); }}>MCP</Button>
-          <a href="#managed-imports" className="rounded-lg border border-[var(--border-soft)] px-3 py-2 text-xs">声明式 Plugin</a>
-          <Button variant="secondary" size="sm" onClick={() => { setKind("agent"); setProvider("all"); }}>Agent</Button>
-          <Button variant="secondary" size="sm" onClick={() => { setKind("workflow"); setProvider("all"); }}>Workflow</Button>
-          <Button variant="secondary" size="sm" onClick={() => { setKind("tool"); setProvider("builtin"); }}>内置能力</Button>
-        </div>
-        <ManagedImports />
+
         {report && <div className="capability-refresh-report" role="status">发现 {report.discovered} · 就绪 {report.ready} · 不可用 {report.unavailable} · 重复 {report.duplicates} · Provider 失败 {report.provider_failures}</div>}
         {error && <ErrorState title="能力信息暂时无法加载" description={error} action={<Button variant="secondary" size="sm" onClick={() => void reload()}>重试</Button>} />}
 
@@ -139,7 +132,7 @@ export default function CapabilitiesPage() {
 
         <div className="capability-split-layout">
           <section className="capability-list-panel" aria-label="能力列表">
-            <div className="capability-list-heading"><div><h2>系统能力</h2><p>{visibleCapabilities.length} 项真实记录</p></div></div>
+            <div className="capability-list-heading"><div><h2>忆涟现在会什么</h2><p>{visibleCapabilities.length} 项真实记录</p></div></div>
             <div className="capability-list-scroll scrollbar-thin">
               {capabilities === null ? (
                 <div className="capability-skeleton-stack" aria-label="正在加载能力"><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div>
@@ -151,9 +144,11 @@ export default function CapabilitiesPage() {
                     const presentation = formatCapabilityStatus(capability.status);
                     return (
                       <button type="button" key={capability.id} aria-selected={capability.id === selectedId} onClick={() => void selectCapability(capability)} className={`capability-list-row ${capability.id === selectedId ? "capability-list-row-selected" : ""}`}>
-                        <span className="capability-list-row-heading"><Boxes className="h-4 w-4 shrink-0 text-[var(--accent-purple)]" /><strong>{capability.name}</strong><CapabilityStatusBadge label={presentation.label} tone={presentation.tone} /></span>
+                        <span className="capability-list-row-heading"><Boxes className="h-4 w-4 shrink-0 text-[var(--accent-purple)]" /><strong>{capability.kind === "tool" ? formatToolDisplayName(capability.name) : capability.name}</strong><CapabilityStatusBadge label={presentation.label} tone={presentation.tone} /></span>
                         <span className="capability-list-row-description">{capability.description || "暂无描述"}</span>
                         <span className="capability-list-row-meta">{formatCapabilityKind(capability.kind)} · {formatCapabilityProvider(capability.provider)}</span>
+                        <span className="u2-capability-permissions">权限：{capability.permissions.length ? capability.permissions.slice(0,2).map(item=>formatPermission(item.permission)).join("、") : "未提供权限信息"}{capability.permissions.length>2 ? ` 等 ${capability.permissions.length} 项` : ""}</span>
+                        <span className="u2-capability-action">查看详情 →</span>
                       </button>
                     );
                   })}
@@ -166,6 +161,7 @@ export default function CapabilitiesPage() {
             {selectedDetail ? <CapabilityDetail capability={selectedDetail} loading={detailLoading} error={detailError} onManage={(to) => navigate(to)} /> : <EmptyState icon={<Boxes className="h-6 w-6" />} title="选择一项能力" description="查看真实的能力、权限与状态字段。" className="h-full min-h-[320px]" />}
           </section>
         </div>
+        <details className="u2-disclosure u2-managed-imports"><summary>添加与管理能力来源 <span>托管 Skill / Plugin 导入与启用</span></summary><ManagedImports /></details>
       </div>
 
       <Modal open={sourceChooserOpen} onClose={() => setSourceChooserOpen(false)} title="新增能力来源">
@@ -197,18 +193,19 @@ function CapabilityDetail({ capability, loading, error, onManage }: { capability
   const managementTarget = getCapabilityManagementTarget(capability);
   return (
     <div className="capability-detail-content">
-      <div className="capability-detail-heading"><div><div className="capability-detail-title-line"><Boxes className="h-5 w-5 text-[var(--accent-primary)]" /><h2>{capability.name}</h2><CapabilityStatusBadge label={status.label} tone={status.tone} /></div><p className="capability-detail-description">{capability.description || "暂无描述"}</p></div>{managementTarget && <Button variant="secondary" size="sm" onClick={() => onManage(managementTarget.to)}><Settings2 className="h-4 w-4" />管理来源</Button>}</div>
+      <div className="capability-detail-heading"><div><div className="capability-detail-title-line"><Boxes className="h-5 w-5 text-[var(--accent-primary)]" /><h2>{capability.kind === "tool" ? formatToolDisplayName(capability.name) : capability.name}</h2><CapabilityStatusBadge label={status.label} tone={status.tone} /></div><p className="capability-detail-description">{capability.description || "暂无描述"}</p></div>{managementTarget && <Button variant="secondary" size="sm" onClick={() => onManage(managementTarget.to)}><Settings2 className="h-4 w-4" />管理来源</Button>}</div>
       {loading && <div className="capability-detail-loading"><Skeleton className="h-4 w-1/2" /></div>}
       {error && <ErrorState title="能力详情暂时无法加载" description={error} />}
       <CapabilityDetailSection title="能力概览">
         <dl className="capability-meta-list"><CapabilityMetaRow label="类型" value={formatCapabilityKind(capability.kind)} /><CapabilityMetaRow label="Provider" value={formatCapabilityProvider(capability.provider)} /><CapabilityMetaRow label="风险" value={risk.label} /><CapabilityMetaRow label="启用状态" value={capability.enabled ? "已启用" : "已禁用"} /></dl>
         {!managementTarget && <p className="mt-3 text-sm text-[var(--text-secondary)]">这是由系统运行时提供的内置能力，不能在注册表中直接编辑或删除。</p>}
       </CapabilityDetailSection>
+      <CapabilityDetailSection title="来源与版本"><dl className="capability-meta-list"><CapabilityMetaRow label="来源" value={capability.metadata.source_name || formatCapabilityProvider(capability.provider)} /><CapabilityMetaRow label="版本" value={capability.metadata.version} /></dl></CapabilityDetailSection>
       <CapabilityDetailSection title="权限与作用域">
         <div className="capability-permission-list">{capability.permissions.length > 0 ? capability.permissions.map((permission) => <div key={permission.permission}><span>{formatPermission(permission.permission)}</span><code>{permission.permission}</code><em>{permission.required ? "必需" : "可选"}</em></div>) : <span>当前没有返回权限信息。</span>}</div>
       </CapabilityDetailSection>
       <CapabilityDetailSection title="技术详情" technical>
-        <dl className="capability-meta-list"><CapabilityMetaRow label="能力 ID" value={capability.id} mono /><CapabilityMetaRow label="原始类型" value={capability.kind} mono /><CapabilityMetaRow label="原始 Provider" value={capability.provider} mono /><CapabilityMetaRow label="来源 ID" value={capability.metadata.source_id} mono /><CapabilityMetaRow label="来源名称" value={capability.metadata.source_name} /><CapabilityMetaRow label="版本" value={capability.metadata.version} mono /><CapabilityMetaRow label="运行时就绪" value={capability.metadata.runtime_ready ? "是" : "否"} /></dl>{capability.input_schema && <pre className="capability-content-preview mt-3">{JSON.stringify(capability.input_schema, null, 2)}</pre>}
+        <dl className="capability-meta-list"><CapabilityMetaRow label="原始名称" value={capability.name} /><CapabilityMetaRow label="能力 ID" value={capability.id} mono /><CapabilityMetaRow label="原始类型" value={capability.kind} mono /><CapabilityMetaRow label="原始 Provider" value={capability.provider} mono /><CapabilityMetaRow label="来源 ID" value={capability.metadata.source_id} mono /><CapabilityMetaRow label="来源名称" value={capability.metadata.source_name} /><CapabilityMetaRow label="版本" value={capability.metadata.version} mono /><CapabilityMetaRow label="运行时就绪" value={capability.metadata.runtime_ready ? "是" : "否"} /></dl>{capability.input_schema && <pre className="capability-content-preview mt-3">{JSON.stringify(capability.input_schema, null, 2)}</pre>}
       </CapabilityDetailSection>
     </div>
   );

@@ -207,7 +207,6 @@ export default function ModelManagerPanel({ legacyModel, actions }: ModelManager
       <div className="u2-model-basic rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 space-y-4">
         <div>
           <h4 className="text-sm font-medium">基础设置</h4>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">保留旧版运行参数，并与模型服务统一保存在当前设置中。</p>
         </div>
         {legacyModel.config.migration_pending ? (
           <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2">
@@ -220,13 +219,13 @@ export default function ModelManagerPanel({ legacyModel, actions }: ModelManager
           </div>
         ) : null}
         <ModelPresetSelect url={legacyModel.config.model.base_url} onField={(key,value)=>legacyModel.updateField("model",key,value)} onAdvanced={()=>{if(advancedRef.current)advancedRef.current.open=true;}} />
-        <div className="flex items-center justify-between">
+        {legacyModel.config.model.api_key_configured && <div className="flex items-center justify-between">
           <p className="text-xs text-[var(--text-muted)]">{legacyModel.secretSourceLabel(legacyModel.config.model.api_key_source)}</p>
           <div className="flex gap-2">
             {legacyModel.config.model.api_key_configured && <Button variant="secondary" size="sm" onClick={() => setReplaceApiKey(true)}>替换密钥</Button>}
             {legacyModel.config.model.api_key_configured && <Button variant="secondary" size="sm" onClick={() => void legacyModel.clearSecret("api_key")}>清除密钥</Button>}
           </div>
-        </div>
+        </div>}
         {(!legacyModel.config.model.api_key_configured || replaceApiKey) && <Input label="API 密钥" type="password" value={legacyModel.config.model.api_key} onChange={(event) => legacyModel.updateField("model", "api_key", event.target.value)} placeholder="输入后安全保存" />}
         <Input label="模型名称" value={legacyModel.config.model.name} onChange={(event) => legacyModel.updateField("model", "name", event.target.value)} />
         {actions}
@@ -260,7 +259,7 @@ export default function ModelManagerPanel({ legacyModel, actions }: ModelManager
 
       <div className="grid gap-2">
         {models.map((model) => (
-          <div key={model.id} className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3">
+          <div key={model.id} data-model-id={model.id} className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="flex items-center gap-2"><span className="truncate text-sm font-medium">{model.label}</span>{model.active ? <Badge tone="success">使用中</Badge> : null}{model.verified_at ? <Badge tone="info"><CheckCircle2 className="h-3 w-3" />已验证</Badge> : <Badge tone="default"><CircleAlert className="h-3 w-3" />未验证</Badge>}</div>
@@ -279,7 +278,7 @@ export default function ModelManagerPanel({ legacyModel, actions }: ModelManager
         ))}
       </div>
 
-      <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--border-strong)] p-3">
+      <div data-testid="model-profile-form" className="rounded-[var(--radius-md)] border border-dashed border-[var(--border-strong)] p-3">
         <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-medium">{editingId ? "编辑模型档案" : "添加模型档案"}</h4>{editingId ? <Button variant="ghost" size="sm" onClick={() => { setEditingId(null); setReplaceProfileApiKey(false); setForm(emptyForm()); }}>取消编辑</Button> : null}</div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div><label className="mb-1.5 block text-sm font-medium">服务商</label><select value={form.provider} onChange={(event) => changeProvider(event.target.value as ProviderPresetId)} className="w-full rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2 text-sm text-[var(--text)]"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="qwen">千问</option><option value="glm">GLM</option><option value="custom">自定义 OpenAI 兼容</option></select></div>

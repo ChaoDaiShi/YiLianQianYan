@@ -19,7 +19,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 const STATUS_PRESENTATIONS: Record<string, { label: string; tone: CapabilityTone }> = {
-  ready: { label: "就绪", tone: "success" },
+  ready: { label: "可用", tone: "success" },
   unavailable: { label: "不可用", tone: "danger" },
   disabled: { label: "已禁用", tone: "default" },
   misconfigured: { label: "配置错误", tone: "warning" },
