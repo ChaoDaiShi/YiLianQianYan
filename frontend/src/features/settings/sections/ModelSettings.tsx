@@ -5,6 +5,8 @@ import { secretSourceLabel } from "../model/mapping";
 import ProviderReadinessCard from "./ProviderReadinessCard";
 
 interface ModelSettingsProps {
+  actions?: React.ReactNode;
+  dirty: boolean;
   config: AppConfig;
   updateField: (section: keyof AppConfig, key: string, value: any) => void;
   clearSecret: (field: "api_key" | "embedding_api_key") => Promise<void>;
@@ -16,6 +18,8 @@ interface ModelSettingsProps {
 }
 
 export default function ModelSettings({
+  actions,
+  dirty,
   config,
   updateField,
   clearSecret,
@@ -27,8 +31,8 @@ export default function ModelSettings({
 }: ModelSettingsProps) {
   return (
     <div className="space-y-4">
-      <ProviderReadinessCard readiness={readiness} kinds={["model"]} testing={testing} results={results} onVerify={onVerify} />
       <ModelManagerPanel
+        actions={<><ProviderReadinessCard dirty={dirty} readiness={readiness} kinds={["model"]} testing={testing} results={results} onVerify={onVerify} />{actions}</>}
         legacyModel={{ config, updateField, clearSecret, secretSourceLabel, secretRefreshToken }}
       />
     </div>

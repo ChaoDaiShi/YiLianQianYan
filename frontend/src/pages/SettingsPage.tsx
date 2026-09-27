@@ -87,6 +87,7 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setSaving(true);
     setSaveError("");
+    setProviderTestResults({});
     const result = await updateSettings(config);
     if (result && !result.error) {
       const fresh = await getSettings();
@@ -147,6 +148,7 @@ export default function SettingsPage() {
     }
     setSaved(true);
     setSaveError("");
+    setProviderTestResults({});
     window.setTimeout(() => setSaved(false), 2500);
   };
 
@@ -183,11 +185,13 @@ export default function SettingsPage() {
     }
     setSaved(true);
     setSaveError("");
+    setProviderTestResults({});
     window.setTimeout(() => setSaved(false), 2500);
   };
 
   const updateField = (section: keyof AppConfig, key: string, value: any) => {
     setSaveError("");
+    setProviderTestResults({});
     setSaved(false);
     setConfig((prev: any) => ({
       ...prev,
@@ -197,6 +201,7 @@ export default function SettingsPage() {
 
   const updateVoiceField = (side: "stt" | "tts", key: string, value: string | number) => {
     setSaveError("");
+    setProviderTestResults({});
     setSaved(false);
     setConfig((prev) => ({
       ...prev,
@@ -212,7 +217,7 @@ export default function SettingsPage() {
     const result = await verifyProviderConnection(kind);
     setProviderTestResults((current) => ({
       ...current,
-      [kind]: result.ok ? "连接测试完成" : result.error,
+      [kind]: result.ok ? "连接正常" : result.error,
     }));
     setTestingProvider(null);
   };
@@ -241,11 +246,25 @@ export default function SettingsPage() {
     reader.readAsDataURL(file);
   };
 
+  const saveActions = (
+<section className="settings-save-card rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-[var(--text-faint)]">先保存配置，再测试连接。密钥留空保留原值；清除需单独确认。</p>
+                <Button onClick={handleSave} disabled={!dirty || saving || testingProvider !== null} aria-label="保存设置">
+                  <Check className="w-4 h-4" />
+                  {saving ? "保存中…" : "保存设置"}
+                </Button>
+              </div>
+            </section>
+  );
+
   const renderSection = () => {
     switch (activeSection) {
       case "model":
         return (
           <ModelSettings
+            actions={saveActions}
+            dirty={dirty}
             config={config}
             updateField={updateField}
             clearSecret={clearSecret}
@@ -260,6 +279,7 @@ export default function SettingsPage() {
       case "voice":
         return (
           <VoiceSettings
+            dirty={dirty}
             config={config}
             updateVoiceField={updateVoiceField}
             replaceVoiceKey={replaceVoiceKey}
@@ -347,15 +367,7 @@ export default function SettingsPage() {
         <div className="system-settings-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-thin">
           <div className="settings-form space-y-6">
             {renderSection()}
-            <section className="settings-save-card rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-[var(--text-faint)]">修改后点击保存设置；密钥输入在保存后会被清空并重新读取脱敏状态。</p>
-                <Button onClick={handleSave} disabled={!dirty || saving} aria-label="保存设置">
-                  <Check className="w-4 h-4" />
-                  {saving ? "保存中…" : "保存设置"}
-                </Button>
-              </div>
-            </section>
+            {activeSection !== "model" && saveActions}
           </div>
         </div>
       </div>

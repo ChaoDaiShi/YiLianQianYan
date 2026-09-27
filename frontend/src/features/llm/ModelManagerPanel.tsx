@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, CircleAlert, Pencil, Plus, RefreshCw, Trash2, Zap } from "lucide-react";
 import {
   activateLlmModel,
@@ -11,6 +11,7 @@ import {
 } from "../../api/client";
 import type { AppConfig, LlmModel, LlmModelPayload, LlmUsageReport } from "../../types";
 import { Badge, Button, Input } from "../../components/ui";
+import ModelPresetSelect from "../settings/sections/ModelPresetSelect";
 import ModelTree from "./ModelTree";
 import TokenUsageChart from "./TokenUsageChart";
 import { buildUsageQuery, providerLabel, PROVIDER_PRESETS, type ProviderPresetId } from "./llmModelUtils";
@@ -45,9 +46,11 @@ interface LegacyModelSettingsProps {
 
 interface ModelManagerPanelProps {
   legacyModel: LegacyModelSettingsProps;
+  actions?: React.ReactNode;
 }
 
-export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProps) {
+export default function ModelManagerPanel({ legacyModel, actions }: ModelManagerPanelProps) {
+  const advancedRef = useRef<HTMLDetailsElement>(null);
   const [models, setModels] = useState<LlmModel[]>([]);
   const [form, setForm] = useState<LlmModelPayload>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -192,18 +195,19 @@ export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProp
       <div>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">模型服务管理</h3>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">支持多个 OpenAI 兼容服务商；API Key 只保存到系统凭据库。</p>
+            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">模型服务</h3>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">选择服务，输入密钥和模型，保存后测试连接。</p>
           </div>
-          {activeModel ? <Badge tone="success"><Zap className="h-3 w-3" />当前：{activeModel.label}</Badge> : null}
+          {activeModel ? <Badge tone="success"><Zap className="h-3 w-3" />当前档案：{activeModel.label}</Badge> : null}
         </div>
         {feedback ? <p className="mt-2 text-xs text-[var(--accent-primary)]" role="status">{feedback}</p> : null}
       </div>
 
-      <div className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3 space-y-4">
+      {activeModel && <p className="u2-config-note" role="status">当前运行使用“{activeModel.label}”档案。下方默认配置仅作备用；修改当前模型请展开“多模型档案与用量”。连接测试使用当前运行档案。</p>}
+      <div className="u2-model-basic rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 space-y-4">
         <div>
-          <h4 className="text-sm font-medium">运行时兼容配置</h4>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">保留旧版运行参数，并与模型服务管理统一保存在当前设置中。</p>
+          <h4 className="text-sm font-medium">基础设置</h4>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">保留旧版运行参数，并与模型服务统一保存在当前设置中。</p>
         </div>
         {legacyModel.config.migration_pending ? (
           <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2">
@@ -215,8 +219,7 @@ export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProp
             <p className="text-xs text-[var(--danger)]">系统安全凭据库不可用，无法新增直接密钥；环境变量方式仍可使用。</p>
           </div>
         ) : null}
-        <Input label="API 地址" value={legacyModel.config.model.base_url} onChange={(event) => legacyModel.updateField("model", "base_url", event.target.value)} />
-        <Input label="模型名称" value={legacyModel.config.model.name} onChange={(event) => legacyModel.updateField("model", "name", event.target.value)} />
+        <ModelPresetSelect url={legacyModel.config.model.base_url} onField={(key,value)=>legacyModel.updateField("model",key,value)} onAdvanced={()=>{if(advancedRef.current)advancedRef.current.open=true;}} />
         <div className="flex items-center justify-between">
           <p className="text-xs text-[var(--text-muted)]">{legacyModel.secretSourceLabel(legacyModel.config.model.api_key_source)}</p>
           <div className="flex gap-2">
@@ -225,6 +228,10 @@ export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProp
           </div>
         </div>
         {(!legacyModel.config.model.api_key_configured || replaceApiKey) && <Input label="API 密钥" type="password" value={legacyModel.config.model.api_key} onChange={(event) => legacyModel.updateField("model", "api_key", event.target.value)} placeholder="输入后安全保存" />}
+        <Input label="模型名称" value={legacyModel.config.model.name} onChange={(event) => legacyModel.updateField("model", "name", event.target.value)} />
+        {actions}
+        <details ref={advancedRef} className="u2-disclosure"><summary>高级设置 <span>地址、采样与 Embedding</span></summary><div className="space-y-4 pt-4">
+        <Input label="API 地址" value={legacyModel.config.model.base_url} onChange={(event) => legacyModel.updateField("model", "base_url", event.target.value)} />
         <Input label="环境变量名" value={legacyModel.config.model.api_key_env} onChange={(event) => legacyModel.updateField("model", "api_key_env", event.target.value)} />
         <div className="border-t border-[var(--border)] pt-4 space-y-4">
           <h5 className="font-semibold text-sm text-[var(--text-muted)]">Embedding 配置</h5>
@@ -245,8 +252,10 @@ export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProp
           <Input label="最大 Token" type="number" value={String(legacyModel.config.model.max_tokens)} onChange={(event) => legacyModel.updateField("model", "max_tokens", parseInt(event.target.value) || 0)} />
         </div>
         <Input label="超时 (ms)" type="number" value={String(legacyModel.config.model.invoke_timeout_ms)} onChange={(event) => legacyModel.updateField("model", "invoke_timeout_ms", parseInt(event.target.value) || 0)} />
+        </div></details>
       </div>
 
+      <details className="u2-disclosure u2-profile-management"><summary>多模型档案与用量 <span>管理来源、切换模型与使用记录</span></summary><div className="space-y-4 pt-4">
       <ModelTree models={models.filter((model) => Boolean(model.verified_at))} />
 
       <div className="grid gap-2">
@@ -289,6 +298,7 @@ export default function ModelManagerPanel({ legacyModel }: ModelManagerPanelProp
         <div className="flex flex-wrap items-end gap-2"><div className="min-w-40 flex-1"><label className="mb-1 block text-xs text-[var(--text-muted)]">模型</label><select value={usageModelId} onChange={(event) => setUsageModelId(event.target.value)} className="w-full rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2 text-sm text-[var(--text)]"><option value="">全部模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></div><div><label className="mb-1 block text-xs text-[var(--text-muted)]">开始</label><input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-2.5 py-2 text-sm text-[var(--text)]" /></div><div><label className="mb-1 block text-xs text-[var(--text-muted)]">结束</label><input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-2.5 py-2 text-sm text-[var(--text)]" /></div></div>
         <TokenUsageChart report={usage} />
       </div>
+      </div></details>
     </div>
   );
 }

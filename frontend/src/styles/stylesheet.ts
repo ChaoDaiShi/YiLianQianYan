@@ -32,4 +32,5 @@ export const stylesheetText = [
   "responsive.css",
   "animations.css",
   "markdown.css",
+  "workbench.css",
 ].map(styleFile).join("\n");

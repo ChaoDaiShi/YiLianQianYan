@@ -66,7 +66,7 @@ describe("Settings contract", () => {
   it("integrates legacy model controls into the model manager", () => {
     expect(source).toContain("<ModelManagerPanel");
     expect(source).toContain("legacyModel");
-    expect(modelManagerSource).toContain("运行时兼容配置");
+    expect(modelManagerSource).toContain("基础设置");
     expect(modelManagerSource).toContain("API 地址");
     expect(modelManagerSource).toContain("Embedding 配置");
     expect(source).not.toContain('<Input label="API 地址" value={config.model.base_url}');
