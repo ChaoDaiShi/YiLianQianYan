@@ -123,8 +123,14 @@ pub async fn dispatch_execution(
         .with_adapter(CommandExecutor::new(server.command_router.clone()))
         .with_adapter(WorkflowExecutor::new(Arc::new(ExistingWorkflowProvider {
             server: Arc::clone(&server),
-            cancel,
-        })));
+            cancel: cancel.clone(),
+        })))
+        .with_adapter(super::super::CapabilityExecutor::new(Arc::new(
+            super::capability_execution::ExistingCapabilityProvider {
+                server: Arc::clone(&server),
+                cancel,
+            },
+        )));
     let result = registry.dispatch(&plan, &execution).await;
     // A cooperative cancellation may settle after an in-flight atomic call.
     // Preserve the authoritative cancelled row and discard its late output.

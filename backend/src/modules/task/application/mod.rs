@@ -11,3 +11,5 @@ pub mod capability_binding;
 pub mod execution_service;
 pub mod graph_service;
 pub mod review_service;
+
+pub mod capability_execution;

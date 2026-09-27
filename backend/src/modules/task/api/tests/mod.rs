@@ -31,3 +31,4 @@ fn server() -> Arc<AppServer> {
 async fn body(response: Response) -> Value {
     serde_json::from_slice(&to_bytes(response.into_body(), 256 * 1024).await.unwrap()).unwrap()
 }
+mod mcp_canvas;

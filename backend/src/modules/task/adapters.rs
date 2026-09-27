@@ -230,9 +230,21 @@ impl TaskExecutorAdapter for WorkflowExecutor {
 pub trait CapabilityExecutionProvider: Send + Sync {
     async fn execute(
         &self,
+        _capability_id: &str,
+        _context: &super::NodeContext,
+    ) -> Result<Option<Value>, AdapterError> {
+        Err(AdapterError::ProviderUnavailable)
+    }
+    /// Additive dispatch contract: providers may pause for a real approval.
+    async fn dispatch(
+        &self,
         capability_id: &str,
-        context: &super::NodeContext,
-    ) -> Result<Option<Value>, AdapterError>;
+        execution: &NodeExecution,
+    ) -> Result<ExecutorDispatch, AdapterError> {
+        let output = self.execute(capability_id, &execution.context).await?;
+        ensure_output_bound(output.as_ref())?;
+        Ok(ExecutorDispatch::Completed { output })
+    }
 }
 
 pub struct CapabilityExecutor {
@@ -271,9 +283,11 @@ impl TaskExecutorAdapter for CapabilityExecutor {
         let Some(provider) = &self.provider else {
             return Err(AdapterError::ProviderUnavailable);
         };
-        let output = provider.execute(&plan.provider, &execution.context).await?;
-        ensure_output_bound(output.as_ref())?;
-        Ok(ExecutorDispatch::Completed { output })
+        let result = provider.dispatch(&plan.provider, execution).await?;
+        if let ExecutorDispatch::Completed { output } = &result {
+            ensure_output_bound(output.as_ref())?;
+        }
+        Ok(result)
     }
 }
 

@@ -200,6 +200,7 @@ enum ApprovalTarget {
     Agent,
     Workflow,
     TaskAgent,
+    TaskNodeExecution,
     InvalidBinding,
 }
 
@@ -210,27 +211,45 @@ enum ApprovalTarget {
 /// binding is treated as data corruption and fails closed rather than falling
 /// back to a different runtime.
 fn classify_approval(approval: &PendingApproval) -> ApprovalTarget {
-    let has_task = approval.task_id.is_some()
-        || approval.task_execution_id.is_some()
-        || approval.agent_execution_id.is_some();
-    if has_task {
-        return match (
-            &approval.task_id,
-            &approval.task_execution_id,
-            &approval.agent_execution_id,
-        ) {
-            (Some(_), Some(_), Some(_)) => ApprovalTarget::TaskAgent,
-            _ => ApprovalTarget::InvalidBinding,
-        };
+    let task = [
+        &approval.task_id,
+        &approval.task_execution_id,
+        &approval.agent_execution_id,
+    ];
+    let workflow = [
+        &approval.execution_id,
+        &approval.workflow_run_id,
+        &approval.workflow_node_id,
+    ];
+    let node = [
+        &approval.task_graph_id,
+        &approval.task_node_id,
+        &approval.node_execution_id,
+    ];
+    let groups = [task, workflow, node];
+    let active = groups
+        .iter()
+        .filter(|group| group.iter().any(|field| field.is_some()))
+        .count();
+    if active == 0 {
+        return ApprovalTarget::Agent;
     }
-
-    let has_execution = approval.execution_id.is_some();
-    let has_run = approval.workflow_run_id.is_some();
-    let has_node = approval.workflow_node_id.is_some();
-    match (has_execution, has_run, has_node) {
-        (false, false, false) => ApprovalTarget::Agent,
-        (true, true, true) => ApprovalTarget::Workflow,
-        _ => ApprovalTarget::InvalidBinding,
+    if active != 1 {
+        return ApprovalTarget::InvalidBinding;
+    }
+    let complete = |group: &[&Option<String>; 3]| {
+        group
+            .iter()
+            .all(|field| field.as_ref().is_some_and(|value| !value.trim().is_empty()))
+    };
+    if complete(&task) {
+        ApprovalTarget::TaskAgent
+    } else if complete(&workflow) {
+        ApprovalTarget::Workflow
+    } else if complete(&node) {
+        ApprovalTarget::TaskNodeExecution
+    } else {
+        ApprovalTarget::InvalidBinding
     }
 }
 
@@ -555,6 +574,9 @@ pub async fn approve_handler(
             }
             Ok(Sse::new(task_agent_approval_stream(server, lookup, true)))
         }
+        ApprovalTarget::TaskNodeExecution => {
+            Err((StatusCode::CONFLICT, "任务节点审批恢复尚未安装".into()))
+        }
         ApprovalTarget::InvalidBinding => Err((StatusCode::CONFLICT, "审批绑定不完整".to_string())),
     }
 }
@@ -608,6 +630,9 @@ pub async fn reject_handler(
             }
             Ok(Sse::new(task_agent_approval_stream(server, lookup, false)))
         }
+        ApprovalTarget::TaskNodeExecution => {
+            Err((StatusCode::CONFLICT, "任务节点审批恢复尚未安装".into()))
+        }
         ApprovalTarget::InvalidBinding => Err((StatusCode::CONFLICT, "审批绑定不完整".to_string())),
     }
 }
@@ -642,6 +667,9 @@ pub async fn cancel_handler(
             }
             Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
         },
+        ApprovalTarget::TaskNodeExecution => {
+            Json(serde_json::json!({"ok":false,"error":"任务节点审批恢复尚未安装"}))
+        }
         ApprovalTarget::InvalidBinding => {
             Json(serde_json::json!({"ok": false, "error": "审批绑定不完整"}))
         }
@@ -1736,6 +1764,9 @@ mod tests {
             task_id: None,
             task_execution_id: None,
             agent_execution_id: None,
+            task_graph_id: None,
+            task_node_id: None,
+            node_execution_id: None,
         }
     }
 
