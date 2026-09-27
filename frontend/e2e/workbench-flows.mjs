@@ -6,19 +6,16 @@ import {join} from 'node:path';
 
 // Only the external provider is a deterministic, explicitly labelled fixture.
 // The app backend, its HTTP client, OS SecretStore and SQLite stay real.
-async function protocolFixture() {
+export async function protocolFixture() {
   const state={expected:'',reject:false,calls:[]};
   const server=createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;
     const body=JSON.parse(raw||'{}');
     const authenticated=req.headers.authorization===`Bearer ${state.expected}`;
-    state.calls.push({path:req.url,authenticated,stream:!!body.stream,forced_rejection:state.reject});
+    state.calls.push({at:Date.now(),path:req.url,authenticated,stream:!!body.stream,forced_rejection:state.reject});
     if(!authenticated||state.reject){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Local fixture rejected credential'}}));return;}
     const content='LOCAL_FIXTURE_RESPONSE：本地协议验收，无外部模型调用。';
     if(body.stream){
-      // The visual suite controls first-token timing. The untouched Chat runtime
-      // can race an instantaneous reply against its initial history hydration.
-      if(state.beforeStream)await state.beforeStream();
       res.writeHead(200,{'Content-Type':'text/event-stream'});
       res.write(`data: ${JSON.stringify({id:'fixture',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})}\n\n`);
       res.write(`data: ${JSON.stringify({id:'fixture',choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})}\n\n`);
@@ -125,11 +122,6 @@ export async function verifyWorkbenchFlows({page,frontendPort,backendPort,contro
     await page.locator('.composer-card textarea').fill(message);
     await reach(page.getByTitle('选择、拖入或粘贴文件（最多 8 个，每个 25 MiB）'));
     await reach(button('与小涟语音对话'));
-    const hydration=page.waitForResponse(r=>r.request().method()==='GET'&&/\/api\/conversations\/[^/]+$/.test(new URL(r.url()).pathname));
-    fixture.state.beforeStream=async()=>{
-      await (await hydration).finished();
-      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-    };
     await button('发送').click();
     await page.locator('.conversation-message-assistant').filter({hasText:'LOCAL_FIXTURE_RESPONSE'}).waitFor({timeout:15000});
     await page.reload({waitUntil:'domcontentloaded'});
@@ -187,7 +179,7 @@ export async function verifyWorkbenchFlows({page,frontendPort,backendPort,contro
         assert.ok(!(await api('GET','/api/llm/models')).some(model=>model.id===profileId));
         checks.push({disposable_profile_removed:true});
       }
-      await writeFile(join(evidenceDir,'flow-checks.json'),JSON.stringify({status:complete?'passed':'failed',checks,provider_calls:fixture.state.calls,provider_kind:'loopback protocol fixture, not a real cloud model',first_token_timing:'after initial conversation history hydration; instant-response race not fixed by U2'},null,2));
+      await writeFile(join(evidenceDir,'flow-checks.json'),JSON.stringify({status:complete?'passed':'failed',checks,provider_calls:fixture.state.calls,provider_kind:'loopback protocol fixture, not a real cloud model',first_token_timing:'immediate provider response; no history wait or artificial delay'},null,2));
     }
     finally { await fixture.close(); }
   }

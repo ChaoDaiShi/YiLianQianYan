@@ -7,6 +7,7 @@ import { chromium } from "playwright-core";
 import { uiFoundation, collectGeometry } from "./ui-foundation.mjs";
 import { canvasStudio, studioGeometry } from "./canvas-studio.mjs";
 import { canvasStability } from "./canvas-stability.mjs";
+import { chatReliability } from "./chat-reliability.mjs";
 import { chatViewRace } from "./chat-view-race.mjs";
 import { workbenchU2 } from "./workbench-u2.mjs";
 
@@ -36,11 +37,12 @@ const edgePaths = [
 
 const processes = [];
 const logs = new Map();
+const chatR1 = process.env.YILIAN_E2E_CHAT_R1;
 const chatFocused = process.env.YILIAN_E2E_CHAT_FOCUSED;
 const studioStage = process.env.YILIAN_E2E_STUDIO;
 const workbenchStage = process.env.YILIAN_E2E_WORKBENCH;
 const uiStage = process.env.YILIAN_E2E_UI_MATRIX;
-const evidenceDir = join(repositoryRoot, "target", chatFocused ? "chat-reliability-r1" : workbenchStage ? "workbench-u2" : studioStage ? "canvas-studio" : uiStage === "baseline" ? "ui-baseline" : uiStage ? "ui-foundation" : "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
+const evidenceDir = join(repositoryRoot, "target", chatFocused || chatR1 ? "chat-reliability-r1" : workbenchStage ? "workbench-u2" : studioStage ? "canvas-studio" : uiStage === "baseline" ? "ui-baseline" : uiStage ? "ui-foundation" : "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
 const browserLog = [];
 const networkLog = [];
 let browser;
@@ -171,7 +173,12 @@ try {
     await laterSetup.click();
     await laterSetup.waitFor({ state: "hidden" });
   }
-  if (chatFocused) {
+  if (chatR1) {
+    const result=await chatReliability({page,frontendPort,backendPort,controlToken,evidenceDir});
+    if(browserErrors.length)throw new Error(browserErrors.join(" | "));
+    await writeFile(join(evidenceDir,"result.json"),JSON.stringify({...result,browser:executablePath,browser_version:browser.version()},null,2));
+    process.stdout.write(JSON.stringify(result)+"\n");testExitCode=0;
+  } else if (chatFocused) {
     const result=await chatViewRace({page,frontendPort,evidenceDir});
     if(browserErrors.length)throw new Error(browserErrors.join(" | "));
     await writeFile(join(evidenceDir,"result.json"),JSON.stringify(result,null,2));
@@ -257,7 +264,9 @@ try {
   }
   }
 
-  const canvasResult = await canvasStability({ page, backendPort, frontendPort, controlToken, evidenceDir });
+  const canvasResult = process.env.YILIAN_E2E_SKIP_CANVAS
+    ? { status: "not_run", stale_responses: 0, reason: "Frozen U2/C2 baseline; no Canvas or CSS changes in Chat R1" }
+    : await canvasStability({ page, backendPort, frontendPort, controlToken, evidenceDir });
   // The scenario deliberately provokes exactly one real stale revision. Match
   // that observed response to Chromium's network diagnostic, not to page errors.
   const expectedConflicts = browserErrors.filter((message) => message === "Failed to load resource: the server responded with a status of 409 (Conflict)");
@@ -268,7 +277,7 @@ try {
   }
   const result = {
     status: "passed",
-    graphs_created: process.env.YILIAN_E2E_CANVAS_ONLY ? 1 : 3,
+    graphs_created: process.env.YILIAN_E2E_CANVAS_ONLY ? 1 : process.env.YILIAN_E2E_SKIP_CANVAS ? 2 : 3,
     settings_viewports: checkedViewports,
     real_backend: true,
     browser: executablePath,
