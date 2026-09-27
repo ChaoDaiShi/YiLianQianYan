@@ -144,16 +144,46 @@ impl TaskWorldRuntime {
         graph_id: &TaskGraphId,
         execution_id: &NodeExecutionId,
     ) -> Result<TaskDispatchLease, TaskWorldRuntimeError> {
+        self.claim_dispatch(graph_id, execution_id, false)
+    }
+
+    /// A suspended approval has no provider future. Reserve a fresh signal only
+    /// while its authoritative attempt still waits; never revive terminal work.
+    pub fn claim_approval_dispatch(
+        &self,
+        graph_id: &TaskGraphId,
+        execution_id: &NodeExecutionId,
+    ) -> Result<TaskDispatchLease, TaskWorldRuntimeError> {
+        self.claim_dispatch(graph_id, execution_id, true)
+    }
+
+    fn claim_dispatch(
+        &self,
+        graph_id: &TaskGraphId,
+        execution_id: &NodeExecutionId,
+        resume_approval: bool,
+    ) -> Result<TaskDispatchLease, TaskWorldRuntimeError> {
         let _control_dispatch_guard = self.control_dispatch_lock.lock();
         let harnesses = self.harnesses.read();
         let execution = harnesses
             .get(graph_id)
             .and_then(|harness| harness.execution(execution_id))
             .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
-        if !execution.status.is_active() {
+        if !execution.status.is_active()
+            || (resume_approval && execution.status != NodeExecutionStatus::WaitingApproval)
+        {
             return Err(TaskHarnessError::InvalidValidationStatus(execution.status).into());
         }
         let mut registry = self.execution_tokens.lock();
+        if resume_approval {
+            registry
+                .entry(execution_id.clone())
+                .or_insert_with(|| ExecutionCancellation {
+                    graph_id: graph_id.clone(),
+                    token: CancellationToken::new(),
+                    in_flight: false,
+                });
+        }
         let entry = registry
             .get_mut(execution_id)
             .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;

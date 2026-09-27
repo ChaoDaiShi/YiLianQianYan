@@ -575,7 +575,28 @@ pub async fn approve_handler(
             Ok(Sse::new(task_agent_approval_stream(server, lookup, true)))
         }
         ApprovalTarget::TaskNodeExecution => {
-            Err((StatusCode::CONFLICT, "任务节点审批恢复尚未安装".into()))
+            let execution = crate::modules::task::application::capability_approval::resolve(
+                Arc::clone(&server),
+                &lookup,
+                true,
+            )
+            .await
+            .map_err(|message| (StatusCode::CONFLICT, message))?;
+            let consumed = server
+                .approval_store
+                .get(&approval_id)
+                .ok_or((StatusCode::CONFLICT, "审批不存在".into()))?;
+            let events = vec![
+                Ok(sse_event(
+                    "approval_resolved",
+                    serde_json::json!({"type":"approval_resolved","approval_id":approval_id,"status":consumed.status}),
+                )),
+                Ok(sse_event(
+                    "task_execution_updated",
+                    serde_json::json!({"type":"task_execution_updated","task_graph_id":execution.graph_id,"task_node_id":execution.node_id,"node_execution_id":execution.id,"status":execution.status}),
+                )),
+            ];
+            Ok(Sse::new(box_stream(futures::stream::iter(events))))
         }
         ApprovalTarget::InvalidBinding => Err((StatusCode::CONFLICT, "审批绑定不完整".to_string())),
     }
@@ -631,7 +652,28 @@ pub async fn reject_handler(
             Ok(Sse::new(task_agent_approval_stream(server, lookup, false)))
         }
         ApprovalTarget::TaskNodeExecution => {
-            Err((StatusCode::CONFLICT, "任务节点审批恢复尚未安装".into()))
+            let execution = crate::modules::task::application::capability_approval::resolve(
+                Arc::clone(&server),
+                &lookup,
+                false,
+            )
+            .await
+            .map_err(|message| (StatusCode::CONFLICT, message))?;
+            let consumed = server
+                .approval_store
+                .get(&approval_id)
+                .ok_or((StatusCode::CONFLICT, "审批不存在".into()))?;
+            let events = vec![
+                Ok(sse_event(
+                    "approval_resolved",
+                    serde_json::json!({"type":"approval_resolved","approval_id":approval_id,"status":consumed.status}),
+                )),
+                Ok(sse_event(
+                    "task_execution_updated",
+                    serde_json::json!({"type":"task_execution_updated","task_graph_id":execution.graph_id,"task_node_id":execution.node_id,"node_execution_id":execution.id,"status":execution.status}),
+                )),
+            ];
+            Ok(Sse::new(box_stream(futures::stream::iter(events))))
         }
         ApprovalTarget::InvalidBinding => Err((StatusCode::CONFLICT, "审批绑定不完整".to_string())),
     }
@@ -668,7 +710,12 @@ pub async fn cancel_handler(
             Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
         },
         ApprovalTarget::TaskNodeExecution => {
-            Json(serde_json::json!({"ok":false,"error":"任务节点审批恢复尚未安装"}))
+            match crate::modules::task::application::capability_approval::cancel(&server, &lookup) {
+                Ok(_) => Json(
+                    serde_json::json!({"ok":true,"approval_id":approval_id,"status":"cancelled"}),
+                ),
+                Err(error) => Json(serde_json::json!({"ok":false,"error":error})),
+            }
         }
         ApprovalTarget::InvalidBinding => {
             Json(serde_json::json!({"ok": false, "error": "审批绑定不完整"}))
@@ -1803,6 +1850,53 @@ mod tests {
         assert!(matches!(
             classify_approval(&approval),
             ApprovalTarget::InvalidBinding
+        ));
+    }
+
+    #[test]
+    fn classify_task_node_and_reject_mixed_partial_or_empty_targets() {
+        let node = crate::safety::PendingApproval {
+            task_graph_id: Some("g".into()),
+            task_node_id: Some("n".into()),
+            node_execution_id: Some("e".into()),
+            ..plain_approval()
+        };
+        assert!(matches!(
+            classify_approval(&node),
+            ApprovalTarget::TaskNodeExecution
+        ));
+        for invalid in [
+            crate::safety::PendingApproval {
+                task_graph_id: None,
+                ..node.clone()
+            },
+            crate::safety::PendingApproval {
+                node_execution_id: Some(" ".into()),
+                ..node.clone()
+            },
+            crate::safety::PendingApproval {
+                execution_id: Some("w".into()),
+                ..node.clone()
+            },
+            crate::safety::PendingApproval {
+                task_id: Some("a".into()),
+                ..node.clone()
+            },
+        ] {
+            assert!(matches!(
+                classify_approval(&invalid),
+                ApprovalTarget::InvalidBinding
+            ));
+        }
+        let agent = crate::safety::PendingApproval {
+            task_id: Some("t".into()),
+            task_execution_id: Some("t-e".into()),
+            agent_execution_id: Some("a-e".into()),
+            ..plain_approval()
+        };
+        assert!(matches!(
+            classify_approval(&agent),
+            ApprovalTarget::TaskAgent
         ));
     }
 

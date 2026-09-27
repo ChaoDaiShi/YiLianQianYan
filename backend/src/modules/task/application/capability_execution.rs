@@ -67,7 +67,7 @@ pub fn completed_result(
                     ),
                 });
             }
-            let output = json!({"kind":"capability_result","capability_id":capability_id,"content":tool_result.content,"ok":true});
+            let output = json!({"kind":"capability_result","capability_id":capability_id,"summary":crate::utils::text::truncate_chars(&tool_result.content,1000),"content":tool_result.content,"ok":true});
             if output.to_string().chars().count() > 32000 {
                 return Err(AdapterError::OutputTooLarge);
             }

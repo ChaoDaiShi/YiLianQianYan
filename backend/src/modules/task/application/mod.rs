@@ -13,3 +13,5 @@ pub mod graph_service;
 pub mod review_service;
 
 pub mod capability_execution;
+
+pub mod capability_approval;
