@@ -48,7 +48,7 @@
 .workbench-grid .home-quick-action:hover { background: var(--surface-hover); }
 .workbench-grid .composer-card, .workbench-grid .home-composer .composer-card,
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .composer-card {
-  border-radius: 12px; background: var(--surface-solid); border: 1px solid var(--border-strong);
+  border-radius: 12px; background: var(--surface-solid); border: 1px solid var(--border-soft);
   box-shadow: 0 3px 12px #00000008; backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 .workbench-grid .composer-card:focus-within,

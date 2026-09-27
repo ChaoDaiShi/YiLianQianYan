@@ -10,7 +10,10 @@ import { canvasStability } from "./canvas-stability.mjs";
 import { workbenchU2 } from "./workbench-u2.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..");
-const frontendRoot = resolve(import.meta.dirname, "..");
+const frontendRoot = resolve(process.env.YILIAN_E2E_FRONTEND_ROOT ?? resolve(import.meta.dirname, ".."));
+if (process.env.YILIAN_E2E_FRONTEND_ROOT && process.env.YILIAN_E2E_WORKBENCH !== "before") {
+  throw new Error("An alternate frontend root is only allowed for baseline capture");
+}
 
 function configuredPort(name, fallback) {
   const port = Number(process.env[name] ?? fallback);
@@ -168,7 +171,10 @@ try {
   }
   if (workbenchStage) {
     const result=await workbenchU2({page,frontendPort,backendPort,controlToken,evidenceDir,stage:workbenchStage});
-    if(browserErrors.length) throw new Error(`Workbench browser errors: ${browserErrors.join(' | ')}`);
+    const expectedProviderErrors=browserErrors.filter(message=>message==='Failed to load resource: the server responded with a status of 400 (Bad Request)');
+    if(expectedProviderErrors.length!==(result.flows?.expectedProviderErrors??0))throw new Error('Unexpected provider rejection diagnostics');
+    const unexpected=browserErrors.filter(message=>!expectedProviderErrors.includes(message));
+    if(unexpected.length) throw new Error(`Workbench browser errors: ${unexpected.join(' | ')}`);
     await writeFile(join(evidenceDir,'result.json'),JSON.stringify({...result,browser:executablePath,browser_version:browser.version()},null,2));
     process.stdout.write(JSON.stringify(result)+'\n');
     testExitCode=0;
@@ -203,6 +209,7 @@ try {
   await page.getByText("2 个图", { exact: true }).waitFor();
 
   await page.goto(`http://127.0.0.1:${frontendPort}/capabilities`, { waitUntil: "networkidle" });
+  await page.locator('.u2-managed-imports > summary').click();
   await page.getByRole("heading", { name: "托管 Skill 与声明式 Plugin" }).waitFor();
   if (await page.getByText(/托管导入服务 unavailable/).count()) {
     throw new Error("Managed import protected route was unavailable");
@@ -220,7 +227,7 @@ try {
   ]) {
     await page.setViewportSize(viewport);
     await page.goto(`http://127.0.0.1:${frontendPort}/settings?section=model`, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "设置" }).waitFor();
+    await page.getByRole("heading", { name: "设置", exact: true }).waitFor();
     const settingsContent = page.locator(".system-settings-content");
     const saveButton = page.getByRole("button", { name: "保存设置" });
     await saveButton.scrollIntoViewIfNeeded();
