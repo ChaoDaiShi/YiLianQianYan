@@ -1,3 +1,6 @@
+import type { CapabilityDescriptor } from "../../api/capabilities";
+import CapabilityPicker from "./capability-picker/CapabilityPicker";
+import { useCanvasCapabilities } from "./capability-picker/useCanvasCapabilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X, RefreshCw } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -45,6 +48,8 @@ export default function TaskWorldPage() {
 
 function TaskWorldSession({ graphId }: { graphId: string }) {
   const navigate = useNavigate();
+  const capabilities = useCanvasCapabilities();
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<StudioPanel>(null);
   const panelTrigger = useRef<HTMLElement | null>(null);
   const changePanel = useCallback((panel: StudioPanel) => {
@@ -118,7 +123,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
 
   const eventWarning = useTaskWorldEvents(graphId, refreshDetail, refreshView);
 
-  const projection = useMemo(() => detail ? projectTaskGraph(detail) : null, [detail]);
+  const projection = useMemo(() => detail ? projectTaskGraph(detail, capabilities.items) : null, [detail, capabilities.items]);
   const selectedNode = projection?.nodes.find((node) => node.id === focusedNodeId) || null;
   const graphLocked = detail?.nodes.some((node) => isActiveExecution(node.latest_execution?.status)) || false;
 
@@ -144,11 +149,18 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   if (!projection) return <TaskWorldLoading />;
 
   const addNode = () => { void mutate(() => addTaskNode(graphId, projection.revision, { id: crypto.randomUUID(), kind: "work", title: "新任务", input: { instruction: "", acceptance_criteria: [] }, retry_policy: { max_attempts: 1 } })); };
-  const canRun = !!selectedNode && !saving && !graphLocked && getExecutorAvailability(selectedNode.executor_ref).kind === "configured";
+  const addCapability = async (tool: CapabilityDescriptor) => {
+    const id = crypto.randomUUID();
+    if (await mutate(() => addTaskNode(graphId, projection.revision, {id,kind:"work",title:tool.name,input:{executor_ref:`capability://${tool.id}`,capability_input:{}},retry_policy:{max_attempts:1}}))) {
+      setPickerOpen(false); setFocusedNodeId(id); changePanel("inspector");
+    }
+  };
+  const canRun = !!selectedNode && !saving && !graphLocked && getExecutorAvailability(selectedNode.executor_ref, selectedNode.capability).kind === "configured";
   const runSelected = () => { if (canRun && selectedNode) void mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision)); };
 
   return (
     <div className="canvas-studio page-canvas">
+      <CapabilityPicker open={pickerOpen} onClose={()=>setPickerOpen(false)} items={capabilities.items} onSelect={tool=>void addCapability(tool)} onRefresh={()=>void capabilities.refresh(true)} loading={capabilities.loading} error={capabilities.error}/>
       <StudioHeader graphId={projection.graphId} revision={view?.view_revision ?? null} pending={canvasSavePending} error={canvasSaveError?.message ?? null} onRetry={retrySave} onBack={()=>navigate("/tasks")} panel={activePanel} onPanel={changePanel}/>
       <div className="studio-workspace task-world-layout">
       {(eventWarning || (saveError && activePanel !== "inspector")) && <div className="studio-notices">
@@ -157,7 +169,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
       </div>}
       <aside id="studio-tools" className="studio-panel studio-tools" aria-label="更多画布工具" hidden={activePanel!=="tools"}>
         <div className="studio-panel-heading"><h2>画布工具</h2><button type="button" aria-label="关闭更多工具" onClick={()=>changePanel(null)}><X size={16}/></button></div>
-        <Button variant="secondary" size="sm" onClick={()=>void reload()}><RefreshCw size={14}/>刷新</Button>
+        <Button variant="secondary" size="sm" onClick={()=>{void reload();void capabilities.refresh(true);}}><RefreshCw size={14}/>刷新</Button>
       {modelUnavailable && <p className="mx-4 mt-2 text-xs text-[var(--warning-fg)]">还没有配置可用的模型服务。 <button type="button" className="underline" onClick={() => navigate("/settings?section=model")}>前往模型设置</button></p>}
       {view && <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-3 py-2" aria-label="画布视图工具">
         <Button size="sm" variant="secondary" disabled={saving || view.selection.filter((nodeId) => !view.groups.some((group) => group.node_ids.includes(nodeId))).length < 2} onClick={createVisualGroup}>创建分组</Button>
@@ -199,6 +211,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
             trailOpen={activePanel==="trail"}
             onCloseTrail={()=>changePanel(null)}
             onAddNode={addNode}
+            onAddCapability={()=>{setPickerOpen(true);void capabilities.refresh(true);}}
             canAddNode={!saving && !graphLocked}
             onRunSelected={runSelected}
             canRunSelected={canRun}
@@ -209,6 +222,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
         <TaskInspector
           graphId={graphId}
           node={selectedNode}
+          capabilities={capabilities}
           expectedRevision={projection.revision}
           revisions={projection.revisions}
           checkpoints={projection.checkpoints}

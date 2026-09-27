@@ -1,3 +1,5 @@
+import type { CapabilityDescriptor } from "../../api/capabilities";
+import { capabilityAvailability } from "./capability-picker/binding";
 import type { Edge, Node } from "@xyflow/react";
 import type {
   CanvasNodeLayout,
@@ -11,6 +13,7 @@ import type {
 export type TaskNodeRole = "Task" | "Decision" | "Human" | "Output" | "Group";
 
 export interface TaskNodeProjection extends TaskNodeDetail {
+  capability?: CapabilityDescriptor;
   role: TaskNodeRole;
   isRunning: boolean;
 }
@@ -86,13 +89,14 @@ export function deriveTaskRole(node: TaskNodeDetail): TaskNodeRole {
   return "Task";
 }
 
-export function projectTaskGraph(detail: TaskGraphDetail): TaskGraphProjection {
+export function projectTaskGraph(detail: TaskGraphDetail, capabilities: CapabilityDescriptor[] = []): TaskGraphProjection {
   return {
     graphId: detail.graph_id,
     schemaVersion: detail.graph.schema_version,
     revision: detail.revision,
     nodes: detail.nodes.map((node) => ({
       ...node,
+      ...(node.executor_ref?.startsWith("capability://") ? {capability: capabilities.find(c => `capability://${c.id}` === node.executor_ref)} : {}),
       state: { ...node.state },
       acceptance_criteria: [...node.acceptance_criteria],
       resources: node.resources.map((resource) => ({ ...resource })),
@@ -240,7 +244,8 @@ export function isTaskWorldEvent(
   return payload.graph_id === graphId;
 }
 
-export function getExecutorAvailability(executorRef: string | null): ExecutorAvailability {
+export function getExecutorAvailability(executorRef: string | null, capability?: CapabilityDescriptor): ExecutorAvailability {
+  if (executorRef?.startsWith("capability://")) return capabilityAvailability(capability);
   if (executorRef === "command://desktop.app.focus" || executorRef === "command://desktop.app.open") {
     return {
       kind: "unavailable",

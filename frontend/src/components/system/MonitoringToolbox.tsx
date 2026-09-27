@@ -1,3 +1,4 @@
+import TaskCanvasApproval from "../../features/task-world/capability-picker/TaskCanvasApproval";
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { listPendingApprovals } from "../../api/approvals";
@@ -55,7 +56,7 @@ export default function MonitoringToolbox({ data, health }: { data: Record<strin
       </div><p className="mt-2 text-xs text-[var(--text-faint)]">仅显示实际接口数据；页面隐藏时停止自动刷新，前台最多每 30 秒刷新一次。</p>
     </>}
     <Modal open={approvalOpen} onClose={() => setApprovalOpen(false)} title="待审批操作">
-      {approvals === null ? <p role="status">审批数据 unavailable，请稍后重试。</p> : approvals.length === 0 ? <p>暂无待审批操作。</p> : approvals.map((approval) => <div key={approval.approval_id} className="mb-3"><p>{approval.tool_name}</p><Button variant="secondary" onClick={() => navigate(`/chat/${encodeURIComponent(approval.conversation_id)}`)}>前往对应对话核对并审批</Button></div>)}
+      {approvals === null ? <p role="status">审批数据 unavailable，请稍后重试。</p> : approvals.length === 0 ? <p>暂无待审批操作。</p> : approvals.map((approval) => approval.task_graph_id ? <TaskCanvasApproval key={approval.approval_id} approval={approval} onResolved={refresh}/> : <div key={approval.approval_id} className="mb-3"><p>{approval.tool_name}</p><Button variant="secondary" onClick={() => navigate(`/chat/${encodeURIComponent(approval.conversation_id)}`)}>前往对应对话核对并审批</Button></div>)}
       <Button variant="secondary" onClick={() => void refresh()}>刷新审批</Button>
     </Modal>
   </section>;

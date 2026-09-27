@@ -45,6 +45,7 @@ interface TaskWorldCanvasProps {
   trailOpen: boolean;
   onCloseTrail: () => void;
   onAddNode: () => void;
+  onAddCapability?: () => void;
   canAddNode: boolean;
   onRunSelected: () => void;
   canRunSelected: boolean;
@@ -71,7 +72,7 @@ function TaskWorldCanvasSurface({
   onDeleteNodes,
   onDeleteEdges,
   semanticLocked = false,
-  trailOpen, onCloseTrail, onAddNode, canAddNode, onRunSelected, canRunSelected, runLabel,
+  trailOpen, onCloseTrail, onAddNode, onAddCapability, canAddNode, onRunSelected, canRunSelected, runLabel,
 }: TaskWorldCanvasProps) {
   const incomingEdges = useMemo(() => {
     const hidden = new Set(view?.groups.filter((group) => group.collapsed).flatMap((group) => group.node_ids));
@@ -186,7 +187,7 @@ function TaskWorldCanvasSurface({
       >
         <Background gap={24} size={1} color="var(--task-world-grid)" />
         <FlowPanel position="bottom-left" className="studio-flow-tools">
-          <StudioToolbar onFit={()=>moveCamera({type:"fit-all"})} onReset={()=>moveCamera({type:"zoom-100"})} onLayout={autoLayout} onAdd={onAddNode} onRun={onRunSelected} canAdd={canAddNode} canRun={canRunSelected} runLabel={runLabel}/>
+          <StudioToolbar onFit={()=>moveCamera({type:"fit-all"})} onReset={()=>moveCamera({type:"zoom-100"})} onLayout={autoLayout} onAdd={onAddNode} onAddCapability={onAddCapability} onRun={onRunSelected} canAdd={canAddNode} canRun={canRunSelected} runLabel={runLabel}/>
         </FlowPanel>
       </ReactFlow>
     </div>

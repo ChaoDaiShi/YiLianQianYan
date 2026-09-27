@@ -1,3 +1,7 @@
+import SchemaForm from "../schema-form/SchemaForm";
+import {parseArguments,hasHeaderBinding,HEADER_UNSUPPORTED} from "../schema-form/schema";
+import {useCapabilityDraft} from "../capability-picker/useCapabilityDraft";
+import type {useCanvasCapabilities} from "../capability-picker/useCanvasCapabilities";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type {
@@ -33,6 +37,7 @@ interface TaskNodeDraft {
 
 interface TaskInspectorProps {
   graphId: string;
+  capabilities?: ReturnType<typeof useCanvasCapabilities>;
   node: TaskNodeProjection | null;
   expectedRevision: number;
   revisions: TaskRevisionSummary[];
@@ -62,6 +67,7 @@ interface TaskInspectorProps {
  */
 export default function TaskInspector({
   graphId,
+  capabilities,
   node,
   expectedRevision,
   revisions,
@@ -80,6 +86,8 @@ export default function TaskInspector({
   onRemoveDependency,
   graphLocked,
 }: TaskInspectorProps) {
+  const capabilityDraft=useCapabilityDraft(graphId,node?.id,expectedRevision,node?.executor_ref);
+  const [argumentError,setArgumentError]=useState("");
   const [title, setTitle] = useState("");
   const [instruction, setInstruction] = useState("");
   const [executorRef, setExecutorRef] = useState("");
@@ -88,6 +96,7 @@ export default function TaskInspector({
   const [restoringCheckpoint, setRestoringCheckpoint] = useState("");
 
   useEffect(() => {
+    setArgumentError("");
     setTitle(node?.title || "");
     setInstruction(node?.instruction_summary || "");
     setExecutorRef(node?.executor_ref || "");
@@ -95,9 +104,11 @@ export default function TaskInspector({
     setDependencyTarget("");
   }, [node?.id, node?.title, node?.instruction_summary, node?.executor_ref, node?.acceptance_criteria.join("\n")]);
 
+  const capability=capabilities?.items.find(c=>`capability://${c.id}`===executorRef);
+  const isCapability=executorRef.startsWith("capability://");
   const availability = useMemo(
-    () => getExecutorAvailability(executorRef.trim() || null),
-    [executorRef],
+    () => getExecutorAvailability(executorRef.trim() || null,capability),
+    [executorRef,capability],
   );
   const stale =
     saveError?.code === "stale_revision" || saveError?.code === "stale_view_revision";
@@ -126,13 +137,21 @@ export default function TaskInspector({
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const input: Record<string, unknown> = {
+      ...capabilityDraft.input,
       instruction: instruction.trim(),
       acceptance_criteria: acceptanceCriteria
         .split("\n")
         .map((value) => value.trim())
         .filter(Boolean),
     };
-    if (executorRef.trim()) input.executor_ref = executorRef.trim();
+    if (executorRef.trim()) input.executor_ref = executorRef.trim(); else delete input.executor_ref;
+    if(isCapability){
+      if(capabilityDraft.loading||capabilityDraft.error)return;
+      try{
+        if(hasHeaderBinding(capability?.input_schema))throw new Error(HEADER_UNSUPPORTED);
+        input.capability_input=parseArguments(capabilityDraft.argumentsJson);setArgumentError("");
+      }catch(error){setArgumentError(error instanceof Error?error.message:"参数无效");return;}
+    } else delete input.capability_input;
     await onSave({
       kind: node.kind,
       title: title.trim(),
@@ -178,7 +197,7 @@ export default function TaskInspector({
       )}
 
       <form className="mt-4 space-y-3" onSubmit={(event) => void submit(event)}>
-        <fieldset disabled={graphLocked || saving} className="space-y-3">
+        <fieldset disabled={graphLocked || saving || (isCapability&&capabilityDraft.loading)} className="space-y-3">
         <BasicSection
           title={title}
           onTitleChange={setTitle}
@@ -189,20 +208,27 @@ export default function TaskInspector({
           executorRef={executorRef}
           onExecutorRefChange={setExecutorRef}
           availability={availability}
+          capabilities={capabilities}
+          onSelect={tool=>{setExecutorRef(`capability://${tool.id}`);capabilityDraft.setArgumentsJson("{}");setArgumentError("");}}
         />
+        {isCapability&&<>
+          {capabilityDraft.loading?<p role="status">正在读取已保存参数…</p>:<SchemaForm schema={capability?.input_schema} value={capabilityDraft.argumentsJson} onChange={capabilityDraft.setArgumentsJson}/>}
+          {(argumentError||capabilityDraft.error)&&<p role="alert" className="text-xs text-[var(--danger-fg)]">{argumentError||capabilityDraft.error}</p>}
+        </>}
         <details className="studio-detail"><summary>验收标准</summary>
         <AcceptanceSection
           acceptanceCriteria={acceptanceCriteria}
           onAcceptanceCriteriaChange={setAcceptanceCriteria}
         />
         </details>
-        <Button type="submit" size="sm" disabled={saving || !title.trim()}>
+        <Button type="submit" size="sm" disabled={saving || !title.trim() || (isCapability&&(capabilityDraft.loading||!!capabilityDraft.error||availability.kind!=="configured"))}>
           {saving ? "保存中…" : "保存语义"}
         </Button>
         </fieldset>
       </form>
       {graphLocked && <p className="mt-2 text-xs text-[var(--text-faint)]">有任务执行尚未结束，请先完成或取消执行后再修改任务图。</p>}
 
+      {latestExecution?.status==="waiting_approval"&&isCapability&&<Link className="mt-3 block text-sm underline" to="/system?card=approvals">前往审批中心 · 任务画布</Link>}
       <details className="studio-detail"><summary>状态与执行记录</summary>
       <StateSection node={node} />
 
@@ -261,7 +287,7 @@ export default function TaskInspector({
         graphLocked={graphLocked}
       />
       </details>
-      <ExtensionSlots/>
+      {!isCapability&&<ExtensionSlots/>}
     </Panel>
   );
 }

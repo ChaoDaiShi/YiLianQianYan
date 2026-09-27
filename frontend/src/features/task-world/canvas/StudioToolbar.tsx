@@ -2,8 +2,8 @@ import { Maximize, Minus, Plus, Play, LayoutGrid } from "lucide-react";
 import { useReactFlow, useViewport } from "@xyflow/react";
 import { Button } from "../../../components/ui";
 
-export default function StudioToolbar({onFit,onReset,onLayout,onAdd,onRun,canAdd,canRun,runLabel}: {
-  onFit:()=>void; onReset:()=>void; onLayout:()=>void; onAdd:()=>void;
+export default function StudioToolbar({onFit,onReset,onLayout,onAdd,onAddCapability,onRun,canAdd,canRun,runLabel}: {
+  onFit:()=>void; onReset:()=>void; onLayout:()=>void; onAdd:()=>void; onAddCapability?:()=>void;
   onRun:()=>void; canAdd:boolean; canRun:boolean; runLabel:string;
 }) {
   const {zoomIn,zoomOut}=useReactFlow();
@@ -18,6 +18,7 @@ export default function StudioToolbar({onFit,onReset,onLayout,onAdd,onRun,canAdd
     <button type="button" aria-label="自动布局" title="自动布局（仅显式操作）" onClick={onLayout}><LayoutGrid size={16}/></button>
     <span className="studio-tool-divider" aria-hidden="true"/>
     <Button variant="secondary" size="sm" disabled={!canAdd} onClick={onAdd}><Plus size={15}/>添加任务节点</Button>
+    {onAddCapability&&<Button variant="secondary" size="sm" disabled={!canAdd} onClick={onAddCapability}>从能力添加</Button>}
     <Button size="sm" disabled={!canRun} title={runLabel} onClick={onRun}><Play size={15}/>运行选中节点</Button>
   </div>;
 }

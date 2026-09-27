@@ -13,6 +13,9 @@ import { requestResult } from "../core/api/http";
 export type CapabilityKind =
   | "tool"
   | "mcp_tool"
+  | "mcp_resource"
+  | "mcp_resource_template"
+  | "mcp_prompt"
   | "subagent"
   | "agent"
   | "workflow"

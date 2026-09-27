@@ -118,12 +118,37 @@ impl CapabilityProvider for McpToolProvider {
                     .strip_prefix("mcp_")
                     .unwrap_or(&info.name)
                     .to_string();
-                tool_descriptor(
+                let mut descriptor = tool_descriptor(
                     &format!("mcp.{remote}"),
                     CapabilityKind::McpTool,
                     CapabilityProviderKind::Mcp,
                     &info,
-                )
+                );
+                // Display metadata only; source_id remains the exact trusted
+                // registry binding, even for identically named remote tools.
+                if let Some(tool) = self.registry.get(&info.name) {
+                    if let Ok(security) = tool.security_descriptor(&serde_json::json!({})) {
+                        if let Some(crate::safety::ResourceDescriptor::Mcp {
+                            server_id,
+                            tool_name,
+                        }) = security.resources.first()
+                        {
+                            descriptor.name = tool_name.clone();
+                            descriptor.metadata.source_name = Some(server_id.clone());
+                        }
+                    }
+                }
+                if let Some(rest) = info.description.strip_prefix("[MCP:") {
+                    if let Some((source, description)) = rest.split_once(']') {
+                        descriptor.metadata.source_name = Some(source.to_string());
+                        descriptor.description = description.trim().to_string();
+                    }
+                }
+                descriptor.permissions.push(CapabilityPermission {
+                    permission: "mcp.invoke".into(),
+                    required: true,
+                });
+                descriptor
             })
             .collect();
         Ok(descriptors)

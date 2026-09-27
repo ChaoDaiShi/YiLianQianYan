@@ -77,7 +77,8 @@ export default function ApprovalCard({
 
   useEffect(() => {
     if (
-      !session
+      approval.task_graph_id
+      || !session
       || session.state === "ended"
       || session.conversational_anchor?.conversation_id !== approval.conversation_id
     ) return;

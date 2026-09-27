@@ -90,7 +90,7 @@ export default function ExecutionSection({
             type="button"
             size="sm"
             variant="secondary"
-            disabled={saving || graphLocked || getExecutorAvailability(node.executor_ref).kind !== "configured"}
+            disabled={saving || graphLocked || getExecutorAvailability(node.executor_ref,node.capability).kind !== "configured"}
             onClick={() => void onStartExecution()}
           >
             {latestExecution ? "再次执行" : "开始执行"}

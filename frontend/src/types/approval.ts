@@ -25,4 +25,7 @@ export interface PendingApproval {
   execution_id?: string | null;
   workflow_run_id?: string | null;
   workflow_node_id?: string | null;
+  task_graph_id?: string | null;
+  task_node_id?: string | null;
+  node_execution_id?: string | null;
 }
