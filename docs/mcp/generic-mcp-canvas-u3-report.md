@@ -143,3 +143,29 @@ C2 初跑仍断言旧的 7 个按钮；U3 新增“从能力添加”后为 8 �
 - `frontend/src/features/task-world/schema-form/schema.ts`
 - `frontend/src/features/task-world/taskGraphProjection.ts`
 - `frontend/src/types/approval.ts`
+
+## U3-C Closure Addendum
+
+2026-09-27，基于本报告对应的 `3adeb10f87f32c619c4786af2778fef17ef96757` 基线开展
+MCP Resource Grant Security Closure。
+**原 U3：PARTIAL；U3-C 补齐资源授权要求后：Generic MCP Canvas U3 STRICT GATE = PASS。**
+以上原始报告和失败记录保留，未改写历史验收状态。
+
+本轮新增持久化 `GrantResource::Mcp`，复用原 JSON 存储和 CRUD，不做 DB schema
+或 migration。Gateway 按精确 server/tool 匹配、Deny 优先；High 风险保持，
+单次审批不变成永久授权。真实 Canvas Task Harness → Gateway → MCP fixture
+证明：pending 后新增精确 Deny，再批准旧审批，远端调用仍为 **0**；新增 Allow
+不自动消费审批，明确批准后只调用一次。此证据正式补齐原 RBAC revoke 测试
+不能替代的 resource deny grant 项。
+
+真实 system Edge 验证了 Grant Editor 创建/删除与 Canvas 拒绝/恢复、server-wide
+Allow + specific Deny、跨服务隔离、审计 grant ID 及清理；原 U3 全执行 E2E
+重新通过。最终 Rust 完整测试 1009/1009，前端完整测试在限定 worker 后
+492/492，生产构建通过。修正和先前失败运行的原始记录见 U3-C 报告。
+
+本轮 Canvas 生产代码、Task Harness 语义、MCP protocol、Secret、数据库迁移、
+Cargo 和 v2 均无改动。完成 U3-C 后停止。
+
+详细报告：[Generic MCP Canvas U3-C](generic-mcp-canvas-u3c-report.md)。
+安全契约：[MCP Resource Grants](../security/mcp-resource-grants.md)。
+最终证据：独立 U3-C 工作区 `target/mcp-grant-u3c/result.json`。

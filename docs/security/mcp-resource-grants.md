@@ -29,6 +29,11 @@ Grant evaluation audit records the decision and matching grant ID, alongside
 server/tool identity. It must not include transport URL, environment values or
 header credentials.
 
+Audit storage retains the matching ID at
+`event.details.result.matched_grant_id`, decision at `event.decision_status`,
+and identity in `event.resources`. A missing match has a null ID. This is
+server-produced evidence; request JSON cannot supply the grant ID.
+
 ## Persistence and editor
 
 Use existing `/api/security/grants` CRUD and `security_grants.resource_json`.
@@ -39,21 +44,21 @@ server. Users create/delete persistent grants explicitly.
 
 ## U3-C implementation and verification plan
 
-- [ ] Add focused model/evaluator tests: JSON and persistent roundtrip,
+- [x] Add focused model/evaluator tests: JSON and persistent roundtrip,
   validation, exact allow/deny, wrong identity, expiry, deny precedence and
   existing resource regressions. Implement only the additive model/matcher.
-- [ ] Extend Gateway evidence and audit. Exercise real McpToolAdapter and
+- [x] Extend Gateway evidence and audit. Exercise real McpToolAdapter and
   Task Harness pending approval → new Deny → approve → remote calls 0,
   plus new Allow → explicit approve → exactly one call.
-- [ ] Extend existing Grant Editor and its payload validation tests. Reuse
+- [x] Extend existing Grant Editor and its payload validation tests. Reuse
   generic CRUD; no Canvas production files change.
-- [ ] Extend LOCAL MCP FIXTURE with read/publish and isolated U3-C system Edge
+- [x] Extend LOCAL MCP FIXTURE with read/publish and isolated U3-C system Edge
   coverage: UI create/delete, server-wide precedence, cross-server isolation,
   recovery, current-policy audit and disposable-grant cleanup. Rerun U3 E2E.
-- [ ] Run final fmt, workspace check/test and desktop check with `--locked -j1`,
+- [x] Run final fmt, workspace check/test and desktop check with `--locked -j1`,
   `CARGO_PROFILE_TEST_CODEGEN_UNITS=4`, target
   `E:/cargo-target/yilian/mcp-grant-u3c`; frontend full test and build once.
-- [ ] Preserve raw evidence in ignored target, audit protected paths, append
+- [x] Preserve raw evidence in ignored target, audit protected paths, append
   U3 Closure Addendum without rewriting original PARTIAL, and publish a truthful
   U3-C acceptance report. Stop after U3-C; no merge, release or next cycle.
 
