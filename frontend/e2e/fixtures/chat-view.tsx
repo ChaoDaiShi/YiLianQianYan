@@ -16,4 +16,4 @@ function Harness(){
  renderExecution={value=>{test.execution=value;return <output id="execution">{JSON.stringify(value.state)}</output>;}}/></>;
 }
 await initializeControlSession();
-createRoot(document.getElementById('root')!).render(<Harness/>);
+createRoot(document.getElementById('root')!).render(<React.StrictMode><Harness/></React.StrictMode>);
