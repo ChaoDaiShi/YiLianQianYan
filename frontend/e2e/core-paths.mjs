@@ -7,6 +7,7 @@ import { chromium } from "playwright-core";
 import { uiFoundation, collectGeometry } from "./ui-foundation.mjs";
 import { canvasStudio, studioGeometry } from "./canvas-studio.mjs";
 import { canvasStability } from "./canvas-stability.mjs";
+import { chatViewRace } from "./chat-view-race.mjs";
 import { workbenchU2 } from "./workbench-u2.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..");
@@ -35,10 +36,11 @@ const edgePaths = [
 
 const processes = [];
 const logs = new Map();
+const chatFocused = process.env.YILIAN_E2E_CHAT_FOCUSED;
 const studioStage = process.env.YILIAN_E2E_STUDIO;
 const workbenchStage = process.env.YILIAN_E2E_WORKBENCH;
 const uiStage = process.env.YILIAN_E2E_UI_MATRIX;
-const evidenceDir = join(repositoryRoot, "target", workbenchStage ? "workbench-u2" : studioStage ? "canvas-studio" : uiStage === "baseline" ? "ui-baseline" : uiStage ? "ui-foundation" : "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
+const evidenceDir = join(repositoryRoot, "target", chatFocused ? "chat-reliability-r1" : workbenchStage ? "workbench-u2" : studioStage ? "canvas-studio" : uiStage === "baseline" ? "ui-baseline" : uiStage ? "ui-foundation" : "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
 const browserLog = [];
 const networkLog = [];
 let browser;
@@ -169,7 +171,12 @@ try {
     await laterSetup.click();
     await laterSetup.waitFor({ state: "hidden" });
   }
-  if (workbenchStage) {
+  if (chatFocused) {
+    const result=await chatViewRace({page,frontendPort,evidenceDir});
+    if(browserErrors.length)throw new Error(browserErrors.join(" | "));
+    await writeFile(join(evidenceDir,"result.json"),JSON.stringify(result,null,2));
+    testExitCode=0;
+  } else if (workbenchStage) {
     const result=await workbenchU2({page,frontendPort,backendPort,controlToken,evidenceDir,stage:workbenchStage});
     const expectedProviderErrors=browserErrors.filter(message=>message==='Failed to load resource: the server responded with a status of 400 (Bad Request)');
     if(expectedProviderErrors.length!==(result.flows?.expectedProviderErrors??0))throw new Error('Unexpected provider rejection diagnostics');
