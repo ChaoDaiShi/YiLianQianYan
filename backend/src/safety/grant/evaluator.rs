@@ -72,7 +72,7 @@ impl GrantEvaluator {
         now_ms: i64,
     ) -> GrantEvaluation {
         // Only a subset of permissions are resource-grant enforced; the rest
-        // (ProcessInspect, Desktop*, Skill, Agent, Mcp) remain RBAC-only.
+        // (ProcessInspect, Desktop*, Skill, Agent) remain RBAC-only.
         if !is_grant_enforced(permission) {
             return GrantEvaluation {
                 decision: GrantDecision::Allow,
@@ -165,6 +165,7 @@ fn is_grant_enforced(permission: PermissionId) -> bool {
             | PermissionId::NetworkRequest
             | PermissionId::ProcessControl
             | PermissionId::ShellExecute
+            | PermissionId::McpInvoke
     )
 }
 
@@ -175,6 +176,22 @@ fn resource_matches(
     registry: Option<&Arc<crate::isolation::ManagedProcessRegistry>>,
 ) -> bool {
     match (resource, desc) {
+        (
+            GrantResource::Mcp {
+                server_id,
+                tool_name,
+            },
+            ResourceDescriptor::Mcp {
+                server_id: actual_server,
+                tool_name: actual_tool,
+            },
+        ) => {
+            server_id == actual_server
+                && tool_name
+                    .as_ref()
+                    .map(|name| name == actual_tool)
+                    .unwrap_or(true)
+        }
         (
             GrantResource::Filesystem {
                 root: grant_root,

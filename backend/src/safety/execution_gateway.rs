@@ -402,12 +402,12 @@ impl SecurityExecutionGateway {
         context: &DecisionContext,
         permission: PermissionId,
         resource: &ResourceDescriptor,
-        decision: &GrantDecision,
+        evaluation: &GrantEvaluation,
     ) -> Result<(), SecurityGatewayError> {
         let Some(recorder) = &self.audit_recorder else {
             return Ok(());
         };
-        let (status, reason) = match decision {
+        let (status, reason) = match &evaluation.decision {
             GrantDecision::Allow => ("allow", None),
             GrantDecision::RequireApproval { reason } => ("require_approval", Some(reason)),
             GrantDecision::Deny { reason } => ("deny", Some(reason)),
@@ -429,6 +429,7 @@ impl SecurityExecutionGateway {
             decision_status: Some(status.to_string()),
             result: Some(serde_json::json!({
                 "decision": status,
+                "matched_grant_id": evaluation.matched_grant_id,
                 "reason": reason.map(|value| crate::utils::text::truncate_chars(value, 160)),
             })),
             details: serde_json::json!({
@@ -949,7 +950,7 @@ impl SecurityExecutionGateway {
                             &context,
                             requested.permission,
                             resource,
-                            &grant_decision.decision,
+                            &grant_decision,
                         )?;
                         if let Some(evidence) =
                             authorized_resource_from_evaluation(resource, &grant_decision, true)
@@ -1094,6 +1095,29 @@ fn authorized_resource_from_evaluation(
     grant_enforced: bool,
 ) -> Option<AuthorizedResource> {
     match resource {
+        ResourceDescriptor::Mcp {
+            server_id,
+            tool_name,
+        } => {
+            if matches!(evaluation.decision, GrantDecision::Deny { .. }) {
+                return None;
+            }
+            let grant_id = if matches!(evaluation.decision, GrantDecision::Allow)
+                && matches!(
+                    evaluation.matched_resource,
+                    Some(crate::safety::grant::GrantResource::Mcp { .. })
+                ) {
+                evaluation.matched_grant_id.clone()
+            } else {
+                None
+            };
+            Some(AuthorizedResource::Mcp {
+                server_id: server_id.clone(),
+                tool_name: tool_name.clone(),
+                one_shot_approval: grant_id.is_none(),
+                grant_id,
+            })
+        }
         ResourceDescriptor::Network { url, method } => {
             let target = crate::safety::grant::parse_network_target(url).ok()?;
             let port = target

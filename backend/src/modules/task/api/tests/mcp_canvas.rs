@@ -248,8 +248,8 @@ async fn mcp_canvas_concurrent_approval_and_current_policy() {
 
     let (server, calls, id, fixture_handle) = fixture().await;
     let execution = start(&server, &id).await;
-    // MCP is RBAC-only in the existing grant evaluator. Revoke that permission
-    // after approval creation; execute_approved must use the current binding.
+    // Keep the independent RBAC regression as well as U3-C resource-grant tests.
+    // Revoke after approval creation; execute_approved uses the current binding.
     server.db.conn().execute("UPDATE security_role_bindings SET role_key='restricted' WHERE subject_id='local-user' AND revoked_at IS NULL",[]).unwrap();
     decide(
         server.clone(),
@@ -262,4 +262,87 @@ async fn mcp_canvas_concurrent_approval_and_current_policy() {
     assert_eq!(denied.failure_code.as_deref(), Some("security_denied"));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     fixture_handle.abort();
+}
+
+#[tokio::test]
+async fn mcp_canvas_pending_approval_revalidates_new_persistent_deny_or_allow() {
+    use crate::modules::task::NodeExecutionStatus;
+    use crate::safety::grant::{GrantEffect, GrantResource, GrantSource, SecurityGrant};
+    for effect in [GrantEffect::Deny, GrantEffect::Allow] {
+        let (server, calls, id, fixture_handle) = fixture().await;
+        let baseline_grants = server.db.list_grants("local-user").unwrap();
+        let execution = start(&server, &id).await;
+        assert_eq!(execution.status, NodeExecutionStatus::WaitingApproval);
+        let approval = execution.approval_ref.as_ref().unwrap();
+        let grant = SecurityGrant {
+            id: uuid::Uuid::new_v4().to_string(),
+            subject_id: "local-user".into(),
+            effect,
+            permission: crate::safety::PermissionId::McpInvoke,
+            resource: GrantResource::Mcp {
+                server_id: "u3-local-fixture".into(),
+                tool_name: Some("echo".into()),
+            },
+            source: GrantSource::User,
+            created_at: 1,
+            expires_at: None,
+        };
+        server.db.create_grant(&grant).unwrap();
+        assert_eq!(
+            server
+                .task_world
+                .find_execution(&execution.id)
+                .unwrap()
+                .1
+                .status,
+            NodeExecutionStatus::WaitingApproval
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "a persistent allow never consumes approval"
+        );
+        decide(server.clone(), approval, true).await.unwrap();
+        let (_, done) = server.task_world.find_execution(&execution.id).unwrap();
+        if effect == GrantEffect::Deny {
+            assert_eq!(done.failure_code.as_deref(), Some("security_denied"));
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        } else {
+            assert_eq!(done.status, NodeExecutionStatus::Succeeded);
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+        assert!(decide(server.clone(), approval, true).await.is_err());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            usize::from(effect == GrantEffect::Allow)
+        );
+        let events = server
+            .audit_recorder
+            .query(&crate::db::SecurityAuditQuery {
+                correlation_id: Some(execution.id.to_string()),
+                event_type: Some("grant_evaluated".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let audit = serde_json::to_value(events).unwrap();
+        assert!(audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |event| event["details"]["result"]["matched_grant_id"] == grant.id
+                    && event["decision_status"]
+                        == if effect == GrantEffect::Deny {
+                            "deny"
+                        } else {
+                            "allow"
+                        }
+            ));
+        server.db.delete_grant(&grant.id).unwrap();
+        assert_eq!(
+            server.db.list_grants("local-user").unwrap(),
+            baseline_grants
+        );
+        fixture_handle.abort();
+    }
 }

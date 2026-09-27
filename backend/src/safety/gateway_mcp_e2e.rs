@@ -272,3 +272,86 @@ async fn gateway_managed_mcp_denied_executes_zero_remote_calls() {
     drop(db);
     let _ = std::fs::remove_file(&db_path);
 }
+
+#[tokio::test]
+async fn gateway_mcp_resource_grants_preserve_high_risk_and_trusted_evidence() {
+    use crate::safety::grant::{
+        AuthorizedResource, GrantEffect, GrantResource, GrantSource, SecurityGrant,
+    };
+    use crate::safety::{PermissionId, PolicyDecision};
+    let db = Arc::new(Database::new(std::path::Path::new(":memory:")).unwrap());
+    let (gateway, calls, name) = gateway_stack(db.clone()).await;
+    let gateway = gateway.with_grant_enforcement();
+    let req = request(&name);
+    let evidence = |decision: PolicyDecision| match decision {
+        PolicyDecision::RequireApproval(ctx) => {
+            assert_eq!(ctx.risk_level, RiskLevel::High);
+            ctx.authorized_resources
+        }
+        other => panic!("MCP must still require approval: {other:?}"),
+    };
+    assert_eq!(
+        evidence(gateway.evaluate(&req, RiskLevel::High).unwrap()),
+        vec![AuthorizedResource::Mcp {
+            server_id: "gateway-mcp-e2e".into(),
+            tool_name: "ping".into(),
+            grant_id: None,
+            one_shot_approval: true,
+        }]
+    );
+    let mut grant = SecurityGrant {
+        id: uuid::Uuid::new_v4().to_string(),
+        subject_id: "local-user".into(),
+        effect: GrantEffect::Allow,
+        permission: PermissionId::McpInvoke,
+        resource: GrantResource::Mcp {
+            server_id: "gateway-mcp-e2e".into(),
+            tool_name: Some("ping".into()),
+        },
+        source: GrantSource::User,
+        created_at: 1,
+        expires_at: None,
+    };
+    db.create_grant(&grant).unwrap();
+    assert_eq!(
+        evidence(gateway.evaluate(&req, RiskLevel::High).unwrap()),
+        vec![AuthorizedResource::Mcp {
+            server_id: "gateway-mcp-e2e".into(),
+            tool_name: "ping".into(),
+            grant_id: Some(grant.id.clone()),
+            one_shot_approval: false,
+        }]
+    );
+    assert!(matches!(
+        gateway.execute(&req, RiskLevel::High).await.unwrap(),
+        SecurityExecutionOutcome::RequiresApproval { .. }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        gateway
+            .execute_approved(&req, RiskLevel::High)
+            .await
+            .unwrap(),
+        SecurityExecutionOutcome::Executed { .. }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    db.delete_grant(&grant.id).unwrap();
+    grant.effect = GrantEffect::Deny;
+    db.create_grant(&grant).unwrap();
+    for outcome in [
+        gateway.execute(&req, RiskLevel::High).await.unwrap(),
+        gateway
+            .execute_approved(&req, RiskLevel::High)
+            .await
+            .unwrap(),
+    ] {
+        assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "denied invocations must add zero calls"
+    );
+    db.delete_grant(&grant.id).unwrap();
+    assert!(db.list_grants("local-user").unwrap().is_empty());
+}
