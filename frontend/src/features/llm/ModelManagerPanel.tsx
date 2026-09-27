@@ -11,7 +11,7 @@ import {
 } from "../../api/client";
 import type { AppConfig, LlmModel, LlmModelPayload, LlmUsageReport } from "../../types";
 import { Badge, Button, Input } from "../../components/ui";
-import ModelPresetSelect from "../settings/sections/ModelPresetSelect";
+import ModelPresetSelect from "./ModelPresetSelect";
 import ModelTree from "./ModelTree";
 import TokenUsageChart from "./TokenUsageChart";
 import { buildUsageQuery, providerLabel, PROVIDER_PRESETS, type ProviderPresetId } from "./llmModelUtils";

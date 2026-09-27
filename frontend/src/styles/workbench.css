@@ -1,5 +1,5 @@
 /* U2: use U1 colors/type and keep C2 geometry and interaction ownership intact. */
-.workspace-region > .page-canvas:not(.canvas-studio), .workbench-grid {
+.workspace-region > .page-canvas:not(.canvas-studio), .workbench-grid, .workbench-grid[data-chat-view="conversation"] {
   background: var(--surface-solid);
 }
 .page-canvas:not(.canvas-studio) .page-header {
@@ -32,26 +32,31 @@
 .u2-model-basic .settings-save-card { padding: 12px 0; border: 0; border-top: 1px solid var(--border-soft); background: transparent; }
 .u2-profile-management { margin-top: 20px; }
 /* Chat: content first; only the composer and selected conversation are raised. */
-.workbench-grid .conversation-sidebar, .workbench-grid .execution-sidebar {
+.workbench-grid .conversation-sidebar, .workbench-grid .execution-sidebar,
+.workbench-grid[data-chat-view="conversation"] .execution-sidebar {
   background: var(--surface-solid); box-shadow: none; backdrop-filter: none;
 }
 .workbench-grid .conversation-create-button { background: var(--accent-soft); border-color: var(--accent-border); box-shadow: none; }
 .workbench-grid .conversation-row { border: 1px solid transparent; border-radius: 8px; box-shadow: none; }
 .workbench-grid .conversation-row-active { background: var(--accent-soft); border-color: transparent; box-shadow: inset 3px 0 var(--accent-primary); }
-.workbench-grid .glass-header { background: var(--surface-solid); backdrop-filter: none; box-shadow: none; border-bottom: 1px solid var(--border-soft); }
+.workbench-grid .glass-header, .workbench-grid[data-chat-view="conversation"] .conversation-chat .glass-header { background: var(--surface-solid); backdrop-filter: none; box-shadow: none; border-bottom: 1px solid var(--border-soft); }
 .workbench-grid .home-ambient-strong, .workbench-grid .home-ambient-stars { opacity: 0.035; }
 .workbench-grid .home-character-glow, .workbench-grid .home-character-ripple, .workbench-grid .home-character-petals { display: none; }
 .workbench-grid .home-character-scene { width: 112px; height: 112px; margin: 4px auto; }
 .workbench-grid .home-character-image { width: 104px; height: 104px; filter: none; }
 .workbench-grid .home-status, .workbench-grid .home-quick-action { background: var(--surface-solid); box-shadow: none; border-color: var(--border-soft); }
 .workbench-grid .home-quick-action:hover { background: var(--surface-hover); }
-.workbench-grid .composer-card, .workbench-grid .home-composer .composer-card {
+.workbench-grid .composer-card, .workbench-grid .home-composer .composer-card,
+.workbench-grid[data-chat-view="conversation"] .conversation-composer .composer-card {
   border-radius: 12px; background: var(--surface-solid); border: 1px solid var(--border-strong);
   box-shadow: 0 3px 12px #00000008; backdrop-filter: none; -webkit-backdrop-filter: none;
 }
-.workbench-grid .composer-card:focus-within { border-color: var(--accent-purple); box-shadow: 0 0 0 2px var(--accent-soft); }
-.workbench-grid .conversation-message-assistant { border: 0; background: transparent; box-shadow: none; }
-.workbench-grid .conversation-message-user { background: var(--accent-soft); border-color: transparent; box-shadow: none; }
+.workbench-grid .composer-card:focus-within,
+.workbench-grid[data-chat-view="conversation"] .conversation-composer .composer-card:focus-within { border-color: var(--accent-purple); box-shadow: 0 0 0 2px var(--accent-soft); }
+/* The older message theme declares important backgrounds; keep these overrides scoped. */
+.workbench-grid .conversation-composer { background: var(--surface-solid); }
+.workbench-grid .conversation-message-assistant { border: 0; background: transparent !important; box-shadow: none; }
+.workbench-grid .conversation-message-user { background: var(--accent-soft) !important; border-color: transparent !important; box-shadow: none; }
 .workbench-grid .conversation-tool-card { border: 0; border-left: 2px solid var(--border-soft); border-radius: 4px; background: var(--surface-muted); box-shadow: none; }
 .workbench-grid .tool-card-icon-well { background: transparent; box-shadow: none; }
 .u2-artifact-card { padding: 14px; border: 1px solid var(--accent-border); border-radius: 12px; background: var(--surface-solid); color: var(--text-secondary); }
@@ -90,6 +95,12 @@
 .workbench-grid .home-character-scene { animation: none; }
 /* Confirmation dialogs and auxiliary drawers retain their existing focus model. */
 [role="dialog"] { border-color: var(--border-soft); }
+.app-shell .shell-ambient-strong { opacity: 0.035; }
+/* Expanded voice is an auxiliary panel, not a cover over Chat's composer.
+   This reservation is scoped to Chat; Studio keeps its frozen safe-area model. */
+.global-voice-host:has(.workbench-grid) { --chat-voice-expanded-space: min(360px, 50vh); }
+.global-voice-host:has(.global-voice-panel) .workspace-region:has(.workbench-grid) { padding-bottom: var(--chat-voice-expanded-space); }
+.global-voice-host:has(.workbench-grid) .global-voice-panel { max-height: calc(var(--chat-voice-expanded-space) - 84px); overflow-y: auto; }
 @media(max-width:720px) {
   .page-canvas:not(.canvas-studio) .page-header { padding: 12px 16px; }
   .u2-disclosure > summary span { display: block; margin: 4px 0 0; }

@@ -1,20 +1,3 @@
-import {PROVIDER_PRESETS} from '../../llm/llmModelUtils';
-import type {AppConfig} from '../../../types';
-
-export type ModelPreset = 'deepseek'|'openai'|'compatible'|'custom';
-export function inferModelPreset(url: string): ModelPreset {
-  try {
-    const host=new URL(url).hostname;
-    if(host==='api.deepseek.com') return 'deepseek';
-    if(host==='api.openai.com') return 'openai';
-  } catch { /* Preserve editable/custom addresses. */ }
-  return 'custom';
-}
-export function modelPresetPatch(preset: ModelPreset): Partial<AppConfig['model']> {
-  if(preset==='custom'||preset==='compatible') return {};
-  const value=PROVIDER_PRESETS[preset];
-  return {provider:'openai',base_url:value.baseUrl,name:value.model};
-}
 export function connectionPresentation(configured:boolean,available:boolean,result?:string,dirty=false) {
   if(dirty)return {label:'有未保存修改',tone:'warning' as const};
   if(result)return result==='连接正常'||result==='试听已开始'

@@ -1,4 +1,5 @@
 import { cn } from "./cn";
+import { useId } from "react";
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -6,7 +7,8 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
 }
 
 export default function Input({ label, hint, className, id, ...props }: InputProps) {
-  const inputId = id || (label ? `input-${label}` : undefined);
+  const generatedId = useId();
+  const inputId = id || generatedId;
   return (
     <div className="w-full">
       {label && (

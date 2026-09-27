@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react';
-import {inferModelPreset,modelPresetPatch,type ModelPreset} from '../model/workbench';
+import {inferModelPreset,modelPresetPatch,type ModelPreset} from './modelPresets';
 
 export default function ModelPresetSelect({url,onField,onAdvanced}:{url:string;onField:(key:string,value:unknown)=>void;onAdvanced:()=>void}) {
   const [preset,setPreset]=useState<ModelPreset>(()=>inferModelPreset(url));

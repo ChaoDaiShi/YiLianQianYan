@@ -1,6 +1,6 @@
 import type { ProviderConnectionKind } from "../../../api/providerConnection";
 import type { AppConfig, ProviderReadinessProjection } from "../../../types";
-import ModelManagerPanel from "../../llm/ModelManagerPanel";
+import { ModelManagerPanel } from "../../llm";
 import { secretSourceLabel } from "../model/mapping";
 import ProviderReadinessCard from "./ProviderReadinessCard";
 
