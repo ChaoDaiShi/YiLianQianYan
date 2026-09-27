@@ -15,7 +15,7 @@ pub async fn start_execution(
         Ok(node_id) => node_id,
         Err(error) => return runtime_error(TaskWorldRuntimeError::Graph(error)),
     };
-    let resolver = match execution_service::executor_resolver(&server, &graph_id, &node_id) {
+    let resolver = match execution_service::executor_resolver(&server, &graph_id, &node_id).await {
         Ok(resolver) => resolver,
         Err(error) => return runtime_error(error),
     };
@@ -122,7 +122,9 @@ pub async fn rerun(
         Ok(graph_id) => graph_id,
         Err(error) => return runtime_error(error),
     };
-    if let Err(error) = execution_service::executor_resolver(&server, &graph_id, &request.node_id) {
+    if let Err(error) =
+        execution_service::executor_resolver(&server, &graph_id, &request.node_id).await
+    {
         return runtime_error(error);
     }
     match server.task_world.prepare_rerun_from_node(

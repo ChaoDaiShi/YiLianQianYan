@@ -62,7 +62,13 @@ async fn review_restore_executes_restored_definitions_and_keeps_archived_attempt
         .unwrap();
     let archived = server
         .task_world
-        .start_execution_with_resolver(&id, &c, 4, executor_resolver(&server, &id, &c).unwrap(), 6)
+        .start_execution_with_resolver(
+            &id,
+            &c,
+            4,
+            executor_resolver(&server, &id, &c).await.unwrap(),
+            6,
+        )
         .unwrap();
     dispatch_execution(server.clone(), id.clone(), archived.id.clone())
         .await
@@ -88,7 +94,7 @@ async fn review_restore_executes_restored_definitions_and_keeps_archived_attempt
                 &id,
                 node,
                 5,
-                executor_resolver(&server, &id, node).unwrap(),
+                executor_resolver(&server, &id, node).await.unwrap(),
                 8,
             )
             .unwrap();

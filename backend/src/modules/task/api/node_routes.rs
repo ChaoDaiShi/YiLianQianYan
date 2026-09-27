@@ -9,6 +9,14 @@ pub async fn add_node(
         Ok(graph_id) => graph_id,
         Err(error) => return runtime_error(error),
     };
+    if let Err(error) = crate::modules::task::application::capability_binding::validate_node_input(
+        &server,
+        &request.node.input,
+    )
+    .await
+    {
+        return runtime_error(error);
+    }
     match server
         .task_world
         .add_node(&graph_id, request.node, request.expected_revision, now())
@@ -35,6 +43,14 @@ pub async fn update_node(
         Ok(node) => node.with_retry_policy(request.retry_policy),
         Err(error) => return runtime_error(TaskWorldRuntimeError::Graph(error)),
     };
+    if let Err(error) = crate::modules::task::application::capability_binding::validate_node_input(
+        &server,
+        &node.input,
+    )
+    .await
+    {
+        return runtime_error(error);
+    }
     match server
         .task_world
         .update_node(&graph_id, node, request.expected_revision, now())

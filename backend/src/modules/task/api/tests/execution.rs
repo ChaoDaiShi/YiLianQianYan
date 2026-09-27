@@ -60,7 +60,7 @@ async fn cancellation_and_pause_stop_real_workflow_after_inflight_model_returns(
                 &id,
                 &node_id,
                 1,
-                executor_resolver(&server, &id, &node_id).unwrap(),
+                executor_resolver(&server, &id, &node_id).await.unwrap(),
                 2,
             )
             .unwrap();
@@ -114,7 +114,7 @@ async fn cancellation_and_pause_stop_real_workflow_after_inflight_model_returns(
                 &id,
                 &node_id,
                 1,
-                executor_resolver(&server, &id, &node_id).unwrap(),
+                executor_resolver(&server, &id, &node_id).await.unwrap(),
                 6
             )
             .is_err());
@@ -174,7 +174,7 @@ async fn cancellation_and_pause_stop_real_workflow_after_inflight_model_returns(
                 &id,
                 &node_id,
                 1,
-                executor_resolver(&server, &id, &node_id).unwrap(),
+                executor_resolver(&server, &id, &node_id).await.unwrap(),
                 8,
             )
             .unwrap();
@@ -226,7 +226,7 @@ async fn real_workflow_harness_edit_rerun_checkpoint_and_attempt_history() {
         )
         .unwrap();
     let checkpoint = server.task_world.checkpoint(&id, 1, 2).unwrap();
-    let resolver = executor_resolver(&server, &id, &node_id).unwrap();
+    let resolver = executor_resolver(&server, &id, &node_id).await.unwrap();
     let first = server
         .task_world
         .start_execution_with_resolver(&id, &node_id, 1, resolver, 3)
@@ -271,7 +271,7 @@ async fn real_workflow_harness_edit_rerun_checkpoint_and_attempt_history() {
             &id,
             &node_id,
             2,
-            executor_resolver(&server, &id, &node_id).unwrap(),
+            executor_resolver(&server, &id, &node_id).await.unwrap(),
             7,
         )
         .unwrap();

@@ -22,7 +22,7 @@ use super::super::{
 };
 
 /// Resolve the executor a node should run under, or explain why it cannot.
-pub fn executor_resolver(
+pub async fn executor_resolver(
     server: &AppServer,
     graph_id: &TaskGraphId,
     node_id: &TaskNodeId,
@@ -49,6 +49,12 @@ pub fn executor_resolver(
         .unwrap_or_default();
     let mut resolver = ExecutorResolver::new();
     match parsed.scheme() {
+        "capability" => {
+            let binding = super::capability_binding::resolve_binding(server, &node.input)
+                .await
+                .map_err(|error| TaskWorldRuntimeError::Harness(TaskHarnessError::Graph(error)))?;
+            resolver.register_capability(binding.capability_id);
+        }
         "workflow"
             if server
                 .db

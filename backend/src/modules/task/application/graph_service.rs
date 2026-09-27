@@ -73,6 +73,11 @@ pub async fn create_task_graph(
         None => (nodes, edges),
     };
 
+    for node in &nodes {
+        super::capability_binding::validate_node_input(server, &node.input)
+            .await
+            .map_err(CreateGraphError::Runtime)?;
+    }
     server
         .task_world
         .create_graph(graph_id, nodes, edges, now())

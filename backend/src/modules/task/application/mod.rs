@@ -7,6 +7,7 @@
 //! Nothing in this layer knows about axum, `StatusCode` or `Response` — the
 //! errors are typed and `api::mapping` turns them into HTTP.
 
+pub mod capability_binding;
 pub mod execution_service;
 pub mod graph_service;
 pub mod review_service;
