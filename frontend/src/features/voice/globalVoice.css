@@ -17,10 +17,10 @@
 
 .global-voice-pill,
 .global-voice-panel {
-  border: 1px solid var(--cyrene-glass-border);
-  background: color-mix(in srgb, var(--surface-elevated) 90%, transparent);
-  box-shadow: var(--shadow-float);
-  backdrop-filter: blur(18px);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-solid);
+  box-shadow: 0 3px 12px #00000012;
+  backdrop-filter: none;
   pointer-events: auto;
 }
 
@@ -29,7 +29,7 @@
   align-items: center;
   gap: 9px;
   min-height: 52px;
-  border-radius: 999px;
+  border-radius: 12px;
   padding: 7px 9px 7px 12px;
 }
 
