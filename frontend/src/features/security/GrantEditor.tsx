@@ -4,6 +4,7 @@ import { Badge, Button, Input } from "../../components/ui";
 import {
   grantPayload,
   grantWarning,
+  mcpGrantError,
   initialGrantEditorState,
   type GrantEditorKind,
   type GrantEditorState,
@@ -16,6 +17,8 @@ interface GrantEditorProps {
 
 function describeResource(resource: Record<string, unknown>): string {
   switch (resource.type) {
+    case "mcp":
+      return `MCP：${String(resource.server_id)} / ${resource.tool_name == null ? "全部工具" : String(resource.tool_name)}`;
     case "filesystem":
       return `文件：${String(resource.root)}${resource.recursive ? "（递归）" : ""}`;
     case "network":
@@ -45,6 +48,10 @@ export function GrantEditor({ grants, onChanged }: GrantEditorProps) {
   const submit = async () => {
     setError(null);
     const payload = grantPayload(state);
+    if (state.kind === "mcp") {
+      const validation = mcpGrantError(state.serverId, state.toolName);
+      if (validation) { setError(validation); return; }
+    }
     if (state.kind === "filesystem" && !state.root.trim()) {
       setError("文件系统根目录不能为空");
       return;
@@ -78,16 +85,21 @@ export function GrantEditor({ grants, onChanged }: GrantEditorProps) {
   const warning = grantWarning(state);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="grant-editor">
       <div className="rounded-lg border border-[var(--border)] p-3 space-y-3">
         <div>
           <h4 className="text-sm font-semibold">创建资源授权</h4>
           <p className="text-xs text-[var(--text-muted)] mt-1">授权只配置安全网关的匹配规则，不会直接执行操作。</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <label className="text-xs">资源类型<select value={state.kind} onChange={(e) => setKind(e.target.value as GrantEditorKind)} className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-2 text-sm text-[var(--text)]"><option value="filesystem">文件系统</option><option value="network">网络</option><option value="process">进程</option><option value="shell">Shell</option></select></label>
+          <label className="text-xs">资源类型<select value={state.kind} onChange={(e) => setKind(e.target.value as GrantEditorKind)} className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-2 text-sm text-[var(--text)]"><option value="filesystem">文件系统</option><option value="network">网络</option><option value="process">进程</option><option value="shell">Shell</option><option value="mcp">MCP 服务 / 工具</option></select></label>
           <label className="text-xs">效果<select value={state.effect} onChange={(e) => update("effect", e.target.value as GrantEditorState["effect"])} className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-2 text-sm text-[var(--text)]"><option value="allow">允许</option><option value="deny">拒绝</option></select></label>
         </div>
+
+        {state.kind === "mcp" && <>
+          <Input label="Server ID" value={state.serverId} onChange={(e) => update("serverId", e.target.value)} placeholder="服务的精确 ID" />
+          <Input label="工具名（可选）" value={state.toolName} onChange={(e) => update("toolName", e.target.value)} placeholder="留空表示该服务全部工具" />
+        </>}
 
         {state.kind === "filesystem" && <>
           <label className="text-xs">权限<select value={state.permission} onChange={(e) => update("permission", e.target.value)} className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-2 text-sm text-[var(--text)]"><option value="filesystem.read">读取</option><option value="filesystem.write">写入</option></select></label>
