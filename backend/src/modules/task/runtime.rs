@@ -164,6 +164,9 @@ impl TaskWorldRuntime {
         resume_approval: bool,
     ) -> Result<TaskDispatchLease, TaskWorldRuntimeError> {
         let _control_dispatch_guard = self.control_dispatch_lock.lock();
+        if resume_approval {
+            self.ensure_execution_allowed(graph_id)?;
+        }
         let harnesses = self.harnesses.read();
         let execution = harnesses
             .get(graph_id)
@@ -410,11 +413,9 @@ impl TaskWorldRuntime {
                     .filter(|execution| {
                         execution.status.is_active()
                             && (execution.executor_ref.is_none()
-                                || (execution
-                                    .executor_ref
-                                    .as_ref()
-                                    .is_some_and(|reference| reference.scheme() == "workflow")
-                                    && self.execution_tokens.lock().contains_key(&execution.id)))
+                                || (execution.executor_ref.as_ref().is_some_and(|reference| {
+                                    matches!(reference.scheme(), "workflow" | "capability")
+                                }) && self.execution_tokens.lock().contains_key(&execution.id)))
                     })
                     .collect::<Vec<_>>();
                 for execution in active_attempts {

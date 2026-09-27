@@ -23,6 +23,11 @@ pub async fn gateway(
     let tool = registry
         .get(tool_name)
         .ok_or(AdapterError::ProviderUnavailable)?;
+    // Recheck at approval resume too: discovery/schema may have changed while
+    // the user was deciding. Never promote persisted arguments into headers.
+    if super::capability_binding::has_header_binding(&tool.parameters()) {
+        return Err(AdapterError::ProviderUnavailable);
+    }
     // Reject any non-MCP mapping even if a descriptor were malformed.
     let descriptor = tool
         .security_descriptor(&json!({}))

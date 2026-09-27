@@ -80,11 +80,22 @@ pub async fn resolve(
             return Err(error);
         }
     };
-    let ownership = server
-        .task_world
-        .claim_approval_dispatch(&execution.graph_id, &execution.id)
-        .map_err(|e| e.to_string())?;
-    let cancel = ownership.cancellation_token();
+    let ownership = if approve {
+        Some(
+            server
+                .task_world
+                .claim_approval_dispatch(&execution.graph_id, &execution.id)
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    // Rejection remains available while a graph is paused. Only approval can
+    // reserve a provider future; that reservation checks current graph control.
+    let cancel = ownership
+        .as_ref()
+        .map(|lease| lease.cancellation_token())
+        .unwrap_or_default();
     let consumed = if approve {
         server
             .approval_store

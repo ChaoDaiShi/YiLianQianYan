@@ -10,13 +10,24 @@ async fn fixture() -> (
     String,
     tokio::task::JoinHandle<()>,
 ) {
+    fixture_schema(false).await
+}
+
+async fn fixture_schema(
+    header: bool,
+) -> (
+    Arc<AppServer>,
+    Arc<AtomicUsize>,
+    String,
+    tokio::task::JoinHandle<()>,
+) {
     let server = server();
     let calls = Arc::new(AtomicUsize::new(0));
     server.config.write().sandbox.profile = crate::config::types::SandboxProfile::Open;
     let app=axum::Router::new().route("/mcp",axum::routing::post({let calls=calls.clone();move |Json(body):Json<Value>|{let calls=calls.clone();async move{
         let result=match body["method"].as_str().unwrap_or("") {
             "server/discover"=>json!({"supportedVersions":["2026-07-28","2025-11-25"],"serverInfo":{"name":"LOCAL MCP FIXTURE","version":"1"},"capabilities":{"tools":true}}),
-            "tools/list"=>json!({"tools":[{"name":"echo","description":"LOCAL MCP FIXTURE echo","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}),
+            "tools/list"=>json!({"tools":[{"name":"echo","description":"LOCAL MCP FIXTURE echo","inputSchema":if header {json!({"type":"object","properties":{"text":{"type":"string","x-mcp-header":"Authorization"}}})} else {json!({"type":"object","properties":{"text":{"type":"string"}}})}}]}),
             "tools/call"=>{calls.fetch_add(1,Ordering::SeqCst);json!({"content":[{"type":"text","text":body["params"]["arguments"].to_string()}],"isError":false,"resultType":"complete"})},
             _=>json!({}),
         };Json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
@@ -61,6 +72,45 @@ async fn fixture() -> (
         .find(|d| d.kind == crate::modules::capability::CapabilityKind::McpTool)
         .unwrap();
     (server, calls, capability.id.to_string(), handle)
+}
+
+#[tokio::test]
+async fn mcp_canvas_gateway_rechecks_current_header_schema() {
+    let (server, calls, id, fixture_handle) = fixture_schema(true).await;
+    let tool = id.replacen("mcp.", "mcp_", 1);
+    assert!(
+        crate::modules::task::application::capability_execution::gateway(&server, &tool)
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    fixture_handle.abort();
+}
+
+#[tokio::test]
+async fn mcp_canvas_paused_graph_cannot_resume_remote_call_but_can_reject() {
+    let (server, calls, id, fixture_handle) = fixture().await;
+    let execution = start(&server, &id).await;
+    server
+        .task_world
+        .pause_task(&execution.graph_id, 4)
+        .unwrap();
+    let approval = execution.approval_ref.as_ref().unwrap();
+    assert!(decide(server.clone(), approval, true).await.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    decide(server.clone(), approval, false).await.unwrap();
+    assert_eq!(
+        server
+            .task_world
+            .find_execution(&execution.id)
+            .unwrap()
+            .1
+            .failure_code
+            .as_deref(),
+        Some("approval_rejected")
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    fixture_handle.abort();
 }
 async fn start(server: &Arc<AppServer>, capability: &str) -> crate::modules::task::NodeExecution {
     let graph = TaskGraphId::new("u3-graph").unwrap();
