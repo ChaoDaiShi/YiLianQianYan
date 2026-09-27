@@ -49,7 +49,7 @@ export async function canvasStudio({page,backendPort,frontendPort,controlToken,e
       const r=el.getBoundingClientRect(),top=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
       return {name:el.getAttribute('aria-label')||el.textContent,reachable:el.contains(top)&&r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight};
     }));
-    assert.equal(controls.length,7);
+    assert.deepEqual(controls.map(c=>c.name),['Zoom Out','Zoom In','适应全部','100%','自动布局','添加任务节点','从能力添加','运行选中节点']);
     assert.ok(controls.every(c=>c.reachable),JSON.stringify(controls));
     geometry.controls=controls;
     const originalPositions=await positions(),originalCamera=await camera();
