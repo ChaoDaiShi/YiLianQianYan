@@ -46,20 +46,42 @@ layer, and explicit real-state labels. Existing APIs and credential handlers sta
 
 ## Plan and verification
 
-- [ ] W0: baseline screenshots/styles/geometry for Chat, Settings, Capability,
+- [x] W0: baseline screenshots/styles/geometry for Chat, Settings, Capability,
   System at 1280/1920; commit this design and capture runner.
-- [ ] W1: Settings disclosure/presets/status, preserve secret handlers and APIs;
+- [x] W1: Settings disclosure/presets/status, preserve secret handlers and APIs;
   focused tests for presets/status and existing credential contracts.
-- [ ] W2: Chat surfaces, sidebar, composer, execution summaries and artifacts.
-- [ ] W3: capability cards/detail and managed import disclosure; preserve source actions.
-- [ ] W4/W5: system/knowledge/memory/nav and voice visual consistency only.
-- [ ] W6: full frontend tests/build/architecture checks; core + frozen Canvas
+- [x] W2: Chat surfaces, sidebar, composer, execution summaries and artifacts.
+- [x] W3: capability cards/detail and managed import disclosure; preserve source actions.
+- [x] W4/W5: system/knowledge/memory/nav and voice visual consistency only.
+- [x] W6: full frontend tests/build/architecture checks; core + frozen Canvas
   Stability + Studio + U2 real backend/system Edge E2E. Four desktop sizes and
   dark Chat/Settings/Capability/Canvas. Secret tests use only isolated disposable
   fixtures; no real cloud calls, imported unknown code or real user secrets.
-- [ ] W7: report/manifest/before-after artifacts in ignored target/workbench-u2,
+- [x] W7: report/manifest/before-after artifacts in ignored target/workbench-u2,
   protected-path diff, local commits and authorized feature branch push. Stop.
 
 If a backend change is required, stop with WORKBENCH_BACKEND_CHANGE_REQUIRED.
 Backend/Cargo/DB/migration/REST/Secret semantics/Canvas state and persistence/v2
 are frozen. No dependencies or remote capability installation are planned.
+
+## Final ownership and evidence notes
+
+Model presets and their UI live inside `features/llm`; Settings composes the
+public `features/llm/index.ts` surface and owns connection presentation. This
+avoids a new Settings/LLM cycle. React Input IDs use `useId` so duplicate field
+labels in collapsed forms retain unique accessible associations.
+
+Existing Chat theme rules have higher specificity and important message
+backgrounds. U2 explicitly overrides those rules for the actual conversation,
+not only its home view. Computed-style E2E checks confirm opaque composer,
+no blur, transparent assistant background and a 1px theme-token border.
+
+Expanded voice reserves space only in Chat through CSS. Voice runtime and Canvas
+safe-area rules remain untouched. Secret verification uses disposable unique
+model profile slots because the OS SecretStore is shared by the Windows user,
+not isolated by the test database directory.
+
+The local provider fixture releases its first streaming token after initial
+conversation history hydration. An instantaneous fixture exposed one existing
+Chat initialization race; no runtime fix is claimed. See the acceptance report
+for the retained failure evidence and limits of this visual acceptance.
