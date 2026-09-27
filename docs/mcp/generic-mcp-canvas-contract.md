@@ -27,19 +27,21 @@ Resolver 在执行开始查询当前能力；provider dispatch 再确认精确�
 
 Gateway 复用 sandbox/workspace/registry/verifier/audit/DB grants 配置，MCP High Risk 与 McpInvoke/精确 server-tool resource 语义保持。参数只来自 node.input.capability_input，不自动注入 graph、conversation、dependency outputs、memory 或 resources。添加和保存绝不运行，只有显式运行进入 Harness。
 
+当前授权边界：现有 GrantEvaluator 对 McpInvoke 明确为 RBAC-only，GrantResource 不含 MCP 类型。本轮不扩展该协议/模型。验证当前权限拒绝（审批创建后 local-user 改为 restricted）使调用为 0；不能将它写成已验证 MCP 专用资源 deny grant。完整 gate 同时保留既有资源 grant 的回归测试。
+
 ## Approval
 
 新增可信 target TaskNodeExecution，task_graph_id/task_node_id/node_execution_id 必须全部存在；任意 partial/mixed binding 判 InvalidBinding。字段 additive optional，继续内存 ApprovalStore，不迁移数据库。
 
 RequiresApproval → 真实 PendingApproval → WaitingApproval → 持久化 NodeExecution；复用 Approval Center，增加 Task Canvas 来源。Task MCP 首版只支持显式 UI 点击；已有 voice attestation 仅支持 Agent 的限制保留。
 
-Approve 原子 consume 一次，检查执行仍 waiting、绑定与 approval_ref 匹配、未取消，并取得 Task dispatch lease/cancellation token。用审批冻结的 tool/arguments/subject 调用 execute_approved，重新使用当前 policy/RBAC/grants，绝不读取后来修改的 draft 参数。重复批准不能二次调用。取消先完成后再批准，调用次数必须保持 0；进行中的取消使用既有 token，迟到结果不能覆盖 Cancelled。
+Approve 原子 consume 一次，检查执行仍 waiting、绑定与 approval_ref 匹配、未取消，并取得 Task dispatch lease/cancellation token。用审批冻结的 tool/arguments/subject 调用 execute_approved，重新使用当前 policy/RBAC/grants，绝不读取后来修改的 draft 参数。重复批准不能二次调用。取消先完成后再批准，调用次数必须保持 0；进行中的取消使用既有 token，迟到结果不能覆盖 Cancelled。暂停图不能批准启动调用；拒绝仍可用。审批恢复再次检查当前工具 schema，拒绝后来出现的 header binding。
 
 Reject 进入 approval_rejected terminal failure，保留历史，不调用 MCP。approval approved 不等于成功；只有真实执行结果和验证通过才 Succeeded。
 
 ## Result / Failure / Unavailable
 
-真实 ToolResult 映射 bounded JSON wrapper：kind=capability_result、capability_id、content、ok。最多 32,000 字符；超限/错误/未验证失败，不造 Artifact，不自动写文件。使用安全文本展示，不执行 HTML/script/iframe。
+真实 ToolResult 映射 bounded JSON wrapper：kind=capability_result、capability_id、content、ok，以及从真实 content 截取的最多 1,000 字符 summary，复用现有执行结果展示。最多 32,000 字符；超限/错误/未验证失败，不造 Artifact，不自动写文件。使用安全文本展示，不执行 HTML/script/iframe。
 
 能力 refresh/消失不删除已保存节点或 binding；UI 显示能力当前不可用，执行重新验证并 fail closed。状态刷新保持 C2 240×128 节点和现有镜头/位置所有权；只显式 Locate/Fit/100%/Auto Layout 改镜头或布局。
 
@@ -50,16 +52,18 @@ Deferred U3.1 Typed Capability Input Binding：Dependency Output、Resource、Ar
 ## 实施与验证步骤
 
 - [x] M0：读取现有 resolver/adapter/approval/runtime；完成并提交本契约。
-- [ ] M1：先写 binding validator 失败测试；实现当前能力解析、参数/header 边界、同名工具身份；focused test 后提交。
-- [ ] M2：扩展 Capability provider dispatch；生产 Gateway 调用及 bounded result；先测 fail-closed，再实现并提交。
-- [ ] M3：新增 TaskNodeExecution 可信审批绑定与 resume；分类/partial/mixed、reject/cancel/duplicate、当前 grant 与真实调用 focused 测试，提交。
-- [ ] M4：按需 picker、普通任务/从能力添加、Inspector 复用；不改 C2 geometry，提交。
-- [ ] M5：schema form + JSON fallback + header unsupported，验证持久化与无自动运行，提交。
-- [ ] M6：测试专用真实 LOCAL MCP FIXTURE（echo/transform，两来源同名）+ REAL PRODUCT BACKEND + system Edge；发现、配置、reload、reject/approve/exactly-once/cancel/unavailable/secret scan，提交。
-- [ ] M7：最终 Rust/前端完整 gate 各一次；Core、Canvas Stability、C2 和 shared approval/Chat focused 回归；报告/证据/校验和；推送当前分支，停止。
+- [x] M1：先写 binding validator 失败测试；实现当前能力解析、参数/header 边界、同名工具身份；focused test 后提交。
+- [x] M2：扩展 Capability provider dispatch；生产 Gateway 调用及 bounded result；先测 fail-closed，再实现并提交。
+- [x] M3：新增 TaskNodeExecution 可信审批绑定与 resume；分类/partial/mixed、reject/cancel/duplicate、当前 grant 与真实调用 focused 测试，提交。
+- [x] M4：按需 picker、普通任务/从能力添加、Inspector 复用；不改 C2 geometry，提交。
+- [x] M5：schema form + JSON fallback + header unsupported，验证持久化与无自动运行，提交。
+- [x] M6：测试专用真实 LOCAL MCP FIXTURE（echo/transform，两来源同名）+ REAL PRODUCT BACKEND + system Edge；发现、配置、reload、reject/approve/exactly-once/cancel/unavailable/secret scan，提交。
+- [x] M7：最终 Rust/前端完整 gate 各一次；Core、Canvas Stability、C2 和 shared approval/Chat focused 回归；报告/证据/校验和；推送当前分支，停止。
 
 开发期只运行 capability/task/MCP/approval 或前端定向测试。Cargo target 固定 E:/cargo-target/yilian/mcp-canvas-u3，CARGO_PROFILE_TEST_CODEGEN_UNITS=4，-j1，--locked。最终：cargo fmt --all -- --check；cargo check --workspace --all-targets --locked -j1；cargo test --workspace --all-targets --locked -j1；cargo check -p yi-lian-qian-yan --locked -j1；npm test/build 和 Architecture checks。
 
 证据保存在 ignored target/mcp-canvas-u3：discovery、call counts、approval timeline、execution、result JSON、截图、backend/fixture/browser/network logs、checksums。报告必须区分真实产品后端与本地 MCP fixture，不声称全面验证外部服务。
 
 DB migration 如必需：停止 MCP_CANVAS_DB_CHANGE_REQUIRED。无 main/develop/v1-release/v2 修改，无 merge/tag/release。
+
+验收结论见 generic-mcp-canvas-u3-report.md：运行闭环与回归通过；严格任务书的 MCP 资源 deny grant 项保留 PARTIAL，不将现有 RBAC 拒绝替换成该项的虚假 PASS。
