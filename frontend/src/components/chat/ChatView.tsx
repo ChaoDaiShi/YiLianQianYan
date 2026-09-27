@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -49,6 +50,7 @@ import {
   isNearBottom,
   scrollMessageListToBottom,
 } from "../layout/workspaceLayout";
+import { createConversationOwnership } from "./conversationOwnership";
 import ChatInput from "./ChatInput";
 import ChatHeader from "./ChatHeader";
 import MessageList, { type StreamingState } from "./MessageList";
@@ -147,9 +149,20 @@ export default function ChatView({
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowMessagesRef = useRef(true);
   const unknownEventTypes = useRef(new Set<string>());
+  const ownership = useRef(createConversationOwnership(conversationId)).current;
+  useLayoutEffect(() => {
+    if (ownership.id !== conversationId) {
+      ownership.activate(conversationId);
+      setMessages([]);
+      setError(null);
+      setIsLoading(false);
+      onVoiceAnchorChange?.(null);
+    }
+  }, [conversationId, ownership, onVoiceAnchorChange]);
 
   useEffect(() => {
     return () => {
+      ownership.invalidate();
       if (finishedTimerRef.current !== null) {
         window.clearTimeout(finishedTimerRef.current);
       }
@@ -196,8 +209,9 @@ export default function ChatView({
     }
 
     setCurrentConvId(conversationId);
+    const request = ownership.hydration();
     loadConversation(conversationId).then(async (conversation) => {
-      if (cancelled) return;
+      if (cancelled || !ownership.ownsRequest(request)) return;
       const anchor = conversation
         && typeof conversation.id === "string"
         && typeof conversation.title === "string"
@@ -222,7 +236,8 @@ export default function ChatView({
           );
         }
       );
-      setMessages(loadedMessages);
+      if (!ownership.admits(request)) return;
+      setMessages((current) => ownership.admits(request) ? loadedMessages : current);
       dispatchExecution({
         type: "hydrate_history",
         conversationId,
@@ -246,8 +261,9 @@ export default function ChatView({
           )
         ),
       ]);
-      if (cancelled) return;
+      if (cancelled || !ownership.ownsRequest(request)) return;
 
+      if (!ownership.admits(request)) return;
       const store = useApprovalStore.getState();
       (listedApprovals || [])
         .filter((approval) => approval.conversation_id === conversationId)
@@ -296,6 +312,8 @@ export default function ChatView({
         return;
       }
 
+      ownership.mutate();
+      if (event.type === "done" || event.type === "error" || event.type === "stream_end") ownership.finish();
       dispatchExecution({ type: "agent_event", event });
 
       switch (event.type) {
@@ -366,18 +384,22 @@ export default function ChatView({
   if (!decisionGateRef.current) {
     decisionGateRef.current = createDecisionGate(async (approvalId, decision) => {
       const store = useApprovalStore.getState();
+      ownership.start();
       store.markResolving(approvalId, true);
       setError(null);
       setIsLoading(true);
+      const ticket = ownership.capture();
       try {
         const context = decisionContextRef.current;
         const submit = decision === "approve" ? approveAction : rejectAction;
         await submit(
           approvalId,
           context.currentConvId,
-          context.handleAgentEvent
+          (event) => { if (ownership.current(ticket)) context.handleAgentEvent(event); }
         );
       } catch (requestError) {
+        if (!ownership.current(ticket)) throw requestError;
+        ownership.finish();
         store.markResolving(approvalId, false);
         setIsLoading(false);
         setError(
@@ -394,7 +416,9 @@ export default function ChatView({
     const completed = execution.completed;
     if (!completed) return;
 
-    if (completed.conversationId === currentConvId) {
+    if (completed.conversationId === ownership.id && completed.conversationId === currentConvId
+      && ownership.claimCompletion(completed.messageId)) {
+      ownership.mutate();
       const assistantMessage: Message = {
         id: completed.messageId,
         role: "assistant",
@@ -453,7 +477,9 @@ export default function ChatView({
   const handleSend = useCallback(
     async (text: string, resourceIds: string[] = []) => {
       if (!text.trim() || isLoading) return false;
+      let ticket = ownership.capture();
       const readiness = await getProviderReadiness();
+      if (!ownership.current(ticket)) return false;
       if (!readiness?.model.available) {
         setModelUnavailable(true);
         return false;
@@ -463,10 +489,13 @@ export default function ChatView({
       if (resourceIds.length > 0) {
         if (!targetConversationId) {
           const created = await createConversation(text.trim().slice(0, 80));
+          if (!ownership.current(ticket)) return false;
           if (!created || typeof created.id !== "string" || !created.id.trim()) {
             throw new Error("创建附件会话失败");
           }
           targetConversationId = created.id;
+          ownership.promote(created.id);
+          ticket = ownership.capture();
           setCurrentConvId(created.id);
           onConversationChange(created.id);
         }
@@ -477,6 +506,8 @@ export default function ChatView({
           resourceIds,
         );
       }
+      if (!ownership.current(ticket)) return false;
+      ownership.start();
       shouldFollowMessagesRef.current = true;
       setError(null);
       setFinished(false);
@@ -495,7 +526,14 @@ export default function ChatView({
       abortRef.current = sendMessage(
         text,
         targetConversationId,
-        handleAgentEvent,
+        (event) => {
+          if (!ownership.current(ticket)) return;
+          if (event.type === "connected" && event.conversation_id && ownership.id === null) {
+            ownership.promote(event.conversation_id);
+            ticket = ownership.capture();
+          }
+          handleAgentEvent(event);
+        },
         activeWorkflow?.id
       );
       return true;
@@ -506,6 +544,7 @@ export default function ChatView({
   const handleRetry = useCallback(() => {
     const retryText = lastSubmittedText.trim();
     if (!retryText || isLoading) return;
+    ownership.mutate();
     setMessages((current) => {
       const last = current[current.length - 1];
       return last?.role === "user" && last.content === retryText
@@ -516,8 +555,10 @@ export default function ChatView({
   }, [handleSend, isLoading, lastSubmittedText]);
 
   const handleStop = useCallback(async () => {
+    const ticket = ownership.capture();
     abortRef.current?.abort();
     if (currentConvId) await stopGeneration(currentConvId);
+    if (!ownership.current(ticket)) return;
     handleAgentEvent({
       type: "stream_end",
       conversation_id: currentConvId || "",
