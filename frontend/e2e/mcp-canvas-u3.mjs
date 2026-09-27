@@ -4,7 +4,7 @@ import {writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 
 // LOCAL MCP FIXTURE. Requests reach the real product transport and Gateway.
-async function fixture(name) {
+export async function fixture(name, resourceTools = false) {
   const calls=[], log=[];
   const basic={type:'object',properties:{text:{type:'string',description:'待处理文本'}},required:['text']};
   const tools=[
@@ -13,6 +13,7 @@ async function fixture(name) {
     {name:'complex',description:'LOCAL MCP FIXTURE complex JSON',inputSchema:{type:'object',properties:{items:{type:'array',items:{type:'string'}}},oneOf:[{required:['items']},{required:['other']}]}},
     {name:'header_bound',description:'LOCAL MCP FIXTURE unsupported secure input',inputSchema:{type:'object',properties:{credential:{type:'string','x-mcp-header':'Authorization'}}}},
   ];
+  if (resourceTools) tools.push(...['read', 'publish'].map(name => ({name, description:`LOCAL MCP FIXTURE ${name}`, inputSchema:basic})));
   const server=createServer(async(req,res)=>{
     let body='';for await(const part of req)body+=part;
     const rpc=JSON.parse(body||'{}');log.push({method:rpc.method,at:Date.now()});
