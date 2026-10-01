@@ -77,6 +77,7 @@ async fn handler(
             state.call_count.fetch_add(1, Ordering::SeqCst);
             json!({
                 "content": [ { "type": "text", "text": "pong from mock" } ],
+                "structuredContent": { "answer": 42 },
                 "isError": false,
                 "resultType": "complete"
             })
@@ -90,6 +91,32 @@ async fn handler(
         json!({ "jsonrpc": "2.0", "id": id, "result": result })
     };
     Json(response).into_response()
+}
+
+#[tokio::test]
+async fn u31_structured_result_survives_real_mcp_gateway_approval() {
+    let db = Arc::new(Database::new(std::path::Path::new(":memory:")).unwrap());
+    let (gateway, calls, name) = gateway_stack(db).await;
+    let req = request(&name);
+    assert!(matches!(
+        gateway.execute(&req, RiskLevel::High).await.unwrap(),
+        SecurityExecutionOutcome::RequiresApproval { .. }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    match gateway
+        .execute_approved(&req, RiskLevel::High)
+        .await
+        .unwrap()
+    {
+        SecurityExecutionOutcome::Executed { tool_result, .. } => {
+            assert_eq!(
+                serde_json::to_value(tool_result).unwrap()["structured"],
+                json!({"answer":42})
+            );
+        }
+        other => panic!("expected real execution: {other:?}"),
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 async fn start_mock() -> (String, MockState) {

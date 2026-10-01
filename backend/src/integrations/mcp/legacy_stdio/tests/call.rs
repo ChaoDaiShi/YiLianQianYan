@@ -254,6 +254,10 @@ fn structured_content_is_included() {
     let tr = result.into_tool_result();
     assert!(tr.content.contains("[MCP structured content]"));
     assert!(tr.content.contains("\"answer\":42"));
+    assert_eq!(
+        serde_json::to_value(tr).unwrap()["structured"],
+        json!({"answer":42})
+    );
 }
 
 #[test]

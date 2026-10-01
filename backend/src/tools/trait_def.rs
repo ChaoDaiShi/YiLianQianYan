@@ -113,6 +113,8 @@ impl std::fmt::Display for RiskLevel {
 pub struct ToolResult {
     pub content: String,
     pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -123,6 +125,7 @@ impl ToolResult {
             content: content.into(),
             ok: true,
             error: None,
+            structured: None,
         }
     }
 
@@ -132,7 +135,23 @@ impl ToolResult {
             ok: false,
             error: Some(content.clone()),
             content,
+            structured: None,
         }
+    }
+
+    pub fn success_with_structured(
+        content: impl Into<String>,
+        structured: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            structured,
+            ..Self::success(content)
+        }
+    }
+
+    pub fn with_structured(mut self, structured: Option<serde_json::Value>) -> Self {
+        self.structured = structured;
+        self
     }
 }
 

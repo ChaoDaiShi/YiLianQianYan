@@ -318,8 +318,12 @@ impl Tool for McpToolAdapter {
                 .call_tool(&self.server_id, &self.remote_tool_name, args, &cancel)
                 .await
             {
-                Ok(result) if !result.is_error => ToolResult::success(result.text),
-                Ok(result) => ToolResult::error(result.text),
+                Ok(result) if !result.is_error => {
+                    ToolResult::success_with_structured(result.text, result.structured_content)
+                }
+                Ok(result) => {
+                    ToolResult::error(result.text).with_structured(result.structured_content)
+                }
                 Err(error) => {
                     let safe = crate::utils::text::truncate_chars(&error.to_string(), 500);
                     ToolResult::error(format!("MCP tool execution failed: {safe}"))

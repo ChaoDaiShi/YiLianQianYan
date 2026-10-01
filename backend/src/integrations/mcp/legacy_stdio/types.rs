@@ -59,6 +59,17 @@ impl McpCallResult {
     /// Text content blocks are joined in order; non-text blocks are replaced
     /// with short placeholders so binary/base64 payloads are never leaked.
     pub fn into_tool_result(self) -> ToolResult {
+        let structured = match super::super::result::tool_call::call_result_structured(
+            &serde_json::json!({"structuredContent":self.structured_content}),
+        ) {
+            Ok(value) => value,
+            Err(_) if self.structured_content.is_none() => None,
+            Err(_) => {
+                return ToolResult::error(
+                    "MCP structured content is invalid or exceeds bounded limits",
+                )
+            }
+        };
         let mut parts: Vec<String> = Vec::new();
 
         for block in &self.content {
@@ -95,9 +106,9 @@ impl McpCallResult {
         };
 
         if self.is_error {
-            ToolResult::error(content)
+            ToolResult::error(content).with_structured(structured)
         } else {
-            ToolResult::success(content)
+            ToolResult::success_with_structured(content, structured)
         }
     }
 }

@@ -27,7 +27,9 @@ use super::super::registry::resources::{parse_resource_list, parse_resource_temp
 use super::super::registry::tools::parse_tool_list;
 use super::super::result::prompt::parse_prompt_get;
 use super::super::result::resource::parse_resource_contents;
-use super::super::result::tool_call::{call_result_text, parse_call_result};
+use super::super::result::tool_call::{
+    call_result_structured, call_result_text, parse_call_result,
+};
 use super::super::security::header_schema::scan_tool_header_bindings;
 use super::super::transport::http::HttpTransport;
 use super::super::transport::stdio::StdioTransport;
@@ -483,6 +485,7 @@ impl McpRuntimeManager {
                 Ok(McpToolCallResult {
                     is_error,
                     text: call_result_text(&value),
+                    structured_content: call_result_structured(&value)?,
                 })
             }
             super::super::protocol::model::McpOperationOutcome::InputRequired(_) => {
@@ -654,8 +657,9 @@ impl McpRuntimeManager {
     }
 }
 
-/// A bounded, safe tool call result (no raw base64 / structured content).
+/// Bounded text and explicit structured protocol data, without raw media blocks.
 pub struct McpToolCallResult {
     pub is_error: bool,
     pub text: String,
+    pub structured_content: Option<serde_json::Value>,
 }
