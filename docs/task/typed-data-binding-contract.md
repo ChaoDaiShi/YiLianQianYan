@@ -73,20 +73,26 @@ WaitingApproval 且已有快照时，允许上游 rerun 并保留该 descendant 
 保存复用 updateTaskNode；重载恢复绑定。保留 C2 浮动工具、面板层级和 240×128
 节点尺寸，绑定不触发布局或镜头操作。
 
+已有执行列表默认仍返回 summaries。显式 `include_output=true` 才返回单个
+latest_successful_output（既有输出界限）；`include_snapshot=true` 返回单个最新
+attempt 的已有快照，可用 execution_id 选择同节点历史 attempt，供查看/验收。
+未添加 endpoint，也不在普通 graph/detail
+刷新中传输全部输出或快照。此读取不会参与执行时的 binding resolution。
+
 ## 实施与验收计划
 
-- [ ] D1：先验证结构结果缺口，再保留 MCP / ToolResult structured，验证 text-only、
+- [x] D1：先验证结构结果缺口，再保留 MCP / ToolResult structured，验证 text-only、
   absent、JSON text 不解析、大小/深度边界、Gateway/Task wrapper 传递。
-- [ ] D2：纯绑定模型/解析器/schema 测试先行；验证路径、null、所有类型、integer、
+- [x] D2：纯绑定模型/解析器/schema 测试先行；验证路径、null、所有类型、integer、
   enum/required、覆盖、冲突、界限；接入 capability provider，解析后才进入 Gateway。
-- [ ] D3：候选图统一 source/edge 校验；真实 API 验证 edge/node 删除原子拒绝；
+- [x] D3：候选图统一 source/edge 校验；真实 API 验证 edge/node 删除原子拒绝；
   增加保留 typed pending snapshot 的最小 rerun 规则与测试。
-- [ ] D4：Inspector 来源编辑器、直接依赖筛选、路径类型树、重载草稿和保存；
+- [x] D4：Inspector 来源编辑器、直接依赖筛选、路径类型树、重载草稿和保存；
   新增有意义的前端模型/编辑器测试，节点几何保持。
-- [ ] D5：真实产品后端 + LOCAL MCP FIXTURE + system Edge 两节点链、缺路径/错类型
+- [x] D5：真实产品后端 + LOCAL MCP FIXTURE + system Edge 两节点链、缺路径/错类型
   零调用、重载、edge/node guard、rerun 新快照、pending 期间上游 rerun 的旧参数。
   最终 Core / U3 / U3-C / U3.1 / Studio C2 E2E、Chat real backend fixture。
-- [ ] D6：最终 Rust fmt/check/test/desktop check，`--locked -j1`、test codegen 4；
+- [x] D6：最终 Rust fmt/check/test/desktop check，`--locked -j1`、test codegen 4；
   前端完整测试/生产构建与架构检查。审计 DB/migration/Secret/v2/GIS 禁区，保存
   target/typed-binding-u31 结果、快照、实际参数、日志、截图与校验清单，写验收报告。
 
