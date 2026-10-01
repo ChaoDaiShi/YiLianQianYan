@@ -173,6 +173,13 @@ export async function listTaskNodeExecutions(
   return result.ok ? { ok: true, data: result.data.executions } : result;
 }
 
+/** Explicit bounded output browsing; ordinary graph/history reads retain summaries. */
+export async function getTaskNodeSuccessfulOutput(graphId: string, nodeId: string): Promise<ApiResult<unknown>> {
+  const result=await requestTaskWorld<{latest_successful_output:unknown}>("GET",
+    `/api/task-world/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/executions?include_output=true`);
+  return result.ok?{ok:true,data:result.data.latest_successful_output}:result;
+}
+
 export async function cancelTaskExecution(
   graphId: string,
   executionId: string,

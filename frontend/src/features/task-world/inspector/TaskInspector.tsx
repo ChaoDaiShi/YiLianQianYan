@@ -1,4 +1,7 @@
 import SchemaForm from "../schema-form/SchemaForm";
+import InputSource,{AdvancedBindings} from "../input-binding/InputSource";
+import {bindingError,directDependencies,samePath} from "../input-binding/model";
+import {useDependencyOutputs} from "../input-binding/useDependencyOutputs";
 import {parseArguments,hasHeaderBinding,HEADER_UNSUPPORTED} from "../schema-form/schema";
 import {useCapabilityDraft} from "../capability-picker/useCapabilityDraft";
 import type {useCanvasCapabilities} from "../capability-picker/useCanvasCapabilities";
@@ -106,6 +109,8 @@ export default function TaskInspector({
 
   const capability=capabilities?.items.find(c=>`capability://${c.id}`===executorRef);
   const isCapability=executorRef.startsWith("capability://");
+  const directNodes=directDependencies(node?.id||"",dependencyEdges,dependencyCandidates);
+  const dependencyOutputs=useDependencyOutputs(graphId,isCapability?directNodes:[]);
   const availability = useMemo(
     () => getExecutorAvailability(executorRef.trim() || null,capability),
     [executorRef,capability],
@@ -149,9 +154,12 @@ export default function TaskInspector({
       if(capabilityDraft.loading||capabilityDraft.error)return;
       try{
         if(hasHeaderBinding(capability?.input_schema))throw new Error(HEADER_UNSUPPORTED);
+        const bindingValidation=bindingError(capabilityDraft.bindings,new Set(directNodes.map(n=>n.id)));
+        if(bindingValidation)throw new Error(bindingValidation);
+        if(capabilityDraft.bindings.length)input.capability_bindings=capabilityDraft.bindings;else delete input.capability_bindings;
         input.capability_input=parseArguments(capabilityDraft.argumentsJson);setArgumentError("");
       }catch(error){setArgumentError(error instanceof Error?error.message:"参数无效");return;}
-    } else delete input.capability_input;
+    } else {delete input.capability_input;delete input.capability_bindings;}
     await onSave({
       kind: node.kind,
       title: title.trim(),
@@ -209,10 +217,15 @@ export default function TaskInspector({
           onExecutorRefChange={setExecutorRef}
           availability={availability}
           capabilities={capabilities}
-          onSelect={tool=>{setExecutorRef(`capability://${tool.id}`);capabilityDraft.setArgumentsJson("{}");setArgumentError("");}}
+          onSelect={tool=>{setExecutorRef(`capability://${tool.id}`);capabilityDraft.setArgumentsJson("{}");capabilityDraft.setBindings([]);setArgumentError("");}}
         />
         {isCapability&&<>
-          {capabilityDraft.loading?<p role="status">正在读取已保存参数…</p>:<SchemaForm schema={capability?.input_schema} value={capabilityDraft.argumentsJson} onChange={capabilityDraft.setArgumentsJson}/>}
+          {capabilityDraft.loading?<p role="status">正在读取已保存参数…</p>:<>
+            <SchemaForm schema={capability?.input_schema} value={capabilityDraft.argumentsJson} onChange={capabilityDraft.setArgumentsJson}
+              isBound={path=>capabilityDraft.bindings.some(b=>samePath(b.target_path,path))}
+              inputSource={path=><InputSource path={path} name={path.join('.')} bindings={capabilityDraft.bindings} onChange={capabilityDraft.setBindings} nodes={directNodes} outputs={dependencyOutputs}/>}/>
+            <AdvancedBindings bindings={capabilityDraft.bindings} onChange={capabilityDraft.setBindings} nodes={directNodes} outputs={dependencyOutputs}/>
+          </>}
           {(argumentError||capabilityDraft.error)&&<p role="alert" className="text-xs text-[var(--danger-fg)]">{argumentError||capabilityDraft.error}</p>}
         </>}
         <details className="studio-detail"><summary>验收标准</summary>

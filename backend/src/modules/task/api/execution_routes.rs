@@ -2,6 +2,15 @@ use super::*;
 
 use crate::modules::task::application::execution_service;
 
+#[derive(Default, Deserialize)]
+pub struct ExecutionEvidenceQuery {
+    #[serde(default)]
+    pub include_output: bool,
+    #[serde(default)]
+    pub include_snapshot: bool,
+    pub execution_id: Option<String>,
+}
+
 pub async fn start_execution(
     State(server): State<Arc<AppServer>>,
     Path((graph_id, node_id)): Path<(String, String)>,
@@ -61,6 +70,7 @@ pub async fn start_execution(
 pub async fn list_executions(
     State(server): State<Arc<AppServer>>,
     Path((graph_id, node_id)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<ExecutionEvidenceQuery>,
 ) -> Response {
     let graph_id = match parse_graph_id(graph_id) {
         Ok(graph_id) => graph_id,
@@ -70,12 +80,27 @@ pub async fn list_executions(
         Ok(node_id) => node_id,
         Err(error) => return runtime_error(TaskWorldRuntimeError::Graph(error)),
     };
-    match server
-        .task_world
-        .list_node_execution_summaries(&graph_id, &node_id)
-    {
+    match server.task_world.list_node_executions(&graph_id, &node_id) {
         Ok(executions) => {
-            (StatusCode::OK, Json(json!({ "executions": executions }))).into_response()
+            let summaries: Vec<_> = executions.iter().map(execution_summary).collect();
+            let mut response = json!({"executions":summaries});
+            if query.include_output {
+                response["latest_successful_output"] = executions
+                    .iter()
+                    .filter(|e| e.status == crate::modules::task::NodeExecutionStatus::Succeeded)
+                    .max_by_key(|e| e.attempt)
+                    .and_then(|e| e.output.clone())
+                    .unwrap_or(Value::Null);
+            }
+            if query.include_snapshot {
+                let selected = query
+                    .execution_id
+                    .as_ref()
+                    .map(|id| executions.iter().find(|e| e.id.as_str() == id))
+                    .unwrap_or_else(|| executions.iter().max_by_key(|e| e.attempt));
+                response["execution_snapshot"] = selected.map(|e| json!(e)).unwrap_or(Value::Null);
+            }
+            (StatusCode::OK, Json(response)).into_response()
         }
         Err(error) => runtime_error(error),
     }
