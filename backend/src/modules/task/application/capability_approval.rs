@@ -172,11 +172,8 @@ pub async fn resolve(
         }
     }
     let result = outcome
-        .map_err(|_| "security_gateway_error".to_string())
-        .and_then(|outcome| {
-            super::capability_execution::completed_result(capability_id, outcome)
-                .map_err(|e| e.to_string())
-        });
+        .map_err(|_| super::super::AdapterError::Execution("security_gateway_error".into()))
+        .and_then(|outcome| super::capability_execution::completed_result(capability_id, outcome));
     match result {
         Ok(ExecutorDispatch::Completed {
             output: Some(output),
@@ -191,6 +188,12 @@ pub async fn resolve(
             )
             .map_err(|e| e.to_string()),
         Ok(ExecutorDispatch::Failed { code, error }) => fail(&server, &execution, &code, &error),
+        Err(super::super::AdapterError::OutputTooLarge) => fail(
+            &server,
+            &execution,
+            "output_too_large",
+            "能力结果整体超过输出大小限制，未保存截断结果",
+        ),
         _ => fail(
             &server,
             &execution,

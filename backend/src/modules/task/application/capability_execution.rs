@@ -72,8 +72,10 @@ pub fn completed_result(
                     ),
                 });
             }
-            let output = json!({"kind":"capability_result","capability_id":capability_id,"summary":crate::utils::text::truncate_chars(&tool_result.content,1000),"content":tool_result.content,"ok":true});
-            if output.to_string().chars().count() > 32000 {
+            let output = json!({"kind":"capability_result","capability_id":capability_id,"summary":crate::utils::text::truncate_chars(&tool_result.content,1000),"content":tool_result.content,"structured":tool_result.structured,"ok":true});
+            if output.to_string().chars().count()
+                > super::super::execution::MAX_NODE_EXECUTION_OUTPUT_CHARS
+            {
                 return Err(AdapterError::OutputTooLarge);
             }
             Ok(ExecutorDispatch::Completed {
@@ -113,12 +115,34 @@ impl CapabilityExecutionProvider for ExistingCapabilityProvider {
         if binding.capability_id != capability_id {
             return Err(AdapterError::ProviderUnavailable);
         }
+        let resolved = super::super::input_binding::validate_membership(
+            &execution.node_id,
+            &graph.dependencies(&execution.node_id),
+            &binding.input_bindings,
+        )
+        .and_then(|_| {
+            super::super::input_binding_resolver::TypedInputBindingResolver::resolve(
+                &binding.arguments,
+                &binding.input_bindings,
+                &execution.context,
+                binding.input_schema.as_ref(),
+            )
+        });
+        let arguments = match resolved {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                return Ok(ExecutorDispatch::Failed {
+                    code: error.code.into(),
+                    error: error.to_string(),
+                })
+            }
+        };
         let gateway = gateway(&self.server, &binding.tool_registry_name).await?;
         let request = SecurityExecutionRequest {
             conversation_id: format!("task-node:{}", execution.id),
             tool_call_id: execution.id.to_string(),
             tool_name: binding.tool_registry_name,
-            arguments: binding.arguments,
+            arguments,
             subject: SecuritySubject::local_user(),
         };
         let outcome = tokio::select! {biased;
@@ -149,7 +173,42 @@ impl CapabilityExecutionProvider for ExistingCapabilityProvider {
                     approval_ref: approval.approval_id,
                 })
             }
-            other => completed_result(capability_id, other),
+            other => match completed_result(capability_id, other) {
+                Err(AdapterError::OutputTooLarge) => Ok(ExecutorDispatch::Failed {
+                    code: "output_too_large".into(),
+                    error: "能力结果整体超过输出大小限制，未保存截断结果".into(),
+                }),
+                result => result,
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    #[test]
+    fn u31_wrapper_preserves_structure_and_rejects_total_output_overflow() {
+        let outcome = |structured| SecurityExecutionOutcome::Executed {
+            tool_result: crate::tools::ToolResult::success_with_structured(
+                "human text",
+                Some(structured),
+            ),
+            verification: crate::agent::verifier::VerificationResult::success("verified", None),
+        };
+        match completed_result("mcp.fixture", outcome(json!({"id":"real"}))).unwrap() {
+            ExecutorDispatch::Completed {
+                output: Some(value),
+            } => {
+                assert_eq!(value["structured"]["id"], "real");
+                assert_eq!(value["content"], "human text");
+                assert_eq!(value["ok"], true);
+            }
+            other => panic!("unexpected result {other:?}"),
+        }
+        assert!(matches!(
+            completed_result("mcp.fixture", outcome(json!({"data":"x".repeat(32000)}))),
+            Err(AdapterError::OutputTooLarge)
+        ));
     }
 }

@@ -7,6 +7,8 @@ pub struct ExecutableCapabilityBinding {
     pub capability_id: String,
     pub tool_registry_name: String,
     pub arguments: Value,
+    pub input_bindings: Vec<super::super::input_binding::InputBinding>,
+    pub input_schema: Option<Value>,
 }
 
 pub const MAX_ARGUMENT_BYTES: usize = 16 * 1024;
@@ -96,6 +98,9 @@ pub fn validate_binding(
         capability_id: id.into(),
         tool_registry_name: tool_name.into(),
         arguments: arguments.clone(),
+        input_bindings: super::super::input_binding::bindings_from_input(input)
+            .map_err(|e| e.to_string())?,
+        input_schema: descriptor.input_schema.clone(),
     })
 }
 
