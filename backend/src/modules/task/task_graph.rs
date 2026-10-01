@@ -179,6 +179,8 @@ impl TaskNode {
     /// executor-ref module so the graph stores one strict, auditable shape.
     pub fn validate(&self) -> Result<(), TaskGraphValidationError> {
         validate_node_title(&self.id, &self.title)?;
+        super::input_binding::bindings_from_input(&self.input)
+            .map_err(|e| TaskGraphValidationError::InvalidDataBinding(e.to_string()))?;
         validate_command_binding(&self.input)
             .map(|_| ())
             .map_err(|error| TaskGraphValidationError::InvalidCommandBinding(error.to_string()))
@@ -334,6 +336,8 @@ impl TaskGraph {
             ));
         }
 
+        super::input_binding::validate_graph_bindings(self)
+            .map_err(|e| TaskGraphValidationError::InvalidDataBinding(e.to_string()))?;
         Ok(())
     }
 
@@ -366,6 +370,8 @@ impl TaskGraph {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TaskGraphValidationError {
+    #[error("invalid typed input binding: {0}")]
+    InvalidDataBinding(String),
     #[error("unsupported task graph schema version: {0}")]
     UnsupportedSchemaVersion(u32),
     #[error("invalid task graph id: {0}")]
