@@ -4,8 +4,8 @@ import {writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 
 // LOCAL MCP FIXTURE. Requests reach the real product transport and Gateway.
-export async function fixture(name, resourceTools = false) {
-  const calls=[], log=[];
+export async function fixture(name, resourceTools = false, typedTools = false) {
+  const calls=[], log=[],inspections=new Map();
   const basic={type:'object',properties:{text:{type:'string',description:'待处理文本'}},required:['text']};
   const tools=[
     {name:'echo',description:'LOCAL MCP FIXTURE echo',inputSchema:basic},
@@ -14,6 +14,10 @@ export async function fixture(name, resourceTools = false) {
     {name:'header_bound',description:'LOCAL MCP FIXTURE unsupported secure input',inputSchema:{type:'object',properties:{credential:{type:'string','x-mcp-header':'Authorization'}}}},
   ];
   if (resourceTools) tools.push(...['read', 'publish'].map(name => ({name, description:`LOCAL MCP FIXTURE ${name}`, inputSchema:basic})));
+  if(typedTools)tools.push(
+    {name:'inspect_dataset',description:'LOCAL MCP FIXTURE structured inspection',inputSchema:{type:'object',properties:{key:{type:'string'},scenario:{type:'string',enum:['normal','type_mismatch','large','deep','text_only']}},required:['key']}},
+    {name:'create_layer',description:'LOCAL MCP FIXTURE received typed arguments',inputSchema:{type:'object',properties:{dataset_id:{type:'string'},layer_name:{type:'string'},rows:{type:'integer'}},required:['dataset_id','layer_name'],additionalProperties:false}}
+  );
   const server=createServer(async(req,res)=>{
     let body='';for await(const part of req)body+=part;
     const rpc=JSON.parse(body||'{}');log.push({method:rpc.method,at:Date.now()});
@@ -24,6 +28,14 @@ export async function fixture(name, resourceTools = false) {
       const {name:tool,arguments:args}=rpc.params;calls.push({tool,args});
       const value=tool==='transform'?{text:(args.mode==='upper'?args.text.toUpperCase():args.text.toLowerCase()).repeat(args.count),enabled:args.enabled,factor:args.factor,options:args.options}:args;
       result={content:[{type:'text',text:JSON.stringify({fixture:name,value})}],isError:false,resultType:'complete'};
+      if(typedTools&&tool==='inspect_dataset'){
+        const version=(inspections.get(args.key)||0)+1;inspections.set(args.key,version);
+        let structured={dataset_id:`ds-${String(version).padStart(3,'0')}`,rows:args.scenario==='type_mismatch'?'42':42,valid:true,meta:{region:'test-region'}};
+        if(args.scenario==='large')structured={data:'x'.repeat(70000)};
+        if(args.scenario==='deep')for(let i=0;i<20;i++)structured={nested:structured};
+        result={content:[{type:'text',text:args.scenario==='text_only'?'{"dataset_id":"text-only-must-not-be-parsed"}':'LOCAL MCP FIXTURE：检查完成，文本不是结构化数据。'}],isError:false,resultType:'complete',...(args.scenario==='text_only'?{}:{structuredContent:structured})};
+      }
+      if(typedTools&&tool==='create_layer')result.structuredContent={received:args};
     }
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({jsonrpc:'2.0',id:rpc.id,result}));
   });

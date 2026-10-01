@@ -12,6 +12,7 @@ import { chatViewRace } from "./chat-view-race.mjs";
 import { workbenchU2 } from "./workbench-u2.mjs";
 import { mcpCanvasU3 } from "./mcp-canvas-u3.mjs";
 import { mcpGrantU3c } from "./mcp-grant-u3c.mjs";
+import { typedBindingU31 } from "./typed-binding-u31.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..");
 const frontendRoot = resolve(process.env.YILIAN_E2E_FRONTEND_ROOT ?? resolve(import.meta.dirname, ".."));
@@ -42,11 +43,12 @@ const logs = new Map();
 const chatR1 = process.env.YILIAN_E2E_CHAT_R1;
 const mcpU3 = process.env.YILIAN_E2E_MCP_U3;
 const mcpU3c = process.env.YILIAN_E2E_MCP_U3C;
+const typedU31 = process.env.YILIAN_E2E_TYPED_U31;
 const chatFocused = process.env.YILIAN_E2E_CHAT_FOCUSED;
 const studioStage = process.env.YILIAN_E2E_STUDIO;
 const workbenchStage = process.env.YILIAN_E2E_WORKBENCH;
 const uiStage = process.env.YILIAN_E2E_UI_MATRIX;
-const evidenceDir = join(repositoryRoot, "target", mcpU3c ? "mcp-grant-u3c" : mcpU3 ? "mcp-canvas-u3" : chatFocused || chatR1 ? "chat-reliability-r1" : workbenchStage ? "workbench-u2" : studioStage ? "canvas-studio" : uiStage === "baseline" ? "ui-baseline" : uiStage ? "ui-foundation" : "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
+const evidenceDir = join(repositoryRoot, "target", typedU31 ? "typed-binding-u31" : mcpU3c ? "mcp-grant-u3c" : mcpU3 ? "mcp-canvas-u3" : chatFocused || chatR1 ? "chat-reliability-r1" : workbenchStage ? "workbench-u2" : studioStage ? "canvas-studio" : uiStage === "baseline" ? "ui-baseline" : uiStage ? "ui-foundation" : "canvas-e2e", new Date().toISOString().replace(/[:.]/g, "-"));
 const browserLog = [];
 const networkLog = [];
 let browser;
@@ -153,7 +155,7 @@ try {
   } else {
     browser = await chromium.launch({ executablePath, headless: true });
   }
-  page = mcpU3 || mcpU3c
+  page = mcpU3 || mcpU3c || typedU31
     ? await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage()
     : await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on("response", (response) => {
@@ -179,7 +181,13 @@ try {
     await laterSetup.click();
     await laterSetup.waitFor({ state: "hidden" });
   }
-  if (mcpU3c) {
+  if (typedU31) {
+    if(!executablePath.toLowerCase().includes('msedge'))throw new Error('U3.1 requires system Edge');
+    const result=await typedBindingU31({page,frontendPort,backendPort,controlToken,evidenceDir});
+    if(browserErrors.length)throw new Error(browserErrors.join(' | '));
+    await writeFile(join(evidenceDir,'result.json'),JSON.stringify({...result,browser:executablePath,browser_version:browser.version()},null,2));
+    process.stdout.write(JSON.stringify(result)+'\n');testExitCode=0;
+  } else if (mcpU3c) {
     if(!executablePath.toLowerCase().includes('msedge'))throw new Error('U3-C requires system Edge');
     const result=await mcpGrantU3c({page,frontendPort,backendPort,controlToken,evidenceDir});
     if(browserErrors.length)throw new Error(browserErrors.join(' | '));
