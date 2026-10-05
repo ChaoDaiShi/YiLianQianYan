@@ -16,15 +16,10 @@ interface AppearanceSettingsProps {
  */
 export default function AppearanceSettings({ theme, onBackgroundUpload }: AppearanceSettingsProps) {
   return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">
-          昔涟外观
-        </h3>
-        <p className="mt-1 text-xs leading-5 text-[var(--text-faint)]">
-          保留昔涟 · 涟漪的统一视觉，只切换适合环境的明暗层级。
-        </p>
-      </div>
+    <>
+      <section className="settings-card settings-card--wide">
+      <header className="settings-card-header"><div><h3>界面模式</h3><p>切换适合当前环境的明暗层级，状态颜色保持一致。</p></div></header>
+      <div className="settings-card-body">
       <div
         className="grid grid-cols-1 gap-3 sm:grid-cols-3"
         role="radiogroup"
@@ -40,7 +35,7 @@ export default function AppearanceSettings({ theme, onBackgroundUpload }: Appear
             type="button"
             role="radio"
             aria-checked={selected}
-            className={`rounded-xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-soft)] ${
+            className={`settings-theme-option ${
               selected
                 ? "border-[var(--accent-border)] bg-[var(--accent-soft)]"
                 : "border-[var(--border-soft)] bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)]"
@@ -53,7 +48,7 @@ export default function AppearanceSettings({ theme, onBackgroundUpload }: Appear
             <span className="block text-sm font-medium text-[var(--text-primary)]">
               {item.label}
             </span>
-            <span className="mt-1 block text-xs leading-5 text-[var(--text-secondary)]">
+            <span className="mt-1 block text-[13px] leading-5 text-[var(--text-secondary)]">
               {item.description}
             </span>
           </button>
@@ -61,15 +56,17 @@ export default function AppearanceSettings({ theme, onBackgroundUpload }: Appear
         })}
       </div>
       {theme.mode === "system" ? (
-        <p className="text-xs text-[var(--text-secondary)]" role="status">
+        <p className="settings-help" role="status">
           当前跟随系统：{theme.resolvedScheme === "dark" ? "夜间" : "白天"}
         </p>
       ) : null}
-
-      <div className="border-t border-[var(--divider)] pt-5">
-        <h4 className="text-sm font-medium mb-2">背景</h4>
+      </div>
+      </section>
+      <section className="settings-card">
+        <header className="settings-card-header"><div><h3>背景与重置</h3><p>背景图会自动加可读性遮罩，不改变风险与验证状态颜色。</p></div></header>
+        <div className="settings-card-body">
         <div className="flex items-center gap-3 flex-wrap">
-          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border)] hover:bg-[var(--panel-hover)] cursor-pointer text-sm transition-colors">
+          <label className="settings-upload-action">
             <Upload className="w-4 h-4" />
             上传背景图
             <input type="file" accept="image/*" onChange={onBackgroundUpload} className="hidden" />
@@ -80,17 +77,12 @@ export default function AppearanceSettings({ theme, onBackgroundUpload }: Appear
             </Button>
           )}
         </div>
-        <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
-          背景图片会自动叠加可读性遮罩，不改变风险和验证状态颜色。
-        </p>
-      </div>
-
-      <div className="flex items-center gap-3">
         <Button variant="secondary" size="sm" onClick={theme.resetTheme}>
           <RotateCcw className="w-4 h-4" />
           重置默认
         </Button>
       </div>
-    </div>
+      </section>
+    </>
   );
 }

@@ -37,24 +37,18 @@ export default function VoiceSettings({
   onPreviewTts,
 }: VoiceSettingsProps) {
   return (
-    <div className="space-y-6">
-      <div className="u2-section-intro"><h3>语音服务 <span>可选</span></h3><p>未配置语音也可以使用文字对话与工作台。识别和合成各自独立。</p></div>
+    <div className="settings-section-stack">
       <ProviderReadinessCard dirty={dirty} readiness={readiness} kinds={["stt", "tts"]} testing={testing} results={results} onVerify={onVerify} onPreviewTts={onPreviewTts} />
-      <p className="text-xs leading-5 text-[var(--text-faint)]">
-        语音识别与语音合成独立配置；两个密钥均只写入系统凭据库，不会在页面中回显。
-      </p>
 
-      <section className="space-y-4 rounded-xl border border-[var(--border-soft)] p-4">
-        <div>
-          <h3 className="font-semibold text-sm text-[var(--text)]">语音识别（STT）</h3>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">将真实麦克风音频转换为最终文本。</p>
-        </div>
+      <section className="settings-subcard">
+        <header className="settings-card-header"><div><h3>语音识别（STT）</h3><p>将真实麦克风音频转换为最终文本。</p></div></header>
+        <div className="settings-card-body">
         <Input label="Provider" value={config.voice.stt.provider} onChange={(e) => updateVoiceField("stt", "provider", e.target.value)} placeholder="openai-compatible" />
         <Input label="模型" value={config.voice.stt.model} onChange={(e) => updateVoiceField("stt", "model", e.target.value)} placeholder="gpt-4o-mini-transcribe" />
         <Input label="语言" value={config.voice.stt.language} onChange={(e) => updateVoiceField("stt", "language", e.target.value)} placeholder="zh" />
         <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
           <div>
-            <p className="text-xs font-medium text-[var(--text)]">{config.voice.stt.api_key_configured ? "STT 凭据已配置" : "STT 凭据未配置"}</p>
+            <p className="text-sm font-medium text-[var(--text)]">{config.voice.stt.api_key_configured ? "STT 凭据已配置" : "STT 凭据未配置"}</p>
             <p className="mt-0.5 text-meta text-[var(--text-muted)]">{secretSourceLabel(config.voice.stt.api_key_source)}</p>
           </div>
           <div className="flex gap-2">{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => onReplaceVoiceKey("stt")}>替换密钥</Button> : null}{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void onClearVoiceSecret("stt")}>清除密钥</Button> : null}</div>
@@ -65,13 +59,12 @@ export default function VoiceSettings({
         <Input label="密钥环境变量名" value={config.voice.stt.api_key_env} onChange={(e) => updateVoiceField("stt", "api_key_env", e.target.value)} placeholder="OPENAI_API_KEY" />
         <Input label="请求超时（毫秒）" type="number" value={String(config.voice.stt.timeout_ms)} onChange={(e) => updateVoiceField("stt", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
         </div></details>
+        </div>
       </section>
 
-      <section className="space-y-4 rounded-xl border border-[var(--border-soft)] p-4">
-        <div>
-          <h3 className="font-semibold text-sm text-[var(--text)]">语音合成（TTS）</h3>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">默认使用 MiniMax 原生语音接口与当前默认音色。</p>
-        </div>
+      <section className="settings-subcard">
+        <header className="settings-card-header"><div><h3>语音合成（TTS）</h3><p>使用已配置的语音服务与默认音色朗读助手回复。</p></div></header>
+        <div className="settings-card-body">
         <Input label="Provider" value={config.voice.tts.provider} onChange={(e) => updateVoiceField("tts", "provider", e.target.value)} placeholder="minimax" />
         <Input label="模型" value={config.voice.tts.model} onChange={(e) => updateVoiceField("tts", "model", e.target.value)} placeholder="speech-2.8-turbo" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -80,7 +73,7 @@ export default function VoiceSettings({
         </div>
         <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
           <div>
-            <p className="text-xs font-medium text-[var(--text)]">{config.voice.tts.api_key_configured ? "TTS 凭据已配置" : "TTS 凭据未配置"}</p>
+            <p className="text-sm font-medium text-[var(--text)]">{config.voice.tts.api_key_configured ? "TTS 凭据已配置" : "TTS 凭据未配置"}</p>
             <p className="mt-0.5 text-meta text-[var(--text-muted)]">{secretSourceLabel(config.voice.tts.api_key_source)}</p>
           </div>
           <div className="flex gap-2">{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => onReplaceVoiceKey("tts")}>替换密钥</Button> : null}{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void onClearVoiceSecret("tts")}>清除密钥</Button> : null}</div>
@@ -91,10 +84,11 @@ export default function VoiceSettings({
         <Input label="密钥环境变量名" value={config.voice.tts.api_key_env} onChange={(e) => updateVoiceField("tts", "api_key_env", e.target.value)} placeholder="留空时使用系统凭据库" />
         <Input label="请求超时（毫秒）" type="number" value={String(config.voice.tts.timeout_ms)} onChange={(e) => updateVoiceField("tts", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
         </div></details>
+        </div>
       </section>
 
-      <p className="text-xs leading-5 text-[var(--text-muted)]">
-        每个 Provider 独立判断可用性；任一侧配置不完整时，该侧保持 fail closed。
+      <p className="settings-help">
+        识别与合成各自使用独立凭据；密钥只写入系统凭据库，不在页面回显。任一侧配置不完整时，该侧保持 fail closed。
       </p>
     </div>
   );

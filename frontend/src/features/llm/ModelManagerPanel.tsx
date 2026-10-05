@@ -191,12 +191,12 @@ export default function ModelManagerPanel({ legacyModel, actions }: ModelManager
   };
 
   return (
-    <div className="space-y-4 border-b border-[var(--border-soft)] pb-6">
-      <div>
-        <div className="flex items-center justify-between gap-3">
+    <div className="settings-section-stack">
+      <div className="settings-inline-heading">
+        <div className="flex w-full items-start justify-between gap-3">
           <div>
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-[var(--text-muted)]">模型服务</h3>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">选择服务，输入密钥和模型，保存后测试连接。</p>
+            <h3>默认模型配置</h3>
+            <p>选择服务、配置凭据和模型，保存后再检查连接。</p>
           </div>
           {activeModel ? <Badge tone="success"><Zap className="h-3 w-3" />当前档案：{activeModel.label}</Badge> : null}
         </div>
@@ -204,9 +204,9 @@ export default function ModelManagerPanel({ legacyModel, actions }: ModelManager
       </div>
 
       {activeModel && <p className="u2-config-note" role="status">当前运行使用“{activeModel.label}”档案。下方默认配置仅作备用；修改当前模型请展开“多模型档案与用量”。连接测试使用当前运行档案。</p>}
-      <div className="u2-model-basic rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 space-y-4">
+      <div className="u2-model-basic settings-subcard">
         <div>
-          <h4 className="text-sm font-medium">基础设置</h4>
+          <h4 className="text-base font-semibold">基础设置</h4>
         </div>
         {legacyModel.config.migration_pending ? (
           <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2">
