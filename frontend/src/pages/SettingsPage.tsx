@@ -1,15 +1,17 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Check } from "lucide-react";
+import { Check, HardDrive, Save } from "lucide-react";
 import { getSettings, updateSettings, getIsolationStatus, listSecurityGrants, type IsolationStatus, type SecurityGrant } from "../api/client";
 import { verifyProviderConnection, type ProviderConnectionKind } from "../api/providerConnection";
 import { useTheme } from "../theme";
 import type { AppConfig, ProviderReadinessProjection } from "../types";
 import { PageHeader, Button, Badge } from "../components/ui";
 import { useGlobalVoiceContext } from "../features/voice/GlobalVoiceHost";
-import { defaultConfig, SECTIONS } from "../features/settings/model/config";
+import { defaultConfig } from "../features/settings/model/config";
 import { comparableConfig } from "../features/settings/model/mapping";
 import type { SectionKey } from "../features/settings/model/types";
+import { SETTINGS_GROUPS, resolveSettingsGroup, settingsGroup } from "../features/settings/model/settingsNavigation";
+import SettingsSectionFrame from "../features/settings/components/SettingsSectionFrame";
 import AgentSettings from "../features/settings/sections/AgentSettings";
 import AppearanceSettings from "../features/settings/sections/AppearanceSettings";
 import CompactionSettings from "../features/settings/sections/CompactionSettings";
@@ -52,10 +54,7 @@ export default function SettingsPage() {
   const theme = useTheme();
 
   useEffect(() => {
-    const requested = searchParams.get("section") as SectionKey | null;
-    if (requested && SECTIONS.some((section) => section.key === requested)) {
-      setActiveSection(requested);
-    }
+    setActiveSection(resolveSettingsGroup(searchParams.get("section")));
   }, [searchParams]);
 
   useEffect(() => {
@@ -246,98 +245,103 @@ export default function SettingsPage() {
     reader.readAsDataURL(file);
   };
 
-  const saveActions = (
-<section className="settings-save-card rounded-xl border border-[var(--border-soft)] bg-[var(--surface-muted)] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-[var(--text-faint)]">先保存配置，再测试连接。密钥留空保留原值；清除需单独确认。</p>
-                <Button onClick={handleSave} disabled={!dirty || saving || testingProvider !== null} aria-label="保存设置">
-                  <Check className="w-4 h-4" />
-                  {saving ? "保存中…" : "保存设置"}
-                </Button>
-              </div>
-            </section>
-  );
-
   const renderSection = () => {
+    const frame = settingsGroup(activeSection);
     switch (activeSection) {
       case "model":
         return (
-          <ModelSettings
-            actions={saveActions}
-            dirty={dirty}
-            config={config}
-            updateField={updateField}
-            clearSecret={clearSecret}
-            secretRefreshToken={secretRefreshToken}
-            readiness={providerReadiness}
-            testing={testingProvider}
-            results={providerTestResults}
-            onVerify={(kind) => void testProvider(kind)}
-          />
+          <SettingsSectionFrame group={frame}>
+            <div className="settings-card settings-card--wide settings-card--flush">
+              <ModelSettings
+                dirty={dirty}
+                config={config}
+                updateField={updateField}
+                clearSecret={clearSecret}
+                secretRefreshToken={secretRefreshToken}
+                readiness={providerReadiness}
+                testing={testingProvider}
+                results={providerTestResults}
+                onVerify={(kind) => void testProvider(kind)}
+              />
+            </div>
+          </SettingsSectionFrame>
         );
 
       case "voice":
         return (
-          <VoiceSettings
-            dirty={dirty}
-            config={config}
-            updateVoiceField={updateVoiceField}
-            replaceVoiceKey={replaceVoiceKey}
-            onReplaceVoiceKey={(side) => setReplaceVoiceKey((value) => ({ ...value, [side]: true }))}
-            onClearVoiceSecret={clearVoiceSecret}
-            readiness={providerReadiness}
-            testing={testingProvider}
-            results={providerTestResults}
-            onVerify={(kind) => void testProvider(kind)}
-            onPreviewTts={() => void previewTts()}
-          />
+          <SettingsSectionFrame group={frame}>
+            <div className="settings-card settings-card--wide settings-card--flush">
+              <VoiceSettings
+                dirty={dirty}
+                config={config}
+                updateVoiceField={updateVoiceField}
+                replaceVoiceKey={replaceVoiceKey}
+                onReplaceVoiceKey={(side) => setReplaceVoiceKey((value) => ({ ...value, [side]: true }))}
+                onClearVoiceSecret={clearVoiceSecret}
+                readiness={providerReadiness}
+                testing={testingProvider}
+                results={providerTestResults}
+                onVerify={(kind) => void testProvider(kind)}
+                onPreviewTts={() => void previewTts()}
+              />
+            </div>
+          </SettingsSectionFrame>
         );
 
       case "agent":
-        return <AgentSettings config={config} updateField={updateField} />;
+        return <SettingsSectionFrame group={frame}>
+          <AgentSettings config={config} updateField={updateField} />
+          <CompactionSettings config={config} updateField={updateField} />
+        </SettingsSectionFrame>;
 
-      case "permissions":
+      case "security":
         return (
-          <PermissionSettings
-            config={config}
-            updateField={updateField}
-            isolation={isolation}
-            grants={grants}
-            onGrantsChanged={refreshGrants}
-          />
+          <SettingsSectionFrame group={frame}>
+            <PermissionSettings
+              config={config}
+              updateField={updateField}
+              isolation={isolation}
+              grants={grants}
+              onGrantsChanged={refreshGrants}
+            />
+            <SandboxSettings config={config} updateField={updateField} />
+          </SettingsSectionFrame>
         );
 
-      case "sandbox":
-        return <SandboxSettings config={config} updateField={updateField} />;
-
-      case "compaction":
-        return <CompactionSettings config={config} updateField={updateField} />;
-
-      case "skills":
-        return <SkillPathSettings config={config} updateField={updateField} />;
+      case "extensions":
+        return <SettingsSectionFrame group={frame}>
+          <SkillPathSettings config={config} updateField={updateField} />
+        </SettingsSectionFrame>;
 
       case "appearance":
-        return <AppearanceSettings theme={theme} onBackgroundUpload={handleBgUpload} />;
+        return <SettingsSectionFrame group={frame}>
+          <AppearanceSettings theme={theme} onBackgroundUpload={handleBgUpload} />
+        </SettingsSectionFrame>;
 
       default:
         return null;
     }
   };
 
+  const activeGroup = settingsGroup(activeSection);
+  const saveStatus = saveError ? "保存失败" : saved ? "已保存" : dirty ? "有未保存修改" : "所有更改已保存";
+
   return (
     <div className="system-settings-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="设置"
-        description={saveError ? saveError : saved ? "设置已保存" : dirty ? "有未保存修改" : "配置应用参数"}
+        description={activeGroup.description}
         actions={
-          saveError ? (
-            <Badge tone="danger">保存失败</Badge>
-          ) : saved ? (
-            <Badge tone="success">
-              <Check className="w-3.5 h-3.5" />
-              已保存
+          <div className="settings-header-actions">
+            <Badge tone={saveError ? "danger" : saved ? "success" : dirty ? "warning" : "default"}>
+              {saved ? <Check className="h-3.5 w-3.5" /> : null}
+              {saveStatus}
             </Badge>
-          ) : dirty ? <Badge tone="warning">未保存</Badge> : null
+            <Button onClick={handleSave} disabled={!dirty || saving || testingProvider !== null} aria-label="保存设置">
+              <Save className="h-4 w-4" />
+              {saving ? "保存中…" : "保存设置"}
+            </Button>
+          </div>
         }
       />
 
@@ -346,28 +350,36 @@ export default function SettingsPage() {
       <div className="system-settings-layout min-h-0 flex-1 overflow-hidden">
         {/* Section tabs */}
         <nav className="system-settings-nav overflow-y-auto scrollbar-thin" aria-label="设置分类">
-          {SECTIONS.map((s) => (
+          <div className="settings-nav-list">
+          {SETTINGS_GROUPS.map((s) => {
+            const Icon = s.icon;
+            return (
             <button
               key={s.key}
               type="button"
               onClick={() => setActiveSection(s.key)}
               aria-current={activeSection === s.key ? "page" : undefined}
-              className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
-                activeSection === s.key
-                  ? "bg-[var(--accent)]/15 text-[var(--accent)] border-r-2 border-r-[var(--accent)] font-medium"
-                  : "text-[var(--text-muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
-              }`}
+              className="settings-nav-item"
             >
-              {s.label}
+              <span className="settings-nav-icon" data-accent={s.accent} aria-hidden="true"><Icon /></span>
+              <span className="min-w-0">
+                <span className="settings-nav-label">{s.label}</span>
+                <span className="settings-nav-description">{s.navDescription}</span>
+              </span>
             </button>
-          ))}
+            );
+          })}
+          </div>
+          <div className="settings-nav-note">
+            <HardDrive aria-hidden="true" />
+            <span><strong>本地优先</strong>密钥保存到系统凭据库，配置保留在本机。</span>
+          </div>
         </nav>
 
         {/* Section content */}
         <div className="system-settings-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-thin">
-          <div className="settings-form space-y-6">
+          <div className="settings-form">
             {renderSection()}
-            {activeSection !== "model" && saveActions}
           </div>
         </div>
       </div>

@@ -1,15 +1,7 @@
 import type { AppConfig } from "../../../types";
 
-/** The settings sections a route may deep-link to via `?section=`. */
-export type SectionKey =
-  | "model"
-  | "voice"
-  | "agent"
-  | "permissions"
-  | "sandbox"
-  | "compaction"
-  | "skills"
-  | "appearance";
+/** The six visible setting groups. Legacy query keys map through settingsNavigation. */
+export type { SettingsGroupKey as SectionKey } from "./settingsNavigation";
 
 /**
  * Field-level edit of one top-level config group.

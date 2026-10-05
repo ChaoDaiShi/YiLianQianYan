@@ -1,6 +1,5 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import type { AppConfig } from "../../../types";
-import type { SectionKey } from "./types";
 
 /**
  * The baseline config the page renders before the backend answers, and the
@@ -50,17 +49,6 @@ export const defaultConfig: AppConfig = {
   subagents: { directories: [] },
   compaction: { enabled: true, context_window: 200000, trigger_threshold: 0.8, keep_recent_tokens: 20000 },
 };
-
-export const SECTIONS: { key: SectionKey; label: string }[] = [
-  { key: "model", label: "模型" },
-  { key: "voice", label: "语音" },
-  { key: "agent", label: "智能体" },
-  { key: "permissions", label: "权限与安全" },
-  { key: "sandbox", label: "沙箱" },
-  { key: "compaction", label: "压缩" },
-  { key: "skills", label: "技能与子智能体" },
-  { key: "appearance", label: "外观" },
-];
 
 /** Only Cyrene system / light / dark are offered; there is no custom theme. */
 export const APPEARANCE_MODES = [
