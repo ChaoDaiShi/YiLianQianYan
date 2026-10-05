@@ -22,14 +22,10 @@
 .u2-section-intro h3 span { margin-left: 8px; font-size: var(--font-size-meta); color: var(--text-secondary); font-weight: 400; }
 .u2-section-intro p, .u2-config-note { margin-top: 6px; color: var(--text-secondary); font-size: var(--font-size-meta); line-height: 1.6; }
 .u2-config-note { padding: 12px; background: var(--accent-soft); border-radius: 10px; }
-.system-settings-page .system-settings-nav { background: var(--surface-solid); border-right: 1px solid var(--border-soft); }
-.system-settings-page .system-settings-content { padding-top: 24px; }
-.system-settings-page .settings-form { max-width: var(--content-form-max); }
 .u2-model-basic [aria-label="Provider 就绪状态"] { padding: 10px 0; border: 0; background: transparent; }
 .u2-model-basic [aria-label="Provider 就绪状态"] > div { margin-top: 6px; }
 .u2-model-basic [aria-label="Provider 就绪状态"] > div > div { border: 0; padding: 0; background: transparent; }
 .u2-model-basic [aria-label="Provider 就绪状态"] h3 { font-size: var(--font-size-control); }
-.u2-model-basic .settings-save-card { padding: 12px 0; border: 0; border-top: 1px solid var(--border-soft); background: transparent; }
 .u2-profile-management { margin-top: 20px; }
 /* Chat: content first; only the composer and selected conversation are raised. */
 .workbench-grid .conversation-sidebar, .workbench-grid .execution-sidebar,

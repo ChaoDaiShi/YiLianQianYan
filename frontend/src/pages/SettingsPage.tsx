@@ -345,7 +345,7 @@ export default function SettingsPage() {
         }
       />
 
-      {saveError ? <div className="mx-4 mt-3" role="alert"><p className="text-xs text-[var(--danger)]">设置暂时无法保存，请检查连接后重试。</p></div> : null}
+      {saveError ? <div className="settings-save-error" role="alert">设置暂时无法保存，请检查连接后重试。</div> : null}
 
       <div className="system-settings-layout min-h-0 flex-1 overflow-hidden">
         {/* Section tabs */}
