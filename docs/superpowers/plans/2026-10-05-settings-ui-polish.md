@@ -35,12 +35,12 @@
 - `SETTINGS_GROUPS` supplies title, description, icon and accent class once.
 - `SettingsSectionFrame` accepts group metadata and renders the page intro plus `.settings-card-grid`.
 
-- [ ] Replace the eight-row category list with six icon rows and descriptions.
-- [ ] Move save status and the only save button into `PageHeader.actions`.
-- [ ] Remove `saveActions` and stop passing a duplicate action into `ModelSettings`.
-- [ ] Compose Agent + Compaction, Permission + Sandbox, and Skills + Subagents in one group each.
-- [ ] Preserve legacy query-string links through `resolveSettingsGroup`.
-- [ ] Commit: `feat(settings): consolidate settings navigation and save actions`.
+- [x] Replace the eight-row category list with six icon rows and descriptions.
+- [x] Move save status and the only save button into `PageHeader.actions`.
+- [x] Remove `saveActions` and stop passing a duplicate action into `ModelSettings`.
+- [x] Compose Agent + Compaction, Permission + Sandbox, and Skills + Subagents in one group each.
+- [x] Preserve legacy query-string links through `resolveSettingsGroup`.
+- [x] Commit: `feat(settings): consolidate settings navigation and save actions`.
 
 ### Task 2: Unified Setting Cards
 
@@ -61,12 +61,12 @@
 - `.settings-card--wide` spans the wide-screen grid for long text/path/security data.
 - `.settings-section-heading`, `.settings-control-label`, `.settings-help` standardize hierarchy.
 
-- [ ] Wrap every logical unit in one shared card instead of ad-hoc borders and uppercase headings.
-- [ ] Keep common labels at 14px and helper text at 12–13px.
-- [ ] Put the current security grants before a collapsed “创建资源授权” disclosure.
-- [ ] Keep destructive controls visible and separate from ordinary options.
-- [ ] Preserve every existing callback, field, value, confirmation and API behavior.
-- [ ] Commit: `style(settings): unify cards typography and security hierarchy`.
+- [x] Wrap every logical unit in one shared card instead of ad-hoc borders and uppercase headings.
+- [x] Keep common labels at 14px and helper text at 12–13px.
+- [x] Put the current security grants before a collapsed “创建资源授权” disclosure.
+- [x] Keep destructive controls visible and separate from ordinary options.
+- [x] Preserve every existing callback, field, value, confirmation and API behavior.
+- [x] Commit: `style(settings): unify cards typography and security hierarchy`.
 
 ### Task 3: Responsive Desktop and Wide-Screen Layout
 
@@ -81,13 +81,13 @@
 - `.system-settings-layout`, `.system-settings-nav`, `.system-settings-content`, `.settings-form`, `.settings-card-grid` own all settings breakpoints.
 - Existing semantic color and focus variables remain the source of truth.
 
-- [ ] Consolidate duplicate settings layout overrides into the settings stylesheet block.
-- [ ] Implement horizontal compact navigation below 900px.
-- [ ] Implement fixed left navigation and 960px content on regular desktop.
-- [ ] Implement 1280px content and two-column independent cards above 1600px.
-- [ ] Ensure text areas, secrets, paths and wide cards span both columns.
-- [ ] Add restrained brand glow and icon tile treatment without bitmap art or heavy glass.
-- [ ] Commit: `style(settings): add responsive Microsoft-inspired layout`.
+- [x] Consolidate duplicate settings layout overrides into the settings stylesheet block.
+- [x] Implement horizontal compact navigation below 900px.
+- [x] Implement fixed left navigation and 960px content on regular desktop.
+- [x] Implement 1280px content and two-column independent cards above 1600px.
+- [x] Ensure text areas, secrets, paths and wide cards span both columns.
+- [x] Add restrained brand glow and icon tile treatment without bitmap art or heavy glass.
+- [x] Commit: `style(settings): add responsive Microsoft-inspired layout`.
 
 ### Task 4: Source Review and Production Build
 
@@ -102,8 +102,7 @@
 - Read-only source audit: one save button implementation, six navigation groups, legacy aliases, minimum font classes, no protected-path changes.
 - Run exactly once after all edits: `cd frontend && npm.cmd run build`.
 
-- [ ] Inspect the final diff for duplicate settings actions and protected files.
-- [ ] Run the single production build and retain its output.
-- [ ] Record build result, branch/HEAD, changed files, known limitations and tests not run.
-- [ ] Commit: `docs(settings): record UI polish scope and build result`.
-
+- [x] Inspect the final diff for duplicate settings actions and protected files.
+- [x] Run the single production build and retain its output.
+- [x] Record build result, branch/HEAD, changed files, known limitations and tests not run.
+- [x] Commit: `docs(settings): record UI polish scope and build result`.

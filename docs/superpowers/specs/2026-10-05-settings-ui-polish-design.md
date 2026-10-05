@@ -1,6 +1,6 @@
 # Settings UI Polish Design
 
-日期：2026-10-05  
+日期：2026-10-05
 基线：`feat/v1-typed-data-binding-u31 @ 9f935304e394ccbbd10747fa2666f29167f15983`
 
 ## 目标
@@ -79,4 +79,3 @@
 - 不新增后端字段、API 或保存语义。
 - 不改主侧栏、Canvas、Chat、系统中心或插件页面。
 - 不运行单元测试、集成测试、E2E 或视觉自动化测试。
-
