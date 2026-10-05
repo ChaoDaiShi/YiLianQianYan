@@ -1,7 +1,9 @@
 # Settings UI Polish Report
 
-日期：2026-10-06  
-分支：`feat/v1-settings-ui-polish`  
+日期：2026-10-06
+
+分支：`feat/v1-settings-ui-polish`
+
 基线：`feat/v1-typed-data-binding-u31 @ 9f935304e394ccbbd10747fa2666f29167f15983`
 
 ## 结果

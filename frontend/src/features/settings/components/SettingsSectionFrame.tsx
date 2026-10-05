@@ -24,4 +24,3 @@ export default function SettingsSectionFrame({ group, children }: SettingsSectio
     </section>
   );
 }
-

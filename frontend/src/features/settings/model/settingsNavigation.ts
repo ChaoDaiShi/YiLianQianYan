@@ -103,4 +103,3 @@ export function resolveSettingsGroup(value: string | null | undefined): Settings
 export function settingsGroup(key: SettingsGroupKey): SettingsGroup {
   return SETTINGS_GROUPS.find((group) => group.key === key) ?? SETTINGS_GROUPS[0];
 }
-
