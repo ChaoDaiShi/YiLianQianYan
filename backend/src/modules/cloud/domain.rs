@@ -44,6 +44,16 @@ pub struct AuthenticatedSessionInput {
     pub expires_at: i64,
 }
 
+#[derive(Clone, Deserialize)]
+pub struct CloudAuthRequest {
+    pub email: String,
+    pub password: String,
+    pub display_name: Option<String>,
+    pub device_id: String,
+    pub device_label: String,
+    pub client_version: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncOperation {

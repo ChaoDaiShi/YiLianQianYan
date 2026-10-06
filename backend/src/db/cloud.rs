@@ -82,9 +82,39 @@ const CLOUD_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
     );",
 );
 
+const CLOUD_SEARCH_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2001,
+    "2001_v11_search_config",
+    MigrationOwner::V11Cloud,
+    "CREATE TABLE cloud_search_config (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        provider TEXT NOT NULL DEFAULT 'anysearch',
+        base_url TEXT NOT NULL DEFAULT 'https://api.anysearch.com',
+        api_key_ref_json TEXT,
+        updated_at INTEGER NOT NULL
+    );",
+);
+
+const CLOUD_SYNC_ENTITY_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2002,
+    "2002_v11_synced_entities",
+    MigrationOwner::V11Cloud,
+    "CREATE TABLE cloud_synced_entities (
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0,1)),
+        payload_json TEXT,
+        server_sequence INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (entity_type, entity_id)
+    );
+    CREATE INDEX idx_cloud_synced_entities_sequence ON cloud_synced_entities(server_sequence);",
+);
+
 impl Database {
     pub fn initialize_cloud_schema(&self) -> Result<(), rusqlite::Error> {
-        self.apply_product_migration(&CLOUD_SCHEMA)
+        self.apply_product_migrations(&[CLOUD_SCHEMA, CLOUD_SEARCH_SCHEMA, CLOUD_SYNC_ENTITY_SCHEMA])
     }
 
     pub fn get_or_create_cloud_identity(&self) -> Result<IdentitySnapshot, rusqlite::Error> {
@@ -157,6 +187,32 @@ impl Database {
             params![session_id, account_id, device_id, expires_at, now],
         )?;
         Ok(())
+    }
+
+    pub fn save_cloud_configuration(
+        &self,
+        cloud_base_url: &str,
+        sync_existing_choice: &str,
+    ) -> Result<(), rusqlite::Error> {
+        self.get_or_create_cloud_identity()?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE cloud_identity SET cloud_base_url=?1, sync_existing_choice=?2, updated_at=?3 WHERE singleton=1",
+            params![cloud_base_url, sync_existing_choice, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn cloud_connection_config(&self) -> Result<Option<(String, String)>, rusqlite::Error> {
+        let conn = self.conn();
+        conn.query_row(
+            "SELECT cloud_base_url, sync_existing_choice FROM cloud_identity
+             WHERE singleton=1 AND cloud_base_url IS NOT NULL",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
     }
 
     pub fn clear_authenticated_cloud_session(&self) -> Result<(), rusqlite::Error> {
@@ -262,6 +318,135 @@ impl Database {
             last_success_at,
             last_error_code,
         })
+    }
+
+    pub fn pending_sync_changes(&self, limit: usize) -> Result<Vec<SyncOutboxItem>, rusqlite::Error> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT change_id, entity_type, entity_id, base_revision, revision, operation,
+                    payload_json, device_id, state, attempts, next_retry_at, last_error_code,
+                    created_at, updated_at
+             FROM cloud_sync_outbox
+             WHERE state='pending' OR next_retry_at IS NULL OR next_retry_at<=?1
+             ORDER BY created_at LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![now, limit.min(100) as i64], map_outbox)?;
+        rows.collect()
+    }
+
+    pub fn remove_sync_change(&self, change_id: &str) -> Result<(), rusqlite::Error> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM cloud_sync_outbox WHERE change_id=?1", [change_id])?;
+        Ok(())
+    }
+
+    pub fn record_sync_conflict(
+        &self,
+        item: &SyncOutboxItem,
+        authoritative_revision: i64,
+    ) -> Result<(), rusqlite::Error> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let local_payload = item.payload.as_ref().map(serde_json::to_string).transpose()
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO cloud_sync_conflicts (
+                id, entity_type, entity_id, local_revision, remote_revision,
+                local_payload_json, remote_payload_json, status, created_at
+             ) VALUES (?1,?2,?3,?4,?5,?6,NULL,'open',?7)",
+            params![uuid::Uuid::new_v4().to_string(), item.entity_type, item.entity_id,
+                item.revision, authoritative_revision, local_payload, now],
+        )?;
+        conn.execute("DELETE FROM cloud_sync_outbox WHERE change_id=?1", [&item.change_id])?;
+        Ok(())
+    }
+
+    pub fn apply_remote_sync_change(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        revision: i64,
+        operation: SyncOperation,
+        payload: Option<&serde_json::Value>,
+        sequence: i64,
+    ) -> Result<(), rusqlite::Error> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let payload = payload.map(serde_json::to_string).transpose()
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO cloud_synced_entities (
+                entity_type, entity_id, revision, deleted, payload_json, server_sequence, updated_at
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(entity_type,entity_id) DO UPDATE SET
+                revision=excluded.revision, deleted=excluded.deleted,
+                payload_json=excluded.payload_json, server_sequence=excluded.server_sequence,
+                updated_at=excluded.updated_at
+             WHERE excluded.revision >= cloud_synced_entities.revision",
+            params![entity_type, entity_id, revision,
+                if operation == SyncOperation::Delete { 1 } else { 0 }, payload, sequence, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_sync_success(&self, cursor: &str) -> Result<(), rusqlite::Error> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO cloud_sync_cursor (singleton, cursor, last_success_at, last_error_code, updated_at)
+             VALUES (1,?1,?2,NULL,?2)
+             ON CONFLICT(singleton) DO UPDATE SET cursor=excluded.cursor,
+                last_success_at=excluded.last_success_at, last_error_code=NULL, updated_at=excluded.updated_at",
+            params![cursor, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn cloud_search_config(
+        &self,
+    ) -> Result<(String, String, Option<crate::integrations::secret::SecretRef>), rusqlite::Error> {
+        let conn = self.conn();
+        let row: Option<(String, String, Option<String>)> = conn
+            .query_row(
+                "SELECT provider, base_url, api_key_ref_json FROM cloud_search_config WHERE singleton=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((provider, base_url, secret_json)) = row else {
+            return Ok(("anysearch".into(), "https://api.anysearch.com".into(), None));
+        };
+        let secret_ref = secret_json
+            .map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            ))?;
+        Ok((provider, base_url, secret_ref))
+    }
+
+    pub fn save_cloud_search_config(
+        &self,
+        base_url: &str,
+        secret_ref: Option<&crate::integrations::secret::SecretRef>,
+    ) -> Result<(), rusqlite::Error> {
+        let secret_json = secret_ref
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO cloud_search_config (singleton, provider, base_url, api_key_ref_json, updated_at)
+             VALUES (1, 'anysearch', ?1, ?2, ?3)
+             ON CONFLICT(singleton) DO UPDATE SET base_url=excluded.base_url,
+                api_key_ref_json=excluded.api_key_ref_json, updated_at=excluded.updated_at",
+            params![base_url, secret_json, now],
+        )?;
+        Ok(())
     }
 }
 

@@ -19,8 +19,8 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use super::state::AppServer;
 use crate::api::{
-    agents, approvals, artifact_download, capabilities, chat, commands, conversations, events,
-    llm_models, logs, mcp_runtime, memories, plugins, projections, resources, secrets, security,
+    agents, approvals, artifact_download, capabilities, chat, cloud, commands, conversations, events,
+    llm_models, logs, mcp_runtime, memories, plugins, projections, resources, search, secrets, security,
     security_grants, settings, skill_candidates, skills_route, subagents, system, task_world,
     tasks, tools, voice, workflow_runtime, workflows, workspaces,
 };
@@ -29,6 +29,17 @@ use crate::safety::CONTROL_SESSION_HEADER;
 pub fn build_router(server: Arc<AppServer>) -> Router {
     let protected = Router::new()
         .route("/api/chat", post(chat::chat_handler))
+        .route("/api/cloud/identity", get(cloud::identity_handler))
+        .route("/api/cloud/login", post(cloud::login_handler))
+        .route("/api/cloud/register", post(cloud::register_handler))
+        .route("/api/cloud/logout", post(cloud::logout_handler))
+        .route("/api/cloud/sync/status", get(cloud::sync_status_handler))
+        .route("/api/cloud/sync/now", post(cloud::sync_now_handler))
+        .route(
+            "/api/search/config",
+            get(search::config_handler).put(search::update_config_handler),
+        )
+        .route("/api/search", post(search::search_handler))
         .route("/api/chat/stop", post(chat::stop_handler))
         .route("/api/events", get(events::events_handler))
         .route("/api/commands", post(commands::execute_handler))
