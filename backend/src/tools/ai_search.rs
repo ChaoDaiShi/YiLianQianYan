@@ -78,8 +78,9 @@ impl Tool for AiSearchTool {
         self.official_base_url()?;
         let descriptor = ToolSecurityDescriptor {
             tool_name: self.name().into(),
-            requested_permissions: vec![PermissionId::NetworkRequest
-                .in_scope(ResourceScope::NetworkTarget)],
+            requested_permissions: vec![
+                PermissionId::NetworkRequest.in_scope(ResourceScope::NetworkTarget)
+            ],
             resources: vec![ResourceDescriptor::Network {
                 url: ANYSEARCH_ENDPOINT.into(),
                 method: "POST".into(),
@@ -106,7 +107,10 @@ impl Tool for AiSearchTool {
         {
             return ToolResult::error("AI 搜索缺少安全网关创建的网络授权证据");
         }
-        let query = args.get("query").and_then(|value| value.as_str()).unwrap_or("");
+        let query = args
+            .get("query")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
         let max = args
             .get("max_results")
             .and_then(|value| value.as_u64())
@@ -116,8 +120,14 @@ impl Tool for AiSearchTool {
             Ok(value) => value,
             Err(error) => return ToolResult::error(error),
         };
-        request.tag = args.get("tag").and_then(|value| value.as_str()).map(str::to_string);
-        request.zone = args.get("zone").and_then(|value| value.as_str()).map(str::to_string);
+        request.tag = args
+            .get("tag")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        request.zone = args
+            .get("zone")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
         request.language = args
             .get("language")
             .and_then(|value| value.as_str())

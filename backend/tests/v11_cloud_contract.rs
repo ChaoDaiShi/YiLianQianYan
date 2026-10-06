@@ -22,12 +22,12 @@ use yilian_backend::modules::cloud::domain::{
     RevisionDecision, SyncOperation,
 };
 use yilian_backend::modules::cloud::lifecycle::CloudLifecycleService;
-use yilian_backend::tools::{AiSearchTool, Tool};
 use yilian_backend::modules::cloud::search::{
     classify_anysearch_status, AnySearchProvider, SearchFailureKind, SearchProvider, SearchRequest,
 };
 use yilian_backend::modules::cloud::session::CloudSessionService;
 use yilian_backend::modules::cloud::sync::CloudSyncService;
+use yilian_backend::tools::{AiSearchTool, Tool};
 use yilian_backend::Database;
 use yilian_backend::{
     api,
@@ -416,7 +416,9 @@ async fn cloud_client_maps_login_contract_without_logging_or_persisting_tokens()
     assert_eq!(session.session_id, "session-1");
     assert_eq!(session.access_token, "access-value");
     assert!(session.expires_at > chrono::Utc::now().timestamp_millis());
-    let refreshed=client.refresh("old-refresh-token-value-123").await.unwrap();assert_eq!(refreshed.access_token,"rotated-access-token-value");assert_eq!(refreshed.refresh_token,"rotated-refresh-token-value");
+    let refreshed = client.refresh("old-refresh-token-value-123").await.unwrap();
+    assert_eq!(refreshed.access_token, "rotated-access-token-value");
+    assert_eq!(refreshed.refresh_token, "rotated-refresh-token-value");
     server.abort();
 }
 
@@ -746,8 +748,20 @@ async fn session_service_lists_devices_without_exposing_remote_tokens() {
 
 #[test]
 fn ai_search_tool_declares_the_exact_provider_network_boundary() {
-    let path=std::env::temp_dir().join(format!("yilian-v11-tool-{}.db",uuid::Uuid::new_v4()));let db=Database::new(&path).unwrap();let store:Arc<dyn SecretStore>=Arc::new(InMemorySecretStore::new());let tool=AiSearchTool::new(db,store);
-    let descriptor=tool.security_descriptor(&serde_json::json!({"query":"Rust docs","max_results":5})).unwrap();
-    assert_eq!(descriptor.tool_name,"ai_search");assert_eq!(descriptor.default_risk,yilian_backend::tools::RiskLevel::Medium);
-    assert!(serde_json::to_string(&descriptor.resources).unwrap().contains("https://api.anysearch.com/v1/search"));let _=std::fs::remove_file(path);
+    let path = std::env::temp_dir().join(format!("yilian-v11-tool-{}.db", uuid::Uuid::new_v4()));
+    let db = Database::new(&path).unwrap();
+    let store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
+    let tool = AiSearchTool::new(db, store);
+    let descriptor = tool
+        .security_descriptor(&serde_json::json!({"query":"Rust docs","max_results":5}))
+        .unwrap();
+    assert_eq!(descriptor.tool_name, "ai_search");
+    assert_eq!(
+        descriptor.default_risk,
+        yilian_backend::tools::RiskLevel::Medium
+    );
+    assert!(serde_json::to_string(&descriptor.resources)
+        .unwrap()
+        .contains("https://api.anysearch.com/v1/search"));
+    let _ = std::fs::remove_file(path);
 }

@@ -110,7 +110,8 @@ impl CloudSessionService {
             .get(&cloud_refresh_token_ref())
             .await?
             .ok_or(CloudSessionError::Unavailable)?;
-        let client = CloudApiClient::new(base_url).map_err(|_| CloudSessionError::InvalidBaseUrl)?;
+        let client =
+            CloudApiClient::new(base_url).map_err(|_| CloudSessionError::InvalidBaseUrl)?;
         let session = client
             .refresh(refresh.expose_secret())
             .await

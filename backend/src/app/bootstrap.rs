@@ -23,8 +23,8 @@ use crate::shared::command::CommandRouter;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;
 use crate::shared::resource::ResourceService;
-use crate::tools::{AiSearchTool, ToolRegistry};
 use crate::tools::skill::SkillDiscovery;
+use crate::tools::{AiSearchTool, ToolRegistry};
 
 use super::state::{AppServer, LogBuffer};
 

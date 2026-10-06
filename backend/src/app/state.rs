@@ -38,8 +38,8 @@ use crate::shared::command::CommandRouter;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;
 use crate::shared::resource::ResourceService;
-use crate::tools::{AiSearchTool, ToolRegistry};
 use crate::tools::skill::SkillDiscovery;
+use crate::tools::{AiSearchTool, ToolRegistry};
 
 /// Number of relevant memories injected into the chat system prompt.
 pub const CHAT_MEMORY_TOP_K: usize = 8;
