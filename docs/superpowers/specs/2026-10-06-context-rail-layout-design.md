@@ -26,7 +26,7 @@
 
 新增纯展示组件 `ContextRail`：
 
-- 宽度 52px，纵向排列 44px 按钮。
+- 宽度 52px，纵向排列 40px 按钮。
 - 每项包含 Lucide 图标、Tooltip、`aria-controls`、`aria-expanded` 和可选状态徽标。
 - 同时只有一个 item active。
 - 不持有业务状态，不读取 API；父页面传入 items 和动作。

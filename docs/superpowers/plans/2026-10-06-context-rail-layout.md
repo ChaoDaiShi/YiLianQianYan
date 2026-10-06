@@ -32,9 +32,9 @@
 - `ContextRailItem { id, label, icon, controls, expanded, badge?, statusTone?, onSelect }`.
 - `ContextRail { label, items, className? }` renders one accessible vertical auxiliary rail.
 
-- [ ] Implement stateless rail, tooltips, badges and expanded state.
-- [ ] Add the canonical 52px rail CSS, focus state and compact sizing.
-- [ ] Commit `feat(layout): add shared context rail`.
+- [x] Implement stateless rail, tooltips, badges and expanded state.
+- [x] Add the canonical 52px rail CSS, focus state and compact sizing.
+- [x] Commit `feat(layout): add shared context rail`.
 
 ### Task 2: Chat Center-First Layout
 
@@ -51,12 +51,12 @@
 - `ContextRail` replaces the collapsed ExecutionSidebar rendering in full mode.
 - Existing Drawer remains the only compact/narrow execution surface.
 
-- [ ] Default the full-mode execution area to a rail.
-- [ ] Show pending approval count and current status without exposing full history.
-- [ ] Expand/collapse explicitly and handle Escape only in full expanded mode.
-- [ ] Simplify ExecutionSidebar to expanded panel content.
-- [ ] Keep message column centered and bounded.
-- [ ] Commit `feat(chat): make execution context collapsed by default`.
+- [x] Default the full-mode execution area to a rail.
+- [x] Show pending approval count and current status without exposing full history.
+- [x] Expand/collapse explicitly and handle Escape only in full expanded mode.
+- [x] Simplify ExecutionSidebar to expanded panel content.
+- [x] Keep message column centered and bounded.
+- [x] Commit `feat(chat): make execution context collapsed by default`.
 
 ### Task 3: Canvas Notion-Style Context Rail
 
@@ -71,11 +71,11 @@
 - Existing `StudioPanel` remains the only panel state.
 - Rail items map exactly to `inspector`, `trail`, and `tools`.
 
-- [ ] Add ContextRail beside the canvas and map three explicit actions.
-- [ ] Remove duplicate panel triggers from StudioHeader.
-- [ ] Dock every expanded panel to the left of the rail.
-- [ ] Keep focus restoration, Escape, selection/camera invariants and bottom toolbar safe area.
-- [ ] Commit `style(canvas): unify auxiliary panels behind context rail`.
+- [x] Add ContextRail beside the canvas and map three explicit actions.
+- [x] Remove duplicate panel triggers from StudioHeader.
+- [x] Dock every expanded panel to the left of the rail.
+- [x] Keep focus restoration, Escape, selection/camera invariants and bottom toolbar safe area.
+- [x] Commit `style(canvas): unify auxiliary panels behind context rail`.
 
 ### Task 4: Scope Audit and Build
 
@@ -84,9 +84,9 @@
 - Create: `docs/ui/context-rail-layout-report.md`
 - Create ignored evidence: `target/context-rail-layout/`.
 
-- [ ] Confirm one shared rail, Chat default collapsed, Canvas default null and no duplicate StudioHeader actions.
-- [ ] Confirm protected paths and package manifests unchanged.
-- [ ] Run exactly one `npm.cmd run build` and retain output.
-- [ ] Record tests not run and runtime visual/focus limitations.
-- [ ] Commit `docs(layout): record context rail build result`.
+- [x] Confirm one shared rail, Chat default collapsed, Canvas default null and no duplicate StudioHeader actions.
+- [x] Confirm protected paths and package manifests unchanged.
+- [x] Run exactly one `npm.cmd run build` and retain output.
+- [x] Record tests not run and runtime visual/focus limitations.
+- [x] Commit `docs(layout): record context rail build result`.
 
