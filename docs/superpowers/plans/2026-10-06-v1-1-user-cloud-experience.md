@@ -12,72 +12,72 @@
 
 ## P0 Foundation Freeze
 
-- [ ] Freeze ADR-001 through ADR-007.
-- [ ] Add public Cloud Contract, sync contract, data classification and stable error taxonomy.
-- [ ] Add public/private boundary scanner and CI gate.
-- [ ] Initialize the physically separate private repository with no remote.
-- [ ] Commit the public and private P0 baselines before Identity implementation.
+- [x] Freeze ADR-001 through ADR-007.
+- [x] Add public Cloud Contract, sync contract, data classification and stable error taxonomy.
+- [x] Add public/private boundary scanner and CI gate.
+- [x] Initialize the physically separate private repository with no remote.
+- [x] Commit the public and private P0 baselines before Identity implementation.
 
 ## P1 Optional Identity
 
-- [ ] Add persistent LocalIdentity, Guest, Authenticated, Offline Authenticated and Closing states.
-- [ ] Store cloud session credentials only through SecretStore references.
-- [ ] Add register, login, refresh, logout, device and session client flows.
-- [ ] Preserve complete local use when the user skips login or the cloud is unavailable.
+- [x] Add persistent LocalIdentity, Guest, Authenticated, Offline Authenticated and Closing states.
+- [x] Store cloud session credentials only through SecretStore references.
+- [x] Add register, login, refresh, logout, device and session client flows.
+- [x] Preserve complete local use when the user skips login or the cloud is unavailable.
 
 ## P2 Private Cloud Data
 
-- [ ] Implement private cloud API identity, device, session and user metadata services.
-- [ ] Add PostgreSQL migrations for users, devices, sessions, sync changes, user data metadata, jobs and audits.
-- [ ] Add object metadata boundary without storing binary blobs in PostgreSQL.
-- [ ] Keep all server implementation inside the private repository.
+- [x] Implement private cloud API identity, device, session and user metadata services.
+- [x] Add PostgreSQL migrations for users, devices, sessions, sync changes, user data metadata, jobs and audits.
+- [x] Add object metadata boundary without storing binary blobs in PostgreSQL.
+- [x] Keep all server implementation inside the private repository.
 
 ## P3 Incremental Sync
 
-- [ ] Add local outbox, cursor, entity revision, tombstone and conflict persistence.
-- [ ] Implement idempotent push and cursor pull.
-- [ ] Define per-entity conflict policies and prevent deleted data resurrection.
-- [ ] Expose retryable failures and manual conflict resolution in the local API.
+- [x] Add local outbox, cursor, entity revision, tombstone and conflict persistence.
+- [x] Implement idempotent push and cursor pull.
+- [x] Define per-entity conflict policies and prevent deleted data resurrection.
+- [x] Expose retryable failures and manual conflict resolution in the local API.
 
 ## P4 Account Sync and Privacy UI
 
-- [ ] Build Account Center, Sync Center and Data and Privacy surfaces.
-- [ ] Separate logout from permanent account deletion.
-- [ ] Make sync state, backlog, conflicts, last success and errors visible.
-- [ ] Keep navigation compact and avoid duplicate actions.
+- [x] Build Account Center, Sync Center and Data and Privacy surfaces.
+- [x] Separate logout from permanent account deletion.
+- [x] Make sync state, backlog, conflicts, last success and errors visible.
+- [x] Keep navigation compact and avoid duplicate actions.
 
 ## P5 Setup Wizard
 
-- [ ] Build a resumable first-run wizard for identity, sync, LLM, Search and optional Voice.
-- [ ] Reuse existing Provider Readiness and Settings save paths.
-- [ ] Keep advanced provider fields in Settings.
+- [x] Build a resumable first-run wizard for identity, sync, LLM, Search and optional Voice.
+- [x] Reuse existing Provider Readiness and Settings save paths.
+- [x] Keep advanced provider fields in Settings.
 
 ## P6 AI Search
 
-- [ ] Implement a provider-neutral SearchProvider contract.
-- [ ] Add AnySearch `POST /v1/search` adapter with anonymous and SecretStore-backed BYOK modes.
-- [ ] Build AI Search results with source opening and actions into Chat, Task and Knowledge.
-- [ ] Preserve request IDs and classify auth, quota, rate-limit and provider failures without logging credentials.
+- [x] Implement a provider-neutral SearchProvider contract.
+- [x] Add AnySearch `POST /v1/search` adapter with anonymous and SecretStore-backed BYOK modes.
+- [x] Build AI Search results with source opening and actions into Chat, Task and Knowledge.
+- [x] Preserve request IDs and classify auth, quota, rate-limit and provider failures without logging credentials.
 
 ## P7 Private Admin Console
 
-- [ ] Implement private Admin API with role checks, metadata-only responses and audit records.
-- [ ] Build Admin Web for users, sync, storage, lifecycle, audit and health.
-- [ ] Keep `/internal/admin/*` outside the public contract and public source tree.
+- [x] Implement private Admin API with role checks, metadata-only responses and audit records.
+- [x] Build Admin Web for users, sync, storage, lifecycle, audit and health.
+- [x] Keep `/internal/admin/*` outside the public contract and public source tree.
 
 ## P8 Export and Delete Lifecycle
 
-- [ ] Implement export requests and downloadable result metadata.
-- [ ] Implement session revocation, DeletionJob, storage cleanup and terminal tombstone behavior.
-- [ ] Make deletion status visible and prevent deleted sessions from writing data.
+- [x] Implement export requests and downloadable result metadata.
+- [x] Implement session revocation, DeletionJob, storage cleanup and terminal tombstone behavior.
+- [x] Make deletion status visible and prevent deleted sessions from writing data.
 
 ## P9 RC Hardening
 
-- [ ] Run Rust formatting, checks and focused tests for changed public and private crates.
-- [ ] Run frontend tests and production builds for desktop and Admin Web.
-- [ ] Run boundary, identity, sync conflict, privacy, search and Admin RBAC E2E gates.
-- [ ] Record Windows/Tauri and real external-provider checks separately as PASS, PARTIAL or HUMAN_PENDING.
-- [ ] Produce hashes, final report, defect list, rollback notes and release candidate metadata.
+- [x] Run Rust formatting, checks and focused tests for changed public and private crates.
+- [x] Run frontend tests and production builds for desktop and Admin Web.
+- [ ] Run real PostgreSQL identity, sync conflict, privacy and Admin RBAC E2E gates (`HUMAN_PENDING`: PostgreSQL/Docker unavailable on this machine).
+- [x] Record Windows/Tauri and real external-provider checks separately as PASS, PARTIAL or HUMAN_PENDING.
+- [x] Produce hashes, final report, defect list, rollback notes and release candidate metadata.
 
 ## Stop Condition
 

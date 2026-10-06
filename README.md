@@ -2,6 +2,8 @@
 
 基于 **Rust + React + Tauri** 的本地优先桌面 AI 智能体。Tauri 桌面客户端是主要交互入口，浏览器版本用于开发预览。
 
+当前候选版本：`1.1.0-rc.1`。v1.1 在不削弱游客/离线本地能力的前提下，新增可选身份、增量同步、账号与隐私中心、首次配置向导、AI Search，以及物理隔离的私有 Cloud/Admin 服务实现。
+
 ## 架构
 
 ```
@@ -14,6 +16,8 @@ frontend (:1420)          backend (:9420)           src-tauri (primary)
                                  ▼
                            ~/.yilianqianyan/
 ```
+
+登录和启用同步后，本地后端通过公开 Cloud Contract 与 YiLian Cloud 交换增量变更；云端不可用时继续使用 SQLite、Resource Store、SecretStore、Task/MCP/Voice 本地运行时。私有云与 Admin 源码位于公共 Git Root 之外，不属于本仓库。
 
 ## 快速开始
 
@@ -50,10 +54,10 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 
 ## 桌面工作台
 
-- `>= 1180px`：任务列表、对话区、执行轨迹三栏常驻。
+- `>= 1180px`：任务列表与对话区常驻，执行上下文默认收起为右侧 ContextRail，显式点击后展开。
 - `960–1179px`：任务列表常驻，执行轨迹从右侧抽屉打开。
 - `800–959px`：任务列表与执行轨迹使用互斥的左右抽屉。
-- 默认主题为“暖色本地（warm-local）”，可切换“精密中性”“石墨专业”“高对比”；自定义背景、字号和面板透明度会本地持久化。
+- 外观统一为 Cyrene 跟随系统、白天和夜间三种模式；自定义背景仍可本地保存。
 - 工具执行结果与结果验证分别显示；工具返回成功不等于验证通过。
 - 高风险与严重风险操作仍会暂停并等待用户明确批准，拒绝后不会执行原工具调用。
 
@@ -120,6 +124,12 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 | `POST` | `/api/security/audit/export` | 导出版本化、已脱敏的 JSON 审计数据 |
 | `GET` | `/api/security/health` | 查询审计子系统与策略版本状态 |
 | `GET` | `/api/health` | 健康检查 |
+| `GET` | `/api/cloud/identity` | LocalIdentity、账号与同步状态 |
+| `POST` | `/api/cloud/{login,register,refresh,logout}` | 可选身份与本机安全会话 |
+| `GET` `/POST` | `/api/cloud/sync/*` | 显式同步选择、状态、冲突与增量同步 |
+| `GET` `/POST` | `/api/cloud/privacy/*`、`/api/cloud/export`、`/api/cloud/account/delete` | 数据摘要、导出与注销生命周期 |
+| `GET` `/PUT` | `/api/search/config` | AnySearch 匿名/BYOK 本机配置 |
+| `POST` | `/api/search` | Provider 中立的结构化 AI Search |
 
 除 `/api/health` 外，所有 `/api/*` 请求都必须携带：
 
@@ -148,6 +158,20 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 | `keyboard` | 键盘模拟（输入/按键/组合键） |
 | `screenshot` | 屏幕截图 |
 | `upscale_image` | AI 图片放大 |
+| `ai_search` | 通过安全网关调用官方 AnySearch，返回结构化结果与来源 |
+
+## v1.1 用户云与体验版
+
+- Guest 模式拥有完整本地核心能力；账号不是启动条件。
+- 登录后必须明确选择“同步已有数据”“保持仅本地”或稍后决定，不静默上传。
+- Outbox、cursor、revision、tombstone 与 durable conflict 支持离线工作和跨设备恢复。
+- LLM、STT、TTS、AnySearch、MCP 凭据默认只进入操作系统 SecretStore。
+- Account Center 集中提供账号、设备会话、同步中心、数据摘要、导出与注销入口。
+- Setup Wizard 提供身份、模型、Search、Voice 的渐进配置，高级参数仍在 Settings。
+- AI Search 结果可以继续交给小涟、创建任务或保存为知识记忆。
+- 公共仓只包含 `cloud-contract` 与本地 `cloud-client`；Cloud API、Admin API/Web、Worker 和 PostgreSQL migration 保持私有物理隔离。
+
+详细基线、ADR、同步协议和验收状态见 `docs/v1.1/`、`docs/adr/`、`docs/cloud/` 与 `docs/privacy/`。
 
 ## v0.2 Trusted Execution
 

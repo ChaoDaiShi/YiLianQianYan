@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## 1.1.0-rc.1 — 2026-10-06
+
+### Added
+
+- 可选 Guest/Login/Register/Refresh/Session/Device 身份模型，LocalIdentity 与本地核心能力不依赖云端。
+- Outbox、cursor、revision、tombstone、冲突留存与显式本地数据同步选择。
+- Account Center、Sync Center、Data and Privacy、Setup Wizard 与一级 AI Search Surface。
+- AnySearch 匿名/BYOK 适配器、真实公开 API smoke，以及通过 SecurityExecutionGateway 的 `ai_search` Agent 工具。
+- 公共 Cloud Contract、ADR-001 至 ADR-007、数据分级与公共/私有仓边界 CI。
+- 物理隔离且无远程仓的私有 Cloud API、Admin API/Web、PostgreSQL migration、Export/Delete Worker 与部署 Runbook。
+
+### Changed
+
+- Chat 与 Canvas 辅助上下文默认收起为共享 ContextRail；首次配置由独立向导承载，不再显示重复 Provider 弹窗。
+- 公共客户端、后端与 Tauri 版本统一为 `1.1.0-rc.1`。
+
+### Security
+
+- Cloud access/refresh token 与 AnySearch Key 只写入本机 SecretStore；SQLite、API、日志和测试证据不保留明文。
+- 私有服务使用 Argon2 密码摘要、opaque token digest、metadata-only Admin RBAC、审计与删除墓碑。
+- 同步 payload 在客户端和服务端双重拒绝 secret 字段；Admin API 不进入公共 OpenAPI 或前端类型。
+
+### Validation
+
+- 前端 505 项测试、生产构建、真实本地后端 + system Edge 四档响应式 E2E 通过。
+- 公共 Rust 1036 项测试、格式、检查、Tauri 检查通过；Windows x64 NSIS 安装包与 SHA-256 已生成。
+- 私有 Rust 工作区检查与测试、Admin Web 测试/构建、零漏洞 npm audit、双仓边界扫描通过。
+- 真实 PostgreSQL/服务器部署、安装器人工启动、代码签名与真实账号双设备长时间同步仍按 RC 门禁标记为 `HUMAN_PENDING`。
+
 ## 1.0.0-rc.2 — 2026-09-17
 
 ### Added
