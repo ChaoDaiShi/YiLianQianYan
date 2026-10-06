@@ -1,40 +1,34 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Button, Modal } from "../ui";
 import { NAV_GROUPS } from "../layout/navGroups";
 import { MANDATORY_NAV, TRUSTED_MODULES, type ProductPreferences } from "./productPreferences";
 import { useProductPreferences } from "./useProductPreferences";
-import { getProviderReadiness } from "../../api/providerConnection";
-import type { ProviderReadinessProjection } from "../../types";
 
 export default function ModuleSetup() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { preferences, loaded, error, save } = useProductPreferences();
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [draft, setDraft] = useState<ProductPreferences>(preferences);
   const [saving, setSaving] = useState(false);
-  const [providerStepOpen, setProviderStepOpen] = useState(false);
-  const [readiness, setReadiness] = useState<ProviderReadinessProjection | null>(null);
-  useEffect(() => { if (loaded && !preferences.setup_completed && !dismissed) { setDraft(preferences); setOpen(true); } }, [loaded, preferences, dismissed]);
+  useEffect(() => {
+    const deferred = window.sessionStorage.getItem("yilian.setup.deferred") === "true";
+    if (loaded && !preferences.setup_completed && !dismissed && !deferred && location.pathname !== "/setup") navigate("/setup");
+  }, [dismissed, loaded, location.pathname, navigate, preferences.setup_completed]);
   const close = () => { setDismissed(true); setOpen(false); };
   const saveModuleSetup = async () => {
-    const firstRun = !preferences.setup_completed;
     setSaving(true);
     try {
-      await save({ ...draft, setup_completed: true });
+      await save({ ...draft, setup_completed: preferences.setup_completed });
       close();
-      setProviderStepOpen(firstRun);
     } catch {
       // The hook exposes the safe, user-facing error and keeps the dialog open.
     } finally {
       setSaving(false);
     }
   };
-  useEffect(() => {
-    if (!providerStepOpen) return;
-    void getProviderReadiness().then(setReadiness);
-  }, [providerStepOpen]);
   return <>
     <button type="button" className="shrink-0 rounded-lg p-1 text-[10px] hover:bg-white/10" aria-label="配置系统模块与导航" onClick={() => { setDraft(preferences); setOpen(true); }}>定制导航</button>
     <Modal open={open} onClose={close} title={preferences.setup_completed ? "系统模块与导航" : "选择可选系统模块"}>
@@ -48,27 +42,6 @@ export default function ModuleSetup() {
       </div>)}
       {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
       <div className="mt-4 flex gap-2"><Button disabled={saving || !loaded} onClick={() => void saveModuleSetup()}>确认并保存</Button><Button variant="secondary" disabled={saving} onClick={close}>取消</Button></div>
-    </Modal>
-    <Modal
-      open={providerStepOpen}
-      onClose={() => setProviderStepOpen(false)}
-      title="开始使用忆涟"
-      footer={<Button variant="secondary" onClick={() => setProviderStepOpen(false)}>稍后设置</Button>}
-    >
-      <div className="space-y-3">
-        <section className="rounded-lg border border-[var(--border-soft)] p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div><p className="text-sm font-medium">模型服务</p><p className="text-xs text-[var(--text-muted)]">{readiness?.model.available ? "● 已可用" : "○ 未配置或不可用"} · AI 功能推荐配置</p></div>
-            <Button size="sm" onClick={() => { setProviderStepOpen(false); navigate("/settings?section=model"); }}>去配置</Button>
-          </div>
-        </section>
-        <section className="rounded-lg border border-[var(--border-soft)] p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div><p className="text-sm font-medium">语音服务（可选）</p><p className="text-xs text-[var(--text-muted)]">{readiness?.stt.available && readiness?.tts.available ? "● 已可用" : "○ 未配置或部分不可用"} · 不阻止进入应用</p></div>
-            <Button size="sm" variant="secondary" onClick={() => { setProviderStepOpen(false); navigate("/settings?section=voice"); }}>去配置</Button>
-          </div>
-        </section>
-      </div>
     </Modal>
   </>;
 }

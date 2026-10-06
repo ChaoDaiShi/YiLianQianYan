@@ -1,4 +1,4 @@
-export const NAV_IDS = ["tasks", "chat", "workflows", "workspaces", "skills", "plugins", "agents", "capabilities", "memory", "knowledge", "system", "logs", "settings"] as const;
+export const NAV_IDS = ["tasks", "chat", "search", "workflows", "workspaces", "skills", "plugins", "agents", "capabilities", "memory", "knowledge", "system", "logs", "settings", "account"] as const;
 export const MANDATORY_NAV = ["tasks", "chat", "settings"];
 export const MONITOR_CARDS = ["health", "processes", "resources", "approvals", "diagnostics"] as const;
 export interface MonitorCardLayout { id: string; x: number; y: number; width: number; height: number }

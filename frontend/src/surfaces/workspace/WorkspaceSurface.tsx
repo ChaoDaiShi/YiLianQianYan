@@ -18,6 +18,9 @@ const AgentsPage = lazy(() => import("../../pages/AgentsPage"));
 const CapabilitiesPage = lazy(() => import("../../pages/CapabilitiesPage"));
 const MemoryPage = lazy(() => import("../../pages/MemoryPage"));
 const KnowledgePage = lazy(() => import("../../pages/KnowledgePage"));
+const SearchPage = lazy(() => import("../../pages/SearchPage"));
+const AccountCenterPage = lazy(() => import("../../pages/AccountCenterPage"));
+const SetupWizardPage = lazy(() => import("../../pages/SetupWizardPage"));
 
 export default function WorkspaceSurface() {
   const { pathname } = useLocation();
@@ -41,6 +44,11 @@ export default function WorkspaceSurface() {
         <Route path="capabilities" element={<CapabilitiesPage />} />
         <Route path="memory" element={<MemoryPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
+        <Route path="search" element={<SearchPage />} />
+        <Route path="account" element={<AccountCenterPage />} />
+        <Route path="sync" element={<Navigate to="/account?section=sync" replace />} />
+        <Route path="privacy" element={<Navigate to="/account?section=privacy" replace />} />
+        <Route path="setup" element={<SetupWizardPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/chat" replace />} />
       </Route>

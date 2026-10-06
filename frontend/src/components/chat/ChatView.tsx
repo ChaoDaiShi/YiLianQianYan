@@ -74,6 +74,7 @@ interface ChatViewProps {
   onRequestGlobalVoiceSession?: () => void;
   onManualSpeech?: (text: string) => void;
   onOpenModelSettings?: () => void;
+  initialSuggestedText?: string;
 }
 
 export interface ExecutionController {
@@ -123,6 +124,7 @@ export default function ChatView({
   onRequestGlobalVoiceSession,
   onManualSpeech,
   onOpenModelSettings,
+  initialSuggestedText,
 }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -150,6 +152,9 @@ export default function ChatView({
   const shouldFollowMessagesRef = useRef(true);
   const unknownEventTypes = useRef(new Set<string>());
   const ownership = useRef(createConversationOwnership(conversationId)).current;
+  useEffect(() => {
+    if (initialSuggestedText?.trim()) setSuggestedText(initialSuggestedText);
+  }, [initialSuggestedText]);
   useLayoutEffect(() => {
     if (ownership.id !== conversationId) {
       ownership.activate(conversationId);

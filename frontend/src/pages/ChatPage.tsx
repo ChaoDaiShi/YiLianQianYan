@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import ChatView from "../components/chat/ChatView";
 import ConversationSidebar from "../components/chat/ConversationSidebar";
 import {
@@ -20,6 +20,10 @@ import { resolveCurrentTaskDestination } from "../components/chat/currentTaskEnt
 export default function ChatPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const initialSuggestedText = typeof (location.state as { suggestedText?: unknown } | null)?.suggestedText === "string"
+    ? (location.state as { suggestedText: string }).suggestedText
+    : undefined;
   const conversationId = id || null;
   const {
     context,
@@ -158,6 +162,7 @@ export default function ChatPage() {
         onRequestGlobalVoiceSession={requestGlobalVoiceSession}
         onManualSpeech={speakAssistantMessage}
         onOpenModelSettings={() => navigate("/settings?section=model")}
+        initialSuggestedText={initialSuggestedText}
         renderExecution={(controller) => {
           if (workspaceMode === "full") {
             const approvals = controller.pendingApprovals.filter(
