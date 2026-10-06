@@ -1,0 +1,15 @@
+name: Public Private Boundary
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main, v1.1/base]
+
+jobs:
+  boundary:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject private server and Admin implementation
+        shell: powershell
+        run: ./scripts/check-private-boundary.ps1

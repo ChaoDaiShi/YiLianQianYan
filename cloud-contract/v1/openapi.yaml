@@ -1,0 +1,412 @@
+openapi: 3.1.0
+info:
+  title: YiLian Cloud Public API
+  version: 1.0.0
+  description: Public desktop client contract. Private Admin APIs are excluded by design.
+servers:
+  - url: https://cloud.example.invalid/api/v1
+paths:
+  /health:
+    get:
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: Public service health
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+  /identity/register:
+    post:
+      operationId: register
+      security: []
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201": { $ref: "#/components/responses/AuthSuccess" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /identity/login:
+    post:
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/AuthSuccess" }
+        "401": { $ref: "#/components/responses/Error" }
+  /identity/refresh:
+    post:
+      operationId: refresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string, minLength: 20 }
+      responses:
+        "200": { $ref: "#/components/responses/AuthSuccess" }
+        "401": { $ref: "#/components/responses/Error" }
+  /account:
+    get:
+      operationId: getAccount
+      responses:
+        "200":
+          description: Current account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Error" }
+  /sessions:
+    get:
+      operationId: listSessions
+      responses:
+        "200":
+          description: Active and recently revoked sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Session" }
+  /sessions/{session_id}/revoke:
+    post:
+      operationId: revokeSession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": { description: Session revoked }
+        "404": { $ref: "#/components/responses/Error" }
+  /sessions/revoke-all:
+    post:
+      operationId: revokeAllSessions
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "204": { description: All sessions revoked }
+  /sync/push:
+    post:
+      operationId: pushChanges
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SyncPushRequest" }
+      responses:
+        "200":
+          description: Per-change application results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncPushResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /sync/pull:
+    get:
+      operationId: pullChanges
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200":
+          description: Ordered server changes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncPullResponse" }
+  /user-data/summary:
+    get:
+      operationId: userDataSummary
+      responses:
+        "200":
+          description: Metadata-only data counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [counts, object_bytes]
+                properties:
+                  counts:
+                    type: object
+                    additionalProperties: { type: integer, minimum: 0 }
+                  object_bytes: { type: integer, minimum: 0 }
+  /search:
+    post:
+      operationId: searchProxy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SearchRequest" }
+      responses:
+        "200":
+          description: Normalized search response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResponse" }
+        "429": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+  /exports:
+    post:
+      operationId: requestExport
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "202":
+          description: Export accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LifecycleJob" }
+  /exports/{job_id}:
+    get:
+      operationId: getExport
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Export status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LifecycleJob" }
+  /account/deletion:
+    post:
+      operationId: requestAccountDeletion
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation: { type: string, const: DELETE }
+      responses:
+        "202":
+          description: Deletion accepted and sessions revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LifecycleJob" }
+  /account/deletion/{job_id}:
+    get:
+      operationId: getAccountDeletion
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Deletion status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LifecycleJob" }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: opaque }
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 16, maxLength: 128 }
+  responses:
+    AuthSuccess:
+      description: Authenticated device session
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AuthSession" }
+    Error:
+      description: Stable error envelope
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    Health:
+      type: object
+      required: [status, version, capabilities]
+      properties:
+        status: { type: string, enum: [healthy, degraded] }
+        version: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+    Account:
+      type: object
+      required: [id, email, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        status: { type: string, enum: [active, closing, deleted] }
+        display_name: { type: [string, "null"] }
+        created_at: { type: integer, format: int64 }
+    RegisterRequest:
+      type: object
+      required: [email, password, device]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 10, maxLength: 256 }
+        display_name: { type: string, maxLength: 80 }
+        device: { $ref: "#/components/schemas/DeviceInput" }
+    LoginRequest:
+      type: object
+      required: [email, password, device]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1, maxLength: 256 }
+        device: { $ref: "#/components/schemas/DeviceInput" }
+    DeviceInput:
+      type: object
+      required: [id, label, client_version]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        client_version: { type: string, maxLength: 40 }
+    AuthSession:
+      type: object
+      required: [account, session, access_token, refresh_token, expires_in]
+      properties:
+        account: { $ref: "#/components/schemas/Account" }
+        session: { $ref: "#/components/schemas/Session" }
+        access_token: { type: string, minLength: 20 }
+        refresh_token: { type: string, minLength: 20 }
+        expires_in: { type: integer, minimum: 60 }
+    Session:
+      type: object
+      required: [id, device_id, device_label, current, created_at, last_seen_at]
+      properties:
+        id: { type: string, format: uuid }
+        device_id: { type: string, format: uuid }
+        device_label: { type: string }
+        current: { type: boolean }
+        created_at: { type: integer, format: int64 }
+        last_seen_at: { type: integer, format: int64 }
+        revoked_at: { type: [integer, "null"], format: int64 }
+    SyncChange:
+      type: object
+      required: [change_id, entity_type, entity_id, base_revision, revision, operation, device_id, changed_at]
+      properties:
+        change_id: { type: string, format: uuid }
+        entity_type: { type: string, maxLength: 64 }
+        entity_id: { type: string, maxLength: 160 }
+        base_revision: { type: integer, minimum: 0 }
+        revision: { type: integer, minimum: 1 }
+        operation: { type: string, enum: [upsert, delete] }
+        payload: { type: [object, "null"], additionalProperties: true }
+        device_id: { type: string, format: uuid }
+        changed_at: { type: integer, format: int64 }
+    ServerChange:
+      allOf:
+        - { $ref: "#/components/schemas/SyncChange" }
+        - type: object
+          required: [sequence]
+          properties:
+            sequence: { type: integer, minimum: 1 }
+    SyncPushRequest:
+      type: object
+      required: [device_id, changes]
+      properties:
+        device_id: { type: string, format: uuid }
+        changes:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/SyncChange" }
+    SyncPushResponse:
+      type: object
+      required: [results, cursor]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [change_id, status]
+            properties:
+              change_id: { type: string, format: uuid }
+              status: { type: string, enum: [applied, duplicate, conflict, rejected] }
+              authoritative_revision: { type: [integer, "null"] }
+              error_code: { type: [string, "null"] }
+        cursor: { type: string }
+    SyncPullResponse:
+      type: object
+      required: [changes, next_cursor, has_more]
+      properties:
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/ServerChange" }
+        next_cursor: { type: string }
+        has_more: { type: boolean }
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string, minLength: 1, maxLength: 2000 }
+        max_results: { type: integer, minimum: 1, maximum: 10, default: 10 }
+        tag: { type: string, maxLength: 80 }
+        zone: { type: string, enum: [cn, intl] }
+        language: { type: string, maxLength: 16 }
+    SearchResponse:
+      type: object
+      required: [request_id, results, total_results, search_time_ms]
+      properties:
+        request_id: { type: string }
+        results:
+          type: array
+          items:
+            type: object
+            required: [title, url]
+            properties:
+              title: { type: string }
+              url: { type: string, format: uri }
+              snippet: { type: [string, "null"] }
+              content: { type: [string, "null"] }
+        total_results: { type: integer, minimum: 0 }
+        search_time_ms: { type: integer, minimum: 0 }
+    LifecycleJob:
+      type: object
+      required: [id, kind, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [export, deletion] }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        result_ref: { type: [string, "null"] }
+        error_code: { type: [string, "null"] }
+        created_at: { type: integer, format: int64 }
+        updated_at: { type: integer, format: int64 }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id, retryable]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+            retryable: { type: boolean }
+            details: { type: object, additionalProperties: true }
+security:
+  - bearerAuth: []

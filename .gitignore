@@ -52,6 +52,17 @@ docs/v1-release/*
 !docs/roadmap/
 docs/roadmap/*
 !docs/roadmap/v1.1-service-cloud-web.md
+!docs/adr/
+!docs/adr/**
+!docs/cloud/
+!docs/cloud/**
+!docs/privacy/
+!docs/privacy/**
+!docs/v1.1/
+!docs/v1.1/**
+!docs/superpowers/
+!docs/superpowers/plans/
+!docs/superpowers/plans/2026-10-06-v1-1-user-cloud-experience.md
 
 AGENTS.md
 YiLianQianYan_Sprint01_AI_Coding_Modification_Guide.md
