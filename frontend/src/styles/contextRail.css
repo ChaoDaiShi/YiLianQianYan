@@ -104,4 +104,3 @@
 @media (prefers-reduced-motion: reduce) {
   .context-rail-action { transition-duration: 0.01ms; }
 }
-
