@@ -9,6 +9,7 @@ describe("NavRail groups", () => {
     expect(items.map((item) => item.to)).toEqual([
       "/tasks",
       "/chat",
+      "/search",
       "/workflows",
       "/workspaces",
       "/skills",
@@ -20,6 +21,7 @@ describe("NavRail groups", () => {
       "/system",
       "/logs",
       "/settings",
+      "/account",
     ]);
 
     expect(NAV_GROUPS.map((group) => group.label)).toEqual([

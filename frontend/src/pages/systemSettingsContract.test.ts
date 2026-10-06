@@ -13,6 +13,9 @@ import skillPathSettingsSource from "../features/settings/sections/SkillPathSett
 import voiceSettingsSource from "../features/settings/sections/VoiceSettings.tsx?raw";
 import modelManagerSource from "../features/llm/ModelManagerPanel.tsx?raw";
 import moduleSetupSource from "../components/system/ModuleSetup.tsx?raw";
+import setupWizardSource from "./SetupWizardPage.tsx?raw";
+import settingsNavigationSource from "../features/settings/model/settingsNavigation.ts?raw";
+import settingsStyleSource from "../styles/settings.css?raw";
 import typesSource from "../types/index.ts?raw";
 
 // Settings is one surface split across a composition page, its model and its
@@ -31,6 +34,8 @@ const source = [
   sandboxSettingsSource,
   skillPathSettingsSource,
   voiceSettingsSource,
+  settingsNavigationSource,
+  settingsStyleSource,
 ].join("\n");
 
 describe("Settings contract", () => {
@@ -44,7 +49,7 @@ describe("Settings contract", () => {
   it("preserves secure voice provider settings and write-only credentials", () => {
     expect(typesSource).toContain("export interface VoiceConfig");
     expect(typesSource).toContain("voice: VoiceConfig");
-    expect(source).toContain('{ key: "voice", label: "语音" }');
+    expect(settingsNavigationSource).toContain('label: "语音能力"');
     expect(typesSource).toContain("export interface VoiceSttConfig");
     expect(typesSource).toContain("export interface VoiceTtsConfig");
     expect(source).toContain("语音识别（STT）");
@@ -101,18 +106,18 @@ describe("Settings contract", () => {
     expect(source).toContain("replaceVoiceKey");
     expect(source).toContain("window.confirm");
     expect(source).toContain("provider_readiness");
-    expect(source).toContain("settings-save-card");
+    expect(pageSource).toContain("settings-header-actions");
     expect(source).not.toContain("system-settings-savebar");
     expect(modelManagerSource).toContain("clearProfileSecret");
     expect(modelManagerSource).toContain("clear_api_key: true");
   });
 
-  it("offers a thin provider step after first-run module setup without requiring voice", () => {
-    expect(moduleSetupSource).toContain("开始使用忆涟");
-    expect(moduleSetupSource).toContain("getProviderReadiness");
-    expect(moduleSetupSource).toContain("模型服务");
-    expect(moduleSetupSource).toContain("语音服务（可选）");
-    expect(moduleSetupSource).toContain("去配置");
-    expect(moduleSetupSource).toContain("稍后设置");
+  it("routes first-run setup to one guided wizard without requiring voice", () => {
+    expect(moduleSetupSource).toContain('navigate("/setup")');
+    expect(setupWizardSource).toContain("v1.1 首次配置");
+    expect(setupWizardSource).toContain("getProviderReadiness");
+    expect(setupWizardSource).toContain("文字智能功能需要一个可用模型");
+    expect(setupWizardSource).toContain("语音能力可以稍后配置");
+    expect(setupWizardSource).toContain("稍后完成");
   });
 });

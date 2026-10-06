@@ -16,7 +16,8 @@ describe("System Center freeze", () => {
 
   it("keeps the three pages token-based and accessible", () => {
     expect(systemSource).toContain("var(--");
-    expect(settingsSource).toContain("var(--");
+    expect(settingsSource).toContain("system-settings-page");
+    expect(settingsSource).toContain("settings-header-actions");
     expect(logsSource).toContain("system-center-page");
     expect(logsSource).toContain("aria-label");
     expect(settingsSource).toContain("aria-label");
