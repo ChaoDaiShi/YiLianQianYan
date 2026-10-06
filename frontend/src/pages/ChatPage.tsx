@@ -9,7 +9,9 @@ import {
   type WorkspaceDrawer,
 } from "../components/layout/workspaceLayout";
 import { Drawer } from "../components/ui";
+import ContextRail, { type ContextRailStatusTone } from "../components/layout/ContextRail";
 import ExecutionSidebar from "../features/execution/ExecutionSidebar";
+import { Activity } from "lucide-react";
 import { useGlobalVoiceContext } from "../features/voice/GlobalVoiceHost";
 import type { ConversationalAnchor } from "../api/voice";
 import { getTaskGraphDetail } from "../api/taskWorld";
@@ -32,7 +34,7 @@ export default function ChatPage() {
   );
   const [conversationDrawerOpen, setConversationDrawerOpen] = useState(false);
   const [executionDrawerOpen, setExecutionDrawerOpen] = useState(false);
-  const [executionCollapsed, setExecutionCollapsed] = useState(false);
+  const [executionCollapsed, setExecutionCollapsed] = useState(true);
   const conversationToggleRef = useRef<HTMLButtonElement>(null);
   const executionToggleRef = useRef<HTMLButtonElement>(null);
 
@@ -50,6 +52,21 @@ export default function ChatPage() {
       setConversationDrawerOpen(false);
     }
   }, [workspaceMode]);
+
+  useEffect(() => {
+    if (workspaceMode !== "full" || executionCollapsed) return;
+    const collapseExecution = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (event.key === "Escape" && !event.defaultPrevented
+        && target instanceof Element
+        && (target === document.body || target.closest(".execution-region"))) {
+        setExecutionCollapsed(true);
+        executionToggleRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", collapseExecution);
+    return () => window.removeEventListener("keydown", collapseExecution);
+  }, [executionCollapsed, workspaceMode]);
 
   useEffect(() => {
     if (context.conversational_anchor?.conversation_id !== conversationId) {
@@ -141,16 +158,45 @@ export default function ChatPage() {
         onRequestGlobalVoiceSession={requestGlobalVoiceSession}
         onManualSpeech={speakAssistantMessage}
         onOpenModelSettings={() => navigate("/settings?section=model")}
-        renderExecution={(controller) =>
-          workspaceMode === "full" ? (
-            <div className="execution-region min-h-0 border-l border-[var(--border)]">
-              <ExecutionSidebar
-                {...controller}
-                collapsed={executionCollapsed}
-                onToggleCollapse={() => setExecutionCollapsed((value) => !value)}
+        renderExecution={(controller) => {
+          if (workspaceMode === "full") {
+            const approvals = controller.pendingApprovals.filter(
+              (approval) => !conversationId || approval.conversation_id === conversationId,
+            ).length;
+            const statusTone: ContextRailStatusTone = approvals > 0
+              ? "warning"
+              : controller.state.connection === "error"
+                ? "danger"
+                : controller.state.connection === "connected" || controller.state.connection === "connecting"
+                  ? "info"
+                  : controller.state.terminal && controller.state.order.length > 0
+                    ? "success"
+                    : "neutral";
+            return executionCollapsed ? (
+              <ContextRail
+                label="对话上下文"
+                className="context-rail--chat"
+                items={[{
+                  id: "execution",
+                  label: "展开执行轨迹",
+                  icon: Activity,
+                  controls: "chat-execution-panel",
+                  expanded: false,
+                  badge: approvals || undefined,
+                  statusTone,
+                  onSelect: () => setExecutionCollapsed(false),
+                }]}
               />
-            </div>
-          ) : (
+            ) : (
+              <div id="chat-execution-panel" className="execution-region min-h-0 border-l border-[var(--border)]">
+                <ExecutionSidebar
+                  {...controller}
+                  onToggleCollapse={() => setExecutionCollapsed(true)}
+                />
+              </div>
+            );
+          }
+          return (
             <Drawer
               open={executionDrawerOpen}
               side="right"
@@ -164,8 +210,8 @@ export default function ChatPage() {
                 onClose={() => setExecutionDrawerOpen(false)}
               />
             </Drawer>
-          )
-        }
+          );
+        }}
       />
     </div>
   );

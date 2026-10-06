@@ -1,4 +1,4 @@
-import { Activity, PanelRightClose, PanelRightOpen, X } from "lucide-react";
+import { PanelRightClose, X } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
 import CurrentActionCard from "./CurrentActionCard";
 import ExecutionHistory from "./ExecutionHistory";
@@ -12,7 +12,6 @@ interface ExecutionSidebarProps {
   onApprove: (approval: PendingApproval) => void;
   onReject: (approval: PendingApproval) => void;
   onClose?: () => void;
-  collapsed?: boolean;
   onToggleCollapse?: () => void;
 }
 
@@ -23,7 +22,6 @@ export default function ExecutionSidebar({
   onApprove,
   onReject,
   onClose,
-  collapsed = false,
   onToggleCollapse,
 }: ExecutionSidebarProps) {
   const history = selectExecutionHistory(state);
@@ -46,33 +44,6 @@ export default function ExecutionSidebar({
       record.executionStatus === "failed" ||
       record.verificationStatus === "failed"
   ).length;
-
-  if (collapsed) {
-    const statusClass =
-      current?.approvalStatus === "pending"
-        ? "bg-[var(--accent-gold)]"
-        : current?.executionStatus === "failed" || state.connection === "error"
-          ? "bg-[var(--danger)]"
-          : current?.executionStatus === "running"
-            ? "bg-[var(--accent-blue)]"
-            : "bg-[var(--text-faint)]";
-
-    return (
-      <aside className="glass-rail execution-sidebar execution-sidebar-collapsed flex h-full w-12 min-h-0 flex-col items-center bg-[var(--surface-muted)] py-3 text-[var(--text)]">
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="rounded-lg p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-          aria-label="展开执行轨迹"
-          title="展开执行轨迹"
-        >
-          <PanelRightOpen className="h-4 w-4" />
-        </button>
-        <Activity className="mt-4 h-4 w-4 text-[var(--text-faint)]" aria-hidden="true" />
-        <span className={"mt-3 h-2 w-2 rounded-full " + statusClass} aria-label="执行状态" />
-      </aside>
-    );
-  }
 
   return (
     <aside className="glass-rail execution-sidebar flex h-full min-h-0 flex-col bg-[var(--surface-muted)] text-[var(--text)]">

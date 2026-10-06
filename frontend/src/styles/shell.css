@@ -532,10 +532,6 @@
   background: var(--accent-gold);
 }
 
-.workbench-grid[data-chat-view="conversation"] .execution-sidebar-collapsed {
-  width: 3rem;
-}
-
 @media (max-width: 900px) {
   .conversation-message-user,
   .conversation-message-assistant,
