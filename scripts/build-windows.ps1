@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $false)]
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = '1.0.0-rc.2',
+    [string]$Version = '1.1.0-rc.1',
 
     [Parameter(Mandatory = $false)]
     [switch]$SkipTests,
@@ -19,7 +19,7 @@ if ($Help) {
     Write-Host ''
     Write-Host 'Usage:'
     Write-Host '  npm run build:windows'
-    Write-Host '  npm run build:windows -- -Version 1.0.0-rc.2'
+    Write-Host '  npm run build:windows -- -Version 1.1.0-rc.1'
     Write-Host '  npm run build:windows -- -SkipTests'
     exit 0
 }
@@ -76,12 +76,12 @@ try {
     Write-Host "YiLianQianYan v$Version Windows release build"
     Write-Host "Project: $ProjectRoot"
 
-    Invoke-NativeStep 'Verify release version metadata' 'powershell.exe' @(
-        '-NoProfile',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', (Join-Path $PSScriptRoot 'verify-release-version.ps1'),
-        '-ExpectedVersion', $Version
-    )
+    Write-Host ''
+    Write-Host '==> Verify release version metadata'
+    & (Join-Path $PSScriptRoot 'verify-release-version.ps1') -ExpectedVersion $Version
+    if (-not $?) {
+        throw 'Verify release version metadata failed.'
+    }
 
     if (-not $SkipTests) {
         Invoke-NativeStep 'Run frontend tests' 'npm.cmd' @('--prefix', 'frontend', 'test')
