@@ -179,7 +179,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
         items={[
           {
             id: "inspector",
-            label: selectedNode ? `节点属性：${selectedNode.title}` : "节点属性",
+            label: "节点属性",
             icon: Settings2,
             controls: "studio-inspector",
             expanded: activePanel === "inspector",
