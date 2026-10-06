@@ -34,11 +34,76 @@ impl IdentitySnapshot {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AuthenticatedSessionInput {
+    pub account_id: String,
+    pub email: String,
+    pub session_id: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncOperation {
     Upsert,
     Delete,
+}
+
+impl SyncOperation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Upsert => "upsert",
+            Self::Delete => "delete",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "upsert" => Some(Self::Upsert),
+            "delete" => Some(Self::Delete),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewSyncChange {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub base_revision: i64,
+    pub revision: i64,
+    pub operation: SyncOperation,
+    pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncOutboxItem {
+    pub change_id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub base_revision: i64,
+    pub revision: i64,
+    pub operation: SyncOperation,
+    pub payload: Option<serde_json::Value>,
+    pub device_id: String,
+    pub state: String,
+    pub attempts: i64,
+    pub next_retry_at: Option<i64>,
+    pub last_error_code: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudSyncStatus {
+    pub pending_count: i64,
+    pub conflict_count: i64,
+    pub error_count: i64,
+    pub cursor: Option<String>,
+    pub last_success_at: Option<i64>,
+    pub last_error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

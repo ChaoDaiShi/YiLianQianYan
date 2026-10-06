@@ -25,3 +25,4 @@ pub use app::bootstrap::create_server;
 /// Serving entrypoints for the standalone binary and Tauri embedding.
 pub use app::lifecycle::{serve, serve_in_background, serve_in_background_with_control_token};
 pub use app::state::AppServer;
+pub use db::Database;

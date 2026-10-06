@@ -2,3 +2,4 @@
 
 pub mod domain;
 pub mod search;
+pub mod session;

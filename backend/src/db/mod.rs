@@ -3,6 +3,7 @@
 // ============================================================
 
 mod artifact_provenance;
+mod cloud;
 mod conversations;
 mod llm_models;
 mod mcp;
@@ -62,6 +63,7 @@ impl Database {
         };
         db.run_v09_bootstrap()?;
         db.run_versioned_migrations(adopted_v09)?;
+        db.initialize_cloud_schema()?;
         // Seed after migrations so the lock is released between calls
         db.seed_builtin_workflows()?;
         Ok(db)

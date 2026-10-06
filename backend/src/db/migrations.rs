@@ -6,6 +6,8 @@ const SHARED_VERSION_MIN: i64 = 0;
 const SHARED_VERSION_MAX: i64 = 999;
 const V1_TASK_WORLD_VERSION_MIN: i64 = 1000;
 const V1_TASK_WORLD_VERSION_MAX: i64 = 1999;
+const V11_CLOUD_VERSION_MIN: i64 = 2000;
+const V11_CLOUD_VERSION_MAX: i64 = 2999;
 
 const SCHEMA_MIGRATIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -22,6 +24,7 @@ const SCHEMA_MIGRATIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS schema_migration
 pub(crate) enum MigrationOwner {
     Shared,
     V1TaskWorld,
+    V11Cloud,
 }
 
 impl MigrationOwner {
@@ -29,6 +32,7 @@ impl MigrationOwner {
         match self {
             Self::Shared => "shared",
             Self::V1TaskWorld => "v1_task_world",
+            Self::V11Cloud => "v1_1_cloud",
         }
     }
 
@@ -36,6 +40,7 @@ impl MigrationOwner {
         match self {
             Self::Shared => "Shared/Core",
             Self::V1TaskWorld => "v1 Task World",
+            Self::V11Cloud => "v1.1 Cloud Client",
         }
     }
 
@@ -43,6 +48,7 @@ impl MigrationOwner {
         match self {
             Self::Shared => SHARED_VERSION_MIN..=SHARED_VERSION_MAX,
             Self::V1TaskWorld => V1_TASK_WORLD_VERSION_MIN..=V1_TASK_WORLD_VERSION_MAX,
+            Self::V11Cloud => V11_CLOUD_VERSION_MIN..=V11_CLOUD_VERSION_MAX,
         }
     }
 }
