@@ -2,7 +2,7 @@ import type { CapabilityDescriptor } from "../../api/capabilities";
 import CapabilityPicker from "./capability-picker/CapabilityPicker";
 import { useCanvasCapabilities } from "./capability-picker/useCanvasCapabilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, RefreshCw } from "lucide-react";
+import { ListTree, RefreshCw, Settings2, SlidersHorizontal, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   addTaskEdge,
@@ -17,12 +17,14 @@ import {
   startTaskNode,
   updateTaskNode,
   type ApiError,
+  type TaskExecutionStatus,
   type TaskGraphNodeDefinition,
 } from "../../api/taskWorld";
 import { getProviderReadiness } from "../../api/providerConnection";
+import ContextRail, { type ContextRailStatusTone } from "../../components/layout/ContextRail";
 import { Button, EmptyState, ErrorState, Skeleton } from "../../components/ui";
 import { useGlobalVoiceContext } from "../voice/GlobalVoiceHost";
-import StudioHeader, { type StudioPanel } from "./StudioHeader";
+import StudioHeader from "./StudioHeader";
 import "./canvas/studio.css";
 import TaskWorldCanvas from "./canvas/TaskWorldCanvas";
 import TaskInspector from "./inspector/TaskInspector";
@@ -32,6 +34,8 @@ import { useTaskWorldEvents } from "./hooks/useTaskEvents";
 import { useTaskGraph } from "./hooks/useTaskGraph";
 import { useTaskGraphReview } from "./hooks/useTaskReview";
 import { getExecutorAvailability, isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
+
+type StudioPanel = "trail" | "inspector" | "tools" | null;
 
 /**
  * Task World page.
@@ -126,6 +130,8 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const projection = useMemo(() => detail ? projectTaskGraph(detail, capabilities.items) : null, [detail, capabilities.items]);
   const selectedNode = projection?.nodes.find((node) => node.id === focusedNodeId) || null;
   const graphLocked = detail?.nodes.some((node) => isActiveExecution(node.latest_execution?.status)) || false;
+  const executedNodeCount = projection?.nodes.filter((node) => node.latest_execution).length ?? 0;
+  const selectedExecutionTone = executionStatusTone(selectedNode?.latest_execution?.status);
 
   const {
     review,
@@ -161,12 +167,44 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   return (
     <div className="canvas-studio page-canvas">
       <CapabilityPicker open={pickerOpen} onClose={()=>setPickerOpen(false)} items={capabilities.items} onSelect={tool=>void addCapability(tool)} onRefresh={()=>void capabilities.refresh(true)} loading={capabilities.loading} error={capabilities.error}/>
-      <StudioHeader graphId={projection.graphId} revision={view?.view_revision ?? null} pending={canvasSavePending} error={canvasSaveError?.message ?? null} onRetry={retrySave} onBack={()=>navigate("/tasks")} panel={activePanel} onPanel={changePanel}/>
+      <StudioHeader graphId={projection.graphId} revision={view?.view_revision ?? null} pending={canvasSavePending} error={canvasSaveError?.message ?? null} onRetry={retrySave} onBack={()=>navigate("/tasks")}/>
       <div className="studio-workspace task-world-layout">
       {(eventWarning || (saveError && activePanel !== "inspector")) && <div className="studio-notices">
         {eventWarning && <p className="studio-event-warning" role="status">实时事件暂不可用：{eventWarning}</p>}
         {saveError && activePanel !== "inspector" && <p className="studio-command-error" role="alert">{saveError.message}</p>}
       </div>}
+      <ContextRail
+        className="studio-context-rail"
+        label="画布上下文"
+        items={[
+          {
+            id: "inspector",
+            label: selectedNode ? `节点属性：${selectedNode.title}` : "节点属性",
+            icon: Settings2,
+            controls: "studio-inspector",
+            expanded: activePanel === "inspector",
+            statusTone: selectedExecutionTone,
+            onSelect: () => changePanel(activePanel === "inspector" ? null : "inspector"),
+          },
+          {
+            id: "trail",
+            label: "执行轨迹",
+            icon: ListTree,
+            controls: "studio-trail",
+            expanded: activePanel === "trail",
+            badge: executedNodeCount > 99 ? "99+" : executedNodeCount || undefined,
+            onSelect: () => changePanel(activePanel === "trail" ? null : "trail"),
+          },
+          {
+            id: "tools",
+            label: "画布工具",
+            icon: SlidersHorizontal,
+            controls: "studio-tools",
+            expanded: activePanel === "tools",
+            onSelect: () => changePanel(activePanel === "tools" ? null : "tools"),
+          },
+        ]}
+      />
       <aside id="studio-tools" className="studio-panel studio-tools" aria-label="更多画布工具" hidden={activePanel!=="tools"}>
         <div className="studio-panel-heading"><h2>画布工具</h2><button type="button" aria-label="关闭更多工具" onClick={()=>changePanel(null)}><X size={16}/></button></div>
         <Button variant="secondary" size="sm" onClick={()=>{void reload();void capabilities.refresh(true);}}><RefreshCw size={14}/>刷新</Button>
@@ -257,4 +295,12 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
 
 function TaskWorldLoading() {
   return <div className="flex h-full flex-col gap-3 p-4"><Skeleton className="h-12" /><Skeleton className="min-h-0 flex-1" /></div>;
+}
+
+function executionStatusTone(status: TaskExecutionStatus | null | undefined): ContextRailStatusTone {
+  if (status === "failed" || status === "blocked") return "danger";
+  if (status === "waiting_approval" || status === "stale") return "warning";
+  if (status === "dispatching" || status === "running" || status === "validating") return "info";
+  if (status === "succeeded") return "success";
+  return "neutral";
 }
