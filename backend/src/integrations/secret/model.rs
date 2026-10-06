@@ -25,6 +25,18 @@ pub const VOICE_KEY_REF: &str = "voice.api_key";
 pub const STT_KEY_REF: &str = "voice.stt.api_key";
 pub const TTS_KEY_REF: &str = "voice.tts.api_key";
 
+pub fn cloud_access_token_ref() -> SecretRef {
+    SecretRef::new("cloud.identity.access_token")
+}
+
+pub fn cloud_refresh_token_ref() -> SecretRef {
+    SecretRef::new("cloud.identity.refresh_token")
+}
+
+pub fn anysearch_key_ref() -> SecretRef {
+    SecretRef::new("search.anysearch.api_key")
+}
+
 /// Build a stable, non-sensitive keyring account for a saved LLM profile.
 pub fn llm_model_key_ref(model_id: &str) -> SecretRef {
     SecretRef::new(format!("llm.model.{}", digest16(model_id.as_bytes())))
@@ -89,6 +101,9 @@ pub enum SecretKind {
     VoiceTtsApiKey,
     LlmModelApiKey,
     McpEnv,
+    CloudAccessToken,
+    CloudRefreshToken,
+    AnySearchApiKey,
 }
 
 /// Where a configured secret currently resolves from (status API).

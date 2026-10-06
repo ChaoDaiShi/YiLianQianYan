@@ -5,6 +5,7 @@
 //! events and projections — never by reaching into each other's internals.
 
 pub mod capability;
+pub mod cloud;
 pub mod memory_skill;
 pub mod resource;
 pub mod settings;
