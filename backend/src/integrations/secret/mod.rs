@@ -19,8 +19,8 @@ pub use migration::migrate_legacy_secrets;
 pub use model::{
     anysearch_key_ref, cloud_access_token_ref, cloud_refresh_token_ref, llm_model_key_ref,
     mcp_env_ref, SecretKind, SecretMigrationReport, SecretRef, SecretSource, SecretStoreError,
-    SecretStoreStatus, CHAT_KEY_REF, EMBEDDING_KEY_REF, MAX_SECRET_KEY_LEN,
-    MAX_SECRET_VALUE_BYTES, SECRET_SERVICE_NAME, STT_KEY_REF, TTS_KEY_REF, VOICE_KEY_REF,
+    SecretStoreStatus, CHAT_KEY_REF, EMBEDDING_KEY_REF, MAX_SECRET_KEY_LEN, MAX_SECRET_VALUE_BYTES,
+    SECRET_SERVICE_NAME, STT_KEY_REF, TTS_KEY_REF, VOICE_KEY_REF,
 };
 pub use os_store::OsSecretStore;
 pub use resolver::SecretResolver;

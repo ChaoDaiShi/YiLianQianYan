@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use secrecy::ExposeSecret;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::integrations::secret::{anysearch_key_ref, SecretStore};

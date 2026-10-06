@@ -38,7 +38,7 @@ use crate::shared::command::CommandRouter;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;
 use crate::shared::resource::ResourceService;
-use crate::tools::registry::ToolRegistry;
+use crate::tools::{AiSearchTool, ToolRegistry};
 use crate::tools::skill::SkillDiscovery;
 
 /// Number of relevant memories injected into the chat system prompt.
@@ -441,6 +441,10 @@ impl AppServer {
             &self.workspace_root,
             Arc::clone(&self.managed_process_registry),
         );
+        base_registry.register(Arc::new(AiSearchTool::new(
+            self.db.clone_connection(),
+            Arc::clone(&self.secret_store),
+        )));
         let mut occupied_names: HashSet<String> = base_registry
             .list_tools()
             .into_iter()

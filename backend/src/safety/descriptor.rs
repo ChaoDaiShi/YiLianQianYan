@@ -238,6 +238,21 @@ fn builtin_descriptor_profile(
             }
             _ => return Err(invalid_resources()),
         },
+        "ai_search" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Network { url, method }]
+                if url == "https://api.anysearch.com/v1/search" && method == "POST" =>
+            {
+                profile(
+                    vec![permission(
+                        PermissionId::NetworkRequest,
+                        ResourceScope::NetworkTarget,
+                    )],
+                    RiskLevel::Medium,
+                    vec![SideEffectKind::NetworkEgress],
+                )
+            }
+            _ => return Err(invalid_resources()),
+        },
         "open_url" => match descriptor.resources.as_slice() {
             [ResourceDescriptor::Network { url, method }, ResourceDescriptor::Desktop {
                 action,

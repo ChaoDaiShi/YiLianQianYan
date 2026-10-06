@@ -1,3 +1,4 @@
+pub mod ai_search;
 pub mod bash;
 pub mod fs;
 pub mod gui_launch;
@@ -14,6 +15,7 @@ pub mod subagent;
 pub mod trait_def;
 pub mod upscale;
 
+pub use ai_search::AiSearchTool;
 pub use gui_launch::{OpenApplicationTool, OpenUrlTool};
 pub use input::{KeyboardTool, MouseTool};
 pub use mcp::{McpToolAdapter, McpToolAdapterError};

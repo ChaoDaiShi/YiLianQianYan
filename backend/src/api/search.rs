@@ -29,7 +29,8 @@ pub struct SearchPayload {
 pub async fn config_handler(
     State(server): State<Arc<AppServer>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let (provider, base_url, secret_ref) = server.db.cloud_search_config().map_err(database_error)?;
+    let (provider, base_url, secret_ref) =
+        server.db.cloud_search_config().map_err(database_error)?;
     let configured = if let Some(secret_ref) = secret_ref {
         matches!(server.secret_store.get(&secret_ref).await, Ok(Some(_)))
     } else {
@@ -47,19 +48,35 @@ pub async fn update_config_handler(
     State(server): State<Arc<AppServer>>,
     Json(update): Json<SearchConfigUpdate>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let (_, current_base_url, current_ref) = server.db.cloud_search_config().map_err(database_error)?;
-    let base_url = update.base_url.as_deref().unwrap_or(&current_base_url).trim_end_matches('/');
+    let (_, current_base_url, current_ref) =
+        server.db.cloud_search_config().map_err(database_error)?;
+    let base_url = update
+        .base_url
+        .as_deref()
+        .unwrap_or(&current_base_url)
+        .trim_end_matches('/');
     validate_base_url(base_url)?;
     let mut secret_ref = current_ref;
     if update.clear_api_key {
-        server.secret_store.delete(&anysearch_key_ref()).await.map_err(secret_error)?;
+        server
+            .secret_store
+            .delete(&anysearch_key_ref())
+            .await
+            .map_err(secret_error)?;
         secret_ref = None;
     } else if let Some(api_key) = update.api_key.filter(|value| !value.trim().is_empty()) {
         let target = anysearch_key_ref();
-        server.secret_store.put(&target, SecretString::from(api_key)).await.map_err(secret_error)?;
+        server
+            .secret_store
+            .put(&target, SecretString::from(api_key))
+            .await
+            .map_err(secret_error)?;
         secret_ref = Some(target);
     }
-    server.db.save_cloud_search_config(base_url, secret_ref.as_ref()).map_err(database_error)?;
+    server
+        .db
+        .save_cloud_search_config(base_url, secret_ref.as_ref())
+        .map_err(database_error)?;
     config_handler(State(server)).await
 }
 
@@ -74,7 +91,13 @@ pub async fn search_handler(
     request.zone = match payload.zone.as_deref() {
         None => None,
         Some("cn" | "intl") => payload.zone,
-        Some(_) => return Err(api_error(StatusCode::BAD_REQUEST, "invalid_zone", "搜索区域必须是 cn 或 intl")),
+        Some(_) => {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_zone",
+                "搜索区域必须是 cn 或 intl",
+            ))
+        }
     };
     let (_, base_url, _) = server.db.cloud_search_config().map_err(database_error)?;
     let provider = AnySearchProvider::new(base_url, Arc::clone(&server.secret_store));
@@ -86,10 +109,22 @@ pub async fn search_handler(
 }
 
 fn validate_base_url(value: &str) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let parsed = url::Url::parse(value)
-        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "invalid_search_url", "搜索服务地址无效"))?;
-    if !matches!(parsed.scheme(), "http" | "https") || !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "invalid_search_url", "搜索服务地址无效"));
+    let parsed = url::Url::parse(value).map_err(|_| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_search_url",
+            "搜索服务地址无效",
+        )
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_search_url",
+            "搜索服务地址无效",
+        ));
     }
     Ok(())
 }
@@ -99,30 +134,72 @@ fn bounded(
     limit: usize,
     field: &str,
 ) -> Result<Option<String>, (StatusCode, Json<serde_json::Value>)> {
-    if value.as_ref().is_some_and(|item| item.chars().count() > limit) {
-        return Err(api_error(StatusCode::BAD_REQUEST, "invalid_search", &format!("{field} 过长")));
+    if value
+        .as_ref()
+        .is_some_and(|item| item.chars().count() > limit)
+    {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_search",
+            &format!("{field} 过长"),
+        ));
     }
     Ok(value)
 }
 
 fn search_error(error: SearchError) -> (StatusCode, Json<serde_json::Value>) {
     match error.kind {
-        SearchFailureKind::InvalidRequest => api_error(StatusCode::BAD_REQUEST, "search_invalid_request", "搜索请求无效"),
-        SearchFailureKind::Authentication => api_error(StatusCode::BAD_GATEWAY, "search_authentication_failed", "搜索服务凭据不可用"),
-        SearchFailureKind::Quota => api_error(StatusCode::PAYMENT_REQUIRED, "search_quota_exhausted", "匿名搜索额度已用完，请配置本机 API Key"),
-        SearchFailureKind::RateLimited => api_error(StatusCode::TOO_MANY_REQUESTS, "search_rate_limited", "搜索请求过于频繁，请稍后重试"),
-        SearchFailureKind::Unavailable | SearchFailureKind::Provider => api_error(StatusCode::BAD_GATEWAY, "search_unavailable", "搜索服务暂时不可用"),
+        SearchFailureKind::InvalidRequest => api_error(
+            StatusCode::BAD_REQUEST,
+            "search_invalid_request",
+            "搜索请求无效",
+        ),
+        SearchFailureKind::Authentication => api_error(
+            StatusCode::BAD_GATEWAY,
+            "search_authentication_failed",
+            "搜索服务凭据不可用",
+        ),
+        SearchFailureKind::Quota => api_error(
+            StatusCode::PAYMENT_REQUIRED,
+            "search_quota_exhausted",
+            "匿名搜索额度已用完，请配置本机 API Key",
+        ),
+        SearchFailureKind::RateLimited => api_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "search_rate_limited",
+            "搜索请求过于频繁，请稍后重试",
+        ),
+        SearchFailureKind::Unavailable | SearchFailureKind::Provider => api_error(
+            StatusCode::BAD_GATEWAY,
+            "search_unavailable",
+            "搜索服务暂时不可用",
+        ),
     }
 }
 
 fn database_error(_: rusqlite::Error) -> (StatusCode, Json<serde_json::Value>) {
-    api_error(StatusCode::INTERNAL_SERVER_ERROR, "search_config_unavailable", "搜索配置暂时不可用")
+    api_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "search_config_unavailable",
+        "搜索配置暂时不可用",
+    )
 }
 
 fn secret_error(_: SecretStoreError) -> (StatusCode, Json<serde_json::Value>) {
-    api_error(StatusCode::INTERNAL_SERVER_ERROR, "search_secret_not_saved", "搜索凭据未能安全保存")
+    api_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "search_secret_not_saved",
+        "搜索凭据未能安全保存",
+    )
 }
 
-fn api_error(status: StatusCode, error: &str, message: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({"error": error, "message": message})))
+fn api_error(
+    status: StatusCode,
+    error: &str,
+    message: &str,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        status,
+        Json(serde_json::json!({"error": error, "message": message})),
+    )
 }

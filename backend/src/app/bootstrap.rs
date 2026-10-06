@@ -23,7 +23,7 @@ use crate::shared::command::CommandRouter;
 use crate::shared::context::{ContextRequest, TaskProjectionProvider};
 use crate::shared::event::EventHub;
 use crate::shared::resource::ResourceService;
-use crate::tools::registry::ToolRegistry;
+use crate::tools::{AiSearchTool, ToolRegistry};
 use crate::tools::skill::SkillDiscovery;
 
 use super::state::{AppServer, LogBuffer};
@@ -87,10 +87,15 @@ impl AppServer {
         }
 
         let managed_process_registry = Arc::new(ManagedProcessRegistry::new());
-        let tool_registry = Arc::new(ToolRegistry::with_defaults_and_process_registry(
+        let mut tool_registry = ToolRegistry::with_defaults_and_process_registry(
             workspace_root,
             Arc::clone(&managed_process_registry),
-        ));
+        );
+        tool_registry.register(Arc::new(AiSearchTool::new(
+            db.clone_connection(),
+            Arc::clone(&secret_store),
+        )));
+        let tool_registry = Arc::new(tool_registry);
 
         let skill_dirs = if config.skills.directories.is_empty() {
             vec!["./skills".to_string()]
