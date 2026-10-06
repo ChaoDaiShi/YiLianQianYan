@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod domain;
+pub mod lifecycle;
 pub mod search;
 pub mod session;
 pub mod sync;

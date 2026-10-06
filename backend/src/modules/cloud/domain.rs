@@ -1,5 +1,39 @@
 use serde::{Deserialize, Serialize};
 
+pub fn sanitize_sync_payload(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .filter(|(key, _)| !is_secret_field(key))
+                .map(|(key, value)| (key, sanitize_sync_payload(value)))
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(sanitize_sync_payload).collect())
+        }
+        other => other,
+    }
+}
+
+fn is_secret_field(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "api_key"
+            | "password"
+            | "access_token"
+            | "refresh_token"
+            | "authorization"
+            | "cookie"
+            | "secret"
+            | "secret_value"
+            | "secret_ref"
+            | "api_key_ref"
+            | "embedding_api_key"
+            | "embedding_api_key_ref"
+            | "env_secret_refs"
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityStatus {
@@ -42,6 +76,17 @@ pub struct AuthenticatedSessionInput {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudSessionView {
+    pub id: String,
+    pub device_id: String,
+    pub device_label: String,
+    pub current: bool,
+    pub created_at: i64,
+    pub last_seen_at: i64,
+    pub revoked_at: Option<i64>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -114,6 +159,37 @@ pub struct CloudSyncStatus {
     pub cursor: Option<String>,
     pub last_success_at: Option<i64>,
     pub last_error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncConflict {
+    pub id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub local_revision: i64,
+    pub remote_revision: i64,
+    pub local_payload: Option<serde_json::Value>,
+    pub remote_payload: Option<serde_json::Value>,
+    pub remote_operation: SyncOperation,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleJob {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub progress: i64,
+    pub result_ref: Option<String>,
+    pub error_code: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudDataSummary {
+    pub counts: std::collections::BTreeMap<String, i64>,
+    pub object_bytes: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

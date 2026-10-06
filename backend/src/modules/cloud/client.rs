@@ -55,8 +55,37 @@ impl CloudApiClient {
         request: CloudAuthRequest,
         idempotency_key: &str,
     ) -> Result<AuthenticatedSessionInput, CloudClientError> {
-        let header = HeaderValue::from_str(idempotency_key).map_err(|_| CloudClientError::Rejected)?;
-        self.authenticate("identity/register", request, Some(header)).await
+        let header =
+            HeaderValue::from_str(idempotency_key).map_err(|_| CloudClientError::Rejected)?;
+        self.authenticate("identity/register", request, Some(header))
+            .await
+    }
+
+    pub async fn refresh(
+        &self,
+        refresh_token: &str,
+    ) -> Result<AuthenticatedSessionInput, CloudClientError> {
+        if refresh_token.len() < 20 {
+            return Err(CloudClientError::Authentication);
+        }
+        let response = self
+            .http
+            .post(format!("{}/identity/refresh", self.base_url))
+            .json(&serde_json::json!({"refresh_token": refresh_token}))
+            .send()
+            .await
+            .map_err(|_| CloudClientError::Unavailable)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(CloudClientError::Authentication);
+        }
+        if !response.status().is_success() {
+            return Err(CloudClientError::Rejected);
+        }
+        let auth: AuthEnvelope = response
+            .json()
+            .await
+            .map_err(|_| CloudClientError::InvalidResponse)?;
+        auth.into_session()
     }
 
     async fn authenticate(
@@ -82,7 +111,10 @@ impl CloudApiClient {
         if let Some(value) = idempotency_key {
             builder = builder.header("Idempotency-Key", value);
         }
-        let response = builder.send().await.map_err(|_| CloudClientError::Unavailable)?;
+        let response = builder
+            .send()
+            .await
+            .map_err(|_| CloudClientError::Unavailable)?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED
             || response.status() == reqwest::StatusCode::FORBIDDEN
         {
@@ -95,18 +127,7 @@ impl CloudApiClient {
             .json()
             .await
             .map_err(|_| CloudClientError::InvalidResponse)?;
-        if auth.access_token.is_empty() || auth.refresh_token.is_empty() {
-            return Err(CloudClientError::InvalidResponse);
-        }
-        Ok(AuthenticatedSessionInput {
-            account_id: auth.account.id,
-            email: auth.account.email,
-            session_id: auth.session.id,
-            access_token: auth.access_token,
-            refresh_token: auth.refresh_token,
-            expires_at: chrono::Utc::now().timestamp_millis()
-                + auth.expires_in.saturating_mul(1_000),
-        })
+        auth.into_session()
     }
 }
 
@@ -128,4 +149,21 @@ struct AccountEnvelope {
 #[derive(Deserialize)]
 struct SessionEnvelope {
     id: String,
+}
+
+impl AuthEnvelope {
+    fn into_session(self) -> Result<AuthenticatedSessionInput, CloudClientError> {
+        if self.access_token.is_empty() || self.refresh_token.is_empty() {
+            return Err(CloudClientError::InvalidResponse);
+        }
+        Ok(AuthenticatedSessionInput {
+            account_id: self.account.id,
+            email: self.account.email,
+            session_id: self.session.id,
+            access_token: self.access_token,
+            refresh_token: self.refresh_token,
+            expires_at: chrono::Utc::now().timestamp_millis()
+                + self.expires_in.saturating_mul(1_000),
+        })
+    }
 }

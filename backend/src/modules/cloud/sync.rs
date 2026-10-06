@@ -44,7 +44,10 @@ impl CloudSyncService {
     ) -> Result<Self, CloudSyncError> {
         let raw = base_url.into();
         let url = url::Url::parse(raw.trim()).map_err(|_| CloudSyncError::InvalidBaseUrl)?;
-        if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() {
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
             return Err(CloudSyncError::InvalidBaseUrl);
         }
         Ok(Self {
@@ -69,7 +72,11 @@ impl CloudSyncService {
         let pending = self.db.pending_sync_changes(100)?;
         let mut pushed = 0;
         let mut conflicts = 0;
-        let mut cursor = self.db.cloud_sync_status()?.cursor.unwrap_or_else(|| "0".to_string());
+        let mut cursor = self
+            .db
+            .cloud_sync_status()?
+            .cursor
+            .unwrap_or_else(|| "0".to_string());
 
         if !pending.is_empty() {
             let response = self
@@ -87,10 +94,16 @@ impl CloudSyncService {
             if !response.status().is_success() {
                 return Err(CloudSyncError::Transport);
             }
-            let push: PushResponse = response.json().await.map_err(|_| CloudSyncError::InvalidResponse)?;
+            let push: PushResponse = response
+                .json()
+                .await
+                .map_err(|_| CloudSyncError::InvalidResponse)?;
             cursor = push.cursor;
             for result in push.results {
-                let Some(item) = pending.iter().find(|item| item.change_id == result.change_id) else {
+                let Some(item) = pending
+                    .iter()
+                    .find(|item| item.change_id == result.change_id)
+                else {
                     continue;
                 };
                 match result.status.as_str() {
@@ -99,7 +112,10 @@ impl CloudSyncService {
                         pushed += 1;
                     }
                     "conflict" => {
-                        self.db.record_sync_conflict(item, result.authoritative_revision.unwrap_or(item.revision))?;
+                        self.db.record_sync_conflict(
+                            item,
+                            result.authoritative_revision.unwrap_or(item.revision),
+                        )?;
                         conflicts += 1;
                     }
                     _ => {
@@ -129,10 +145,14 @@ impl CloudSyncService {
             if !response.status().is_success() {
                 return Err(CloudSyncError::Transport);
             }
-            let page: PullResponse = response.json().await.map_err(|_| CloudSyncError::InvalidResponse)?;
+            let page: PullResponse = response
+                .json()
+                .await
+                .map_err(|_| CloudSyncError::InvalidResponse)?;
             for change in &page.changes {
-                let operation = SyncOperation::parse(&change.operation).ok_or(CloudSyncError::InvalidResponse)?;
-                self.db.apply_remote_sync_change(
+                let operation = SyncOperation::parse(&change.operation)
+                    .ok_or(CloudSyncError::InvalidResponse)?;
+                let conflicted = self.db.apply_remote_sync_change(
                     &change.entity_type,
                     &change.entity_id,
                     change.revision,
@@ -140,7 +160,11 @@ impl CloudSyncService {
                     change.payload.as_ref(),
                     change.sequence,
                 )?;
-                pulled += 1;
+                if conflicted {
+                    conflicts += 1;
+                } else {
+                    pulled += 1;
+                }
             }
             cursor = page.next_cursor;
             if !page.has_more {
@@ -148,7 +172,12 @@ impl CloudSyncService {
             }
         }
         self.db.save_sync_success(&cursor)?;
-        Ok(SyncReport { pushed, pulled, conflicts, cursor })
+        Ok(SyncReport {
+            pushed,
+            pulled,
+            conflicts,
+            cursor,
+        })
     }
 }
 

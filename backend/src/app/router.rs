@@ -19,10 +19,10 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use super::state::AppServer;
 use crate::api::{
-    agents, approvals, artifact_download, capabilities, chat, cloud, commands, conversations, events,
-    llm_models, logs, mcp_runtime, memories, plugins, projections, resources, search, secrets, security,
-    security_grants, settings, skill_candidates, skills_route, subagents, system, task_world,
-    tasks, tools, voice, workflow_runtime, workflows, workspaces,
+    agents, approvals, artifact_download, capabilities, chat, cloud, commands, conversations,
+    events, llm_models, logs, mcp_runtime, memories, plugins, projections, resources, search,
+    secrets, security, security_grants, settings, skill_candidates, skills_route, subagents,
+    system, task_world, tasks, tools, voice, workflow_runtime, workflows, workspaces,
 };
 use crate::safety::CONTROL_SESSION_HEADER;
 
@@ -32,9 +32,37 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/cloud/identity", get(cloud::identity_handler))
         .route("/api/cloud/login", post(cloud::login_handler))
         .route("/api/cloud/register", post(cloud::register_handler))
+        .route("/api/cloud/refresh", post(cloud::refresh_handler))
         .route("/api/cloud/logout", post(cloud::logout_handler))
+        .route("/api/cloud/sessions", get(cloud::sessions_handler))
+        .route(
+            "/api/cloud/sessions/:id/revoke",
+            post(cloud::revoke_session_handler),
+        )
         .route("/api/cloud/sync/status", get(cloud::sync_status_handler))
+        .route("/api/cloud/sync/choice", put(cloud::sync_choice_handler))
+        .route(
+            "/api/cloud/sync/conflicts",
+            get(cloud::sync_conflicts_handler),
+        )
+        .route(
+            "/api/cloud/sync/conflicts/:id/resolve",
+            post(cloud::resolve_sync_conflict_handler),
+        )
         .route("/api/cloud/sync/now", post(cloud::sync_now_handler))
+        .route(
+            "/api/cloud/privacy/summary",
+            get(cloud::privacy_summary_handler),
+        )
+        .route("/api/cloud/export", post(cloud::request_export_handler))
+        .route(
+            "/api/cloud/account/delete",
+            post(cloud::request_deletion_handler),
+        )
+        .route(
+            "/api/cloud/jobs/:kind/:id",
+            get(cloud::lifecycle_job_handler),
+        )
         .route(
             "/api/search/config",
             get(search::config_handler).put(search::update_config_handler),
