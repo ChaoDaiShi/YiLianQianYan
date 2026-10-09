@@ -28,4 +28,3 @@
 - 远端 CI：`BLOCKED_BY_WORKFLOW_SCOPE`。
 - 真人验收：`HUMAN_PENDING`。
 - 正式 v1.0.0：`NOT RELEASED`。
-
