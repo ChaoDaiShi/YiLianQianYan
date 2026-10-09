@@ -74,6 +74,22 @@ impl CloudSessionService {
         Ok(())
     }
 
+    pub async fn logout_with_report(
+        &self,
+        lease: &crate::modules::cloud::contracts::ScopeLease,
+        session_id_opt: Option<&str>,
+        service_origin_opt: Option<&str>,
+        account_id_opt: Option<&str>,
+    ) -> crate::modules::cloud::revocation::LogoutReport {
+        let revocation_service = crate::modules::cloud::revocation::RevocationService::new(
+            self.db.clone(),
+            Arc::clone(&self.secret_store),
+        );
+        revocation_service
+            .logout(lease, session_id_opt, service_origin_opt, account_id_opt)
+            .await
+    }
+
     pub async fn list_remote_sessions(
         &self,
         base_url: &str,

@@ -168,6 +168,8 @@ pub struct AppServer {
     pub(crate) voice_dispatch_hook: Arc<RwLock<Option<Arc<dyn VoiceDispatchHook>>>>,
     /// Authoritative v1 Task World registry and persistence boundary.
     pub task_world: TaskWorldRuntime,
+    /// Isolated ScopedDb wrapper binding database with active scope lease and gate latch.
+    pub scoped_db: crate::db::cloud::scoped_db::ScopedDb,
 }
 
 impl AppServer {

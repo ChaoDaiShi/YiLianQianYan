@@ -160,6 +160,22 @@ impl Database {
         )?;
         Ok(())
     }
+
+    pub fn get_cloud_profile_lease(
+        &self,
+    ) -> Result<crate::modules::cloud::contracts::ScopeLease, rusqlite::Error> {
+        let conn = self.conn();
+        conn.query_row(
+            "SELECT scope_id, generation FROM cloud_profile_metadata WHERE singleton = 1",
+            [],
+            |row| {
+                Ok(crate::modules::cloud::contracts::ScopeLease {
+                    scope_id: row.get(0)?,
+                    generation: row.get(1)?,
+                })
+            },
+        )
+    }
 }
 
 fn map_identity(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentitySnapshot> {

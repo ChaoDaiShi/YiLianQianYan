@@ -156,7 +156,7 @@ impl AppServer {
             .map_err(|error| format!("register presence command: {error}"))?;
 
         let server = Self {
-            db,
+            db: db.clone(),
             config,
             tool_registry,
             managed_process_registry,
@@ -183,6 +183,15 @@ impl AppServer {
             voice_runtime,
             voice_dispatch_hook: Arc::new(RwLock::new(None)),
             task_world,
+            scoped_db: {
+                let lease = db.get_cloud_profile_lease().unwrap_or_else(|_| {
+                    crate::modules::cloud::contracts::ScopeLease {
+                        scope_id: "default-guest".into(),
+                        generation: uuid::Uuid::new_v4().to_string(),
+                    }
+                });
+                crate::db::cloud::scoped_db::ScopedDb::new(db.clone(), lease)
+            },
         };
         server.set_voice_dispatch_hook(Arc::new(InteractionVoiceDispatch::new(
             server.db.clone_connection(),
@@ -213,7 +222,9 @@ pub(crate) async fn create_server_with_control_session(
 ) -> Result<(Arc<AppServer>, axum::Router), String> {
     let data_dir = default_data_dir();
     std::fs::create_dir_all(&data_dir).ok();
-    let db_path = data_dir.join("yilianqianyan-v1.db");
+    let (db_path, lease, profile_id) =
+        crate::modules::cloud::profile::ProfileManager::resolve_active_profile_db_path(&data_dir)
+            .map_err(|e| format!("resolve active profile: {e}"))?;
 
     let workspace_root = std::env::var("YILIAN_WORKSPACE")
         .ok()
@@ -225,7 +236,9 @@ pub(crate) async fn create_server_with_control_session(
         .unwrap_or_else(|| ".".to_string());
 
     tracing::info!(
-        "Backend: profile=v1, data_dir={}, workspace={}",
+        "Backend: profile={}, lease={:?}, data_dir={}, workspace={}",
+        profile_id,
+        lease,
         data_dir.display(),
         workspace_root
     );
@@ -236,6 +249,11 @@ pub(crate) async fn create_server_with_control_session(
         }
         None => AppServer::new(&db_path, &workspace_root)?,
     });
+
+    server
+        .scoped_db
+        .validate_stored_scope()
+        .map_err(|e| format!("profile stored scope validation failed: {e}"))?;
     // Migrate legacy plaintext secrets BEFORE registering MCP servers, so the
     // runtime manager sees the post-migration `env_secret_refs`.
     server.migrate_secrets().await;

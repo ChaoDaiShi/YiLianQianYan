@@ -118,6 +118,96 @@ pub enum ApplyDisposition {
     ConflictStored { conflict_id: String },
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PendingChange {
+    pub change_id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub base_revision: i64,
+    pub revision: i64,
+    pub operation: super::domain::SyncOperation,
+    pub payload: Option<Value>,
+    pub device_id: String,
+    pub changed_at: i64,
+    pub local_generation: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AckReport {
+    pub applied: usize,
+    pub duplicate: usize,
+    pub conflicts: usize,
+    pub rejected: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VersionDecision {
+    Apply,
+    Stale,
+    Duplicate,
+    ContentMismatch,
+}
+
+pub fn decide_remote_version(
+    stored_revision: Option<i64>,
+    stored_digest: Option<&str>,
+    incoming_revision: i64,
+    incoming_digest: &str,
+) -> VersionDecision {
+    match stored_revision {
+        None => VersionDecision::Apply,
+        Some(rev) if incoming_revision < rev => VersionDecision::Stale,
+        Some(rev) if incoming_revision > rev => VersionDecision::Apply,
+        Some(_) if stored_digest == Some(incoming_digest) => VersionDecision::Duplicate,
+        Some(_) => VersionDecision::ContentMismatch,
+    }
+}
+
+pub fn compute_canonical_digest(
+    entity_type: &str,
+    entity_id: &str,
+    revision: i64,
+    operation: super::domain::SyncOperation,
+    payload: Option<&Value>,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let normalized_payload = match payload {
+        Some(Value::Null) | None => Value::Null,
+        Some(val) => canonicalize_json_value(val),
+    };
+    let canonical_payload_str =
+        serde_json::to_string(&normalized_payload).unwrap_or_else(|_| "null".to_string());
+    let raw = format!(
+        "{}:{}:{}:{}:{}",
+        entity_type,
+        entity_id,
+        revision,
+        operation.as_str(),
+        canonical_payload_str
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+pub fn canonicalize_json_value(val: &Value) -> Value {
+    match val {
+        Value::Object(map) => {
+            let mut sorted = std::collections::BTreeMap::new();
+            for (k, v) in map {
+                sorted.insert(k.clone(), canonicalize_json_value(v));
+            }
+            let mut new_map = serde_json::Map::new();
+            for (k, v) in sorted {
+                new_map.insert(k, v);
+            }
+            Value::Object(new_map)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(canonicalize_json_value).collect()),
+        other => other.clone(),
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ApplyPageReport {
     pub applied: usize,
@@ -260,37 +350,10 @@ pub fn canonical_scope(api_root: &str, account_id: &str) -> Result<(ScopeKey, St
     Ok((key, scope_id))
 }
 
-#[derive(Clone)]
-pub struct ScopedDb {
-    db: crate::Database,
-    lease: ScopeLease,
-}
-
-impl std::fmt::Debug for ScopedDb {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ScopedDb")
-            .field("lease", &self.lease)
-            .finish_non_exhaustive()
-    }
-}
-
-impl ScopedDb {
-    pub fn new(db: crate::Database, lease: ScopeLease) -> Self {
-        Self { db, lease }
-    }
-    pub fn lease(&self) -> &ScopeLease {
-        &self.lease
-    }
-    pub fn db(&self) -> &crate::Database {
-        &self.db
-    }
-    pub fn validate_lease(&self, lease: &ScopeLease) -> Result<(), SyncError> {
-        if self.lease.scope_id != lease.scope_id || self.lease.generation != lease.generation {
-            return Err(SyncError::ScopeChanged);
-        }
-        Ok(())
-    }
-}
+pub use crate::db::cloud::apply::{
+    apply_pull_page, apply_selected_remote_tx, reconcile_skipped_history, ReconciliationReport,
+};
+pub use crate::db::cloud::scoped_db::ScopedDb;
 
 pub fn validate_sync_payload(
     entity_type: &str,

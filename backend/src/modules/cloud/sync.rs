@@ -1,11 +1,13 @@
 use secrecy::ExposeSecret;
-use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::db::Database;
 use crate::integrations::secret::{cloud_access_token_ref, SecretStore};
 
-use super::domain::SyncOperation;
+use super::contracts::{
+    canonical_scope, PullPage, PushAck, ScopeError, ScopeLease, ScopedDb, SyncError,
+    SYNC_EPOCH_HEADER, SYNC_PROTOCOL_HEADER,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SyncReport {
@@ -25,8 +27,12 @@ pub enum CloudSyncError {
     Transport,
     #[error("cloud sync response was invalid")]
     InvalidResponse,
-    #[error("local sync persistence failed")]
+    #[error("local sync persistence failed: {0}")]
     Database(#[from] rusqlite::Error),
+    #[error("sync error: {0}")]
+    Sync(#[from] SyncError),
+    #[error("scope error: {0}")]
+    Scope(#[from] ScopeError),
 }
 
 pub struct CloudSyncService {
@@ -62,116 +68,146 @@ impl CloudSyncService {
     }
 
     pub async fn sync_now(&self) -> Result<SyncReport, CloudSyncError> {
+        let identity = self.db.get_or_create_cloud_identity()?;
+        let account_id = identity.account_id.as_deref().unwrap_or("default");
+        let (_scope_key, scope_id) =
+            canonical_scope(&self.base_url, account_id).map_err(CloudSyncError::Scope)?;
+        let lease = ScopeLease {
+            scope_id,
+            generation: "default".to_string(),
+        };
+        let scoped_db = ScopedDb::new(self.db.clone(), lease.clone());
+        self.sync_now_scoped(&scoped_db, &lease).await
+    }
+
+    pub async fn sync_now_scoped(
+        &self,
+        scoped_db: &ScopedDb,
+        lease: &ScopeLease,
+    ) -> Result<SyncReport, CloudSyncError> {
+        scoped_db
+            .validate_lease(lease)
+            .map_err(CloudSyncError::Sync)?;
+
         let token = self
             .secret_store
             .get(&cloud_access_token_ref())
             .await
             .map_err(|_| CloudSyncError::AuthenticationRequired)?
             .ok_or(CloudSyncError::AuthenticationRequired)?;
+
         let identity = self.db.get_or_create_cloud_identity()?;
-        let pending = self.db.pending_sync_changes(100)?;
+        let (checkpoint_cursor, sync_epoch) = scoped_db
+            .read_checkpoint(lease)
+            .map_err(CloudSyncError::Sync)?;
+
+        // 1. Push phase
+        let push_batch = scoped_db
+            .load_or_create_push_batch(lease, 100)
+            .map_err(CloudSyncError::Sync)?;
         let mut pushed = 0;
         let mut conflicts = 0;
-        let mut cursor = self
-            .db
-            .cloud_sync_status()?
-            .cursor
-            .unwrap_or_else(|| "0".to_string());
 
-        if !pending.is_empty() {
-            let response = self
+        if !push_batch.is_empty() {
+            let mut req = self
                 .http
                 .post(format!("{}/sync/push", self.base_url))
                 .bearer_auth(token.expose_secret())
-                .header("Idempotency-Key", uuid::Uuid::new_v4().to_string())
-                .json(&serde_json::json!({"device_id":identity.device_id,"changes":pending}))
+                .header(SYNC_PROTOCOL_HEADER, "2")
+                .header("Idempotency-Key", uuid::Uuid::new_v4().to_string());
+            if let Some(ref epoch) = sync_epoch {
+                req = req.header(SYNC_EPOCH_HEADER, epoch);
+            }
+            let response = req
+                .json(&serde_json::json!({
+                    "device_id": identity.device_id,
+                    "changes": push_batch
+                }))
                 .send()
                 .await
                 .map_err(|_| CloudSyncError::Transport)?;
+
             if response.status() == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(CloudSyncError::AuthenticationRequired);
             }
             if !response.status().is_success() {
                 return Err(CloudSyncError::Transport);
             }
-            let push: PushResponse = response
+
+            scoped_db
+                .validate_lease(lease)
+                .map_err(CloudSyncError::Sync)?;
+
+            let push_ack: PushAck = response
                 .json()
                 .await
                 .map_err(|_| CloudSyncError::InvalidResponse)?;
-            cursor = push.cursor;
-            for result in push.results {
-                let Some(item) = pending
-                    .iter()
-                    .find(|item| item.change_id == result.change_id)
-                else {
-                    continue;
-                };
-                match result.status.as_str() {
-                    "applied" | "duplicate" => {
-                        self.db.remove_sync_change(&result.change_id)?;
-                        pushed += 1;
-                    }
-                    "conflict" => {
-                        self.db.record_sync_conflict(
-                            item,
-                            result.authoritative_revision.unwrap_or(item.revision),
-                        )?;
-                        conflicts += 1;
-                    }
-                    _ => {
-                        self.db.mark_sync_change_failed(
-                            &result.change_id,
-                            result.error_code.as_deref().unwrap_or("SYNC_REJECTED"),
-                            chrono::Utc::now().timestamp_millis() + 30_000,
-                        )?;
-                    }
-                }
-            }
+
+            // Crucial S2 invariant: push_ack does NOT touch download_cursor!
+            let ack_report = scoped_db
+                .ack_push(lease, &push_ack)
+                .map_err(CloudSyncError::Sync)?;
+            pushed = ack_report.applied + ack_report.duplicate;
+            conflicts += ack_report.conflicts;
         }
 
+        // 2. Pull phase
         let mut pulled = 0;
+        let mut cursor = checkpoint_cursor;
+
         loop {
-            let response = self
+            scoped_db
+                .validate_lease(lease)
+                .map_err(CloudSyncError::Sync)?;
+
+            let mut req = self
                 .http
                 .get(format!("{}/sync/pull", self.base_url))
                 .bearer_auth(token.expose_secret())
-                .query(&[("cursor", cursor.as_str()), ("limit", "100")])
-                .send()
-                .await
-                .map_err(|_| CloudSyncError::Transport)?;
+                .header(SYNC_PROTOCOL_HEADER, "2")
+                .query(&[("cursor", cursor.as_str()), ("limit", "100")]);
+            if let Some(ref epoch) = sync_epoch {
+                req = req.header(SYNC_EPOCH_HEADER, epoch);
+            }
+
+            let response = req.send().await.map_err(|_| CloudSyncError::Transport)?;
+
             if response.status() == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(CloudSyncError::AuthenticationRequired);
             }
             if !response.status().is_success() {
                 return Err(CloudSyncError::Transport);
             }
-            let page: PullResponse = response
+
+            scoped_db
+                .validate_lease(lease)
+                .map_err(CloudSyncError::Sync)?;
+
+            let page: PullPage = response
                 .json()
                 .await
                 .map_err(|_| CloudSyncError::InvalidResponse)?;
-            for change in &page.changes {
-                let operation = SyncOperation::parse(&change.operation)
-                    .ok_or(CloudSyncError::InvalidResponse)?;
-                let conflicted = self.db.apply_remote_sync_change(
-                    &change.entity_type,
-                    &change.entity_id,
-                    change.revision,
-                    operation,
-                    change.payload.as_ref(),
-                    change.sequence,
-                )?;
-                if conflicted {
-                    conflicts += 1;
-                } else {
-                    pulled += 1;
-                }
-            }
-            cursor = page.next_cursor;
+
+            // Atomically apply page: updates business tables, mirror, conflicts, and advances download_cursor
+            let page_report = scoped_db
+                .apply_pull_page(lease, &cursor, &page)
+                .map_err(CloudSyncError::Sync)?;
+            pulled += page_report.applied + page_report.duplicate;
+            conflicts += page_report.conflicts;
+            cursor = page_report.download_cursor;
+
             if !page.has_more {
                 break;
             }
         }
-        self.db.save_sync_success(&cursor)?;
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self.db.conn();
+        conn.execute(
+            "UPDATE cloud_sync_cursor SET last_success_at=?1, last_error_code=NULL, updated_at=?1 WHERE singleton=1",
+            rusqlite::params![now],
+        )?;
+
         Ok(SyncReport {
             pushed,
             pulled,
@@ -179,35 +215,4 @@ impl CloudSyncService {
             cursor,
         })
     }
-}
-
-#[derive(Deserialize)]
-struct PushResponse {
-    results: Vec<PushResult>,
-    cursor: String,
-}
-
-#[derive(Deserialize)]
-struct PushResult {
-    change_id: String,
-    status: String,
-    authoritative_revision: Option<i64>,
-    error_code: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct PullResponse {
-    changes: Vec<RemoteChange>,
-    next_cursor: String,
-    has_more: bool,
-}
-
-#[derive(Deserialize)]
-struct RemoteChange {
-    entity_type: String,
-    entity_id: String,
-    revision: i64,
-    operation: String,
-    payload: Option<serde_json::Value>,
-    sequence: i64,
 }

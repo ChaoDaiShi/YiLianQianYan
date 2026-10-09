@@ -131,6 +131,27 @@ const CLOUD_CONFLICT_OPERATION_SCHEMA: ProductMigrationSpec = ProductMigrationSp
      CHECK (remote_operation IN ('upsert','delete'));",
 );
 
+const CLOUD_PROFILE_METADATA_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2010,
+    "2010_profile_scope",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2010_profile_scope.sql"),
+);
+
+const CLOUD_SYNC_CHECKPOINT_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2011,
+    "2011_sync_checkpoint",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2011_sync_checkpoint.sql"),
+);
+
+const CLOUD_PENDING_REVOCATIONS_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2013,
+    "2013_pending_revocations",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2013_pending_revocations.sql"),
+);
+
 impl Database {
     pub fn initialize_cloud_schema(&self) -> Result<(), rusqlite::Error> {
         self.apply_product_migrations(&[
@@ -139,6 +160,9 @@ impl Database {
             CLOUD_SYNC_ENTITY_SCHEMA,
             CLOUD_LOCAL_REVISION_SCHEMA,
             CLOUD_CONFLICT_OPERATION_SCHEMA,
+            CLOUD_PROFILE_METADATA_SCHEMA,
+            CLOUD_SYNC_CHECKPOINT_SCHEMA,
+            CLOUD_PENDING_REVOCATIONS_SCHEMA,
         ])
     }
 }

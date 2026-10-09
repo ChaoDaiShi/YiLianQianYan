@@ -115,30 +115,105 @@ pub async fn refresh_handler(
 pub async fn logout_handler(
     State(server): State<Arc<AppServer>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if let (Some((base_url, _)), Some(session_id)) = (
-        server
-            .db
-            .cloud_connection_config()
-            .map_err(internal_error)?,
-        server
-            .db
-            .cloud_current_session_id()
-            .map_err(internal_error)?,
-    ) {
-        let service = CloudSessionService::new(
-            server.db.clone_connection(),
-            Arc::clone(&server.secret_store),
-        );
-        let _ = service.revoke_remote_session(&base_url, &session_id).await;
-    }
-    CloudSessionService::new(
+    let lease = server.scoped_db.lease().clone();
+    let conn_config = server
+        .db
+        .cloud_connection_config()
+        .map_err(internal_error)?;
+    let session_id = server
+        .db
+        .cloud_current_session_id()
+        .map_err(internal_error)?;
+    let identity = server.db.cloud_identity().map_err(internal_error)?;
+    let account_id = identity.as_ref().and_then(|id| id.account_id.as_deref());
+
+    let service = CloudSessionService::new(
         server.db.clone_connection(),
         Arc::clone(&server.secret_store),
+    );
+
+    let report = service
+        .logout_with_report(
+            &lease,
+            session_id.as_deref(),
+            conn_config.as_ref().map(|c| c.0.as_str()),
+            account_id,
+        )
+        .await;
+
+    let updated_identity = server
+        .db
+        .get_or_create_cloud_identity()
+        .map_err(internal_error)?;
+    let sync = server.db.cloud_sync_status().map_err(internal_error)?;
+
+    Ok(Json(serde_json::json!({
+        "report": report,
+        "identity": updated_identity,
+        "sync": sync,
+        "sync_existing_choice": server.db.cloud_sync_existing_choice().map_err(internal_error)?,
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ProfileSwitchPayload {
+    pub service_origin: String,
+    pub account_id: String,
+    pub choice: Option<crate::modules::cloud::profile::ActivationChoice>,
+}
+
+pub async fn profile_handler(
+    State(server): State<Arc<AppServer>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let data_dir = std::env::var("YILIAN_DATA_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::data_dir().map(|d| d.join("yilianqianyan-v1")))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let registry = crate::modules::cloud::profile::ProfileManager::load_or_initialize(&data_dir)
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, "profile_error", &e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "active_profile_id": registry.active_profile_id,
+        "active_generation": registry.active_generation,
+        "active_lease": server.scoped_db.lease(),
+        "profiles": registry.profiles.values().collect::<Vec<_>>(),
+    })))
+}
+
+pub async fn profile_switch_handler(
+    State(server): State<Arc<AppServer>>,
+    Json(payload): Json<ProfileSwitchPayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let data_dir = std::env::var("YILIAN_DATA_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::data_dir().map(|d| d.join("yilianqianyan-v1")))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let scope_key = crate::modules::cloud::contracts::ScopeKey {
+        service_origin: payload.service_origin,
+        account_id: payload.account_id,
+    };
+    let choice = payload
+        .choice
+        .unwrap_or(crate::modules::cloud::profile::ActivationChoice::OpenAccountOnly);
+
+    let plan = crate::modules::cloud::profile::ProfileManager::activate_profile(
+        &data_dir,
+        &server,
+        &scope_key,
+        choice,
+        std::time::Duration::from_secs(5),
     )
-    .logout()
     .await
-    .map_err(session_error)?;
-    identity_handler(State(server)).await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, "profile_switch_failed", &e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "plan": plan,
+        "status": "awaiting_restart"
+    })))
 }
 
 pub async fn sessions_handler(
@@ -463,6 +538,29 @@ fn sync_error(error: CloudSyncError) -> (StatusCode, Json<serde_json::Value>) {
             "cloud_sync_state_unavailable",
             "本地同步状态暂时不可用",
         ),
+        CloudSyncError::Sync(error) => match error {
+            crate::modules::cloud::contracts::SyncError::AuthenticationRequired => api_error(
+                StatusCode::UNAUTHORIZED,
+                "cloud_authentication_required",
+                "云会话已失效，请重新登录；本地数据仍会保留",
+            ),
+            crate::modules::cloud::contracts::SyncError::ScopeChanged => {
+                api_error(StatusCode::CONFLICT, "scope_changed", "账号或作用域已改变")
+            }
+            crate::modules::cloud::contracts::SyncError::ProtocolUpgradeRequired => api_error(
+                StatusCode::UPGRADE_REQUIRED,
+                "sync_upgrade_required",
+                "云同步协议版本不匹配，需要升级",
+            ),
+            _ => api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "cloud_sync_failed",
+                "云同步执行失败",
+            ),
+        },
+        CloudSyncError::Scope(_) => {
+            api_error(StatusCode::CONFLICT, "scope_changed", "账号或作用域已改变")
+        }
     }
 }
 

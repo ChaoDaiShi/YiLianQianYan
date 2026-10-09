@@ -3,7 +3,7 @@
 // ============================================================
 
 mod artifact_provenance;
-mod cloud;
+pub mod cloud;
 mod conversations;
 mod llm_models;
 mod mcp;
@@ -611,8 +611,8 @@ impl Database {
         Ok(())
     }
 
-    /// Get raw connection reference for internal use
-    pub(crate) fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    /// Get raw connection reference
+    pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }
 }

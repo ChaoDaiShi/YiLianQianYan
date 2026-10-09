@@ -162,3 +162,66 @@ pub(super) fn decode_optional_json(
         })
         .transpose()
 }
+
+pub fn store_conflict_tx(
+    tx: &rusqlite::Transaction<'_>,
+    entity_type: &str,
+    entity_id: &str,
+    local_revision: i64,
+    remote_revision: i64,
+    local_payload_json: Option<&str>,
+    remote_payload: Option<&serde_json::Value>,
+    remote_operation: SyncOperation,
+) -> Result<String, rusqlite::Error> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let id = uuid::Uuid::new_v4().to_string();
+    let remote_payload_json = remote_payload.map(|v| serde_json::to_string(v).unwrap_or_default());
+    tx.execute(
+        "INSERT INTO cloud_sync_conflicts (
+            id, entity_type, entity_id, local_revision, remote_revision,
+            local_payload_json, remote_payload_json, remote_operation, status, created_at
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'open',?9)",
+        params![
+            &id,
+            entity_type,
+            entity_id,
+            local_revision,
+            remote_revision,
+            local_payload_json,
+            remote_payload_json,
+            remote_operation.as_str(),
+            now
+        ],
+    )?;
+    Ok(id)
+}
+
+pub fn store_integrity_conflict_tx(
+    tx: &rusqlite::Transaction<'_>,
+    remote: &crate::modules::cloud::contracts::RemoteRecord,
+    _remote_digest: &str,
+) -> Result<String, rusqlite::Error> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let id = uuid::Uuid::new_v4().to_string();
+    let remote_payload_json = remote
+        .payload
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_default());
+    tx.execute(
+        "INSERT INTO cloud_sync_conflicts (
+            id, entity_type, entity_id, local_revision, remote_revision,
+            local_payload_json, remote_payload_json, remote_operation, status, created_at
+         ) VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,'open',?8)",
+        params![
+            &id,
+            &remote.entity_type,
+            &remote.entity_id,
+            remote.revision,
+            remote.revision,
+            remote_payload_json,
+            remote.operation.as_str(),
+            now
+        ],
+    )?;
+    Ok(id)
+}

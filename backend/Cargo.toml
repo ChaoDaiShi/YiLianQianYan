@@ -29,7 +29,8 @@ serde_json = "1"
 sha2 = "0.10"
 
 # Database
-rusqlite = { version = "0.31", features = ["bundled"] }
+# Note: "backup" feature enabled for SQLite online backup API to quarantine legacy DB safely
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 
 # HTTP client (for LLM calls)
 reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }

@@ -33,6 +33,18 @@ pub fn cloud_refresh_token_ref() -> SecretRef {
     SecretRef::new("cloud.identity.refresh_token")
 }
 
+pub fn scoped_cloud_access_token_ref(scope_id: &str) -> SecretRef {
+    SecretRef::new(format!("cloud.scope.{scope_id}.access_token"))
+}
+
+pub fn scoped_cloud_refresh_token_ref(scope_id: &str) -> SecretRef {
+    SecretRef::new(format!("cloud.scope.{scope_id}.refresh_token"))
+}
+
+pub fn revoke_session_token_ref(session_id: &str) -> SecretRef {
+    SecretRef::new(format!("cloud.revoke.{session_id}.token"))
+}
+
 pub fn anysearch_key_ref() -> SecretRef {
     SecretRef::new("search.anysearch.api_key")
 }
