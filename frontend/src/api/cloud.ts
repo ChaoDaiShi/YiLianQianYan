@@ -21,10 +21,22 @@ export interface CloudSyncStatus {
   last_error_code: string | null;
 }
 
+export type RemoteRevocationStatus = "confirmed" | "pending" | "unknown";
+
+export interface LogoutReport {
+  local_signed_out: boolean;
+  remote_revocation: RemoteRevocationStatus;
+}
+
 export interface CloudIdentityResponse {
   identity: CloudIdentity;
   sync: CloudSyncStatus;
   sync_existing_choice: "undecided" | "sync" | "local_only";
+  report?: LogoutReport;
+}
+
+export interface CloudLogoutResponse extends CloudIdentityResponse {
+  report: LogoutReport;
 }
 
 export interface CloudConnectionPayload {
@@ -112,8 +124,58 @@ export function registerCloud(payload: CloudConnectionPayload): Promise<ApiResul
   return requestResult("POST", "/api/cloud/register", payload);
 }
 
-export function logoutCloud(): Promise<ApiResult<CloudIdentityResponse>> {
+export interface ScopeLease {
+  scope_id: string;
+  generation: string;
+}
+
+export interface ProfileRecord {
+  id: string;
+  kind: "guest" | "account";
+  service_origin: string | null;
+  account_id: string | null;
+  created_at: number;
+}
+
+export interface ProfileView {
+  active_profile_id: string;
+  active_generation: string;
+  active_lease: ScopeLease;
+  profiles: ProfileRecord[];
+}
+
+export interface ActivationPlan {
+  profile_id: string;
+  lease: ScopeLease;
+  requires_restart: boolean;
+  import_count: number;
+}
+
+export interface ProfileSwitchResponse {
+  plan: ActivationPlan;
+  status: "awaiting_restart";
+}
+
+export type ActivationChoice =
+  | "OpenAccountOnly"
+  | { ImportSelectedGuest: { entity_ids: string[] } };
+
+export interface ProfileSwitchPayload {
+  service_origin: string;
+  account_id: string;
+  choice?: ActivationChoice;
+}
+
+export function logoutCloud(): Promise<ApiResult<CloudLogoutResponse>> {
   return requestResult("POST", "/api/cloud/logout");
+}
+
+export function getCloudProfile(): Promise<ApiResult<ProfileView>> {
+  return requestResult("GET", "/api/cloud/profile");
+}
+
+export function switchCloudProfile(payload: ProfileSwitchPayload): Promise<ApiResult<ProfileSwitchResponse>> {
+  return requestResult("POST", "/api/cloud/profile/switch", payload);
 }
 
 export function getCloudSyncStatus(): Promise<CloudSyncResponse | null> {
