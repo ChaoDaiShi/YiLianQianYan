@@ -26,4 +26,3 @@ Do not start Identity, Cloud Gateway, Cloud Harness, Web Surface, v2 or Gate 4 w
 - Remote CI remains `BLOCKED_BY_WORKFLOW_SCOPE`.
 - Real microphone, cloud Provider, audible TTS, acoustic echo behavior, direct spoken barge-in and installer usability remain `HUMAN_PENDING` under `v1-h-checklist.md`.
 - Formal v1.0.0 remains `NOT RELEASED`.
-

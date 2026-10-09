@@ -35,4 +35,3 @@ export function parseArguments(raw: string): Record<string, unknown> {
   if(!bounded(value,0))throw new Error('参数嵌套不能超过 16 层');
   return value as Record<string, unknown>;
 }
-
