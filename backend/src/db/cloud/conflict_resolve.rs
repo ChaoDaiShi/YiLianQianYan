@@ -172,7 +172,7 @@ pub fn clone_entity_with_references_tx(
 
                 // Clone associated messages
                 let mut stmt = tx.prepare(
-                    "SELECT role, content, tool_calls_json, tool_call_id, message_status, token_count, created_at
+                    "SELECT role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at
                      FROM messages WHERE conversation_id=?1 ORDER BY created_at",
                 )?;
                 let messages: Vec<(
@@ -180,8 +180,8 @@ pub fn clone_entity_with_references_tx(
                     String,
                     Option<String>,
                     Option<String>,
-                    String,
-                    Option<i64>,
+                    Option<String>,
+                    Option<String>,
                     i64,
                 )> = stmt
                     .query_map([old_id], |r| {
@@ -198,12 +198,12 @@ pub fn clone_entity_with_references_tx(
                     .filter_map(Result::ok)
                     .collect();
 
-                for (role, content, tc, tid, ms, tc_cnt, msg_created) in messages {
+                for (role, content, tc, tid, tn, tr, msg_created) in messages {
                     let msg_id = uuid::Uuid::new_v4().to_string();
                     tx.execute(
-                        "INSERT INTO messages (id, conversation_id, role, content, tool_calls_json, tool_call_id, message_status, token_count, created_at)
+                        "INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                        params![msg_id, new_id, role, content, tc, tid, ms, tc_cnt, msg_created],
+                        params![msg_id, new_id, role, content, tc, tid, tn, tr, msg_created],
                     )?;
                 }
             } else if let Some(payload) = payload {
@@ -259,19 +259,19 @@ pub fn clone_entity_with_references_tx(
             }
         }
         "message" => {
-            let row: Option<(String, String, String, Option<String>, Option<String>, String, Option<i64>, i64)> = tx
+            let row: Option<(String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, i64)> = tx
                 .query_row(
-                    "SELECT conversation_id, role, content, tool_calls_json, tool_call_id, message_status, token_count, created_at
+                    "SELECT conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at
                      FROM messages WHERE id=?1",
                     [old_id],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
                 )
                 .optional()?;
-            if let Some((conv_id, role, content, tc, tid, ms, tc_cnt, msg_created)) = row {
+            if let Some((conv_id, role, content, tc, tid, tn, tr, msg_created)) = row {
                 tx.execute(
-                    "INSERT INTO messages (id, conversation_id, role, content, tool_calls_json, tool_call_id, message_status, token_count, created_at)
+                    "INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![new_id, conv_id, role, content, tc, tid, ms, tc_cnt, msg_created],
+                    params![new_id, conv_id, role, content, tc, tid, tn, tr, msg_created],
                 )?;
             }
         }
