@@ -251,3 +251,10 @@ impl AccountDeletionState {
         }
     }
 }
+
+pub use super::contracts::{
+    canonical_scope, validate_sync_payload, ApplyDisposition, ApplyPageReport, EntityKey, PullPage,
+    PushAck, PushResult, PushStatus, RemoteRecord, ScopeError, ScopeKey, ScopeLease, ScopedDb,
+    SyncCapabilities, SyncError, CONTRACT_REVISION, SYNC_EPOCH_HEADER, SYNC_PROTOCOL_HEADER,
+    SYNC_PROTOCOL_VERSION,
+};

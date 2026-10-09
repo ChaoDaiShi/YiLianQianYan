@@ -1,0 +1,37 @@
+{
+  "valid_delete_record": {
+    "change_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    "entity_type": "memory",
+    "entity_id": "memory-tombstone-1",
+    "revision": 3,
+    "operation": "delete",
+    "payload": null,
+    "sequence": "1010",
+    "device_id": "11111111-1111-4111-8111-111111111111",
+    "changed_at": 1791504020000
+  },
+  "invalid_delete_with_payload": {
+    "change_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    "entity_type": "memory",
+    "entity_id": "memory-tombstone-1",
+    "revision": 3,
+    "operation": "delete",
+    "payload": {
+      "content": "unexpected payload on delete"
+    },
+    "sequence": "1011",
+    "device_id": "11111111-1111-4111-8111-111111111111",
+    "changed_at": 1791504021000
+  },
+  "invalid_upsert_null_payload": {
+    "change_id": "12121212-1212-4212-8212-121212121212",
+    "entity_type": "memory",
+    "entity_id": "memory-tombstone-1",
+    "revision": 4,
+    "operation": "upsert",
+    "payload": null,
+    "sequence": "1012",
+    "device_id": "11111111-1111-4111-8111-111111111111",
+    "changed_at": 1791504022000
+  }
+}

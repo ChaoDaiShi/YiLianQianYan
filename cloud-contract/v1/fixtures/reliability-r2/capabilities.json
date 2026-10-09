@@ -1,0 +1,19 @@
+{
+  "sync_protocol": 2,
+  "contract_revision": "v1.1-r2",
+  "sync_epoch": "33333333-3333-4333-8333-333333333333",
+  "entity_schemas": {
+    "conversation": 1,
+    "message": 1,
+    "memory": 1,
+    "agent_profile": 1,
+    "workflow_metadata": 1,
+    "artifact_metadata": 1,
+    "task_graph": 1,
+    "canvas_view": 1,
+    "settings": 1,
+    "capability_usage": 1
+  },
+  "max_push_changes": 100,
+  "max_pull_changes": 100
+}

@@ -1,4 +1,8 @@
+mod apply;
+mod capture;
+mod conflicts;
 mod identity;
+mod outbox;
 mod projection;
 mod schema;
 mod settings;

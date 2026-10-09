@@ -1,0 +1,19 @@
+{
+  "scope_input": {
+    "service_origin": "https://cloud.example.com/api/v1",
+    "account_id": "acc-99999999-9999-4999-8999-999999999999"
+  },
+  "canonical_scope_id": "62a3839f4cd998e675008113989fbfd40d3f23a78d154635884bf96893b83666",
+  "active_lease": {
+    "scope_id": "62a3839f4cd998e675008113989fbfd40d3f23a78d154635884bf96893b83666",
+    "generation": "gggggggg-gggg-4ggg-8ggg-gggggggggggg"
+  },
+  "stale_lease": {
+    "scope_id": "62a3839f4cd998e675008113989fbfd40d3f23a78d154635884bf96893b83666",
+    "generation": "oldoldol-dold-4old-8old-oldoldoldold"
+  },
+  "alternate_scope": {
+    "service_origin": "https://cloud.example.com/api/v1",
+    "account_id": "acc-88888888-8888-4888-8888-888888888888"
+  }
+}
