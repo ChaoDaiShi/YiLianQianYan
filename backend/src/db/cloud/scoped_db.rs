@@ -70,6 +70,30 @@ impl ScopedDb {
         f(&mut conn)
     }
 
+    /// Execute a write closure within an immediate transaction and active read lock on the gate latch.
+    pub fn with_write_tx<T, F>(&self, lease: &ScopeLease, f: F) -> Result<T, SyncError>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, SyncError>,
+    {
+        self.with_active_write(lease, |conn| {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let result = f(&tx)?;
+            tx.commit()?;
+            Ok(result)
+        })
+    }
+
+    /// Execute a read closure within an active read transaction.
+    pub fn with_read_tx<T, F>(&self, lease: &ScopeLease, f: F) -> Result<T, SyncError>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, SyncError>,
+    {
+        self.validate_lease(lease)?;
+        let mut conn = self.db.conn();
+        let tx = conn.transaction()?;
+        f(&tx)
+    }
+
     /// Validates that the metadata in table `cloud_profile_metadata` matches this ScopedDb's scope_id.
     /// Fail closed if not present or mismatched.
     pub fn validate_stored_scope(&self) -> Result<(), SyncError> {

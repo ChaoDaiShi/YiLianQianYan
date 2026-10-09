@@ -31,7 +31,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/chat", post(chat::chat_handler))
         .route("/api/cloud/identity", get(cloud::identity_handler))
         .route("/api/cloud/profile", get(cloud::profile_handler))
-        .route("/api/cloud/profile/switch", post(cloud::profile_switch_handler))
+        .route(
+            "/api/cloud/profile/switch",
+            post(cloud::profile_switch_handler),
+        )
         .route("/api/cloud/login", post(cloud::login_handler))
         .route("/api/cloud/register", post(cloud::register_handler))
         .route("/api/cloud/refresh", post(cloud::refresh_handler))

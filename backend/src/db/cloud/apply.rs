@@ -46,143 +46,28 @@ impl Database {
         payload: Option<&serde_json::Value>,
         sequence: i64,
     ) -> Result<bool, rusqlite::Error> {
-        let now = chrono::Utc::now().timestamp_millis();
-        let payload_json = payload
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         let mut conn = self.conn();
-        let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        let remote_digest =
-            compute_canonical_digest(entity_type, entity_id, revision, operation, payload);
-
-        let stored: Option<(i64, Option<String>)> = transaction
-            .query_row(
-                "SELECT revision, canonical_digest FROM cloud_synced_entities WHERE entity_type=?1 AND entity_id=?2",
-                params![entity_type, entity_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-
-        let (stored_rev, stored_digest) = match stored {
-            Some((rev, dig)) => (Some(rev), dig),
-            None => (None, None),
-        };
-
-        let decision = decide_remote_version(
-            stored_rev,
-            stored_digest.as_deref(),
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let remote = RemoteRecord {
+            change_id: uuid::Uuid::new_v4().to_string(),
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
             revision,
-            &remote_digest,
-        );
-
-        if decision == VersionDecision::Stale || decision == VersionDecision::Duplicate {
-            transaction.commit()?;
-            return Ok(false);
-        }
-
-        let pending: Option<(i64, Option<String>)> = transaction
-            .query_row(
-                "SELECT revision, payload_json FROM cloud_sync_outbox
-                 WHERE entity_type=?1 AND entity_id=?2 ORDER BY created_at DESC LIMIT 1",
-                params![entity_type, entity_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-
-        if let Some((local_revision, local_payload)) = pending {
-            transaction.execute(
-                "INSERT INTO cloud_sync_conflicts (id,entity_type,entity_id,local_revision,remote_revision,
-                    local_payload_json,remote_payload_json,remote_operation,status,created_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'open',?9)",
-                params![
-                    uuid::Uuid::new_v4().to_string(),
-                    entity_type,
-                    entity_id,
-                    local_revision,
-                    revision,
-                    local_payload,
-                    payload_json,
-                    operation.as_str(),
-                    now
-                ],
-            )?;
-            transaction.execute(
-                "DELETE FROM cloud_sync_outbox WHERE entity_type=?1 AND entity_id=?2",
-                params![entity_type, entity_id],
-            )?;
-            transaction.commit()?;
-            return Ok(true);
-        }
-
-        if decision == VersionDecision::ContentMismatch {
-            transaction.execute(
-                "INSERT INTO cloud_sync_conflicts (id,entity_type,entity_id,local_revision,remote_revision,
-                    local_payload_json,remote_payload_json,remote_operation,status,created_at)
-                 VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,'open',?8)",
-                params![
-                    uuid::Uuid::new_v4().to_string(),
-                    entity_type,
-                    entity_id,
-                    revision,
-                    revision,
-                    payload_json,
-                    operation.as_str(),
-                    now
-                ],
-            )?;
-            transaction.commit()?;
-            return Ok(true);
-        }
-
-        super::projection::apply_remote_entity(
-            &transaction,
-            entity_type,
-            entity_id,
             operation,
-            payload,
-            now,
-        )?;
-
-        transaction.execute(
-            "INSERT INTO cloud_synced_entities (
-                entity_type, entity_id, revision, deleted, payload_json, canonical_digest, server_sequence, updated_at
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-             ON CONFLICT(entity_type,entity_id) DO UPDATE SET
-                revision=excluded.revision, deleted=excluded.deleted,
-                payload_json=excluded.payload_json, canonical_digest=excluded.canonical_digest,
-                server_sequence=excluded.server_sequence, updated_at=excluded.updated_at
-             WHERE excluded.revision >= cloud_synced_entities.revision",
-            params![
-                entity_type,
-                entity_id,
-                revision,
-                if operation == SyncOperation::Delete { 1 } else { 0 },
-                payload_json,
-                remote_digest,
-                sequence,
-                now
-            ],
-        )?;
-
-        transaction.execute(
-            "INSERT INTO cloud_entity_revisions (entity_type,entity_id,fingerprint,revision,authoritative_revision,local_generation,deleted,updated_at)
-             VALUES (?1,?2,?3,?4,?4,?4,?5,?6)
-             ON CONFLICT(entity_type,entity_id) DO UPDATE SET
-                fingerprint=excluded.fingerprint, revision=excluded.revision, authoritative_revision=excluded.authoritative_revision,
-                deleted=excluded.deleted, updated_at=excluded.updated_at",
-            params![
-                entity_type,
-                entity_id,
-                remote_digest,
-                revision,
-                if operation == SyncOperation::Delete { 1 } else { 0 },
-                now
-            ],
-        )?;
-        transaction.commit()?;
-        Ok(false)
+            payload: payload.cloned(),
+            sequence: sequence.to_string(),
+            device_id: String::new(),
+            changed_at: chrono::Utc::now().timestamp_millis(),
+        };
+        let disposition = apply_one_remote_tx(&tx, &remote).map_err(|e| match e {
+            SyncError::Database(dbe) => dbe,
+            other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
+        })?;
+        tx.commit()?;
+        Ok(matches!(
+            disposition,
+            ApplyDisposition::ConflictStored { .. }
+        ))
     }
 
     pub fn save_sync_success(&self, cursor: &str) -> Result<(), rusqlite::Error> {
@@ -335,16 +220,24 @@ pub fn apply_one_remote_tx(
                 .as_ref()
                 .map(|v| serde_json::to_string(v).unwrap_or_default());
 
-            let pending: Option<(String, i64, Option<String>, String, i64)> = tx
+            let pending: Option<(String, i64, String, Option<String>, String, i64)> = tx
                 .query_row(
-                    "SELECT change_id, revision, payload_json, state, local_generation FROM cloud_sync_outbox
+                    "SELECT change_id, revision, operation, payload_json, state, local_generation FROM cloud_sync_outbox
                      WHERE entity_type=?1 AND entity_id=?2 ORDER BY created_at DESC LIMIT 1",
                     params![&remote.entity_type, &remote.entity_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
                 )
                 .optional()?;
 
-            if let Some((change_id, local_revision, local_payload, _state, _local_gen)) = pending {
+            if let Some((
+                change_id,
+                local_revision,
+                local_op_str,
+                local_payload,
+                _state,
+                local_gen,
+            )) = pending
+            {
                 // If it is our own change echo
                 if remote.change_id == change_id
                     || (remote.revision == local_revision && remote.device_id.is_empty())
@@ -377,16 +270,23 @@ pub fn apply_one_remote_tx(
                     )?;
                     return Ok(ApplyDisposition::Applied);
                 } else {
-                    let conflict_id = super::conflicts::store_conflict_tx(
-                        tx,
-                        &remote.entity_type,
-                        &remote.entity_id,
-                        local_revision,
-                        remote.revision,
-                        local_payload.as_deref(),
-                        remote.payload.as_ref(),
-                        remote.operation,
-                    )?;
+                    let local_change = crate::modules::cloud::contracts::PendingChange {
+                        change_id: change_id.clone(),
+                        entity_type: remote.entity_type.clone(),
+                        entity_id: remote.entity_id.clone(),
+                        base_revision: local_revision.saturating_sub(1),
+                        revision: local_revision,
+                        operation: SyncOperation::parse(&local_op_str)
+                            .unwrap_or(SyncOperation::Upsert),
+                        payload: local_payload
+                            .as_deref()
+                            .and_then(|p| serde_json::from_str(p).ok()),
+                        device_id: String::new(),
+                        changed_at: now,
+                        local_generation: local_gen,
+                    };
+                    let conflict_id =
+                        super::conflicts::store_conflict_tx(tx, &local_change, remote)?;
                     tx.execute(
                         "UPDATE cloud_sync_outbox SET state='conflicted', last_error_code='CONFLICT', updated_at=?2
                          WHERE entity_type=?1 AND entity_id=?2",

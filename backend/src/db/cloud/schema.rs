@@ -145,6 +145,13 @@ const CLOUD_SYNC_CHECKPOINT_SCHEMA: ProductMigrationSpec = ProductMigrationSpec:
     include_str!("migrations/2011_sync_checkpoint.sql"),
 );
 
+const CLOUD_CONFLICT_SNAPSHOT_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2012,
+    "2012_conflict_snapshot",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2012_conflict_snapshot.sql"),
+);
+
 const CLOUD_PENDING_REVOCATIONS_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
     2013,
     "2013_pending_revocations",
@@ -162,6 +169,7 @@ impl Database {
             CLOUD_CONFLICT_OPERATION_SCHEMA,
             CLOUD_PROFILE_METADATA_SCHEMA,
             CLOUD_SYNC_CHECKPOINT_SCHEMA,
+            CLOUD_CONFLICT_SNAPSHOT_SCHEMA,
             CLOUD_PENDING_REVOCATIONS_SCHEMA,
         ])
     }

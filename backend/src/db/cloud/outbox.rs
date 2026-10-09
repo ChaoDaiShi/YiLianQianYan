@@ -1,7 +1,7 @@
 use crate::db::Database;
 use crate::modules::cloud::contracts::{
-    compute_canonical_digest, AckReport, PendingChange, PushAck, PushStatus, ScopeLease, ScopedDb,
-    SyncError,
+    compute_canonical_digest, AckReport, PendingChange, PushAck, PushStatus, RemoteRecord,
+    ScopeLease, ScopedDb, SyncError,
 };
 use crate::modules::cloud::domain::{NewSyncChange, SyncOperation, SyncOutboxItem};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
@@ -349,22 +349,33 @@ impl Database {
                 ));
             }
 
-            let item_opt: Option<(String, String, i64, String, Option<String>, Option<String>)> = tx
+            let item_opt: Option<(String, String, i64, String, Option<String>, Option<String>, i64, String, i64)> = tx
                 .query_row(
-                    "SELECT entity_type, entity_id, revision, operation, payload_json, canonical_digest
+                    "SELECT entity_type, entity_id, revision, operation, payload_json, canonical_digest, base_revision, device_id, local_generation
                      FROM cloud_sync_outbox WHERE change_id=?1",
                     [&result.change_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
                 )
                 .optional()?;
 
-            let Some((entity_type, entity_id, local_revision, op_str, payload_json, digest)) =
-                item_opt
+            let Some((
+                entity_type,
+                entity_id,
+                local_revision,
+                op_str,
+                payload_json,
+                digest,
+                base_rev,
+                device_id,
+                local_gen,
+            )) = item_opt
             else {
                 continue;
             };
 
             let operation = SyncOperation::parse(&op_str).unwrap_or(SyncOperation::Upsert);
+
+            super::conflicts::finalize_resolution_ack_tx(&tx, &result.change_id, result)?;
 
             match result.status {
                 PushStatus::Applied | PushStatus::Duplicate => {
@@ -425,16 +436,35 @@ impl Database {
                         .as_ref()
                         .map(|r| r.operation)
                         .unwrap_or(SyncOperation::Upsert);
-                    super::conflicts::store_conflict_tx(
-                        &tx,
-                        &entity_type,
-                        &entity_id,
-                        local_revision,
-                        auth_rev,
-                        payload_json.as_deref(),
-                        remote_payload,
-                        remote_op,
-                    )?;
+                    let local_change = PendingChange {
+                        change_id: result.change_id.clone(),
+                        entity_type: entity_type.clone(),
+                        entity_id: entity_id.clone(),
+                        base_revision: base_rev,
+                        revision: local_revision,
+                        operation,
+                        payload: payload_json
+                            .as_deref()
+                            .and_then(|t| serde_json::from_str(t).ok()),
+                        device_id,
+                        changed_at: now,
+                        local_generation: local_gen,
+                    };
+                    let remote_rec = result
+                        .authoritative
+                        .clone()
+                        .unwrap_or_else(|| RemoteRecord {
+                            change_id: String::new(),
+                            entity_type: entity_type.clone(),
+                            entity_id: entity_id.clone(),
+                            revision: auth_rev,
+                            operation: remote_op,
+                            payload: remote_payload.cloned(),
+                            sequence: "0".to_string(),
+                            device_id: String::new(),
+                            changed_at: now,
+                        });
+                    super::conflicts::store_conflict_tx(&tx, &local_change, &remote_rec)?;
                     tx.execute(
                         "UPDATE cloud_sync_outbox SET state='conflicted', last_error_code='CONFLICT', updated_at=?2 WHERE change_id=?1",
                         params![&result.change_id, now],

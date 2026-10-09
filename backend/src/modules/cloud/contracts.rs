@@ -140,6 +140,60 @@ pub struct AckReport {
     pub rejected: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionChoice {
+    KeepLocal,
+    UseRemote,
+    KeepLocalAsCopy,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResolveConflictRequest {
+    pub conflict_id: String,
+    pub expected_conflict_version: i64,
+    pub expected_remote_revision: i64,
+    pub choice: ResolutionChoice,
+    pub request_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolveConflictResult {
+    pub conflict_id: String,
+    pub state: String, // open / resolving / resolved
+    pub queued_change_id: Option<String>,
+    pub copied_entity_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ConflictRecord {
+    pub id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub local_revision: i64,
+    pub remote_revision: i64,
+    pub local_operation: super::domain::SyncOperation,
+    pub remote_operation: super::domain::SyncOperation,
+    pub local_payload: Option<Value>,
+    pub remote_payload: Option<Value>,
+    pub remote_change_id: Option<String>,
+    pub remote_sequence: Option<String>,
+    pub conflict_version: i64,
+    pub local_generation: i64,
+    pub status: String,
+    pub resolution_request_id: Option<String>,
+    pub queued_change_id: Option<String>,
+    pub copied_entity_id: Option<String>,
+    pub created_at: i64,
+    pub resolved_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidatedResolution {
+    pub conflict: ConflictRecord,
+    pub choice: ResolutionChoice,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VersionDecision {
     Apply,
@@ -247,6 +301,10 @@ pub enum SyncError {
     InvalidRevision(String),
     #[error("Restore requires new entity: {0}")]
     RestoreRequiresNewEntity(String),
+    #[error("Remote payload missing: {0}")]
+    RemotePayloadMissing(String),
+    #[error("Conflict changed: {0}")]
+    ConflictChanged(String),
     #[error("Transport error: {0}")]
     Transport(String),
     #[error("Authentication required")]
@@ -350,8 +408,13 @@ pub fn canonical_scope(api_root: &str, account_id: &str) -> Result<(ScopeKey, St
     Ok((key, scope_id))
 }
 
+pub use super::conflict_service::{resolve_conflict, ConflictService};
 pub use crate::db::cloud::apply::{
     apply_pull_page, apply_selected_remote_tx, reconcile_skipped_history, ReconciliationReport,
+};
+pub use crate::db::cloud::conflicts::{
+    build_resolution_change, clone_entity_with_references_tx, finalize_resolution_ack_tx,
+    get_conflict_tx, store_conflict_tx, validate_resolution,
 };
 pub use crate::db::cloud::scoped_db::ScopedDb;
 

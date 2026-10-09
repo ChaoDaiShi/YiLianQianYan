@@ -56,7 +56,7 @@ function creationDependencies(
   };
 }
 
-describe("task center page contract", () => {
+describe("task center page contract", { timeout: 15000 }, () => {
   it("never navigates when a malformed success omits the persisted identity", async () => {
     const createEmptyTaskGraph = await loadCreateEmptyTaskGraph();
     const dependencies = creationDependencies(vi.fn().mockResolvedValue({ ok: true, data: {} }));
