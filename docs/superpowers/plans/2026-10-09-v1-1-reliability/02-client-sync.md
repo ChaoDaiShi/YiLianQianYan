@@ -1,6 +1,6 @@
 # S2 客户端游标、版本与页面原子提交
 
-> 状态：NOT STARTED。可用临时 SQLite 和固定云响应独立开发；实际开放依赖 S1/S3/S4/S6。输入为 [S0](00-contracts-and-foundation.md) 的 ScopedDb、ScopeLease、PushAck、PullPage。
+> 状态：COMPLETED。已完成事务边界、游标原子提交、回声匹配修复及十项集成用例验证。输入为 [S0](00-contracts-and-foundation.md) 的 ScopedDb、ScopeLease、PushAck、PullPage。
 
 ## 1. 文件
 
@@ -180,10 +180,10 @@ assert_eq!(decide_remote_version(Some(8), Some("new"), 8, "other"), VersionDecis
 
 真实 SQLite 用例必须检查业务表、同步镜像、队列、冲突表及 cursor 的内容；不能只检查返回枚举。
 
-- [ ] S2.1 写双设备 cursor 与 stale-projection 回归，记录失败。
-- [ ] S2.2 实现 outbox 状态与 ACK 事务，接入 stable batch。
-- [ ] S2.3 实现整页事务、单记录决策、依赖待投影与错误码。
-- [ ] S2.4 实现恢复核对及故障注入，证明不丢本机差异。
-- [ ] S2.5 `cargo test -p yilian-backend --test v11_sync_atomicity`，再执行总计划要求的 fmt/check；S7 补真实跨设备测试。
+- [x] S2.1 写双设备 cursor 与 stale-projection 回归，记录失败。
+- [x] S2.2 实现 outbox 状态与 ACK 事务，接入 stable batch。
+- [x] S2.3 实现整页事务、单记录决策、依赖待投影与错误码。
+- [x] S2.4 实现恢复核对及故障注入，证明不丢本机差异。
+- [x] S2.5 `cargo test -p yilian-backend --test v11_sync_atomicity`，再执行总计划要求的 fmt/check；S7 补真实跨设备测试。
 
 建议分支：`fix/v1-1-client-sync-atomicity`；提交：`fix(sync): atomically apply pull pages and preserve download checkpoints`。
