@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 
 use crate::config::types::{SandboxConfig, SandboxProfile};
 use crate::db::{Database, McpServer};
-use crate::mcp_runtime::{McpRuntimeManager, McpRuntimeStatus, McpTransportConfig};
+use crate::integrations::mcp::{McpRuntimeManager, McpRuntimeStatus, McpTransportConfig};
 use crate::safety::execution_gateway::{
     SecurityExecutionGateway, SecurityExecutionOutcome, SecurityExecutionRequest,
 };
@@ -77,6 +77,7 @@ async fn handler(
             state.call_count.fetch_add(1, Ordering::SeqCst);
             json!({
                 "content": [ { "type": "text", "text": "pong from mock" } ],
+                "structuredContent": { "answer": 42 },
                 "isError": false,
                 "resultType": "complete"
             })
@@ -90,6 +91,32 @@ async fn handler(
         json!({ "jsonrpc": "2.0", "id": id, "result": result })
     };
     Json(response).into_response()
+}
+
+#[tokio::test]
+async fn u31_structured_result_survives_real_mcp_gateway_approval() {
+    let db = Arc::new(Database::new(std::path::Path::new(":memory:")).unwrap());
+    let (gateway, calls, name) = gateway_stack(db).await;
+    let req = request(&name);
+    assert!(matches!(
+        gateway.execute(&req, RiskLevel::High).await.unwrap(),
+        SecurityExecutionOutcome::RequiresApproval { .. }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    match gateway
+        .execute_approved(&req, RiskLevel::High)
+        .await
+        .unwrap()
+    {
+        SecurityExecutionOutcome::Executed { tool_result, .. } => {
+            assert_eq!(
+                serde_json::to_value(tool_result).unwrap()["structured"],
+                json!({"answer":42})
+            );
+        }
+        other => panic!("expected real execution: {other:?}"),
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 async fn start_mock() -> (String, MockState) {
@@ -163,7 +190,7 @@ async fn gateway_stack(db: Arc<Database>) -> (SecurityExecutionGateway, Arc<Atom
         created_at: 0,
         updated_at: 0,
     };
-    let legacy_tool = crate::mcp::McpTool {
+    let legacy_tool = crate::integrations::mcp::legacy_stdio::McpTool {
         name: runtime.tools[0].name.clone(),
         description: runtime.tools[0].description.clone(),
         input_schema: runtime.tools[0].input_schema.clone(),
@@ -271,4 +298,87 @@ async fn gateway_managed_mcp_denied_executes_zero_remote_calls() {
     drop(gateway);
     drop(db);
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn gateway_mcp_resource_grants_preserve_high_risk_and_trusted_evidence() {
+    use crate::safety::grant::{
+        AuthorizedResource, GrantEffect, GrantResource, GrantSource, SecurityGrant,
+    };
+    use crate::safety::{PermissionId, PolicyDecision};
+    let db = Arc::new(Database::new(std::path::Path::new(":memory:")).unwrap());
+    let (gateway, calls, name) = gateway_stack(db.clone()).await;
+    let gateway = gateway.with_grant_enforcement();
+    let req = request(&name);
+    let evidence = |decision: PolicyDecision| match decision {
+        PolicyDecision::RequireApproval(ctx) => {
+            assert_eq!(ctx.risk_level, RiskLevel::High);
+            ctx.authorized_resources
+        }
+        other => panic!("MCP must still require approval: {other:?}"),
+    };
+    assert_eq!(
+        evidence(gateway.evaluate(&req, RiskLevel::High).unwrap()),
+        vec![AuthorizedResource::Mcp {
+            server_id: "gateway-mcp-e2e".into(),
+            tool_name: "ping".into(),
+            grant_id: None,
+            one_shot_approval: true,
+        }]
+    );
+    let mut grant = SecurityGrant {
+        id: uuid::Uuid::new_v4().to_string(),
+        subject_id: "local-user".into(),
+        effect: GrantEffect::Allow,
+        permission: PermissionId::McpInvoke,
+        resource: GrantResource::Mcp {
+            server_id: "gateway-mcp-e2e".into(),
+            tool_name: Some("ping".into()),
+        },
+        source: GrantSource::User,
+        created_at: 1,
+        expires_at: None,
+    };
+    db.create_grant(&grant).unwrap();
+    assert_eq!(
+        evidence(gateway.evaluate(&req, RiskLevel::High).unwrap()),
+        vec![AuthorizedResource::Mcp {
+            server_id: "gateway-mcp-e2e".into(),
+            tool_name: "ping".into(),
+            grant_id: Some(grant.id.clone()),
+            one_shot_approval: false,
+        }]
+    );
+    assert!(matches!(
+        gateway.execute(&req, RiskLevel::High).await.unwrap(),
+        SecurityExecutionOutcome::RequiresApproval { .. }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        gateway
+            .execute_approved(&req, RiskLevel::High)
+            .await
+            .unwrap(),
+        SecurityExecutionOutcome::Executed { .. }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    db.delete_grant(&grant.id).unwrap();
+    grant.effect = GrantEffect::Deny;
+    db.create_grant(&grant).unwrap();
+    for outcome in [
+        gateway.execute(&req, RiskLevel::High).await.unwrap(),
+        gateway
+            .execute_approved(&req, RiskLevel::High)
+            .await
+            .unwrap(),
+    ] {
+        assert!(matches!(outcome, SecurityExecutionOutcome::Denied { .. }));
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "denied invocations must add zero calls"
+    );
+    db.delete_grant(&grant.id).unwrap();
+    assert!(db.list_grants("local-user").unwrap().is_empty());
 }

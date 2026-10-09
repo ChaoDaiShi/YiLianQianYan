@@ -1,0 +1,576 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  dispatchVoiceTurn,
+  endVoiceSession,
+  getPresence,
+  getVoiceSession,
+  interruptVoiceSession,
+  startVoiceSession,
+  type GlobalVoiceSession,
+  type PresenceSnapshot,
+  type VoiceRuntimeSnapshot,
+} from "../../api/voice";
+import { GlobalVoiceContextBridge, mergeVoiceContext } from "./context/VoiceContext";
+import {
+  EMPTY_PRESENCE,
+  contextFromSession,
+  contextMatchesSession,
+  normalizeSnapshot,
+  snapshotWithSession,
+  transcriptFromTurn,
+} from "./model/projection";
+import type {
+  ConversationRefreshSignal,
+  GlobalVoiceContextBridgeValue,
+  GlobalVoiceContextPatch,
+  GlobalVoiceContextSnapshot,
+  GlobalVoiceHostProps,
+} from "./model/types";
+import { useSpeechPlayback, cleanupVoiceSession } from "./useSpeechPlayback";
+import { useVoiceCapture, type FinalVoiceTranscript } from "./useVoiceCapture";
+import { runVoiceContinuation } from "./voiceContinuation";
+import { runVoiceBargeIn } from "./bargeIn";
+import { runFinalTranscriptFlow, type TurnFlowRuntime } from "./turnFlow";
+import { useHandsFree } from "./useHandsFree";
+import { synchronizeVoiceContext } from "./voiceContextSync";
+import { type ChatVoiceControls } from "./ChatVoiceInput";
+import { GlobalVoiceLeaf, type GlobalVoiceProductState } from "./GlobalVoiceLeaf";
+import { useGlobalVoiceRuntime } from "./runtime/useGlobalVoiceRuntime";
+import "./globalVoice.css";
+
+// `./GlobalVoiceHost` stays the module's public entry. The context bridge,
+// the pure projections and the route policy now live in `context/` and
+// `model/`; they are re-exported here so every existing import keeps working.
+export {
+  getVoiceSessionKey,
+  isFinalTranscriptForSession,
+  nextConversationRefresh,
+  voiceStatusLabel,
+} from "./model/projection";
+export { mergeVoiceContext, useGlobalVoiceContext } from "./context/VoiceContext";
+export { resolveVoiceContextForRoute } from "./model/routing";
+export type {
+  ConversationRefreshSignal,
+  GlobalVoiceContextPatch,
+  GlobalVoiceContextSnapshot,
+  GlobalVoiceHostProps,
+  VoiceSurfaceHostMode,
+} from "./model/types";
+
+export default function GlobalVoiceHost({
+  children,
+  initialSnapshot = null,
+  initialPresence = null,
+  initialExpanded = false,
+  contextPatch,
+}: GlobalVoiceHostProps) {
+  const [snapshot, setSnapshot] = useState<VoiceRuntimeSnapshot | null>(initialSnapshot);
+  const [, setPresence] = useState<PresenceSnapshot>(
+    initialPresence ?? initialSnapshot?.presence ?? EMPTY_PRESENCE,
+  );
+  const [expanded, setExpanded] = useState(initialExpanded);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [targetDescription, setTargetDescription] = useState("尚未解析");
+  const [intentDescription, setIntentDescription] = useState("会话对话");
+  const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
+  const [globalConversationEnabled, setGlobalConversationEnabled] = useState(
+    Boolean(initialSnapshot?.session && initialSnapshot.session.state !== "ended"),
+  );
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
+  const [conversationRefresh, setConversationRefresh] = useState<ConversationRefreshSignal | null>(null);
+  const runtime = useGlobalVoiceRuntime(initialSnapshot?.session ?? null);
+  const chatDraftCaptureRef = useRef(false);
+  const chatOwnedSessionRef = useRef<string | null>(null);
+  const pendingChatCaptureRef = useRef(false);
+  const chatFinalSubscribersRef = useRef(new Set<(text: string) => void>());
+  const pendingManualSpeechRef = useRef<string | null>(null);
+  const manualSpeechOwnedSessionRef = useRef<string | null>(null);
+  const manualSpeechStartedRef = useRef(false);
+  const endSessionRef = useRef<() => Promise<void>>(async () => undefined);
+  const invalidateContextRef = useRef<() => void>(() => undefined);
+  const localContextTouchedRef = useRef(false);
+  const [voiceContext, setVoiceContext] = useState<GlobalVoiceContextSnapshot>(() =>
+    contextFromSession(initialSnapshot?.session ?? null),
+  );
+  runtime.commitContext(voiceContext);
+
+  const updateContext = useCallback((patch: GlobalVoiceContextPatch) => {
+    localContextTouchedRef.current = true;
+    const previous = runtime.readContext();
+    const next = mergeVoiceContext(previous, patch);
+    if (next.conversational_anchor?.conversation_id !== previous.conversational_anchor?.conversation_id) {
+      runtime.bumpIdentityEpoch();
+      invalidateContextRef.current();
+    }
+    runtime.commitContext(next);
+    setVoiceContext(next);
+  }, [runtime]);
+
+  const session = snapshot?.session ?? null;
+  runtime.commitSession(session);
+  const finalTranscript = transcriptFromTurn(snapshot);
+
+  useEffect(() => {
+    if (initialSnapshot) setSnapshot(initialSnapshot);
+    if (initialSnapshot?.session && initialSnapshot.session.state !== "ended") {
+      setGlobalConversationEnabled(true);
+    }
+    if (initialPresence) setPresence(initialPresence);
+    if (initialSnapshot?.session && !localContextTouchedRef.current) {
+      setVoiceContext(contextFromSession(initialSnapshot.session));
+    }
+  }, [initialPresence, initialSnapshot]);
+
+  useEffect(() => {
+    if (!contextPatch) return;
+    updateContext(contextPatch);
+  }, [
+    contextPatch?.active_task,
+    contextPatch?.conversational_anchor,
+    contextPatch?.focused_surface,
+    updateContext,
+  ]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    void Promise.all([getVoiceSession(controller.signal), getPresence(controller.signal)]).then(
+      ([remoteSnapshot, remotePresence]) => {
+        if (cancelled) return;
+        const normalized = normalizeSnapshot(remoteSnapshot);
+        if (normalized) {
+          setSnapshot(normalized);
+          if (normalized.session && normalized.session.state !== "ended") {
+            setGlobalConversationEnabled(true);
+          }
+          if (normalized.session && !localContextTouchedRef.current) {
+            setVoiceContext(contextFromSession(normalized.session));
+          }
+        }
+        if (remotePresence) setPresence(remotePresence);
+      },
+    ).catch(() => {
+      // A missing backend should leave the host visible with an honest idle state.
+    });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session || contextMatchesSession(voiceContext, session)) return;
+    const controller = new AbortController();
+    const epoch = runtime.readEpoch();
+    void synchronizeVoiceContext({
+      session,
+      signal: controller.signal,
+      getContext: () => runtime.readContext(),
+      isCurrent: () => runtime.readEpoch() === epoch
+        && runtime.readLatestSession()?.voice_session_id === session.voice_session_id
+        && runtime.readLatestSession()?.generation === session.generation,
+    }).then((updated) => {
+      if (!updated || controller.signal.aborted) return;
+      setSnapshot((previous) => {
+        if (
+          controller.signal.aborted || runtime.readEpoch() !== epoch
+          || !contextMatchesSession(runtime.readContext(), updated) ||
+          !previous?.session ||
+          previous.session.voice_session_id !== session.voice_session_id ||
+          previous.session.generation !== session.generation
+        ) {
+          return previous;
+        }
+        return { ...previous, session: updated };
+      });
+    }).catch((error) => {
+      if (controller.signal.aborted || runtime.readEpoch() !== epoch) return;
+      setNotice(error instanceof Error ? error.message : "语音上下文同步失败。");
+    });
+    return () => controller.abort();
+  }, [
+    session,
+    voiceContext,
+    runtime,
+  ]);
+
+  const setVoiceError = useCallback((message: string) => {
+    setNotice(message);
+  }, []);
+
+  const playback = useSpeechPlayback({
+    sessionId: session?.voice_session_id,
+    generation: session?.generation,
+    onError: setVoiceError,
+  });
+
+  const playbackRef = useRef(playback);
+  playbackRef.current = playback;
+  useEffect(() => () => {
+    runtime.invalidateInFlight();
+    chatDraftCaptureRef.current = false;
+    pendingChatCaptureRef.current = false;
+    chatFinalSubscribersRef.current.clear();
+    pendingManualSpeechRef.current = null;
+  }, [runtime]);
+
+  const finishChatOwnedSession = useCallback(() => {
+    chatDraftCaptureRef.current = false;
+    pendingChatCaptureRef.current = false;
+    if (!chatOwnedSessionRef.current) return;
+    chatOwnedSessionRef.current = null;
+    void endSessionRef.current();
+  }, []);
+
+  const turnFlowRuntime = useMemo<TurnFlowRuntime>(() => ({
+    readEpoch: runtime.readEpoch,
+    readLatestSession: runtime.readLatestSession,
+    readContextAnchorId: () => runtime.readContext().conversational_anchor?.conversation_id,
+    readContextIdentityEpoch: runtime.readIdentityEpoch,
+    readChatDraft: () => chatDraftCaptureRef.current,
+    takeEchoEvidence: runtime.takeEchoEvidence,
+    now: () => Date.now(),
+    monotonicNow: () => performance.now(),
+    forEachChatFinal: (deliver) => {
+      for (const listener of chatFinalSubscribersRef.current) deliver(listener);
+    },
+    setNotice,
+    setSnapshot,
+    setTargetDescription,
+    setIntentDescription,
+    setConversationRefresh,
+    setAwaitingConfirmation,
+    finishChatOwnedSession,
+    abortContinuation: runtime.abortContinuation,
+    beginContinuation: runtime.beginContinuation,
+    endContinuation: runtime.endContinuation,
+    dispatchVoiceTurn,
+    runContinuation: runVoiceContinuation,
+    speak: (text) => playbackRef.current.speak(text),
+  }), [finishChatOwnedSession, runtime]);
+
+  const handleFinalTranscript = useCallback(
+    (result: FinalVoiceTranscript) => runFinalTranscriptFlow(result, turnFlowRuntime),
+    [turnFlowRuntime],
+  );
+
+  const interruptForBargeIn = useCallback(async (): Promise<GlobalVoiceSession | void> => {
+    return runVoiceBargeIn(session, {
+      bumpEpoch: runtime.bumpEpoch,
+      readEpoch: runtime.readEpoch,
+      readLatestSession: runtime.readLatestSession,
+      readContextAnchorId: () => runtime.readContext().conversational_anchor?.conversation_id,
+      abortContinuation: runtime.abortContinuation,
+      interruptPlayback: playback.interrupt,
+      interruptVoiceSession,
+      commitSession: (interrupted) => {
+        runtime.commitSession(interrupted);
+        setSnapshot((previous) =>
+          previous
+            ? { ...previous, session: interrupted, lease: null, partial_transcript: null }
+            : previous,
+        );
+        setPresence((previous) => ({ ...previous, interaction: "interrupted" }));
+      },
+    });
+  }, [playback.interrupt, runtime, session]);
+
+  const capture = useVoiceCapture({
+    session,
+    handsFreeEnabled,
+    onBargeIn: interruptForBargeIn,
+    onPartial: (text) => {
+      setSnapshot((previous) =>
+        previous ? { ...previous, partial_transcript: text } : previous,
+      );
+    },
+    onFinal: handleFinalTranscript,
+    onError: setVoiceError,
+  });
+  invalidateContextRef.current = () => { capture.cancel(); playback.interrupt(); };
+  useHandsFree({
+    enabled: handsFreeEnabled && session?.state !== "ended",
+    sessionId: session?.voice_session_id ?? null,
+    identityEpoch: runtime.readIdentityEpoch(),
+    playing: playback.state.status === "playing" || playback.state.status === "synthesizing",
+    capture: {
+      ...capture,
+      start: async (reason, stream) => {
+        const operation = runtime.beginCaptureOperation();
+        chatDraftCaptureRef.current = false;
+        // Snapshot only actual audio playback, before barge-in releases it.
+        const overlap = playbackRef.current.captureOverlap();
+        const handle = await capture.start(reason, stream);
+        runtime.recordEchoEvidence(
+          overlap,
+          handle?.lease ?? null,
+          operation.operationEpoch,
+          operation.identityEpoch,
+        );
+        return handle;
+      },
+    },
+    onError: (message) => { setHandsFreeEnabled(false); capture.cancel(); setNotice(message); },
+  });
+
+  const startSession = useCallback(async (showGlobalConversation = true): Promise<GlobalVoiceSession | null> => {
+    runtime.beginCaptureOperation();
+    const requestEpoch = runtime.bumpEpoch();
+    runtime.abortContinuation();
+    playback.interrupt();
+    const started = await startVoiceSession(voiceContext.focused_surface);
+    if (runtime.readEpoch() !== requestEpoch) return null;
+    if (!started) {
+      setNotice("语音会话未能启动，请检查后端与语音配置。");
+      return null;
+    }
+    setNotice(null);
+    if (showGlobalConversation) setGlobalConversationEnabled(true);
+    runtime.commitSession(started);
+    setSnapshot((previous) => snapshotWithSession(previous, started));
+    setPresence((previous) => ({ ...previous, activity: "working", interaction: "listening" }));
+    return started;
+  }, [playback, runtime, voiceContext.focused_surface]);
+
+  const endSession = useCallback(async () => {
+    if (!session) return;
+    runtime.beginCaptureOperation();
+    setHandsFreeEnabled(false);
+    const requestEpoch = runtime.bumpEpoch();
+    runtime.abortContinuation();
+    await cleanupVoiceSession({
+      sessionId: session.voice_session_id,
+      generation: session.generation,
+      cancelCapture: capture.cancel,
+      interruptPlayback: playback.interrupt,
+      endSession: async (sessionId, generation) => {
+        const ended = await endVoiceSession(sessionId, generation);
+        if (ended && runtime.readEpoch() === requestEpoch) {
+          setSnapshot((previous) =>
+            previous
+              ? {
+                  ...previous,
+                  session: ended,
+                  lease: null,
+                  partial_transcript: null,
+                  final_transcript: null,
+                }
+              : snapshotWithSession(null, ended),
+          );
+          setPresence((previous) => ({ ...previous, activity: "idle", interaction: "none" }));
+        }
+      },
+    });
+    chatDraftCaptureRef.current = false;
+    pendingChatCaptureRef.current = false;
+    chatOwnedSessionRef.current = null;
+    pendingManualSpeechRef.current = null;
+    manualSpeechOwnedSessionRef.current = null;
+    manualSpeechStartedRef.current = false;
+    setGlobalConversationEnabled(false);
+    setNotice(null);
+  }, [capture.cancel, playback.interrupt, runtime, session]);
+  endSessionRef.current = endSession;
+
+  const startCapture = useCallback(async (chatDraft = false) => {
+    const operation = runtime.beginCaptureOperation();
+    chatDraftCaptureRef.current = chatDraft;
+    const overlap = playbackRef.current.captureOverlap();
+    const handle = await capture.start("user-click");
+    runtime.recordEchoEvidence(
+      overlap,
+      handle?.lease ?? null,
+      operation.operationEpoch,
+      operation.identityEpoch,
+    );
+  }, [capture, runtime]);
+
+  const subscribeChatFinal = useCallback((listener: (text: string) => void) => {
+    chatFinalSubscribersRef.current.add(listener);
+    return () => chatFinalSubscribersRef.current.delete(listener);
+  }, []);
+
+  const cancelChatCapture = useCallback(() => {
+    capture.cancel();
+    finishChatOwnedSession();
+  }, [capture.cancel, finishChatOwnedSession]);
+
+  const startChatCapture = useCallback(async () => {
+    if (capture.state.status !== "idle" && capture.state.status !== "error") return;
+    chatDraftCaptureRef.current = true;
+    setNotice(null);
+    if (session && session.state !== "ended") {
+      await startCapture(true);
+      return;
+    }
+    pendingChatCaptureRef.current = true;
+    const started = await startSession(false);
+    if (!started) {
+      pendingChatCaptureRef.current = false;
+      chatDraftCaptureRef.current = false;
+      return;
+    }
+    chatOwnedSessionRef.current = started.voice_session_id;
+  }, [capture.state.status, session, startCapture, startSession]);
+
+  useEffect(() => {
+    if (!pendingChatCaptureRef.current || !session || session.state === "ended") return;
+    pendingChatCaptureRef.current = false;
+    void startCapture(true);
+  }, [session?.generation, session?.state, session?.voice_session_id, startCapture]);
+
+  const chatVoiceControls = useMemo<ChatVoiceControls>(() => ({
+    status: capture.state.status,
+    volume: capture.state.volume,
+    start: () => { void startChatCapture(); },
+    stop: capture.stop,
+    cancel: cancelChatCapture,
+    subscribeFinal: subscribeChatFinal,
+  }), [
+    cancelChatCapture,
+    capture.state.status,
+    capture.state.volume,
+    capture.stop,
+    startChatCapture,
+    subscribeChatFinal,
+  ]);
+
+  const requestGlobalVoiceSession = useCallback(() => {
+    setGlobalConversationEnabled(true);
+    setExpanded(true);
+    setHandsFreeEnabled(true);
+    if (!session || session.state === "ended") void startSession(true);
+  }, [session, startSession]);
+
+  const speakAssistantMessage = useCallback((text: string) => {
+    const message = text.trim();
+    if (!message) return;
+    if (session && session.state !== "ended") {
+      void playbackRef.current.speak(message);
+      return;
+    }
+    pendingManualSpeechRef.current = message;
+    manualSpeechStartedRef.current = false;
+    void startSession(false).then((started) => {
+      if (started) manualSpeechOwnedSessionRef.current = started.voice_session_id;
+      else pendingManualSpeechRef.current = null;
+    });
+  }, [session, startSession]);
+
+  useEffect(() => {
+    const message = pendingManualSpeechRef.current;
+    if (!message || !session || session.state === "ended") return;
+    pendingManualSpeechRef.current = null;
+    manualSpeechStartedRef.current = true;
+    void playbackRef.current.speak(message);
+  }, [session?.generation, session?.state, session?.voice_session_id]);
+
+  useEffect(() => {
+    if (!manualSpeechOwnedSessionRef.current || !manualSpeechStartedRef.current) return;
+    if (playback.state.status !== "ended" && playback.state.status !== "error") return;
+    manualSpeechOwnedSessionRef.current = null;
+    manualSpeechStartedRef.current = false;
+    void endSessionRef.current();
+  }, [playback.state.status]);
+
+  useEffect(() => {
+    if (playback.state.status === "playing") {
+      setPresence((previous) => ({ ...previous, activity: "working", interaction: "speaking" }));
+    } else if (capture.state.status === "listening" || capture.state.status === "transcribing") {
+      setPresence((previous) => ({ ...previous, activity: "working", interaction: "listening" }));
+    }
+  }, [capture.state.status, playback.state.status]);
+
+  const productState = useMemo<GlobalVoiceProductState>(() => {
+    if (capture.state.status === "error" || playback.state.status === "error" || notice) {
+      return "error";
+    }
+    if (awaitingConfirmation) return "confirmation";
+    if (
+      playback.state.status === "synthesizing" ||
+      playback.state.status === "playing" ||
+      playback.state.status === "paused"
+    ) {
+      return "speaking";
+    }
+    if (
+      capture.state.status === "acquiring" ||
+      capture.state.status === "transcribing" ||
+      session?.state === "processing"
+    ) {
+      return "understanding";
+    }
+    return "listening";
+  }, [
+    awaitingConfirmation,
+    capture.state.status,
+    notice,
+    playback.state.status,
+    session?.state,
+  ]);
+
+  const currentContextDescription = [
+    voiceContext.active_task ? `当前任务：${voiceContext.active_task}` : "",
+    voiceContext.conversational_anchor?.title
+      ? `当前对话：${voiceContext.conversational_anchor.title}`
+      : "",
+  ].filter(Boolean).join(" · ") || "当前页面";
+  const captureActive = capture.state.status === "acquiring"
+    || capture.state.status === "listening"
+    || capture.state.status === "transcribing";
+
+  const contextBridge = useMemo<GlobalVoiceContextBridgeValue>(() => ({
+    context: voiceContext,
+    conversationRefresh,
+    session,
+    updateContext,
+    chatVoiceControls,
+    requestGlobalVoiceSession,
+    speakAssistantMessage,
+  }), [
+    chatVoiceControls,
+    conversationRefresh,
+    requestGlobalVoiceSession,
+    session,
+    speakAssistantMessage,
+    updateContext,
+    voiceContext,
+  ]);
+
+  return (
+    <GlobalVoiceContextBridge.Provider value={contextBridge}>
+      <div className="global-voice-host">
+        {children}
+        {globalConversationEnabled ? (
+          <GlobalVoiceLeaf
+            state={productState}
+            expanded={expanded}
+            heardText={(finalTranscript || snapshot?.partial_transcript) || undefined}
+            currentContext={currentContextDescription}
+            interpretedAction={intentDescription || targetDescription}
+            microphoneLabel={capture.state.status === "listening"
+              ? "停止录音"
+              : captureActive
+                ? "取消输入"
+                : "开始说话"}
+            soundLabel={playback.state.muted ? "打开声音" : "静音"}
+            onToggleExpanded={() => setExpanded((value) => !value)}
+            onMicrophone={() => {
+              if (capture.state.status === "listening") capture.stop();
+              else if (captureActive) capture.cancel();
+              else if (session && session.state !== "ended") void startCapture(false);
+              else requestGlobalVoiceSession();
+            }}
+            onSound={playback.toggleMute}
+            onEnd={() => void endSession()}
+            soundDisabled={!session || session.state === "ended"}
+            endDisabled={!session || session.state === "ended"}
+            notice={capture.state.error ?? notice}
+          />
+        ) : null}
+      </div>
+    </GlobalVoiceContextBridge.Provider>
+  );
+}
+
+export { GlobalVoiceHost };

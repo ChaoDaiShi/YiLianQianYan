@@ -1,5 +1,12 @@
+import { useEffect, useRef, useState } from "react";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
+import {
+  attestVoiceApprovalDisplayed,
+  revokeVoiceApprovalDisplay,
+  type VoiceApprovalAttestation,
+} from "../../api/voice";
+import { useGlobalVoiceContext } from "../../features/voice/GlobalVoiceHost";
 import { formatToolDisplayName } from "../chat/toolDisplay";
 import { Button } from "../ui";
 
@@ -61,12 +68,103 @@ export default function ApprovalCard({
   onApprove,
   onReject,
 }: ApprovalCardProps) {
+  const { session } = useGlobalVoiceContext();
+  const cardRef = useRef<HTMLElement>(null);
+  const [voiceProofUnavailable, setVoiceProofUnavailable] = useState(false);
   const isCritical = approval.risk_level === "critical";
   const target = targetFromArgs(approval.arguments || {});
   const maskedArgs = JSON.stringify(maskArgs(approval.arguments || {}), null, 2);
 
+  useEffect(() => {
+    if (
+      approval.task_graph_id
+      || !session
+      || session.state === "ended"
+      || session.conversational_anchor?.conversation_id !== approval.conversation_id
+    ) return;
+    const element = cardRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") return;
+    const controller = new AbortController();
+    let active = true;
+    let visible = false;
+    let issuing = false;
+    let requestStarted = false;
+    let displayId = crypto.randomUUID();
+    let issued: VoiceApprovalAttestation | null = null;
+    const revoke = () => {
+      const current = issued;
+      if (!current && !requestStarted) return;
+      const revokedDisplayId = current?.display_id ?? displayId;
+      issued = null;
+      requestStarted = false;
+      displayId = crypto.randomUUID();
+      void revokeVoiceApprovalDisplay(
+        approval.approval_id,
+        revokedDisplayId,
+      ).catch(() => undefined);
+    };
+    const attest = async () => {
+      if (!active || issuing || issued || !visible || document.visibilityState !== "visible") return;
+      issuing = true;
+      requestStarted = true;
+      const requestedDisplayId = displayId;
+      try {
+        const result = await attestVoiceApprovalDisplayed(
+          approval.approval_id,
+          session.voice_session_id,
+          session.generation,
+          requestedDisplayId,
+          controller.signal,
+        );
+        if (!active || !visible || document.visibilityState !== "visible") {
+          if (result) {
+            void revokeVoiceApprovalDisplay(
+              approval.approval_id,
+              requestedDisplayId,
+            ).catch(() => undefined);
+          }
+          return;
+        }
+        issued = result;
+        requestStarted = false;
+        setVoiceProofUnavailable(!result);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setVoiceProofUnavailable(true);
+        }
+      } finally {
+        issuing = false;
+      }
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = Boolean(entry?.isIntersecting);
+      if (visible) void attest();
+      else revoke();
+    }, { threshold: 0.5 });
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void attest();
+      else revoke();
+    };
+    observer.observe(element);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      controller.abort();
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      revoke();
+    };
+  }, [
+    approval.approval_id,
+    approval.conversation_id,
+    session?.generation,
+    session?.voice_session_id,
+    session?.conversational_anchor?.conversation_id,
+  ]);
+
   return (
     <section
+      ref={cardRef}
       className={
         "conversation-approval-card overflow-hidden rounded-[var(--radius-lg)] border bg-[var(--surface-solid)] " +
         (isCritical
@@ -170,6 +268,11 @@ export default function ApprovalCard({
             {resolving ? "提交中…" : "允许本次"}
           </Button>
         </div>
+        {voiceProofUnavailable ? (
+          <p className="text-[11px] text-[var(--text-faint)]" role="status">
+            语音确认暂不可用，请使用卡片按钮。
+          </p>
+        ) : null}
       </div>
     </section>
   );

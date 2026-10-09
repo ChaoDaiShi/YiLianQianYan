@@ -10,7 +10,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::server::AppServer;
+use crate::app::state::AppServer;
 use crate::workspace::{Workspace, WorkspaceFieldError, WorkspaceId};
 
 #[derive(Debug, Deserialize)]

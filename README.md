@@ -2,6 +2,8 @@
 
 基于 **Rust + React + Tauri** 的本地优先桌面 AI 智能体。Tauri 桌面客户端是主要交互入口，浏览器版本用于开发预览。
 
+当前候选版本：`1.1.0-rc.1`。v1.1 在不削弱游客/离线本地能力的前提下，新增可选身份、增量同步、账号与隐私中心、首次配置向导、AI Search，以及物理隔离的私有 Cloud/Admin 服务实现。
+
 ## 架构
 
 ```
@@ -14,6 +16,8 @@ frontend (:1420)          backend (:9420)           src-tauri (primary)
                                  ▼
                            ~/.yilianqianyan/
 ```
+
+登录和启用同步后，本地后端通过公开 Cloud Contract 与 YiLian Cloud 交换增量变更；云端不可用时继续使用 SQLite、Resource Store、SecretStore、Task/MCP/Voice 本地运行时。私有云与 Admin 源码位于公共 Git Root 之外，不属于本仓库。
 
 ## 快速开始
 
@@ -50,10 +54,10 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 
 ## 桌面工作台
 
-- `>= 1180px`：任务列表、对话区、执行轨迹三栏常驻。
+- `>= 1180px`：任务列表与对话区常驻，执行上下文默认收起为右侧 ContextRail，显式点击后展开。
 - `960–1179px`：任务列表常驻，执行轨迹从右侧抽屉打开。
 - `800–959px`：任务列表与执行轨迹使用互斥的左右抽屉。
-- 默认主题为“暖色本地（warm-local）”，可切换“精密中性”“石墨专业”“高对比”；自定义背景、字号和面板透明度会本地持久化。
+- 外观统一为 Cyrene 跟随系统、白天和夜间三种模式；自定义背景仍可本地保存。
 - 工具执行结果与结果验证分别显示；工具返回成功不等于验证通过。
 - 高风险与严重风险操作仍会暂停并等待用户明确批准，拒绝后不会执行原工具调用。
 
@@ -66,9 +70,14 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 │       ├── server.rs            # AppServer 共享状态
 │       ├── api/                 # REST + SSE 路由
 │       │   ├── chat.rs          # POST /api/chat (SSE流式)
+│       │   ├── events.rs        # GET /api/events (产品事件 SSE)
+│       │   ├── commands.rs      # POST /api/commands (共享命令入口)
+│       │   ├── resources.rs     # Resource ingest/list/get
+│       │   ├── voice.rs         # Voice/Presence foundation API
 │       │   ├── conversations.rs # CRUD /api/conversations
 │       │   ├── settings.rs      # GET/PUT /api/settings
 │       │   └── tools.rs         # GET /api/tools
+│       ├── shared/              # Event/Command/Resource/Voice/Projection 契约
 │       ├── agent/               # ReAct agent 引擎
 │       ├── llm/                 # LLM 客户端 (OpenAI兼容)
 │       ├── tools/               # 内置工具系统
@@ -77,7 +86,8 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 │       └── config/              # 配置管理
 ├── frontend/                    # React 前端
 │   └── src/
-│       ├── api/client.ts        # fetch + SSE 客户端
+│       ├── api/                 # 按 chat/tasks/events/resources 等领域拆分的客户端
+│       ├── surfaces/            # WorkspaceSurface 与 Desktop host skeleton
 │       ├── components/          # UI 组件
 │       │   ├── chat/            # 聊天界面
 │       │   ├── sidebar/         # 对话列表
@@ -94,6 +104,14 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 |------|------|------|
 | `POST` | `/api/chat` | SSE 流式聊天 |
 | `POST` | `/api/chat/stop` | 取消生成 |
+| `GET` | `/api/events` | 低频 Product Event SSE |
+| `POST` | `/api/commands` | 共享命令路由；不替代授权 |
+| `POST` | `/api/resources/ingest` | 上传到应用管理存储并返回 Resource ID |
+| `GET` | `/api/resources[/:id]` | 查询 Resource 元数据 |
+| `GET` | `/api/presence` | 查询分层 Presence 快照 |
+| `POST` | `/api/voice/sessions/{start,stop,interrupt,cancel}` | Provider 中立 VoiceSession lifecycle |
+| `GET` | `/api/projections/tasks` | TaskProjection；Foundation 阶段为显式 Mock |
+| `GET` | `/api/projections/desktop-context` | DesktopContextProjection；Foundation 阶段为显式 Mock |
 | `GET` `/POST` `/DELETE` | `/api/conversations[/{id}]` | 对话 CRUD |
 | `GET` `/PUT` | `/api/settings` | 配置管理 |
 | `GET` `/POST` | `/api/llm/models` | 多服务商模型档案列表/新增 |
@@ -106,6 +124,12 @@ Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 comm
 | `POST` | `/api/security/audit/export` | 导出版本化、已脱敏的 JSON 审计数据 |
 | `GET` | `/api/security/health` | 查询审计子系统与策略版本状态 |
 | `GET` | `/api/health` | 健康检查 |
+| `GET` | `/api/cloud/identity` | LocalIdentity、账号与同步状态 |
+| `POST` | `/api/cloud/{login,register,refresh,logout}` | 可选身份与本机安全会话 |
+| `GET` `/POST` | `/api/cloud/sync/*` | 显式同步选择、状态、冲突与增量同步 |
+| `GET` `/POST` | `/api/cloud/privacy/*`、`/api/cloud/export`、`/api/cloud/account/delete` | 数据摘要、导出与注销生命周期 |
+| `GET` `/PUT` | `/api/search/config` | AnySearch 匿名/BYOK 本机配置 |
+| `POST` | `/api/search` | Provider 中立的结构化 AI Search |
 
 除 `/api/health` 外，所有 `/api/*` 请求都必须携带：
 
@@ -134,6 +158,20 @@ X-Yilian-Control-Session: <本次进程的控制会话令牌>
 | `keyboard` | 键盘模拟（输入/按键/组合键） |
 | `screenshot` | 屏幕截图 |
 | `upscale_image` | AI 图片放大 |
+| `ai_search` | 通过安全网关调用官方 AnySearch，返回结构化结果与来源 |
+
+## v1.1 用户云与体验版
+
+- Guest 模式拥有完整本地核心能力；账号不是启动条件。
+- 登录后必须明确选择“同步已有数据”“保持仅本地”或稍后决定，不静默上传。
+- Outbox、cursor、revision、tombstone 与 durable conflict 支持离线工作和跨设备恢复。
+- LLM、STT、TTS、AnySearch、MCP 凭据默认只进入操作系统 SecretStore。
+- Account Center 集中提供账号、设备会话、同步中心、数据摘要、导出与注销入口。
+- Setup Wizard 提供身份、模型、Search、Voice 的渐进配置，高级参数仍在 Settings。
+- AI Search 结果可以继续交给小涟、创建任务或保存为知识记忆。
+- 公共仓只包含 `cloud-contract` 与本地 `cloud-client`；Cloud API、Admin API/Web、Worker 和 PostgreSQL migration 保持私有物理隔离。
+
+详细基线、ADR、同步协议和验收状态见 `docs/v1.1/`、`docs/adr/`、`docs/cloud/` 与 `docs/privacy/`。
 
 ## v0.2 Trusted Execution
 
@@ -206,6 +244,17 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
   - Settings「权限」页面提供 Filesystem/Network/Process/Shell 授权创建、删除、风险提示与真实隔离状态；不宣传 Full Sandbox。
 
 **Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。SecretStore 只负责存取，绝不授予权限或绕过 Gateway；Grant 是 authority，不是 execution。
+
+## v1 / v2 Shared Foundation
+
+v1 Task World 与 v2 Desktop World 从同一 `shared-foundation-v1-v2` 标签并行开发。Shared 只冻结 Migration、API boundary、Surface Host、Event、Command、Resource、Voice/Presence、Context/Projection 契约；TaskGraph、DesktopSpace、App Mount、Wallpaper 与 Widget 均未在 Foundation 中实现。
+
+- 架构入口：`docs/architecture/shared-foundation.md`
+- Ownership 与并行流程：`docs/development/ownership.md`、`parallel-development.md`
+- 验收入口：`docs/development/integration-gates.md`
+- 下游交接：`docs/handoff-v1.md`、`docs/handoff-v2.md`
+
+跨域 Mock 始终返回 `simulated=true` / `provider=mock`，不伪装真实 Windows 或 Task 能力。Command request 仍不等于 Authorization，任何现实副作用必须继续经过现有安全执行路径。
 
 ## Next: v0.9
 

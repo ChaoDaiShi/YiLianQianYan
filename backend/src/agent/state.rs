@@ -2,7 +2,7 @@
 // Agent state — conversation history management
 // ============================================================
 
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::types::ChatMessage;
 
 /// Running state for a single agent conversation session
 #[derive(Debug, Clone)]
@@ -64,7 +64,7 @@ impl AgentState {
     pub fn add_assistant_message(
         &mut self,
         content: Option<String>,
-        tool_calls: Option<Vec<crate::llm::types::ToolCall>>,
+        tool_calls: Option<Vec<crate::integrations::llm::types::ToolCall>>,
     ) {
         self.messages.push(ChatMessage {
             role: "assistant".to_string(),

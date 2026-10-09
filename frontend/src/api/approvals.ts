@@ -27,8 +27,9 @@ async function requestJSON<T>(path: string, body?: unknown): Promise<T | null> {
 
 async function streamDecision(
   path: string,
-  body: { conversation_id?: string | null },
-  onEvent: (event: AgentEvent) => void
+  body: { conversation_id?: string | null; attestation_id?: string },
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -37,6 +38,7 @@ async function streamDecision(
       ...controlSessionHeaders(),
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {
@@ -108,24 +110,30 @@ async function streamDecision(
 export function approveAction(
   approvalId: string,
   conversationId: string | null,
-  onEvent: (event: AgentEvent) => void
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
+  attestationId?: string,
 ): Promise<void> {
   return streamDecision(
     `/api/approvals/${approvalId}/approve`,
-    { conversation_id: conversationId },
-    onEvent
+    { conversation_id: conversationId, attestation_id: attestationId },
+    onEvent,
+    signal,
   );
 }
 
 export function rejectAction(
   approvalId: string,
   conversationId: string | null,
-  onEvent: (event: AgentEvent) => void
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
+  attestationId?: string,
 ): Promise<void> {
   return streamDecision(
     `/api/approvals/${approvalId}/reject`,
-    { conversation_id: conversationId },
-    onEvent
+    { conversation_id: conversationId, attestation_id: attestationId },
+    onEvent,
+    signal,
   );
 }
 

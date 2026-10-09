@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { grantPayload, grantWarning, initialGrantEditorState, isolationRows } from "./grantEditorModel";
+import { grantPayload, grantWarning, initialGrantEditorState, isolationRows, mcpGrantError } from "./grantEditorModel";
 
 describe("grant editor", () => {
+  it("validates bounded literal identities and explicitly warns about server scope", () => {
+    expect(mcpGrantError("A", "")).toBeNull();
+    expect(mcpGrantError("A", "Publish")).toBeNull();
+    for (const invalid of [" ", "*", "a*", "a\nb", "\u007f", "a".repeat(257), "界".repeat(86)]) {
+      expect(mcpGrantError(invalid, "publish")).not.toBeNull();
+      expect(mcpGrantError("A", invalid)).not.toBeNull();
+    }
+    expect(mcpGrantError("", "publish")).not.toBeNull();
+    expect(grantWarning({ ...initialGrantEditorState, kind: "mcp" })).toContain("逐次审批");
+  });
+  it("builds exact MCP and server-wide grants without changing identity", () => {
+    for (const toolName of ["Publish", ""]) {
+      const payload = grantPayload({ ...initialGrantEditorState, kind: "mcp", serverId: "Server-A", toolName, effect: "deny" });
+      expect(payload).toEqual({ permission_id: "mcp.invoke", effect: "deny", resource: { type: "mcp", server_id: "Server-A", tool_name: toolName || null } });
+    }
+  });
   it("builds a filesystem grant create payload", () => {
     const payload = grantPayload({ ...initialGrantEditorState, root: "C:/workspace" });
     expect(payload.resource).toEqual({ type: "filesystem", root: "C:/workspace", recursive: true });

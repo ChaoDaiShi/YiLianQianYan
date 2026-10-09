@@ -11,7 +11,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use super::Database;
 use crate::execution::{ExecutionContext, ExecutionId};
-use crate::workflow::{
+use crate::modules::workflow::{
     NodeRunState, WorkflowGraphDefinition, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
 };
 
@@ -504,7 +504,7 @@ mod tests {
     use super::super::Database;
     use super::WorkflowGraphRecord;
     use crate::execution::{ExecutionContext, ExecutionId};
-    use crate::workflow::{
+    use crate::modules::workflow::{
         NodeRunStatus, WorkflowEdgeDefinition, WorkflowGraphDefinition, WorkflowNodeConfig,
         WorkflowNodeDefinition, WorkflowNodeId, WorkflowNodeKind, WorkflowRun, WorkflowRunId,
         WORKFLOW_GRAPH_SCHEMA_VERSION,

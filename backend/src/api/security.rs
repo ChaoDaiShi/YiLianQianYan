@@ -8,9 +8,9 @@ use axum::{
 use serde::Serialize;
 
 use crate::{
+    app::state::AppServer,
     db::{SecurityAuditEvent, SecurityAuditQuery},
     safety::{redact_error, AuditError, AuditExportV1, AuditHealth, POLICY_VERSION},
-    server::AppServer,
 };
 
 #[derive(Debug, Serialize)]

@@ -17,6 +17,7 @@ interface MessageListProps {
   onScroll?: React.UIEventHandler<HTMLDivElement>;
   error?: string | null;
   onRetry?: () => void;
+  onSpeak?: (text: string) => void;
 }
 
 function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
@@ -73,6 +74,7 @@ export default function MessageList({
   onScroll,
   error,
   onRetry,
+  onSpeak,
 }: MessageListProps) {
   return (
     <div
@@ -89,6 +91,7 @@ export default function MessageList({
               message.role === "assistant" &&
               messages[index - 1]?.role !== "assistant"
             }
+            onSpeak={onSpeak}
           />
         ))}
 

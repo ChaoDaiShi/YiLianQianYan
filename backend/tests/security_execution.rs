@@ -22,6 +22,7 @@ use tower::ServiceExt;
 use yilian_backend::{
     agent::verifier::{VerificationResult, Verifier},
     api::build_router,
+    app::state::AppServer,
     config::types::{SandboxConfig, SandboxProfile},
     db::{Database, SecurityAuditEvent, SecurityAuditQuery},
     safety::{
@@ -29,7 +30,6 @@ use yilian_backend::{
         AuditRecorder, BuiltInRole, ControlSession, PendingApproval, SecurityExecutionGateway,
         SecurityExecutionRequest, SecuritySubject, CONTROL_SESSION_HEADER,
     },
-    server::AppServer,
     tools::{RiskLevel, Tool, ToolRegistry, ToolResult},
 };
 

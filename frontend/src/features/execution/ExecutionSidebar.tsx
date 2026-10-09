@@ -1,4 +1,4 @@
-import { Activity, PanelRightClose, PanelRightOpen, X } from "lucide-react";
+import { PanelRightClose, X } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
 import CurrentActionCard from "./CurrentActionCard";
 import ExecutionHistory from "./ExecutionHistory";
@@ -12,7 +12,6 @@ interface ExecutionSidebarProps {
   onApprove: (approval: PendingApproval) => void;
   onReject: (approval: PendingApproval) => void;
   onClose?: () => void;
-  collapsed?: boolean;
   onToggleCollapse?: () => void;
 }
 
@@ -23,7 +22,6 @@ export default function ExecutionSidebar({
   onApprove,
   onReject,
   onClose,
-  collapsed = false,
   onToggleCollapse,
 }: ExecutionSidebarProps) {
   const history = selectExecutionHistory(state);
@@ -47,40 +45,13 @@ export default function ExecutionSidebar({
       record.verificationStatus === "failed"
   ).length;
 
-  if (collapsed) {
-    const statusClass =
-      current?.approvalStatus === "pending"
-        ? "bg-[var(--accent-gold)]"
-        : current?.executionStatus === "failed" || state.connection === "error"
-          ? "bg-[var(--danger)]"
-          : current?.executionStatus === "running"
-            ? "bg-[var(--accent-blue)]"
-            : "bg-[var(--text-faint)]";
-
-    return (
-      <aside className="glass-rail execution-sidebar execution-sidebar-collapsed flex h-full w-12 min-h-0 flex-col items-center bg-[var(--surface-muted)] py-3 text-[var(--text)]">
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="rounded-lg p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-          aria-label="展开执行轨迹"
-          title="展开执行轨迹"
-        >
-          <PanelRightOpen className="h-4 w-4" />
-        </button>
-        <Activity className="mt-4 h-4 w-4 text-[var(--text-faint)]" aria-hidden="true" />
-        <span className={"mt-3 h-2 w-2 rounded-full " + statusClass} aria-label="执行状态" />
-      </aside>
-    );
-  }
-
   return (
     <aside className="glass-rail execution-sidebar flex h-full min-h-0 flex-col bg-[var(--surface-muted)] text-[var(--text)]">
       <header className="execution-header flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
         <div>
           <h2 className="text-sm font-semibold">执行轨迹</h2>
           <span className="execution-header-motif" aria-hidden="true" />
-          <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+          <p className="mt-0.5 text-caption text-[var(--text-muted)]">
             {history.length} 个动作 · {completed} 个完成
             {failures > 0 ? ` · ${failures} 个异常` : ""}
           </p>
@@ -114,7 +85,7 @@ export default function ExecutionSidebar({
         <section aria-labelledby="current-action-heading">
           <h3
             id="current-action-heading"
-            className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
+            className="mb-2 text-meta font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
           >
             当前动作
           </h3>
@@ -133,7 +104,7 @@ export default function ExecutionSidebar({
         <section className="mt-5" aria-labelledby="execution-history-heading">
           <h3
             id="execution-history-heading"
-            className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
+            className="mb-2 text-meta font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
           >
             历史记录
           </h3>

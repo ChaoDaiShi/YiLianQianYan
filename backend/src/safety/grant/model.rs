@@ -140,6 +140,12 @@ pub enum NetworkZone {
 /// Tool JSON can describe a request, but it cannot manufacture this evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthorizedResource {
+    Mcp {
+        server_id: String,
+        tool_name: String,
+        grant_id: Option<String>,
+        one_shot_approval: bool,
+    },
     Network {
         scheme: String,
         host: String,
@@ -174,6 +180,12 @@ pub enum ProcessGrantScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum GrantResource {
+    Mcp {
+        server_id: String,
+        /// None means all tools on this exact server; never a wildcard string.
+        #[serde(default)]
+        tool_name: Option<String>,
+    },
     Filesystem {
         /// Canonical root directory.
         root: String,
@@ -226,6 +238,21 @@ impl SecurityGrant {
 /// Validate that a permission/resource combination is coherent.
 pub fn validate_grant(permission: PermissionId, resource: &GrantResource) -> Result<(), String> {
     let ok = match (permission, resource) {
+        (
+            PermissionId::McpInvoke,
+            GrantResource::Mcp {
+                server_id,
+                tool_name,
+            },
+        ) => {
+            let valid = |value: &str| {
+                !value.trim().is_empty()
+                    && value.len() <= 256
+                    && !value.chars().any(char::is_control)
+                    && !value.contains('*')
+            };
+            valid(server_id) && tool_name.as_deref().map(valid).unwrap_or(true)
+        }
         (
             PermissionId::FilesystemRead | PermissionId::FilesystemWrite,
             GrantResource::Filesystem { root, .. },
@@ -281,6 +308,7 @@ pub fn resource_scope(permission: PermissionId) -> ResourceScope {
         PermissionId::NetworkRequest => ResourceScope::NetworkTarget,
         PermissionId::ProcessControl | PermissionId::ProcessInspect => ResourceScope::Process,
         PermissionId::ShellExecute => ResourceScope::ShellCommand,
+        PermissionId::McpInvoke => ResourceScope::McpServer,
         _ => ResourceScope::Workspace,
     }
 }

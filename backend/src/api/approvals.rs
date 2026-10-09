@@ -24,30 +24,35 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::engine::{self, AgentEvent, RunOutcome};
 use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
+use crate::app::state::{AppServer, LogBuffer};
 use crate::config::types::AppConfig;
 use crate::db::{Database, MessageRow};
-use crate::llm::client::LlmClient;
-use crate::llm::types::ChatMessage;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::types::ChatMessage;
+use crate::modules::workflow::{
+    cancel_workflow_approval, resolve_workflow_approval, WorkflowRunId,
+};
 use crate::safety::approval::{ApprovalError, PendingApproval};
 use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGatewayError};
 use crate::safety::{
     AuditEventInput, AuditEventType, SecurityExecutionGateway, SecurityExecutionRequest,
     SecuritySubject,
 };
-use crate::server::{AppServer, LogBuffer};
 use crate::tools::registry::ToolRegistry;
-use crate::workflow::{cancel_workflow_approval, resolve_workflow_approval, WorkflowRunId};
 
 #[derive(Debug, Deserialize)]
 pub struct ApprovalDecisionRequest {
     #[serde(default)]
     pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub attestation_id: Option<String>,
 }
 
 fn status_for(e: &ApprovalError) -> StatusCode {
     match e {
         ApprovalError::NotFound => StatusCode::NOT_FOUND,
-        ApprovalError::AlreadyProcessed
+        ApprovalError::Ambiguous
+        | ApprovalError::AlreadyProcessed
         | ApprovalError::Expired
         | ApprovalError::Cancelled
         | ApprovalError::ConversationMismatch => StatusCode::CONFLICT,
@@ -118,6 +123,47 @@ fn resolve_and_consume(
     Ok(approval)
 }
 
+fn consume_spoken_attested(
+    server: &AppServer,
+    approval: &PendingApproval,
+    body: &ApprovalDecisionRequest,
+    approve: bool,
+) -> Result<Option<PendingApproval>, (StatusCode, String)> {
+    let Some(attestation_id) = body.attestation_id.as_deref() else {
+        return Ok(None);
+    };
+    if body.conversation_id.as_deref() != Some(approval.conversation_id.as_str()) {
+        return Err((StatusCode::CONFLICT, "语音审批上下文不匹配".to_string()));
+    }
+    let decision = if approve { "approve" } else { "reject" };
+    let result = server
+        .voice_runtime
+        .authorize_spoken_approval(
+            attestation_id,
+            &approval.approval_id,
+            &approval.conversation_id,
+            decision,
+            chrono::Utc::now().timestamp_millis(),
+            || {
+                if approve {
+                    server.approval_store.consume_unique_expected_for_approval(
+                        &approval.conversation_id,
+                        &approval.approval_id,
+                    )
+                } else {
+                    server.approval_store.consume_unique_expected_for_rejection(
+                        &approval.conversation_id,
+                        &approval.approval_id,
+                    )
+                }
+            },
+        )
+        .map_err(|_| (StatusCode::CONFLICT, "语音审批凭据无效或已过期".to_string()))?;
+    let consumed = result.map_err(|error| (status_for(&error), error.to_string()))?;
+    record_approval_resolved(server, &consumed);
+    Ok(Some(consumed))
+}
+
 async fn execute_approved_tool(
     server: &AppServer,
     config: &AppConfig,
@@ -147,13 +193,14 @@ async fn execute_approved_tool(
 }
 
 /// How to route an approval decision. Workflow-bound approvals resume a
-/// [`crate::workflow::WorkflowRun`]; task-agent approvals execute the original
+/// [`crate::modules::workflow::WorkflowRun`]; task-agent approvals execute the original
 /// call through the gateway and finalize the agent step; everything else
 /// resumes a Chat Agent.
 enum ApprovalTarget {
     Agent,
     Workflow,
     TaskAgent,
+    TaskNodeExecution,
     InvalidBinding,
 }
 
@@ -164,27 +211,45 @@ enum ApprovalTarget {
 /// binding is treated as data corruption and fails closed rather than falling
 /// back to a different runtime.
 fn classify_approval(approval: &PendingApproval) -> ApprovalTarget {
-    let has_task = approval.task_id.is_some()
-        || approval.task_execution_id.is_some()
-        || approval.agent_execution_id.is_some();
-    if has_task {
-        return match (
-            &approval.task_id,
-            &approval.task_execution_id,
-            &approval.agent_execution_id,
-        ) {
-            (Some(_), Some(_), Some(_)) => ApprovalTarget::TaskAgent,
-            _ => ApprovalTarget::InvalidBinding,
-        };
+    let task = [
+        &approval.task_id,
+        &approval.task_execution_id,
+        &approval.agent_execution_id,
+    ];
+    let workflow = [
+        &approval.execution_id,
+        &approval.workflow_run_id,
+        &approval.workflow_node_id,
+    ];
+    let node = [
+        &approval.task_graph_id,
+        &approval.task_node_id,
+        &approval.node_execution_id,
+    ];
+    let groups = [task, workflow, node];
+    let active = groups
+        .iter()
+        .filter(|group| group.iter().any(|field| field.is_some()))
+        .count();
+    if active == 0 {
+        return ApprovalTarget::Agent;
     }
-
-    let has_execution = approval.execution_id.is_some();
-    let has_run = approval.workflow_run_id.is_some();
-    let has_node = approval.workflow_node_id.is_some();
-    match (has_execution, has_run, has_node) {
-        (false, false, false) => ApprovalTarget::Agent,
-        (true, true, true) => ApprovalTarget::Workflow,
-        _ => ApprovalTarget::InvalidBinding,
+    if active != 1 {
+        return ApprovalTarget::InvalidBinding;
+    }
+    let complete = |group: &[&Option<String>; 3]| {
+        group
+            .iter()
+            .all(|field| field.as_ref().is_some_and(|value| !value.trim().is_empty()))
+    };
+    if complete(&task) {
+        ApprovalTarget::TaskAgent
+    } else if complete(&workflow) {
+        ApprovalTarget::Workflow
+    } else if complete(&node) {
+        ApprovalTarget::TaskNodeExecution
+    } else {
+        ApprovalTarget::InvalidBinding
     }
 }
 
@@ -357,7 +422,7 @@ fn task_agent_approval_stream(
 
     let stream = async_stream::stream! {
         let gateway = build_workflow_gateway(&server).await;
-        let result = crate::task::resolve_task_agent_approval(
+        let result = crate::modules::task::resolve_task_agent_approval(
             &gateway,
             &server.approval_store,
             &server.db,
@@ -386,7 +451,7 @@ fn task_agent_approval_stream(
 
                 // Report the real persisted task status.
                 let status = task_id.as_ref()
-                    .and_then(|id| crate::task::TaskId::new(id.clone()).ok())
+                    .and_then(|id| crate::modules::task::TaskId::new(id.clone()).ok())
                     .and_then(|id| server.db.get_task(&id).ok().flatten())
                     .map(|t| t.status.to_string())
                     .unwrap_or_else(|| "failed".to_string());
@@ -433,27 +498,28 @@ async fn cancel_task_agent_approval(
         .as_ref()
         .ok_or_else(|| "审批未绑定 Agent 执行".to_string())?;
 
-    let task_id = crate::task::TaskId::new(task_id.clone()).map_err(|e| e.to_string())?;
-    let execution_id =
-        crate::task::TaskExecutionId::new(execution_id.clone()).map_err(|e| e.to_string())?;
-    let agent_execution_id = crate::task::AgentExecutionId::new(agent_execution_id.clone())
+    let task_id = crate::modules::task::TaskId::new(task_id.clone()).map_err(|e| e.to_string())?;
+    let execution_id = crate::modules::task::TaskExecutionId::new(execution_id.clone())
         .map_err(|e| e.to_string())?;
+    let agent_execution_id =
+        crate::modules::task::AgentExecutionId::new(agent_execution_id.clone())
+            .map_err(|e| e.to_string())?;
 
     let now = chrono::Utc::now().timestamp_millis();
     if let Some(mut agent_execution) = server.db.get_agent_execution(&agent_execution_id)? {
-        agent_execution.status = crate::task::AgentExecutionStatus::Cancelled;
+        agent_execution.status = crate::modules::task::AgentExecutionStatus::Cancelled;
         agent_execution.finished_at = Some(now);
         agent_execution.updated_at = now;
         server.db.update_agent_execution(&agent_execution)?;
     }
     if let Some(mut execution) = server.db.get_task_execution(&execution_id)? {
-        execution.status = crate::task::TaskExecutionStatus::Cancelled;
+        execution.status = crate::modules::task::TaskExecutionStatus::Cancelled;
         execution.finished_at = Some(now);
         execution.updated_at = now;
         server.db.update_task_execution(&execution)?;
     }
     if let Some(mut task) = server.db.get_task(&task_id)? {
-        task.status = crate::task::TaskStatus::Cancelled;
+        task.status = crate::modules::task::TaskStatus::Cancelled;
         task.updated_at = now;
         server.db.update_task(&task)?;
     }
@@ -471,6 +537,16 @@ pub async fn approve_handler(
         .approval_store
         .get(&approval_id)
         .ok_or((StatusCode::NOT_FOUND, "审批不存在".to_string()))?;
+    if body.attestation_id.is_some() && !matches!(classify_approval(&lookup), ApprovalTarget::Agent)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "语音审批暂仅支持当前对话中的工具审批".to_string(),
+        ));
+    }
+    if let Some(approval) = consume_spoken_attested(&server, &lookup, &body, true)? {
+        return Ok(Sse::new(resume_stream(server, approval, true)));
+    }
     match classify_approval(&lookup) {
         ApprovalTarget::Agent => {
             let approval =
@@ -498,6 +574,30 @@ pub async fn approve_handler(
             }
             Ok(Sse::new(task_agent_approval_stream(server, lookup, true)))
         }
+        ApprovalTarget::TaskNodeExecution => {
+            let execution = crate::modules::task::application::capability_approval::resolve(
+                Arc::clone(&server),
+                &lookup,
+                true,
+            )
+            .await
+            .map_err(|message| (StatusCode::CONFLICT, message))?;
+            let consumed = server
+                .approval_store
+                .get(&approval_id)
+                .ok_or((StatusCode::CONFLICT, "审批不存在".into()))?;
+            let events = vec![
+                Ok(sse_event(
+                    "approval_resolved",
+                    serde_json::json!({"type":"approval_resolved","approval_id":approval_id,"status":consumed.status}),
+                )),
+                Ok(sse_event(
+                    "task_execution_updated",
+                    serde_json::json!({"type":"task_execution_updated","task_graph_id":execution.graph_id,"task_node_id":execution.node_id,"node_execution_id":execution.id,"status":execution.status}),
+                )),
+            ];
+            Ok(Sse::new(box_stream(futures::stream::iter(events))))
+        }
         ApprovalTarget::InvalidBinding => Err((StatusCode::CONFLICT, "审批绑定不完整".to_string())),
     }
 }
@@ -513,6 +613,16 @@ pub async fn reject_handler(
         .approval_store
         .get(&approval_id)
         .ok_or((StatusCode::NOT_FOUND, "审批不存在".to_string()))?;
+    if body.attestation_id.is_some() && !matches!(classify_approval(&lookup), ApprovalTarget::Agent)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "语音审批暂仅支持当前对话中的工具审批".to_string(),
+        ));
+    }
+    if let Some(approval) = consume_spoken_attested(&server, &lookup, &body, false)? {
+        return Ok(Sse::new(resume_stream(server, approval, false)));
+    }
     match classify_approval(&lookup) {
         ApprovalTarget::Agent => {
             let approval = resolve_and_consume(
@@ -540,6 +650,30 @@ pub async fn reject_handler(
                 ));
             }
             Ok(Sse::new(task_agent_approval_stream(server, lookup, false)))
+        }
+        ApprovalTarget::TaskNodeExecution => {
+            let execution = crate::modules::task::application::capability_approval::resolve(
+                Arc::clone(&server),
+                &lookup,
+                false,
+            )
+            .await
+            .map_err(|message| (StatusCode::CONFLICT, message))?;
+            let consumed = server
+                .approval_store
+                .get(&approval_id)
+                .ok_or((StatusCode::CONFLICT, "审批不存在".into()))?;
+            let events = vec![
+                Ok(sse_event(
+                    "approval_resolved",
+                    serde_json::json!({"type":"approval_resolved","approval_id":approval_id,"status":consumed.status}),
+                )),
+                Ok(sse_event(
+                    "task_execution_updated",
+                    serde_json::json!({"type":"task_execution_updated","task_graph_id":execution.graph_id,"task_node_id":execution.node_id,"node_execution_id":execution.id,"status":execution.status}),
+                )),
+            ];
+            Ok(Sse::new(box_stream(futures::stream::iter(events))))
         }
         ApprovalTarget::InvalidBinding => Err((StatusCode::CONFLICT, "审批绑定不完整".to_string())),
     }
@@ -575,6 +709,14 @@ pub async fn cancel_handler(
             }
             Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
         },
+        ApprovalTarget::TaskNodeExecution => {
+            match crate::modules::task::application::capability_approval::cancel(&server, &lookup) {
+                Ok(_) => Json(
+                    serde_json::json!({"ok":true,"approval_id":approval_id,"status":"cancelled"}),
+                ),
+                Err(error) => Json(serde_json::json!({"ok":false,"error":error})),
+            }
+        }
         ApprovalTarget::InvalidBinding => {
             Json(serde_json::json!({"ok": false, "error": "审批绑定不完整"}))
         }
@@ -1082,8 +1224,9 @@ async fn resume_agent(
 #[cfg(test)]
 mod tests {
     use super::{
-        approve_handler, cancel_handler, classify_approval, execute_approved_tool, reject_handler,
-        resolve_and_consume, workflow_approval_stream, ApprovalDecisionRequest, ApprovalTarget,
+        approve_handler, cancel_handler, classify_approval, consume_spoken_attested,
+        execute_approved_tool, reject_handler, resolve_and_consume, workflow_approval_stream,
+        ApprovalDecisionRequest, ApprovalTarget,
     };
     use async_trait::async_trait;
     use axum::{
@@ -1103,17 +1246,21 @@ mod tests {
     };
 
     use crate::{
+        app::state::AppServer,
         db::{SecurityAuditEvent, SecurityAuditQuery},
         execution::{ExecutionContext, ExecutionId},
-        safety::execution_gateway::SecurityExecutionOutcome,
-        safety::ControlSession,
-        server::AppServer,
-        tools::{trait_def::RiskLevel, Tool, ToolRegistry, ToolResult},
-        workflow::{
+        modules::workflow::{
             NodeRunStatus, WorkflowGraphDefinition, WorkflowNodeConfig, WorkflowNodeDefinition,
             WorkflowNodeId, WorkflowNodeKind, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
             WORKFLOW_GRAPH_SCHEMA_VERSION,
         },
+        safety::execution_gateway::SecurityExecutionOutcome,
+        safety::ControlSession,
+        shared::{
+            interaction::{ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface},
+            voice::{VoiceInputOwner, VoiceSessionState},
+        },
+        tools::{trait_def::RiskLevel, Tool, ToolRegistry, ToolResult},
     };
 
     struct TempDatabase(PathBuf);
@@ -1341,6 +1488,140 @@ mod tests {
         assert_resolution(&events[0], &pending.approval_id, "rejected");
     }
 
+    #[test]
+    fn spoken_attestation_is_rechecked_and_consumed_at_the_approval_boundary() {
+        let (_temp, server) = test_server("spoken-attestation");
+        let conversation = server.db.create_conversation("spoken approval").unwrap();
+        let pending = server.approval_store.create(
+            conversation.id.clone(),
+            "voice-tool-call".to_string(),
+            "bash".to_string(),
+            serde_json::json!({"command": "echo safe"}),
+            RiskLevel::High,
+            "high-risk tool".to_string(),
+            "local-user".to_string(),
+        );
+        let started = server
+            .voice_runtime
+            .start(FocusedSurface::Conversation)
+            .unwrap();
+        let session = server
+            .voice_runtime
+            .update_context(
+                &started.voice_session_id,
+                started.generation,
+                ContextAnchorSnapshot {
+                    focused_surface: FocusedSurface::Conversation,
+                    conversational_anchor: Some(ConversationalAnchor::new(
+                        &conversation.id,
+                        &conversation.title,
+                        conversation.updated_at,
+                    )),
+                    active_task: None,
+                },
+            )
+            .unwrap();
+        assert_ne!(session.state, VoiceSessionState::Ended);
+        let attestation = server
+            .voice_runtime
+            .attest_displayed_approval(
+                &pending.approval_id,
+                &conversation.id,
+                &session.voice_session_id,
+                session.generation,
+                "display-boundary",
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .unwrap();
+        let lease = server
+            .voice_runtime
+            .acquire_lease(
+                &session.voice_session_id,
+                session.generation,
+                VoiceInputOwner::PushToTalk,
+            )
+            .unwrap();
+        let accepted = server
+            .voice_runtime
+            .commit_final(
+                &session.voice_session_id,
+                session.generation,
+                &lease.lease_id,
+                "同意",
+            )
+            .unwrap();
+        let hook = server.voice_dispatch_hook().unwrap();
+        let outcome = server
+            .voice_runtime
+            .dispatch_once(accepted, hook.as_ref())
+            .unwrap();
+        assert!(matches!(
+            outcome.continuation,
+            Some(crate::modules::voice::VoiceContinuation::Approval { .. })
+        ));
+
+        assert!(consume_spoken_attested(
+            &server,
+            &pending,
+            &ApprovalDecisionRequest {
+                conversation_id: Some(conversation.id.clone()),
+                attestation_id: Some("not-issued".to_string()),
+            },
+            true,
+        )
+        .is_err());
+        assert_eq!(
+            server
+                .approval_store
+                .get(&pending.approval_id)
+                .unwrap()
+                .status,
+            crate::safety::ApprovalStatus::Pending
+        );
+
+        assert!(consume_spoken_attested(
+            &server,
+            &pending,
+            &ApprovalDecisionRequest {
+                conversation_id: Some(conversation.id.clone()),
+                attestation_id: Some(attestation.attestation_id.clone()),
+            },
+            false,
+        )
+        .is_err());
+        assert_eq!(
+            server
+                .approval_store
+                .get(&pending.approval_id)
+                .unwrap()
+                .status,
+            crate::safety::ApprovalStatus::Pending
+        );
+
+        let consumed = consume_spoken_attested(
+            &server,
+            &pending,
+            &ApprovalDecisionRequest {
+                conversation_id: Some(conversation.id.clone()),
+                attestation_id: Some(attestation.attestation_id.clone()),
+            },
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(consumed.status, crate::safety::ApprovalStatus::Approved);
+        assert!(consume_spoken_attested(
+            &server,
+            &pending,
+            &ApprovalDecisionRequest {
+                conversation_id: Some(conversation.id),
+                attestation_id: Some(attestation.attestation_id),
+            },
+            true,
+        )
+        .is_err());
+    }
+
     #[tokio::test]
     async fn cancel_records_cancelled_resolution_once() {
         let (_temp, server) = test_server("cancel");
@@ -1351,6 +1632,7 @@ mod tests {
             Path(pending.approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: Some(pending.conversation_id.clone()),
+                attestation_id: None,
             }),
         )
         .await;
@@ -1388,7 +1670,7 @@ mod tests {
     // ── MCP runtime integration ──
 
     use crate::db::McpServer;
-    use crate::mcp::McpTool;
+    use crate::integrations::mcp::legacy_stdio::McpTool;
     use crate::tools::McpToolAdapter;
 
     fn mcp_server(id: &str, command: Option<&str>) -> McpServer {
@@ -1529,6 +1811,9 @@ mod tests {
             task_id: None,
             task_execution_id: None,
             agent_execution_id: None,
+            task_graph_id: None,
+            task_node_id: None,
+            node_execution_id: None,
         }
     }
 
@@ -1568,16 +1853,65 @@ mod tests {
         ));
     }
 
-    fn bash_graph() -> WorkflowGraphDefinition {
+    #[test]
+    fn classify_task_node_and_reject_mixed_partial_or_empty_targets() {
+        let node = crate::safety::PendingApproval {
+            task_graph_id: Some("g".into()),
+            task_node_id: Some("n".into()),
+            node_execution_id: Some("e".into()),
+            ..plain_approval()
+        };
+        assert!(matches!(
+            classify_approval(&node),
+            ApprovalTarget::TaskNodeExecution
+        ));
+        for invalid in [
+            crate::safety::PendingApproval {
+                task_graph_id: None,
+                ..node.clone()
+            },
+            crate::safety::PendingApproval {
+                node_execution_id: Some(" ".into()),
+                ..node.clone()
+            },
+            crate::safety::PendingApproval {
+                execution_id: Some("w".into()),
+                ..node.clone()
+            },
+            crate::safety::PendingApproval {
+                task_id: Some("a".into()),
+                ..node.clone()
+            },
+        ] {
+            assert!(matches!(
+                classify_approval(&invalid),
+                ApprovalTarget::InvalidBinding
+            ));
+        }
+        let agent = crate::safety::PendingApproval {
+            task_id: Some("t".into()),
+            task_execution_id: Some("t-e".into()),
+            agent_execution_id: Some("a-e".into()),
+            ..plain_approval()
+        };
+        assert!(matches!(
+            classify_approval(&agent),
+            ApprovalTarget::TaskAgent
+        ));
+    }
+
+    fn deterministic_read_graph() -> WorkflowGraphDefinition {
+        // This suite verifies the approval/SSE bridge, not OS process launch.
+        // Keep the real Gateway path while avoiding a platform-dependent shell.
         WorkflowGraphDefinition {
             schema_version: WORKFLOW_GRAPH_SCHEMA_VERSION,
-            entry_node_id: WorkflowNodeId::new("bash").unwrap(),
+            entry_node_id: WorkflowNodeId::new("read").unwrap(),
             nodes: vec![WorkflowNodeDefinition {
-                id: WorkflowNodeId::new("bash").unwrap(),
+                id: WorkflowNodeId::new("read").unwrap(),
                 kind: WorkflowNodeKind::Tool,
                 config: WorkflowNodeConfig::Tool {
-                    tool_name: "bash".to_string(),
-                    arguments: serde_json::json!({"command": "echo test"}),
+                    tool_name: "read_file".to_string(),
+                    arguments: serde_json::json!({"path": "Cargo.toml"}),
                 },
             }],
             edges: vec![],
@@ -1595,11 +1929,17 @@ mod tests {
             None,
             now,
         );
-        let mut run = WorkflowRun::new(WorkflowRunId::generate(), ctx, bash_graph(), now).unwrap();
-        let bash = WorkflowNodeId::new("bash").unwrap();
-        run.transition_node(&bash, NodeRunStatus::Running, now)
+        let mut run = WorkflowRun::new(
+            WorkflowRunId::generate(),
+            ctx,
+            deterministic_read_graph(),
+            now,
+        )
+        .unwrap();
+        let read = WorkflowNodeId::new("read").unwrap();
+        run.transition_node(&read, NodeRunStatus::Running, now)
             .unwrap();
-        run.transition_node(&bash, NodeRunStatus::WaitingApproval, now)
+        run.transition_node(&read, NodeRunStatus::WaitingApproval, now)
             .unwrap();
         let run_id = run.run_id.to_string();
         server.db.create_workflow_run("g1", &run).unwrap();
@@ -1608,10 +1948,10 @@ mod tests {
         let approval = server.approval_store.create_workflow(
             run.execution_context.execution_id.to_string(),
             run.run_id.to_string(),
-            "bash".to_string(),
+            "read".to_string(),
             "tool-call-1".to_string(),
-            "bash".to_string(),
-            serde_json::json!({"command": "echo test"}),
+            "read_file".to_string(),
+            serde_json::json!({"path": "Cargo.toml"}),
             RiskLevel::High,
             "high-risk".to_string(),
             "local-user".to_string(),
@@ -1640,6 +1980,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await
@@ -1675,6 +2016,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await
@@ -1709,6 +2051,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await;
@@ -1742,6 +2085,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await
@@ -1755,6 +2099,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await;
@@ -1793,6 +2138,7 @@ mod tests {
             Path("partial-1".to_string()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await;
@@ -1809,6 +2155,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await
@@ -1847,6 +2194,7 @@ mod tests {
             Path(approval_id.clone()),
             Json(ApprovalDecisionRequest {
                 conversation_id: None,
+                attestation_id: None,
             }),
         )
         .await

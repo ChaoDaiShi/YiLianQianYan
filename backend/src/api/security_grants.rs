@@ -13,9 +13,9 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::safety::grant::{validate_grant, GrantEffect, GrantResource, SecurityGrant};
 use crate::safety::PermissionId;
-use crate::server::AppServer;
 
 const LOCAL_SUBJECT: &str = "local-user";
 

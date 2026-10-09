@@ -2,7 +2,7 @@
 // Conversation CRUD operations
 // ============================================================
 
-use rusqlite::params;
+use rusqlite::{params, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
 use super::Database;
@@ -202,14 +202,20 @@ impl Database {
     }
 
     pub fn delete_conversation(&self, id: &str) -> Result<(), String> {
-        let conn = self.conn();
-        conn.execute(
-            "DELETE FROM messages WHERE conversation_id = ?1",
-            params![id],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM conversations WHERE id = ?1", params![id])
+        let mut conn = self.conn();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM messages WHERE conversation_id = ?1",
+                params![id],
+            )
+            .map_err(|e| e.to_string())?;
+        transaction
+            .execute("DELETE FROM conversations WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        transaction.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -227,19 +233,47 @@ impl Database {
     // ── Messages ──
 
     pub fn add_message(&self, msg: &MessageRow) -> Result<(), String> {
-        let conn = self.conn();
-        conn.execute(
+        self.add_message_if_conversation_exists(msg)
+    }
+
+    /// Insert one message only if its conversation still exists, with the
+    /// existence check and insert/update committed as one SQLite transaction.
+    /// This closes the anchor-validation/delete race even when SQLite foreign
+    /// key enforcement is disabled by an older database connection.
+    pub fn add_message_if_conversation_exists(&self, msg: &MessageRow) -> Result<(), String> {
+        let mut conn = self.conn();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+                params![msg.conversation_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err(format!(
+                "conversation does not exist: {}",
+                msg.conversation_id
+            ));
+        }
+        transaction
+            .execute(
             "INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![msg.id, msg.conversation_id, msg.role, msg.content,
                     msg.tool_calls, msg.tool_call_id, msg.tool_name, msg.tool_result, msg.created_at],
-        ).map_err(|e| e.to_string())?;
+            )
+            .map_err(|e| e.to_string())?;
         let now = chrono::Utc::now().timestamp_millis();
-        conn.execute(
-            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
-            params![now, msg.conversation_id],
-        )
-        .map_err(|e| e.to_string())?;
+        transaction
+            .execute(
+                "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+                params![now, msg.conversation_id],
+            )
+            .map_err(|e| e.to_string())?;
+        transaction.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 

@@ -12,6 +12,8 @@ use super::model::{
 use super::GrantEvaluator;
 use crate::safety::{PermissionId, ResourceDescriptor};
 
+mod mcp;
+
 fn grant(permission: PermissionId, effect: GrantEffect, resource: GrantResource) -> SecurityGrant {
     SecurityGrant {
         id: uuid::Uuid::new_v4().to_string(),

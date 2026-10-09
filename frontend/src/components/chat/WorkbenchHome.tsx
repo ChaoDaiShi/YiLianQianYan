@@ -7,8 +7,10 @@ import {
   type AgentStatus,
 } from "./agentStatus";
 import ChatInput from "./ChatInput";
+import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 
 interface WorkbenchHomeProps {
+  conversationId?: string | null;
   connection: AgentRunState["connection"];
   pendingApprovals: PendingApproval[];
   isLoading: boolean;
@@ -18,6 +20,9 @@ interface WorkbenchHomeProps {
   suggestedText?: string;
   onTextUsed?: () => void;
   onHint?: (text: string) => void;
+  onOpenCurrentTask: () => void;
+  chatVoiceControls?: ChatVoiceControls | null;
+  onRequestGlobalVoiceSession?: () => void;
 }
 
 interface QuickAction {
@@ -95,6 +100,7 @@ const STATUS_META: Record<
 };
 
 export default function WorkbenchHome({
+  conversationId,
   connection,
   pendingApprovals,
   isLoading,
@@ -104,6 +110,9 @@ export default function WorkbenchHome({
   suggestedText,
   onTextUsed,
   onHint,
+  onOpenCurrentTask,
+  chatVoiceControls,
+  onRequestGlobalVoiceSession,
 }: WorkbenchHomeProps) {
   const status = resolveAgentStatus({
     connection,
@@ -138,7 +147,12 @@ export default function WorkbenchHome({
             </p>
           </div>
 
-          <div className="home-character home-character-scene relative">
+          <button
+            type="button"
+            onClick={onOpenCurrentTask}
+            aria-label="打开当前任务画布"
+            className="home-character home-character-scene relative border-0 bg-transparent"
+          >
             <div className="home-character-glow" aria-hidden="true" />
             <div className="home-character-ripple" aria-hidden="true" />
             <div className="home-character-petals" aria-hidden="true" />
@@ -147,7 +161,7 @@ export default function WorkbenchHome({
               alt="小昔涟"
               className="home-character-image h-[168px] w-[168px] object-contain"
             />
-          </div>
+          </button>
         </div>
 
         <div
@@ -163,11 +177,14 @@ export default function WorkbenchHome({
         </div>
 
         <ChatInput
+          conversationId={conversationId}
           onSend={onSend}
           isLoading={isLoading}
           onStop={onStop}
           suggestedText={suggestedText}
           onTextUsed={onTextUsed}
+          chatVoiceControls={chatVoiceControls}
+          onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
         />
 
         <div className="home-quick-actions">

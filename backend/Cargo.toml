@@ -1,7 +1,12 @@
 [package]
 name = "yilian-backend"
-version = "0.9.0"
+version = "1.1.0-rc.1"
 edition = "2021"
+# Application-internal crate: nothing in this repository runs `cargo publish`,
+# and no third party consumes `yilian_backend` as a library. See
+# docs/architecture/public-api-policy.md — the supported contracts are the
+# REST / command / event / projection surfaces, not Rust module paths.
+publish = false
 
 [lib]
 name = "yilian_backend"
@@ -29,6 +34,10 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # HTTP client (for LLM calls)
 reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 url = "2"
+pdf-extract = "=0.12.0"
+calamine = { version = "=0.36.1", default-features = false }
+quick-xml = "=0.41.0"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 open = { version = "5.4", features = ["shellexecute-on-windows"] }
 
 # Async utilities

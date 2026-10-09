@@ -7,6 +7,11 @@ describe("approval card presentation contract", () => {
     expect(approvalCardSource).toContain("approval.reason");
     expect(approvalCardSource).toContain("拒绝此次工具操作");
     expect(approvalCardSource).toContain("允许此次工具操作");
+    expect(approvalCardSource).toContain("attestVoiceApprovalDisplayed");
+    expect(approvalCardSource).toContain("IntersectionObserver");
+    expect(approvalCardSource).toContain("revokeVoiceApprovalDisplay");
+    expect(approvalCardSource).toContain('document.visibilityState !== "visible"');
+    expect(approvalCardSource).toContain("session?.generation");
   });
 
   it("does not invent an impact field when the backend does not provide one", () => {

@@ -2,13 +2,22 @@
 // Database module — SQLite persistence (thread-safe, cloneable)
 // ============================================================
 
+mod artifact_provenance;
+mod cloud;
 mod conversations;
 mod llm_models;
 mod mcp;
 mod memories;
+mod migrations;
+mod resource_bindings;
+mod resources;
 mod security_audit;
 mod settings;
+mod skill_candidates;
 mod task;
+mod task_canvas;
+mod task_execution;
+mod task_world;
 mod workflow_runtime;
 mod workflows;
 mod workspace;
@@ -16,12 +25,17 @@ mod workspace;
 #[cfg(test)]
 mod llm_models_tests;
 
+pub use artifact_provenance::*;
 pub use conversations::*;
 pub use llm_models::*;
 pub use mcp::McpServer;
 pub use memories::*;
+pub use resource_bindings::*;
 pub use security_audit::*;
+pub use skill_candidates::*;
 pub use task::*;
+pub use task_execution::*;
+pub use task_world::{TaskSupervisorSnapshot, TaskWorldPersistenceError};
 pub use workflow_runtime::*;
 pub use workflows::Workflow;
 // settings::* not re-exported (used internally via Database impl)
@@ -43,10 +57,13 @@ impl Database {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(path)?;
+        let adopted_v09 = migrations::table_exists(&conn, "conversations")?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
-        db.run_migrations()?;
+        db.run_v09_bootstrap()?;
+        db.run_versioned_migrations(adopted_v09)?;
+        db.initialize_cloud_schema()?;
         // Seed after migrations so the lock is released between calls
         db.seed_builtin_workflows()?;
         Ok(db)
@@ -63,7 +80,7 @@ impl Database {
         Ok(())
     }
 
-    fn run_migrations(&self) -> Result<(), rusqlite::Error> {
+    fn run_v09_bootstrap(&self) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS conversations (
@@ -539,6 +556,29 @@ impl Database {
         )?;
 
         Ok(())
+    }
+
+    fn run_versioned_migrations(&self, adopted_v09: bool) -> Result<(), rusqlite::Error> {
+        let mut conn = self.conn.lock().unwrap();
+        migrations::run_versioned_migrations(&mut conn, adopted_v09)
+    }
+
+    /// Apply product-owned migrations through the shared registrar while
+    /// keeping the connection behind Database's crate-private mutex.
+    pub(crate) fn apply_product_migrations(
+        &self,
+        specs: &[migrations::ProductMigrationSpec],
+    ) -> Result<(), rusqlite::Error> {
+        let mut conn = self.conn.lock().unwrap();
+        migrations::apply_product_migrations(&mut conn, specs)
+    }
+
+    /// Apply one product-owned migration through the same locked registrar.
+    pub(crate) fn apply_product_migration(
+        &self,
+        spec: &migrations::ProductMigrationSpec,
+    ) -> Result<(), rusqlite::Error> {
+        self.apply_product_migrations(std::slice::from_ref(spec))
     }
 
     /// Seed built-in workflow templates if the workflows table is empty.

@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $false)]
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '0.9.0',
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
+    [string]$Version = '1.1.0-rc.1',
 
     [Parameter(Mandatory = $false)]
     [switch]$SkipTests,
@@ -19,7 +19,7 @@ if ($Help) {
     Write-Host ''
     Write-Host 'Usage:'
     Write-Host '  npm run build:windows'
-    Write-Host '  npm run build:windows -- -Version 0.9.0'
+    Write-Host '  npm run build:windows -- -Version 1.1.0-rc.1'
     Write-Host '  npm run build:windows -- -SkipTests'
     exit 0
 }
@@ -47,6 +47,21 @@ function Invoke-NativeStep {
     }
 }
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha256.ComputeHash($stream)
+        return -join ($bytes | ForEach-Object { $_.ToString('X2') })
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 if ($env:OS -ne 'Windows_NT') {
     throw 'The Windows NSIS release must be built on Windows.'
 }
@@ -61,12 +76,12 @@ try {
     Write-Host "YiLianQianYan v$Version Windows release build"
     Write-Host "Project: $ProjectRoot"
 
-    Invoke-NativeStep 'Verify release version metadata' 'powershell.exe' @(
-        '-NoProfile',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', (Join-Path $PSScriptRoot 'verify-release-version.ps1'),
-        '-ExpectedVersion', $Version
-    )
+    Write-Host ''
+    Write-Host '==> Verify release version metadata'
+    & (Join-Path $PSScriptRoot 'verify-release-version.ps1') -ExpectedVersion $Version
+    if (-not $?) {
+        throw 'Verify release version metadata failed.'
+    }
 
     if (-not $SkipTests) {
         Invoke-NativeStep 'Run frontend tests' 'npm.cmd' @('--prefix', 'frontend', 'test')
@@ -105,7 +120,7 @@ try {
         throw "Release installer is empty: $($installer.FullName)"
     }
 
-    $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+    $hash = Get-Sha256Hex -Path $installer.FullName
     $checksumPath = "$($installer.FullName).sha256"
     $checksumLine = "$hash  $($installer.Name)$([Environment]::NewLine)"
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)

@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Volume2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "../../types";
@@ -9,6 +9,8 @@ import { isExternalHttpUrl, openExternalUrl } from "./externalLink";
 export interface MessageBubbleProps {
   message: Message;
   showAssistantAvatar?: boolean;
+  /** TTS stays a deliberate user gesture and is supplied by GlobalVoiceHost. */
+  onSpeak?: (text: string) => void;
 }
 
 export function areMessageBubblePropsEqual(
@@ -17,11 +19,12 @@ export function areMessageBubblePropsEqual(
 ) {
   return (
     previous.message === next.message &&
-    previous.showAssistantAvatar === next.showAssistantAvatar
+    previous.showAssistantAvatar === next.showAssistantAvatar &&
+    previous.onSpeak === next.onSpeak
   );
 }
 
-function MessageBubble({ message, showAssistantAvatar = true }: MessageBubbleProps) {
+function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const [copied, setCopied] = useState(false);
@@ -110,19 +113,31 @@ function MessageBubble({ message, showAssistantAvatar = true }: MessageBubblePro
             </div>
           )}
           {!isUser && message.content && (
-            <button
-              type="button"
-              onClick={() => void copy()}
-              className="absolute -bottom-2 right-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-1.5 text-[var(--text-muted)] opacity-0 transition-opacity hover:text-[var(--text-primary)] focus:opacity-100 group-hover:opacity-100"
-              title="复制回答"
-              aria-label="复制回答"
-            >
-              {copied ? (
-                <Check className="h-3.5 w-3.5 text-[var(--success)]" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" />
-              )}
-            </button>
+            <div className="absolute -bottom-2 right-1 flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+              <button
+                type="button"
+                onClick={() => onSpeak?.(message.content)}
+                disabled={!onSpeak}
+                className="rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                title="朗读回答"
+                aria-label="朗读回答"
+              >
+                <Volume2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void copy()}
+                className="rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                title="复制回答"
+                aria-label="复制回答"
+              >
+                {copied ? (
+                  <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
           )}
         </div>
       </div>

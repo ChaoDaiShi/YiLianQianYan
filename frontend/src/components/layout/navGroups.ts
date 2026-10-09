@@ -10,8 +10,10 @@ import {
   ListTodo,
   Puzzle,
   ScrollText,
+  Search,
   Settings,
   Sparkles,
+  UserCircle,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +35,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { to: "/tasks", id: "tasks", label: "任务", icon: ListTodo },
       { to: "/chat", id: "chat", label: "对话", icon: MessageSquare },
+      { to: "/search", id: "search", label: "搜索", icon: Search },
       { to: "/workflows", id: "workflows", label: "工作流", icon: GitBranch },
       {
         to: "/workspaces",
@@ -59,6 +62,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       { to: "/system", id: "system", label: "监控", icon: Activity },
       { to: "/logs", id: "logs", label: "日志", icon: ScrollText },
       { to: "/settings", id: "settings", label: "设置", icon: Settings },
+      { to: "/account", id: "account", label: "账号", icon: UserCircle },
     ],
   },
 ] as const;

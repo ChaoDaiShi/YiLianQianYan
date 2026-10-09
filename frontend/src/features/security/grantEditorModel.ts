@@ -1,4 +1,4 @@
-export type GrantEditorKind = "filesystem" | "network" | "process" | "shell";
+export type GrantEditorKind = "filesystem" | "network" | "process" | "shell" | "mcp";
 
 export interface GrantEditorState {
   kind: GrantEditorKind;
@@ -14,6 +14,8 @@ export interface GrantEditorState {
   processScope: "managed_children";
   pid: string;
   hostEscapeAcknowledged: boolean;
+  serverId: string;
+  toolName: string;
 }
 
 export const initialGrantEditorState: GrantEditorState = {
@@ -30,6 +32,8 @@ export const initialGrantEditorState: GrantEditorState = {
   processScope: "managed_children",
   pid: "",
   hostEscapeAcknowledged: false,
+  serverId: "",
+  toolName: "",
 };
 
 export function grantPayload(state: GrantEditorState): {
@@ -38,6 +42,12 @@ export function grantPayload(state: GrantEditorState): {
   resource: Record<string, unknown>;
 } {
   switch (state.kind) {
+    case "mcp":
+      return {
+        permission_id: "mcp.invoke",
+        effect: state.effect,
+        resource: { type: "mcp", server_id: state.serverId, tool_name: state.toolName === "" ? null : state.toolName },
+      };
     case "filesystem":
       return {
         permission_id: state.permission,
@@ -77,6 +87,9 @@ export function grantPayload(state: GrantEditorState): {
 }
 
 export function grantWarning(state: GrantEditorState): string | null {
+  if (state.kind === "mcp") {
+    return "按 Server ID 与工具名精确匹配，区分大小写；工具名留空表示整个服务。拒绝优先于允许；允许授权仍需按高风险策略逐次审批。";
+  }
   if (state.kind === "network" && state.zone === "loopback") {
     return "回环地址只允许连接本机服务；请确认这是预期目标。";
   }
@@ -86,6 +99,15 @@ export function grantWarning(state: GrantEditorState): string | null {
   if (state.kind === "shell" && state.hostEscapeAcknowledged) {
     return "Shell 授权允许命令逃逸工作区边界；仅在明确需要时启用。";
   }
+  return null;
+}
+
+export function mcpGrantError(serverId: string, toolName: string): string | null {
+  const valid = (value: string) => value.trim().length > 0
+    && new TextEncoder().encode(value).length <= 256
+    && !/[\u0000-\u001f\u007f-\u009f*]/.test(value);
+  if (!valid(serverId)) return "Server ID 必须为 1–256 字节，不能包含控制字符或 *";
+  if (toolName !== "" && !valid(toolName)) return "工具名必须为 1–256 字节，不能包含控制字符或 *；留空表示整个服务";
   return null;
 }
 

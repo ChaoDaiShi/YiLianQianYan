@@ -61,6 +61,13 @@ pub struct PendingApproval {
     pub task_id: Option<String>,
     pub task_execution_id: Option<String>,
     pub agent_execution_id: Option<String>,
+    /// Trusted Task Harness binding; never populated from an approval request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_graph_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_execution_id: Option<String>,
 }
 
 impl PendingApproval {
@@ -73,6 +80,7 @@ impl PendingApproval {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalError {
     NotFound,
+    Ambiguous,
     AlreadyProcessed,
     Expired,
     Cancelled,
@@ -83,6 +91,7 @@ impl std::fmt::Display for ApprovalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             ApprovalError::NotFound => "审批不存在",
+            ApprovalError::Ambiguous => "当前会话存在多个待处理审批",
             ApprovalError::AlreadyProcessed => "审批已被处理，不能重复操作",
             ApprovalError::Expired => "审批已过期",
             ApprovalError::Cancelled => "审批已取消",
@@ -138,6 +147,51 @@ impl ApprovalStore {
             task_id: None,
             task_execution_id: None,
             agent_execution_id: None,
+            task_graph_id: None,
+            task_node_id: None,
+            node_execution_id: None,
+        };
+        self.approvals
+            .write()
+            .insert(approval.approval_id.clone(), approval.clone());
+        approval
+    }
+
+    /// Create a pending approval bound to a Task Harness node execution.
+    pub fn create_task_node(
+        &self,
+        task_graph_id: String,
+        task_node_id: String,
+        node_execution_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+        risk_level: RiskLevel,
+        reason: String,
+        subject_id: String,
+    ) -> PendingApproval {
+        let now = Utc::now();
+        let approval = PendingApproval {
+            approval_id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: format!("task-node:{node_execution_id}"),
+            tool_call_id,
+            tool_name,
+            arguments,
+            risk_level,
+            reason,
+            status: ApprovalStatus::Pending,
+            created_at: now,
+            expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
+            subject_id,
+            execution_id: None,
+            workflow_run_id: None,
+            workflow_node_id: None,
+            task_id: None,
+            task_execution_id: None,
+            agent_execution_id: None,
+            task_graph_id: Some(task_graph_id),
+            task_node_id: Some(task_node_id),
+            node_execution_id: Some(node_execution_id),
         };
         self.approvals
             .write()
@@ -177,6 +231,9 @@ impl ApprovalStore {
             task_id: Some(task_id),
             task_execution_id: Some(task_execution_id),
             agent_execution_id: Some(agent_execution_id),
+            task_graph_id: None,
+            task_node_id: None,
+            node_execution_id: None,
         };
         self.approvals
             .write()
@@ -219,6 +276,9 @@ impl ApprovalStore {
             task_id: None,
             task_execution_id: None,
             agent_execution_id: None,
+            task_graph_id: None,
+            task_node_id: None,
+            node_execution_id: None,
         };
         self.approvals
             .write()
@@ -270,6 +330,9 @@ impl ApprovalStore {
             task_id: None,
             task_execution_id: None,
             agent_execution_id: None,
+            task_graph_id: None,
+            task_node_id: None,
+            node_execution_id: None,
         };
         approvals.insert(approval.approval_id.clone(), approval.clone());
         (approval, true)
@@ -302,6 +365,25 @@ impl ApprovalStore {
             .collect()
     }
 
+    /// List only currently active approvals belonging to one conversation.
+    ///
+    /// A bare approval is never allowed to search the process-wide store. The
+    /// conversation binding is the minimum context needed to make a voice or
+    /// text confirmation safe.
+    pub fn list_pending_for_conversation(&self, conversation_id: &str) -> Vec<PendingApproval> {
+        let now = Utc::now();
+        self.approvals
+            .read()
+            .values()
+            .filter(|approval| {
+                approval.conversation_id == conversation_id
+                    && approval.status == ApprovalStatus::Pending
+                    && !approval.is_expired(now)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Atomically mark a pending approval as Approved.
     ///
     /// Returns the approval with its original tool-call payload. The
@@ -322,6 +404,51 @@ impl ApprovalStore {
         conversation_id: &str,
     ) -> Result<PendingApproval, ApprovalError> {
         self.transition(approval_id, conversation_id, ApprovalStatus::Rejected)
+    }
+
+    /// Atomically select and consume the only active approval in a
+    /// conversation. Selection and the status transition happen under the
+    /// same write lock, so a second pending item or a concurrent resolver can
+    /// never turn a stale list result into a side effect.
+    pub fn consume_unique_pending_for_approval(
+        &self,
+        conversation_id: &str,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_unique_pending(conversation_id, ApprovalStatus::Approved)
+    }
+
+    /// Atomically select and reject the only active approval in a
+    /// conversation. See [`Self::consume_unique_pending_for_approval`] for
+    /// the selection and concurrency guarantee.
+    pub fn consume_unique_pending_for_rejection(
+        &self,
+        conversation_id: &str,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_unique_pending(conversation_id, ApprovalStatus::Rejected)
+    }
+
+    pub fn consume_unique_expected_for_approval(
+        &self,
+        conversation_id: &str,
+        expected_approval_id: &str,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_unique_expected(
+            conversation_id,
+            expected_approval_id,
+            ApprovalStatus::Approved,
+        )
+    }
+
+    pub fn consume_unique_expected_for_rejection(
+        &self,
+        conversation_id: &str,
+        expected_approval_id: &str,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_unique_expected(
+            conversation_id,
+            expected_approval_id,
+            ApprovalStatus::Rejected,
+        )
     }
 
     /// Atomically mark a pending approval as Cancelled.
@@ -355,6 +482,78 @@ impl ApprovalStore {
             return Err(ApprovalError::Expired);
         }
 
+        approval.status = target;
+        Ok(approval.clone())
+    }
+
+    fn consume_unique_pending(
+        &self,
+        conversation_id: &str,
+        target: ApprovalStatus,
+    ) -> Result<PendingApproval, ApprovalError> {
+        let now = Utc::now();
+        let mut map = self.approvals.write();
+        let matching = map
+            .values()
+            .filter(|approval| {
+                approval.conversation_id == conversation_id
+                    && approval.status == ApprovalStatus::Pending
+                    && !approval.is_expired(now)
+            })
+            .map(|approval| approval.approval_id.clone())
+            .collect::<Vec<_>>();
+        let [approval_id] = matching.as_slice() else {
+            return if matching.is_empty() {
+                Err(ApprovalError::NotFound)
+            } else {
+                Err(ApprovalError::Ambiguous)
+            };
+        };
+
+        let approval = map.get_mut(approval_id).ok_or(ApprovalError::NotFound)?;
+        // The map is locked from selection through mutation. Keep this check
+        // explicit so the expiry boundary remains fail closed if the clock
+        // advances between the initial filter and this assignment.
+        if approval.is_expired(now) {
+            approval.status = ApprovalStatus::Expired;
+            return Err(ApprovalError::Expired);
+        }
+        approval.status = target;
+        Ok(approval.clone())
+    }
+
+    fn consume_unique_expected(
+        &self,
+        conversation_id: &str,
+        expected_approval_id: &str,
+        target: ApprovalStatus,
+    ) -> Result<PendingApproval, ApprovalError> {
+        let now = Utc::now();
+        let mut map = self.approvals.write();
+        let matching = map
+            .values()
+            .filter(|approval| {
+                approval.conversation_id == conversation_id
+                    && approval.status == ApprovalStatus::Pending
+                    && !approval.is_expired(now)
+            })
+            .map(|approval| approval.approval_id.clone())
+            .collect::<Vec<_>>();
+        let [approval_id] = matching.as_slice() else {
+            return if matching.is_empty() {
+                Err(ApprovalError::NotFound)
+            } else {
+                Err(ApprovalError::Ambiguous)
+            };
+        };
+        if approval_id != expected_approval_id {
+            return Err(ApprovalError::NotFound);
+        }
+        let approval = map.get_mut(approval_id).ok_or(ApprovalError::NotFound)?;
+        if approval.is_expired(now) {
+            approval.status = ApprovalStatus::Expired;
+            return Err(ApprovalError::Expired);
+        }
         approval.status = target;
         Ok(approval.clone())
     }

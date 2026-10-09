@@ -134,6 +134,7 @@ describe("execution trace collapse contract", () => {
   it("wires an accessible manual collapse control without changing execution state", () => {
     expect(chatPageSource).toContain("data-execution-collapsed");
     expect(executionSidebarSource).toContain("aria-label=\"收起执行轨迹\"");
-    expect(executionSidebarSource).toContain("aria-label=\"展开执行轨迹\"");
+    expect(chatPageSource).toContain('label: "展开执行轨迹"');
+    expect(chatPageSource).toContain("<ContextRail");
   });
 });

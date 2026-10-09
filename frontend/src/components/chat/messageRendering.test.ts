@@ -54,6 +54,13 @@ describe("MessageBubble render boundary", () => {
     expect(messageBubbleSource).toContain("event.preventDefault()");
   });
 
+  it("keeps assistant TTS manual and outside the conversation write path", () => {
+    expect(messageBubbleSource).toContain("朗读回答");
+    expect(messageBubbleSource).toContain("onSpeak");
+    expect(messageBubbleSource).not.toContain("synthesizeSpeech(");
+    expect(messageBubbleSource).not.toContain("sendMessage(");
+  });
+
   it("shows a readable error message and keeps raw fields in an error log", () => {
     expect(messageListSource).toContain("presentExecutionError(error)");
     expect(messageListSource).toContain("presentation.message");

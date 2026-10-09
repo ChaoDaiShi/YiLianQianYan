@@ -1,0 +1,149 @@
+@media (max-width: 980px) {
+  .memory-overview {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .memory-bubbles {
+    width: min(100%, 430px);
+    min-width: 0;
+    align-self: center;
+  }
+
+  .memory-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .memory-filter-group {
+    max-width: 100%;
+  }
+
+  .memory-source-filter {
+    width: 100%;
+  }
+
+  .memory-lower-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memory-detail-panel {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 560px) {
+  .memory-page-body,
+  .knowledge-page-body {
+    padding: 10px;
+  }
+
+  .memory-overview,
+  .knowledge-capability-panel {
+    padding: 14px;
+  }
+
+  .memory-bubbles {
+    transform: scale(0.92);
+    transform-origin: center;
+    width: 112%;
+    margin-inline: -6%;
+  }
+
+  .memory-detail-fields,
+  .knowledge-capability-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memory-maintenance-content,
+  .knowledge-capability-action {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+@media (max-width: 980px) {
+  .capability-card-grid,
+  .capability-skeleton-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .capability-split-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .capability-split-layout > .capability-detail-panel {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 640px) {
+  .capability-page-body {
+    padding: 10px;
+  }
+
+  .capability-filter-surface {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .capability-search-field {
+    min-width: 0;
+  }
+
+  .capability-filter-select {
+    min-width: 0;
+  }
+
+  .capability-card-grid,
+  .capability-skeleton-grid,
+  .capability-meta-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-height: 780px) {
+  .capability-page-body {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .capability-split-layout {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .workflow-editor-columns {
+    grid-template-columns: 180px minmax(0, 1fr) 260px;
+  }
+}
+
+@media (max-width: 900px) {
+  .workflow-editor-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workflow-editor-description-input {
+    width: min(460px, 70vw);
+  }
+
+  .workflow-editor-columns {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .workflow-editor-inspector {
+    grid-column: 1 / -1;
+    max-height: 340px;
+  }
+}
+
+@media (max-height: 780px) {
+  .workflow-editor-page {
+    min-height: 640px;
+  }
+
+  .workflow-canvas-panel {
+    min-height: 300px;
+  }
+}

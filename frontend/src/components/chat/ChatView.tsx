@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -10,6 +11,7 @@ import {
 } from "react";
 import {
   activateWorkflow,
+  createConversation,
   listWorkflows,
   loadConversation,
   sendMessage,
@@ -17,6 +19,10 @@ import {
   type AgentEvent,
   type Workflow,
 } from "../../api/client";
+import { bindResources } from "../../api/resources";
+import { getProviderReadiness } from "../../api/providerConnection";
+import type { ConversationalAnchor } from "../../api/voice";
+import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 import {
   approveAction,
   getApproval,
@@ -44,6 +50,7 @@ import {
   isNearBottom,
   scrollMessageListToBottom,
 } from "../layout/workspaceLayout";
+import { createConversationOwnership } from "./conversationOwnership";
 import ChatInput from "./ChatInput";
 import ChatHeader from "./ChatHeader";
 import MessageList, { type StreamingState } from "./MessageList";
@@ -58,7 +65,16 @@ interface ChatViewProps {
   executionToggleRef?: RefObject<HTMLButtonElement>;
   onToggleConversations: () => void;
   onToggleExecution: () => void;
+  onVoiceAnchorChange?: (anchor: ConversationalAnchor | null) => void;
+  conversationRefreshRevision?: number;
+  onOpenCurrentTask: () => void;
   renderExecution?: (controller: ExecutionController) => ReactNode;
+  /** Provided by the existing GlobalVoiceHost through the application root. */
+  chatVoiceControls?: ChatVoiceControls | null;
+  onRequestGlobalVoiceSession?: () => void;
+  onManualSpeech?: (text: string) => void;
+  onOpenModelSettings?: () => void;
+  initialSuggestedText?: string;
 }
 
 export interface ExecutionController {
@@ -100,7 +116,15 @@ export default function ChatView({
   executionToggleRef,
   onToggleConversations,
   onToggleExecution,
+  onVoiceAnchorChange,
+  conversationRefreshRevision = 0,
+  onOpenCurrentTask,
   renderExecution,
+  chatVoiceControls = null,
+  onRequestGlobalVoiceSession,
+  onManualSpeech,
+  onOpenModelSettings,
+  initialSuggestedText,
 }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -113,6 +137,7 @@ export default function ChatView({
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [allWorkflows, setAllWorkflows] = useState<Workflow[]>([]);
   const [suggestedText, setSuggestedText] = useState("");
+  const [modelUnavailable, setModelUnavailable] = useState(false);
   const [execution, dispatchExecution] = useReducer(
     reduceExecutionWorkspace,
     conversationId,
@@ -126,9 +151,23 @@ export default function ChatView({
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowMessagesRef = useRef(true);
   const unknownEventTypes = useRef(new Set<string>());
+  const ownership = useRef(createConversationOwnership(conversationId)).current;
+  useEffect(() => {
+    if (initialSuggestedText?.trim()) setSuggestedText(initialSuggestedText);
+  }, [initialSuggestedText]);
+  useLayoutEffect(() => {
+    if (ownership.id !== conversationId) {
+      ownership.activate(conversationId);
+      setMessages([]);
+      setError(null);
+      setIsLoading(false);
+      onVoiceAnchorChange?.(null);
+    }
+  }, [conversationId, ownership, onVoiceAnchorChange]);
 
   useEffect(() => {
     return () => {
+      ownership.invalidate();
       if (finishedTimerRef.current !== null) {
         window.clearTimeout(finishedTimerRef.current);
       }
@@ -151,6 +190,14 @@ export default function ChatView({
   }, [loadWorkflows]);
 
   useEffect(() => {
+    let active = true;
+    void getProviderReadiness().then((readiness) => {
+      if (active) setModelUnavailable(!readiness?.model.available);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     shouldFollowMessagesRef.current = true;
     let cancelled = false;
     setFinished(false);
@@ -167,8 +214,21 @@ export default function ChatView({
     }
 
     setCurrentConvId(conversationId);
+    const request = ownership.hydration();
     loadConversation(conversationId).then(async (conversation) => {
-      if (cancelled || !conversation?.messages) return;
+      if (cancelled || !ownership.ownsRequest(request)) return;
+      const anchor = conversation
+        && typeof conversation.id === "string"
+        && typeof conversation.title === "string"
+        && typeof conversation.updated_at === "number"
+        ? {
+            conversation_id: conversation.id,
+            title: conversation.title,
+            updated_at: conversation.updated_at,
+          }
+        : null;
+      onVoiceAnchorChange?.(anchor);
+      if (!conversation?.messages) return;
       const loadedMessages = (conversation.messages as unknown[]).filter(
         (message): message is Message => {
           if (!message || typeof message !== "object") return false;
@@ -181,7 +241,8 @@ export default function ChatView({
           );
         }
       );
-      setMessages(loadedMessages);
+      if (!ownership.admits(request)) return;
+      setMessages((current) => ownership.admits(request) ? loadedMessages : current);
       dispatchExecution({
         type: "hydrate_history",
         conversationId,
@@ -205,8 +266,9 @@ export default function ChatView({
           )
         ),
       ]);
-      if (cancelled) return;
+      if (cancelled || !ownership.ownsRequest(request)) return;
 
+      if (!ownership.admits(request)) return;
       const store = useApprovalStore.getState();
       (listedApprovals || [])
         .filter((approval) => approval.conversation_id === conversationId)
@@ -234,7 +296,7 @@ export default function ChatView({
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [conversationId, conversationRefreshRevision, onVoiceAnchorChange]);
 
   const clearResolvingForConversation = useCallback((targetId: string) => {
     const store = useApprovalStore.getState();
@@ -255,6 +317,8 @@ export default function ChatView({
         return;
       }
 
+      ownership.mutate();
+      if (event.type === "done" || event.type === "error" || event.type === "stream_end") ownership.finish();
       dispatchExecution({ type: "agent_event", event });
 
       switch (event.type) {
@@ -325,18 +389,22 @@ export default function ChatView({
   if (!decisionGateRef.current) {
     decisionGateRef.current = createDecisionGate(async (approvalId, decision) => {
       const store = useApprovalStore.getState();
+      ownership.start();
       store.markResolving(approvalId, true);
       setError(null);
       setIsLoading(true);
+      const ticket = ownership.capture();
       try {
         const context = decisionContextRef.current;
         const submit = decision === "approve" ? approveAction : rejectAction;
         await submit(
           approvalId,
           context.currentConvId,
-          context.handleAgentEvent
+          (event) => { if (ownership.current(ticket)) context.handleAgentEvent(event); }
         );
       } catch (requestError) {
+        if (!ownership.current(ticket)) throw requestError;
+        ownership.finish();
         store.markResolving(approvalId, false);
         setIsLoading(false);
         setError(
@@ -353,7 +421,9 @@ export default function ChatView({
     const completed = execution.completed;
     if (!completed) return;
 
-    if (completed.conversationId === currentConvId) {
+    if (completed.conversationId === ownership.id && completed.conversationId === currentConvId
+      && ownership.claimCompletion(completed.messageId)) {
+      ownership.mutate();
       const assistantMessage: Message = {
         id: completed.messageId,
         role: "assistant",
@@ -410,8 +480,39 @@ export default function ChatView({
   }, []);
 
   const handleSend = useCallback(
-    (text: string) => {
-      if (!text.trim() || isLoading) return;
+    async (text: string, resourceIds: string[] = []) => {
+      if (!text.trim() || isLoading) return false;
+      let ticket = ownership.capture();
+      const readiness = await getProviderReadiness();
+      if (!ownership.current(ticket)) return false;
+      if (!readiness?.model.available) {
+        setModelUnavailable(true);
+        return false;
+      }
+      setModelUnavailable(false);
+      let targetConversationId = currentConvId;
+      if (resourceIds.length > 0) {
+        if (!targetConversationId) {
+          const created = await createConversation(text.trim().slice(0, 80));
+          if (!ownership.current(ticket)) return false;
+          if (!created || typeof created.id !== "string" || !created.id.trim()) {
+            throw new Error("创建附件会话失败");
+          }
+          targetConversationId = created.id;
+          ownership.promote(created.id);
+          ticket = ownership.capture();
+          setCurrentConvId(created.id);
+          onConversationChange(created.id);
+        }
+        const boundConversationId = targetConversationId;
+        if (!boundConversationId) throw new Error("附件会话标识不可用");
+        await bindResources(
+          { kind: "conversation", conversation_id: boundConversationId },
+          resourceIds,
+        );
+      }
+      if (!ownership.current(ticket)) return false;
+      ownership.start();
       shouldFollowMessagesRef.current = true;
       setError(null);
       setFinished(false);
@@ -425,33 +526,44 @@ export default function ChatView({
           created_at: Date.now(),
         },
       ]);
-      dispatchExecution({ type: "start_run", conversationId: currentConvId });
+      dispatchExecution({ type: "start_run", conversationId: targetConversationId });
       setIsLoading(true);
       abortRef.current = sendMessage(
         text,
-        currentConvId,
-        handleAgentEvent,
+        targetConversationId,
+        (event) => {
+          if (!ownership.current(ticket)) return;
+          if (event.type === "connected" && event.conversation_id && ownership.id === null) {
+            ownership.promote(event.conversation_id);
+            ticket = ownership.capture();
+          }
+          handleAgentEvent(event);
+        },
         activeWorkflow?.id
       );
+      return true;
     },
-    [activeWorkflow, currentConvId, handleAgentEvent, isLoading]
+    [activeWorkflow, currentConvId, handleAgentEvent, isLoading, onConversationChange]
   );
 
   const handleRetry = useCallback(() => {
     const retryText = lastSubmittedText.trim();
     if (!retryText || isLoading) return;
+    ownership.mutate();
     setMessages((current) => {
       const last = current[current.length - 1];
       return last?.role === "user" && last.content === retryText
         ? current.slice(0, -1)
         : current;
     });
-    handleSend(retryText);
+    void handleSend(retryText);
   }, [handleSend, isLoading, lastSubmittedText]);
 
   const handleStop = useCallback(async () => {
+    const ticket = ownership.capture();
     abortRef.current?.abort();
     if (currentConvId) await stopGeneration(currentConvId);
+    if (!ownership.current(ticket)) return;
     handleAgentEvent({
       type: "stream_end",
       conversation_id: currentConvId || "",
@@ -492,6 +604,15 @@ export default function ChatView({
           finished={finished}
         />
 
+        {modelUnavailable ? (
+          <section className="mx-4 mt-3 rounded-[var(--radius-md)] border border-[var(--warning-border)] bg-[var(--warning-soft)] px-4 py-3 text-sm" role="status">
+            <p className="font-medium text-[var(--warning-fg)]">还没有配置可用的模型服务。</p>
+            <button type="button" className="mt-2 text-[var(--accent-primary)] underline" onClick={onOpenModelSettings}>
+              前往模型设置
+            </button>
+          </section>
+        ) : null}
+
       {messages.length === 0 && !streaming && !error ? (
         <WorkbenchHome
           connection={runState.connection}
@@ -499,10 +620,14 @@ export default function ChatView({
           isLoading={isLoading}
           finished={finished}
           onSend={handleSend}
+          conversationId={currentConvId}
           onStop={handleStop}
           suggestedText={suggestedText}
           onTextUsed={() => setSuggestedText("")}
           onHint={setSuggestedText}
+          onOpenCurrentTask={onOpenCurrentTask}
+          chatVoiceControls={chatVoiceControls}
+          onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
         />
       ) : (
         <>
@@ -513,15 +638,19 @@ export default function ChatView({
             onScroll={handleMessageScroll}
             error={error}
             onRetry={handleRetry}
+            onSpeak={onManualSpeech}
           />
 
           <footer className="conversation-composer shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
             <ChatInput
               onSend={handleSend}
+              conversationId={currentConvId}
               isLoading={isLoading}
               onStop={handleStop}
               suggestedText={suggestedText}
               onTextUsed={() => setSuggestedText("")}
+              chatVoiceControls={chatVoiceControls}
+              onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
             />
           </footer>
         </>

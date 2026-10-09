@@ -12,9 +12,9 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::app::state::AppServer;
 use crate::db::{ArtifactQuery, TaskQuery};
-use crate::server::AppServer;
-use crate::task::{
+use crate::modules::task::{
     build_task_orchestrator, Task, TaskExecutionId, TaskId, TaskOrchestrator, TaskPriority,
     TaskRunner,
 };
@@ -65,7 +65,7 @@ struct ServerOrchestratorBuilder {
 }
 
 #[async_trait]
-impl crate::task::OrchestratorBuilder for ServerOrchestratorBuilder {
+impl crate::modules::task::OrchestratorBuilder for ServerOrchestratorBuilder {
     async fn build(&self) -> TaskOrchestrator {
         build_task_orchestrator(&self.server).await
     }
@@ -119,7 +119,7 @@ pub async fn list_tasks(
         .map_err(|_| (StatusCode::BAD_REQUEST, "无效 workspace_id".to_string()))?;
     let status = query
         .status
-        .map(|s| s.parse::<crate::task::TaskStatus>())
+        .map(|s| s.parse::<crate::modules::task::TaskStatus>())
         .transpose()
         .map_err(|_| (StatusCode::BAD_REQUEST, "无效 status".to_string()))?;
     let tasks = server
@@ -152,7 +152,7 @@ pub async fn create_task(
     let priority = parse_priority(body.priority)?;
     let agent_team_id = body
         .agent_team_id
-        .map(|id| crate::task::AgentTeamId::new(id))
+        .map(|id| crate::modules::task::AgentTeamId::new(id))
         .transpose()
         .map_err(|_| (StatusCode::BAD_REQUEST, "无效 agent_team_id".to_string()))?;
     let now = chrono::Utc::now().timestamp_millis();
@@ -201,12 +201,12 @@ pub async fn update_task(
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "任务不存在".to_string()))?;
     if let Some(title) = body.title {
-        crate::task::validate_task_fields(&title, &task.description)
+        crate::modules::task::validate_task_fields(&title, &task.description)
             .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
         task.title = title.trim().to_string();
     }
     if let Some(description) = body.description {
-        crate::task::validate_task_fields(&task.title, &description)
+        crate::modules::task::validate_task_fields(&task.title, &description)
             .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
         task.description = description.trim().to_string();
     }
@@ -215,7 +215,7 @@ pub async fn update_task(
     }
     if let Some(status) = body.status {
         let status = status
-            .parse::<crate::task::TaskStatus>()
+            .parse::<crate::modules::task::TaskStatus>()
             .map_err(|_| (StatusCode::BAD_REQUEST, "无效 status".to_string()))?;
         task.status = status;
     }
@@ -224,7 +224,7 @@ pub async fn update_task(
     }
     if let Some(agent_team_id) = body.agent_team_id {
         task.agent_team_id = Some(
-            crate::task::AgentTeamId::new(agent_team_id)
+            crate::modules::task::AgentTeamId::new(agent_team_id)
                 .map_err(|_| (StatusCode::BAD_REQUEST, "无效 agent_team_id".to_string()))?,
         );
     }
@@ -390,7 +390,7 @@ pub async fn list_artifacts(
     Ok(Json(serde_json::json!({ "artifacts": views })))
 }
 
-fn artifact_view(artifact: &crate::task::Artifact) -> serde_json::Value {
+fn artifact_view(artifact: &crate::modules::task::Artifact) -> serde_json::Value {
     serde_json::json!({
         "id": artifact.id.as_str(),
         "workspace_id": artifact.workspace_id.as_str(),
@@ -445,7 +445,7 @@ pub async fn get_artifact(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let artifact_id = crate::task::ArtifactId::new(id)
+    let artifact_id = crate::modules::task::ArtifactId::new(id)
         .map_err(|_| (StatusCode::BAD_REQUEST, "无效 artifact id".to_string()))?;
     let artifact = server
         .db
@@ -502,14 +502,14 @@ pub async fn resolve_decision(
     Path(id): Path<String>,
     Json(body): Json<ResolveDecisionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let decision_id = crate::task::TaskDecisionId::new(id)
+    let decision_id = crate::modules::task::TaskDecisionId::new(id)
         .map_err(|_| (StatusCode::BAD_REQUEST, "无效 decision id".to_string()))?;
     let decision = server
         .db
         .get_task_decision(&decision_id)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "决策不存在".to_string()))?;
-    if decision.status == crate::task::TaskDecisionStatus::Resolved {
+    if decision.status == crate::modules::task::TaskDecisionStatus::Resolved {
         return Err((StatusCode::CONFLICT, "决策已被处理".to_string()));
     }
     if !decision.options.iter().any(|o| o.id == body.option_id) {

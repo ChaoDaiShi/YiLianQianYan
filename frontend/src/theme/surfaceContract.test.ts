@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-// @ts-expect-error -- Node file access is test-only and not bundled.
-import { readFileSync } from "node:fs";
+import { stylesheetText } from "../styles/stylesheet";
 import appShellSource from "../components/layout/AppShell.tsx?raw";
 import agentsSource from "../pages/AgentsPage.tsx?raw";
 import capabilitiesSource from "../pages/CapabilitiesPage.tsx?raw";
@@ -17,7 +16,7 @@ import workflowsSource from "../pages/WorkflowsPage.tsx?raw";
 import workspaceDetailSource from "../pages/WorkspaceDetailPage.tsx?raw";
 import workspacesSource from "../pages/WorkspacesPage.tsx?raw";
 
-const css = readFileSync(new URL("../index.css", import.meta.url), "utf8");
+const css = stylesheetText;
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

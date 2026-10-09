@@ -8,7 +8,7 @@ export default function Panel({ className, padding = true, children, ...props }:
   return (
     <div
       className={cn(
-        "glass-surface shadow-card-token rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] transition-[background-color,border-color,box-shadow] duration-[var(--motion-fast)]",
+        "ui-panel min-w-0 glass-surface shadow-card-token rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] transition-[background-color,border-color,box-shadow] duration-[var(--motion-fast)]",
         padding && "p-4",
         className
       )}

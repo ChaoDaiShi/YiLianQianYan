@@ -136,7 +136,7 @@ export default function ChatHeader({
                   )}
                   <span className="truncate">{workflow.name}</span>
                   {workflow.nodes.length > 0 && (
-                    <span className="ml-auto shrink-0 text-[10px] text-[var(--text-faint)]">
+                    <span className="ml-auto shrink-0 text-caption text-[var(--text-faint)]">
                       {workflow.nodes.length} 步
                     </span>
                   )}
@@ -149,7 +149,7 @@ export default function ChatHeader({
 
       <div className="ml-auto flex items-center gap-2">
         <div
-          className="hidden items-center gap-1.5 text-[11px] text-[var(--text-muted)] min-[720px]:flex"
+          className="hidden items-center gap-1.5 text-meta text-[var(--text-muted)] min-[720px]:flex"
           aria-label={`Agent 状态：${statusMeta.label}`}
         >
           <span className={`h-2 w-2 rounded-full ${statusMeta.color}`} />
@@ -166,7 +166,7 @@ export default function ChatHeader({
           >
             <PanelRight className="h-4 w-4" />
             {executionCount > 0 && (
-              <Badge tone="accent" className="px-1.5 py-0 text-[10px]">
+              <Badge tone="accent" className="px-1.5 py-0 text-caption">
                 {executionCount}
               </Badge>
             )}

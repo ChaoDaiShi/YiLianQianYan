@@ -8,7 +8,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::server::{AppServer, LogEntry};
+use crate::app::state::{AppServer, LogEntry};
 
 #[derive(serde::Deserialize)]
 pub struct LogsQuery {

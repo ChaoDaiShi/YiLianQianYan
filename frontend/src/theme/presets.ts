@@ -1,3 +1,5 @@
+import typography from "./typography.json";
+
 import type { ColorScheme, PresetId, ThemeColors, ThemeConfig } from "./types";
 
 type BuiltInPresetId = Exclude<PresetId, "custom">;
@@ -57,7 +59,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
     blur: 0,
     brightness: 1,
     panelOpacity: 0.52,
-    fontSize: 14,
+    fontSize: Number.parseFloat(typography["--font-size-body"]),
     monoTitles: false,
     customVars: {},
   },
@@ -90,7 +92,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
     blur: 0,
     brightness: 1,
     panelOpacity: 0.94,
-    fontSize: 14,
+    fontSize: Number.parseFloat(typography["--font-size-body"]),
     monoTitles: false,
     customVars: {},
   },
@@ -123,7 +125,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
     blur: 0,
     brightness: 1,
     panelOpacity: 0.95,
-    fontSize: 14,
+    fontSize: Number.parseFloat(typography["--font-size-body"]),
     monoTitles: false,
     customVars: {},
   },
@@ -156,7 +158,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
     blur: 0,
     brightness: 1,
     panelOpacity: 0.95,
-    fontSize: 14,
+    fontSize: Number.parseFloat(typography["--font-size-body"]),
     monoTitles: true,
     customVars: {},
   },
@@ -189,7 +191,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
     blur: 0,
     brightness: 1,
     panelOpacity: 0.98,
-    fontSize: 15,
+    fontSize: Number.parseFloat(typography["--font-size-body"]),
     monoTitles: false,
     customVars: {},
   },

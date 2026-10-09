@@ -11,6 +11,8 @@ describe("workbench home responsive composition", () => {
     expect(workbenchHomeSource).toContain("home-content");
     expect(workbenchHomeSource).toContain("home-character-image");
     expect(workbenchHomeSource).toContain("home-character-scene");
+    expect(workbenchHomeSource).toContain("onOpenCurrentTask");
+    expect(workbenchHomeSource).toContain('aria-label="打开当前任务画布"');
     expect(workbenchHomeSource).toContain("home-character-ripple");
     expect(workbenchHomeSource).toContain("/cyrene-home-character.png");
     expect(workbenchHomeSource).toContain("home-quick-actions");

@@ -7,14 +7,16 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::app::state::AppServer;
 use crate::config::types::ModelConfig;
 use crate::db::{LlmModelInput, LlmModelRow, LlmUsageInput};
-use crate::llm::client::{LlmClient, LlmError};
-use crate::llm::types::ChatMessage;
-use crate::llm::usage::DatabaseUsageRecorder;
+use crate::integrations::llm::client::{LlmClient, LlmError};
+use crate::integrations::llm::types::ChatMessage;
+use crate::integrations::llm::usage::DatabaseUsageRecorder;
+use crate::integrations::secret::{
+    llm_model_key_ref, record_secret_event, SecretKind, SecretRef, SecretSource,
+};
 use crate::safety::AuditEventType;
-use crate::secret::{llm_model_key_ref, record_secret_event, SecretKind, SecretRef, SecretSource};
-use crate::server::AppServer;
 
 const MAX_MODELS: usize = 32;
 
@@ -274,7 +276,27 @@ pub async fn delete_handler(
         .map_err(internal_error)?
         .ok_or_else(|| bad_request("模型不存在".to_string()))?;
     let secret_ref = SecretRef::new(row.api_key_ref);
-    let _ = server.secret_store.delete(&secret_ref).await;
+    if server.secret_store.delete(&secret_ref).await.is_err() {
+        record_secret_event(
+            &server.audit_recorder,
+            AuditEventType::SecretDeleted,
+            SecretKind::LlmModelApiKey,
+            &secret_ref,
+            "delete_model",
+            false,
+        );
+        return Err(bad_request(
+            "系统凭据库中的 API Key 删除失败，模型未删除".to_string(),
+        ));
+    }
+    record_secret_event(
+        &server.audit_recorder,
+        AuditEventType::SecretDeleted,
+        SecretKind::LlmModelApiKey,
+        &secret_ref,
+        "delete_model",
+        true,
+    );
     server.db.delete_llm_model(&id).map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -390,14 +412,29 @@ pub async fn usage_handler(
     ))
 }
 
-fn safe_error(error: &LlmError) -> String {
+pub(crate) fn normalize_provider_error(error: &LlmError) -> &'static str {
     match error {
-        LlmError::NoApiKey | LlmError::EmbeddingNoApiKey => "未配置 API Key".to_string(),
-        LlmError::Timeout => "连接超时".to_string(),
-        LlmError::Http(_) | LlmError::Api(_) => "服务商返回错误".to_string(),
-        LlmError::Parse(_) | LlmError::Stream(_) => "响应格式不兼容".to_string(),
-        _ => "模型连接失败".to_string(),
+        LlmError::NoApiKey | LlmError::EmbeddingNoApiKey | LlmError::SecretUnavailable => {
+            "INVALID_CONFIGURATION"
+        }
+        LlmError::Timeout => "TIMEOUT",
+        LlmError::Http(error) if error.is_timeout() => "TIMEOUT",
+        LlmError::Http(_) => "PROVIDER_UNREACHABLE",
+        LlmError::Api(message) if message.contains("HTTP 401") || message.contains("HTTP 403") => {
+            "INVALID_CREDENTIAL"
+        }
+        LlmError::Api(message) if message.contains("HTTP 404") => "MODEL_NOT_FOUND",
+        LlmError::Api(message) if message.contains("HTTP 429") => "RATE_LIMITED",
+        LlmError::Api(_) => "PROVIDER_UNREACHABLE",
+        LlmError::Parse(_)
+        | LlmError::Stream(_)
+        | LlmError::EmbeddingNotConfigured
+        | LlmError::InvalidEmbeddingResponse(_) => "INVALID_CONFIGURATION",
     }
+}
+
+fn safe_error(error: &LlmError) -> String {
+    normalize_provider_error(error).to_string()
 }
 
 fn bad_request(message: String) -> (StatusCode, Json<serde_json::Value>) {

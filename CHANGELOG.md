@@ -2,6 +2,85 @@
 
 ## Unreleased
 
+## 1.1.0-rc.1 — 2026-10-06
+
+### Added
+
+- 可选 Guest/Login/Register/Refresh/Session/Device 身份模型，LocalIdentity 与本地核心能力不依赖云端。
+- Outbox、cursor、revision、tombstone、冲突留存与显式本地数据同步选择。
+- Account Center、Sync Center、Data and Privacy、Setup Wizard 与一级 AI Search Surface。
+- AnySearch 匿名/BYOK 适配器、真实公开 API smoke，以及通过 SecurityExecutionGateway 的 `ai_search` Agent 工具。
+- 公共 Cloud Contract、ADR-001 至 ADR-007、数据分级与公共/私有仓边界 CI。
+- 物理隔离且无远程仓的私有 Cloud API、Admin API/Web、PostgreSQL migration、Export/Delete Worker 与部署 Runbook。
+
+### Changed
+
+- Chat 与 Canvas 辅助上下文默认收起为共享 ContextRail；首次配置由独立向导承载，不再显示重复 Provider 弹窗。
+- 公共客户端、后端与 Tauri 版本统一为 `1.1.0-rc.1`。
+
+### Security
+
+- Cloud access/refresh token 与 AnySearch Key 只写入本机 SecretStore；SQLite、API、日志和测试证据不保留明文。
+- 私有服务使用 Argon2 密码摘要、opaque token digest、metadata-only Admin RBAC、审计与删除墓碑。
+- 同步 payload 在客户端和服务端双重拒绝 secret 字段；Admin API 不进入公共 OpenAPI 或前端类型。
+
+### Validation
+
+- 前端 505 项测试、生产构建、真实本地后端 + system Edge 四档响应式 E2E 通过。
+- 公共 Rust 1036 项测试、格式、检查、Tauri 检查通过；Windows x64 NSIS 安装包与 SHA-256 已生成。
+- 私有 Rust 工作区检查与测试、Admin Web 测试/构建、零漏洞 npm audit、双仓边界扫描通过。
+- 真实 PostgreSQL/服务器部署、安装器人工启动、代码签名与真实账号双设备长时间同步仍按 RC 门禁标记为 `HUMAN_PENDING`。
+
+## 1.0.0-rc.2 — 2026-09-17
+
+### Added
+
+- 首次模块选择后增加轻量 Provider 就绪引导：模型服务为 AI 功能推荐配置，语音服务保持可选。
+- Settings 增加统一的模型、STT、TTS 就绪状态与真实最小 Provider 连接检查；错误只使用安全归一化错误码。
+- 普通聊天增加真实麦克风输入到编辑框且默认不自动发送，并为 Assistant 消息提供手动 TTS 播放。
+- 全域语音增加面向用户的常驻 Pill 与展开面板，跨 v1 页面保持同一 VoiceSession，并从入口直接启用免手持打断。
+- 记录 v1.1 Optional Identity、Cloud Model Gateway、Cloud Harness 与 Web Surface 的文档路线，未启动实现。
+
+### Fixed
+
+- 修复 Settings 低分辨率下全域语音浮层可能遮挡保存操作的问题，并覆盖 1280×720、1366×768、1920×1080 三种视口。
+- 修复模型、Embedding、STT、TTS 密钥的保留、替换、显式清除和重启后持久化语义；页面与 API 不回显明文。
+- 修复 Chat、任务规划和 AI 图审查在模型未配置时缺少明确设置引导的问题。
+
+### Security
+
+- Secret 删除失败时保持 fail closed；Provider 原始响应、Authorization 和密钥不进入产品 UI、日志或测试证据。
+- Voice 继续复用既有 Interaction Router、审批、Gateway、generation 与 echo guard，不建立旁路运行时。
+
+### Release status
+
+- 这是新的候选版本，保留 `1.0.0-rc.1` 安装包、SHA 与历史证据不变；正式 v1.0.0 仍为 `HUMAN_PENDING`。
+
+## 1.0.0-rc.1 — 2026-09-17
+
+### Added
+
+- v1 无限任务画布：自然语言规划、第二张图、语义/视图独立 revision、持久化分组与折叠、依赖感知自动布局、检查点、部分重跑和真实 Task Harness。
+- 全局 VoiceSession、Conversation Anchor、MiniMax 云 STT/TTS、自定义音色、免按键讲话打断，以及绑定已展示审批与 generation 的一次性语音授权凭证。
+- 受控 Resource 摄入和解析、Conversation/Task/Node 绑定、有限 NodeContext、可追溯 Artifact 预览/下载，以及从真实完成任务生成可审查的 Memory-to-Skill 候选。
+- Capability Center 的 MD/ZIP/公开 GitHub 检查与预览、事务化安装/更新/回滚/卸载、显式 Skill 启停；声明式 Plugin 保持惰性，不加载任意前端或原生代码。
+- 内置系统模块、受保护的侧栏定制、真实系统监控卡片、网格/自由布局和可见性受控刷新。
+- 使用系统 Edge/Chrome 与隔离临时数据库运行的真实后端浏览器核心路径 E2E。
+
+### Changed
+
+- 默认产品保持 v1 Workspace，不初始化被冻结的 v2 DesktopSpace、Windows 观察/控制、App Mount、Wallpaper 或桌宠能力。
+- React Router 更新到 6.30.6；版本与安装脚本统一为候选版本 `1.0.0-rc.1`。
+
+### Security
+
+- 缺失执行器、活动任务图语义编辑、资源解析、Skill 导入、语音审批和陈旧 revision 均保持 fail closed。
+- AI 图审查只返回绑定被审查 revision 的受限节点文案建议；必须由用户逐条接受，且不能修改执行器、权限、边或图标识。
+
+### Release status
+
+- 这是候选版本，不是正式 v1.0.0 Release。技术全门禁、安装包验收与 V1-H 真人语音/听觉/安装体验完成前保持 RC/HUMAN_PENDING。
+
 ## 0.9.0 — 2026-08-22
 
 ### Added

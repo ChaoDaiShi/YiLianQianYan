@@ -15,8 +15,8 @@ use super::candidate::MemoryCandidate;
 use super::policy::{validate_candidate, MemoryWritePolicy};
 use crate::config::types::ModelConfig;
 use crate::db::{CreateMemoryRequest, Database, Memory, MemoryQuery};
-use crate::llm::client::LlmClient;
-use crate::secret::SecretResolver;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::secret::SecretResolver;
 use std::sync::Arc;
 
 /// Outcome of attempting to persist a single candidate.

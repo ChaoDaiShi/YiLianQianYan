@@ -23,11 +23,11 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use crate::app::state::DiscoveredSubagent;
 use crate::safety::{
     DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
     ToolSecurityDescriptor,
 };
-use crate::server::DiscoveredSubagent;
 use crate::tools::trait_def::{RiskLevel, Tool, ToolResult};
 
 /// Maximum length of the final exposed tool name.

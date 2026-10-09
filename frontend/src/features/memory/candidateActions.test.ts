@@ -1,0 +1,6 @@
+import { expect,it } from "vitest";
+import type { SkillCandidate } from "../../api/evidence";
+import { candidateBelongsToSource,canConfirmCandidate } from "./candidateActions";
+const candidate:SkillCandidate={id:"candidate",revision:2,status:"validated",sources:[{kind:"node",graph_id:"graph",node_id:"node",execution_id:"execution"}],lesson:"Reviewed lesson",sensitivity:"screened",skill_name:null,skill_version:null,created_at:1,updated_at:2};
+it("requires validation, unchanged reviewed text and explicit confirmation",()=>{expect(canConfirmCandidate(candidate,candidate.lesson,true)).toBe(true);expect(canConfirmCandidate(candidate,candidate.lesson,false)).toBe(false);expect(canConfirmCandidate(candidate,"Changed",true)).toBe(false);expect(canConfirmCandidate({...candidate,status:"draft"},candidate.lesson,true)).toBe(false);expect(canConfirmCandidate({...candidate,status:"rejected"},candidate.lesson,true)).toBe(false);});
+it("shows only candidates from the selected task execution",()=>{expect(candidateBelongsToSource(candidate,{kind:"node",graph_id:"graph",node_id:"node",execution_id:"execution"})).toBe(true);expect(candidateBelongsToSource(candidate,{kind:"node",graph_id:"other",node_id:"node",execution_id:"execution"})).toBe(false);});

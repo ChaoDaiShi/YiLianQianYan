@@ -13,8 +13,8 @@ use serde::Serialize;
 
 use crate::config::types::ModelConfig;
 use crate::db::{Database, RetrieveQuery, ScoredMemory};
-use crate::llm::client::LlmClient;
-use crate::secret::SecretResolver;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::secret::SecretResolver;
 use crate::utils::text::truncate_chars;
 use std::sync::Arc;
 

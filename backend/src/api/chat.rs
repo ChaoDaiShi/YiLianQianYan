@@ -17,11 +17,11 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::engine::{self, AgentEvent};
 use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
+use crate::app::state::{AppServer, CHAT_MEMORY_TOP_K};
 use crate::db::{MessageRow, RetrieveQuery};
-use crate::llm::client::LlmClient;
-use crate::llm::usage::DatabaseUsageRecorder;
+use crate::integrations::llm::client::LlmClient;
+use crate::integrations::llm::usage::DatabaseUsageRecorder;
 use crate::safety::SecurityExecutionGateway;
-use crate::server::{AppServer, CHAT_MEMORY_TOP_K};
 use crate::utils::text::truncate_chars;
 
 #[derive(Debug, Deserialize)]
@@ -52,15 +52,7 @@ pub async fn chat_handler(
     let legacy_config = server.config.read().clone();
     let active_model = db.get_active_llm_model().ok().flatten();
     let mut config = legacy_config.clone();
-    if let Some(model) = active_model.as_ref() {
-        let mut active_config = model.to_model_config();
-        active_config.embedding_model = legacy_config.model.embedding_model.clone();
-        active_config.embedding_base_url = legacy_config.model.embedding_base_url.clone();
-        active_config.embedding_api_key = legacy_config.model.embedding_api_key.clone();
-        active_config.embedding_api_key_env = legacy_config.model.embedding_api_key_env.clone();
-        active_config.embedding_api_key_ref = legacy_config.model.embedding_api_key_ref.clone();
-        config.model = active_config;
-    }
+    config.model = server.effective_model_config();
     // Build one MCP-aware runtime registry snapshot for this whole chat run.
     // It is used by BOTH the LLM tool definitions and the Security Gateway so
     // the LLM, evaluation, and execution all see the same tool set.
@@ -185,10 +177,10 @@ pub async fn chat_handler(
     // Build agent state from history before persisting the current user message.
     let mut agent_state = AgentState::new(system_prompt);
     if let Ok(conv) = db.get_conversation(&conv_id) {
-        let msgs: Vec<crate::llm::types::ChatMessage> = conv
+        let msgs: Vec<crate::integrations::llm::types::ChatMessage> = conv
             .messages
             .iter()
-            .map(|m| crate::llm::types::ChatMessage {
+            .map(|m| crate::integrations::llm::types::ChatMessage {
                 role: m.role.clone(),
                 content: if m.content.is_empty() {
                     None
@@ -244,7 +236,7 @@ pub async fn chat_handler(
             model.provider.clone(),
             model.model.clone(),
             "chat",
-        )) as Arc<dyn crate::llm::client::UsageRecorder>
+        )) as Arc<dyn crate::integrations::llm::client::UsageRecorder>
     });
     let llm_client = LlmClient::new_with_usage_recorder(
         &config.model,
@@ -434,9 +426,9 @@ mod tests {
     use crate::{
         agent::engine::AgentEvent,
         api::build_router,
+        app::state::AppServer,
         db::MessageRow,
         safety::{ControlSession, CONTROL_SESSION_HEADER},
-        server::AppServer,
     };
 
     type CapturedRequests = Arc<Mutex<Vec<Value>>>;

@@ -48,6 +48,7 @@ impl std::fmt::Display for PluginId {
 /// explicitly import + enable it. Only environment-variable *names* are allowed
 /// (never actual secret values).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpServerTemplate {
     pub name: String,
     #[serde(default)]
@@ -65,6 +66,7 @@ pub struct McpServerTemplate {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginContributions {
     #[serde(default)]
     pub agents: Vec<String>,
@@ -77,6 +79,7 @@ pub struct PluginContributions {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginManifest {
     pub schema_version: u32,
     pub id: String,
