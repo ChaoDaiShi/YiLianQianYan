@@ -240,7 +240,8 @@ pub fn apply_one_remote_tx(
             {
                 // If it is our own change echo
                 if remote.change_id == change_id
-                    || (remote.revision == local_revision && remote.device_id.is_empty())
+                    || (remote.revision == local_revision
+                        && local_payload.as_deref() == payload_json_str.as_deref())
                 {
                     tx.execute(
                         "INSERT INTO cloud_synced_entities (entity_type, entity_id, revision, deleted, payload_json, canonical_digest, server_sequence, updated_at)
@@ -288,7 +289,7 @@ pub fn apply_one_remote_tx(
                     let conflict_id =
                         super::conflicts::store_conflict_tx(tx, &local_change, remote)?;
                     tx.execute(
-                        "UPDATE cloud_sync_outbox SET state='conflicted', last_error_code='CONFLICT', updated_at=?2
+                        "UPDATE cloud_sync_outbox SET state='conflicted', last_error_code='CONFLICT', updated_at=?3
                          WHERE entity_type=?1 AND entity_id=?2",
                         params![&remote.entity_type, &remote.entity_id, now],
                     )?;
