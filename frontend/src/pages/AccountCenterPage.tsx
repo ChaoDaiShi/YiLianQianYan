@@ -61,7 +61,7 @@ export default function AccountCenterPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
-    if (section !== "privacy" || state?.identity.status === "guest") return;
+    if (section !== "privacy" || !state || state.identity.status === "guest") return;
     void getPrivacySummary().then((result) => { if (result.ok) setDataSummary(result.data.summary); });
   }, [section, state?.identity.status]);
   useEffect(() => {
@@ -76,7 +76,13 @@ export default function AccountCenterPage() {
       ? await loginCloud(form)
       : await registerCloud({ ...form, display_name: form.display_name || undefined });
     if (result.ok) {
-      setState(result.data); setForm((current) => ({ ...current, password: "" }));
+      setForm((current) => ({ ...current, password: "" }));
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("restart_application");
+      } catch {
+        setError("账号数据已隔离保存。请重新启动应用以进入该账号。当前窗口不会加载新账号数据。");
+      }
     } else {
       setError(result.error);
     }
@@ -86,7 +92,14 @@ export default function AccountCenterPage() {
   const logout = async () => {
     setBusy(true); setError("");
     const result = await logoutCloud();
-    if (result.ok) setState(result.data); else setError(result.error);
+    if (result.ok) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("restart_application");
+      } catch {
+        setError("已安全退出云账号。请重新启动应用以返回游客 Profile。");
+      }
+    } else setError(result.error);
     setBusy(false);
   };
 

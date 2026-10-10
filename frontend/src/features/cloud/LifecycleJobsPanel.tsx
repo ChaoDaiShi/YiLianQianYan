@@ -1,5 +1,9 @@
 import { Download, AlertCircle, CheckCircle2, Clock, RefreshCw } from "lucide-react";
-import { type LifecycleJob, type LifecycleJobStatus } from "../../api/cloud";
+import {
+  downloadCloudExport,
+  type LifecycleJob,
+  type LifecycleJobStatus,
+} from "../../api/cloud";
 import { Badge, Button } from "../../components/ui";
 
 interface LifecycleJobsPanelProps {
@@ -72,6 +76,19 @@ export function LifecycleJobsPanel({
   onRefresh,
   isRefreshing = false,
 }: LifecycleJobsPanelProps) {
+  const downloadExport = async () => {
+    if (!job || job.kind !== "export") return;
+    const result = await downloadCloudExport(job.id);
+    if (!result.ok) return;
+    const url = URL.createObjectURL(result.data);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `yilian-export-${job.id}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
   if (!job) {
     return null;
   }
@@ -175,15 +192,13 @@ export function LifecycleJobsPanel({
 
       {isExport && job.status === "completed" ? (
         <div style={{ marginTop: "16px" }}>
-          <a
-            href={`/api/cloud/export/${encodeURIComponent(job.id)}/download`}
-            download={`yilian-export-${job.id}.json`}
-            style={{ textDecoration: "none" }}
+          <Button
+            variant="primary"
+            onClick={() => void downloadExport()}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
           >
-            <Button variant="primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <Download style={{ width: 16, height: 16 }} /> 下载导出数据 (.json)
-            </Button>
-          </a>
+            <Download style={{ width: 16, height: 16 }} /> 下载导出数据 (.json)
+          </Button>
         </div>
       ) : null}
 

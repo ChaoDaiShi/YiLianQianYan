@@ -70,8 +70,8 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
         service_origin: targetOrigin.trim(),
         account_id: targetAccount.trim(),
         choice: importGuest
-          ? { ImportSelectedGuest: { entity_ids: [] } }
-          : "OpenAccountOnly",
+          ? { type: "import_selected_guest", entity_ids: [] }
+          : { type: "open_account_only" },
       },
       {
         onRestartRequired: (plan) => {

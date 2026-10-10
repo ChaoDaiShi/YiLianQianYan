@@ -108,24 +108,13 @@ describe("ProfileSwitchController", () => {
           local_signed_out: true,
           remote_revocation: "pending",
         },
-        identity: {
-          local_identity_id: "loc-1",
-          device_id: "dev-1",
-          account_id: null,
-          email: null,
-          status: "guest",
-          local_core_available: true,
-          cloud_enabled: false,
+        activation: {
+          profile_id: "guest-1",
+          lease: { scope_id: "guest-scope", generation: "guest-generation" },
+          requires_restart: true,
+          import_count: 0,
         },
-        sync: {
-          pending_count: 0,
-          conflict_count: 0,
-          error_count: 0,
-          cursor: null,
-          last_success_at: null,
-          last_error_code: null,
-        },
-        sync_existing_choice: "undecided",
+        status: "awaiting_restart",
       },
     });
 

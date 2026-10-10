@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SYNC_CATEGORIES, SyncPrivacyPanel } from './SyncPrivacyPanel';
+import {
+  categoriesFromPolicy,
+  DEFAULT_SYNC_CATEGORIES,
+  policyFromCategories,
+  SyncPrivacyPanel,
+} from './SyncPrivacyPanel';
 
 describe('SyncPrivacyPanel', () => {
   it('renders all default synchronization categories', () => {
@@ -41,5 +46,24 @@ describe('SyncPrivacyPanel', () => {
     expect(html).toContain('自定义数据');
     expect(html).toContain('仅保留本地');
     expect(html).toContain('aria-checked="false"');
+  });
+
+  it('maps persisted profile policy to the category controls and back', () => {
+    const policy = {
+      sync_conversations: false,
+      sync_messages: false,
+      sync_memories: true,
+      sync_agent_profiles: true,
+      sync_workflow_metadata: false,
+      sync_artifact_metadata: true,
+      sync_task_graphs: false,
+      sync_canvas_views: false,
+      sync_settings: true,
+      sync_capability_usage: false,
+    };
+    const categories = categoriesFromPolicy(policy);
+    expect(categories.find((item) => item.key === 'conversations')?.enabled).toBe(false);
+    expect(categories.find((item) => item.key === 'memories')?.enabled).toBe(true);
+    expect(policyFromCategories(categories)).toEqual(policy);
   });
 });

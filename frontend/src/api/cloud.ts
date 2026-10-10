@@ -1,4 +1,4 @@
-import { request, requestResult, type ApiResult } from "../core/api/http";
+import { request, requestBlob, requestResult, type ApiResult } from "../core/api/http";
 
 export type IdentityStatus = "guest" | "authenticated" | "offline_authenticated" | "closing";
 
@@ -21,6 +21,19 @@ export interface CloudSyncStatus {
   last_error_code: string | null;
 }
 
+export interface CloudSyncPolicy {
+  sync_conversations: boolean;
+  sync_messages: boolean;
+  sync_memories: boolean;
+  sync_agent_profiles: boolean;
+  sync_workflow_metadata: boolean;
+  sync_artifact_metadata: boolean;
+  sync_task_graphs: boolean;
+  sync_canvas_views: boolean;
+  sync_settings: boolean;
+  sync_capability_usage: boolean;
+}
+
 export type RemoteRevocationStatus = "confirmed" | "pending" | "unknown";
 
 export interface LogoutReport {
@@ -35,8 +48,10 @@ export interface CloudIdentityResponse {
   report?: LogoutReport;
 }
 
-export interface CloudLogoutResponse extends CloudIdentityResponse {
+export interface CloudLogoutResponse {
   report: LogoutReport;
+  activation: ActivationPlan;
+  status: "awaiting_restart";
 }
 
 export interface CloudConnectionPayload {
@@ -44,6 +59,11 @@ export interface CloudConnectionPayload {
   email: string;
   password: string;
   display_name?: string;
+}
+
+export interface CloudAuthenticationResponse {
+  activation: ActivationPlan;
+  status: "awaiting_restart";
 }
 
 export interface CloudSyncResponse {
@@ -129,11 +149,11 @@ export function getCloudIdentity(): Promise<CloudIdentityResponse | null> {
   return request("GET", "/api/cloud/identity");
 }
 
-export function loginCloud(payload: CloudConnectionPayload): Promise<ApiResult<CloudIdentityResponse>> {
+export function loginCloud(payload: CloudConnectionPayload): Promise<ApiResult<CloudAuthenticationResponse>> {
   return requestResult("POST", "/api/cloud/login", payload);
 }
 
-export function registerCloud(payload: CloudConnectionPayload): Promise<ApiResult<CloudIdentityResponse>> {
+export function registerCloud(payload: CloudConnectionPayload): Promise<ApiResult<CloudAuthenticationResponse>> {
   return requestResult("POST", "/api/cloud/register", payload);
 }
 
@@ -170,8 +190,8 @@ export interface ProfileSwitchResponse {
 }
 
 export type ActivationChoice =
-  | "OpenAccountOnly"
-  | { ImportSelectedGuest: { entity_ids: string[] } };
+  | { type: "open_account_only" }
+  | { type: "import_selected_guest"; entity_ids: string[] };
 
 export interface ProfileSwitchPayload {
   service_origin: string;
@@ -203,6 +223,14 @@ export function updateSyncChoice(choice: CloudIdentityResponse["sync_existing_ch
   return requestResult("PUT", "/api/cloud/sync/choice", { choice });
 }
 
+export function getCloudSyncPolicy(): Promise<ApiResult<{ policy: CloudSyncPolicy }>> {
+  return requestResult("GET", "/api/cloud/sync/policy");
+}
+
+export function updateCloudSyncPolicy(policy: CloudSyncPolicy): Promise<ApiResult<{ policy: CloudSyncPolicy }>> {
+  return requestResult("PUT", "/api/cloud/sync/policy", policy);
+}
+
 export function listSyncConflicts(): Promise<ApiResult<{ conflicts: SyncConflict[] }>> {
   return requestResult("GET", "/api/cloud/sync/conflicts");
 }
@@ -232,6 +260,10 @@ export function getPrivacySummary(): Promise<ApiResult<{ summary: CloudDataSumma
 
 export function requestCloudExport(): Promise<ApiResult<{ job: LifecycleJob }>> {
   return requestResult("POST", "/api/cloud/export");
+}
+
+export function downloadCloudExport(id: string): Promise<ApiResult<Blob>> {
+  return requestBlob(`/api/cloud/export/${encodeURIComponent(id)}/download`);
 }
 
 export function requestAccountDeletion(): Promise<ApiResult<{ job: LifecycleJob; identity: CloudIdentity | null }>> {

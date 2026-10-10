@@ -13,8 +13,12 @@ import {
 import { Badge, Button, Panel, Spinner } from "../../components/ui";
 import {
   getPrivacySummary,
+  getCloudIdentity,
+  getCloudSyncPolicy,
+  updateCloudSyncPolicy,
   type CloudDataSummary,
   type CloudIdentity,
+  type CloudSyncPolicy,
 } from "../../api/cloud";
 
 export interface SyncCategoryPolicy {
@@ -77,10 +81,10 @@ export const DEFAULT_SYNC_CATEGORIES: SyncCategoryPolicy[] = [
   },
   {
     key: "settings",
-    name: "用户偏好设置",
-    description: "同步主题、界面与常规偏好段落。",
+    name: "用户界面偏好",
+    description: "仅同步已审核的 system_preferences 界面与产品偏好段落。",
     enabled: true,
-    prohibitedNotice: "模型提供商密钥、语音服务凭据与搜索认证永远保存在本地 SecretStore",
+    prohibitedNotice: "模型、语音、搜索凭据和运行授权不属于该同步段落",
   },
 ];
 
@@ -98,10 +102,18 @@ export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
   const [identity, setIdentity] = useState<CloudIdentity | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState<string>("");
+  const [savingPolicy, setSavingPolicy] = useState(false);
 
   const fetchSummary = async () => {
     setLoadingSummary(true);
     setSummaryError("");
+    const identityState = await getCloudIdentity();
+    if (!identityState || identityState.identity.status === "guest") {
+      setIdentity(identityState?.identity ?? null);
+      setSummary({ counts: {}, object_bytes: 0 });
+      setLoadingSummary(false);
+      return;
+    }
     const result = await getPrivacySummary();
     if (result.ok) {
       setSummary(result.data.summary);
@@ -114,13 +126,30 @@ export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
 
   useEffect(() => {
     void fetchSummary();
+    void getCloudSyncPolicy().then((result) => {
+      if (!result.ok) {
+        setSummaryError(result.error);
+        return;
+      }
+      setCategories(categoriesFromPolicy(result.data.policy));
+    });
   }, []);
 
-  const handleToggleCategory = (key: string) => {
+  const handleToggleCategory = async (key: string) => {
     const updated = categories.map((cat) =>
       cat.key === key ? { ...cat, enabled: !cat.enabled } : cat
     );
     setCategories(updated);
+    setSavingPolicy(true);
+    const policy = policyFromCategories(updated);
+    const result = await updateCloudSyncPolicy(policy);
+    setSavingPolicy(false);
+    if (!result.ok) {
+      setCategories(categories);
+      setSummaryError(`同步范围保存失败：${result.error}`);
+      return;
+    }
+    setSummaryError("");
 
     if (onPolicyChange) {
       const record: Record<string, boolean> = {};
@@ -222,7 +251,8 @@ export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
                   type="button"
                   role="switch"
                   aria-checked={category.enabled}
-                  onClick={() => handleToggleCategory(category.key)}
+                  onClick={() => void handleToggleCategory(category.key)}
+                  disabled={savingPolicy}
                   className={`shrink-0 w-11 h-6 rounded-full transition-colors relative focus:outline-none focus:ring-2 focus:ring-[var(--accent)] ${
                     category.enabled ? "bg-[var(--accent)]" : "bg-[var(--border-strong)]"
                   }`}
@@ -331,3 +361,42 @@ export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
     </div>
   );
 };
+
+export function policyFromCategories(categories: SyncCategoryPolicy[]): CloudSyncPolicy {
+  const enabled = new Map(categories.map((category) => [category.key, category.enabled]));
+  return {
+    sync_conversations: enabled.get("conversations") ?? false,
+    sync_messages: enabled.get("conversations") ?? false,
+    sync_memories: enabled.get("memories") ?? false,
+    sync_agent_profiles: enabled.get("agent_profiles") ?? false,
+    sync_workflow_metadata: enabled.get("workflow_metadata") ?? false,
+    sync_artifact_metadata: enabled.get("artifact_metadata") ?? false,
+    sync_task_graphs: enabled.get("task_graphs") ?? false,
+    sync_canvas_views: enabled.get("task_graphs") ?? false,
+    sync_settings: enabled.get("settings") ?? false,
+    sync_capability_usage: enabled.get("capability_usage") ?? false,
+  };
+}
+
+export function categoriesFromPolicy(policy: CloudSyncPolicy): SyncCategoryPolicy[] {
+  return DEFAULT_SYNC_CATEGORIES.map((category) => {
+    const enabled = category.key === "conversations"
+      ? policy.sync_conversations && policy.sync_messages
+      : category.key === "task_graphs"
+        ? policy.sync_task_graphs && policy.sync_canvas_views
+        : mappedKeyValue(policy, category.key);
+    return { ...category, enabled };
+  });
+}
+
+function mappedKeyValue(policy: CloudSyncPolicy, key: string): boolean {
+  const values: Record<string, boolean> = {
+    memories: policy.sync_memories,
+    agent_profiles: policy.sync_agent_profiles,
+    workflow_metadata: policy.sync_workflow_metadata,
+    artifact_metadata: policy.sync_artifact_metadata,
+    capability_usage: policy.sync_capability_usage,
+    settings: policy.sync_settings,
+  };
+  return values[key] ?? false;
+}
