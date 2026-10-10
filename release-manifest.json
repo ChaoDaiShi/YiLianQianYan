@@ -1,7 +1,7 @@
 {
   "contract_revision": "v1.1-r2",
-  "public_sha": null,
-  "private_sha": null,
+  "public_sha": "7fe21e45f31a31928e7f5fcd9ea4cb410416c6e4",
+  "private_sha": "23f790bf9bb58fad1b57fa3d78922c8b5b2ba68e",
   "api_running_revision": null,
   "worker_running_revision": null,
   "admin_running_revision": null,
