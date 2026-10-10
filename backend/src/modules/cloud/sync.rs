@@ -5,8 +5,8 @@ use crate::db::Database;
 use crate::integrations::secret::{cloud_access_token_ref, SecretStore};
 
 use super::contracts::{
-    canonical_scope, PullPage, PushAck, ScopeError, ScopeLease, ScopedDb, SyncError,
-    SYNC_EPOCH_HEADER, SYNC_PROTOCOL_HEADER,
+    canonical_scope, PullPage, PushAck, ScopeError, ScopeLease, ScopedDb, SyncCapabilities,
+    SyncError, CONTRACT_REVISION, SYNC_EPOCH_HEADER, SYNC_PROTOCOL_HEADER, SYNC_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -89,14 +89,33 @@ impl CloudSyncService {
             .validate_lease(lease)
             .map_err(CloudSyncError::Sync)?;
 
+        let access_ref = self
+            .db
+            .cloud_secret_refs()?
+            .map(|refs| refs.0)
+            .unwrap_or_else(cloud_access_token_ref);
         let token = self
             .secret_store
-            .get(&cloud_access_token_ref())
+            .get(&access_ref)
             .await
             .map_err(|_| CloudSyncError::AuthenticationRequired)?
             .ok_or(CloudSyncError::AuthenticationRequired)?;
 
         let identity = self.db.get_or_create_cloud_identity()?;
+        let capabilities = self.fetch_capabilities().await?;
+        if capabilities.sync_protocol != SYNC_PROTOCOL_VERSION
+            || capabilities.contract_revision != CONTRACT_REVISION
+        {
+            return Err(SyncError::ProtocolUpgradeRequired.into());
+        }
+        match scoped_db.bind_sync_epoch(lease, &capabilities.sync_epoch) {
+            Ok(()) => {}
+            Err(SyncError::CursorResetRequired) => {
+                self.db.reconcile_skipped_history()?;
+                scoped_db.replace_sync_epoch_after_reset(lease, &capabilities.sync_epoch)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
         let (checkpoint_cursor, sync_epoch) = scoped_db
             .read_checkpoint(lease)
             .map_err(CloudSyncError::Sync)?;
@@ -109,28 +128,43 @@ impl CloudSyncService {
         let mut conflicts = 0;
 
         if !push_batch.is_empty() {
+            let change_ids = push_batch
+                .iter()
+                .map(|change| change.change_id.clone())
+                .collect::<Vec<_>>();
             let mut req = self
                 .http
                 .post(format!("{}/sync/push", self.base_url))
                 .bearer_auth(token.expose_secret())
                 .header(SYNC_PROTOCOL_HEADER, "2")
-                .header("Idempotency-Key", uuid::Uuid::new_v4().to_string());
+                .header("Idempotency-Key", stable_batch_key(&change_ids));
             if let Some(ref epoch) = sync_epoch {
                 req = req.header(SYNC_EPOCH_HEADER, epoch);
             }
-            let response = req
+            let response = match req
                 .json(&serde_json::json!({
                     "device_id": identity.device_id,
                     "changes": push_batch
                 }))
                 .send()
                 .await
-                .map_err(|_| CloudSyncError::Transport)?;
+            {
+                Ok(response) => response,
+                Err(_) => {
+                    scoped_db.requeue_push_batch(lease, &change_ids, "TRANSPORT_FAILED")?;
+                    return Err(CloudSyncError::Transport);
+                }
+            };
 
             if response.status() == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(CloudSyncError::AuthenticationRequired);
             }
             if !response.status().is_success() {
+                scoped_db.requeue_push_batch(
+                    lease,
+                    &change_ids,
+                    &format!("HTTP_{}", response.status().as_u16()),
+                )?;
                 return Err(CloudSyncError::Transport);
             }
 
@@ -138,15 +172,31 @@ impl CloudSyncService {
                 .validate_lease(lease)
                 .map_err(CloudSyncError::Sync)?;
 
-            let push_ack: PushAck = response
-                .json()
-                .await
-                .map_err(|_| CloudSyncError::InvalidResponse)?;
+            let push_ack: PushAck = match response.json().await {
+                Ok(ack) => ack,
+                Err(_) => {
+                    scoped_db.requeue_push_batch(lease, &change_ids, "INVALID_RESPONSE")?;
+                    return Err(CloudSyncError::InvalidResponse);
+                }
+            };
 
             // Crucial S2 invariant: push_ack does NOT touch download_cursor!
             let ack_report = scoped_db
                 .ack_push(lease, &push_ack)
                 .map_err(CloudSyncError::Sync)?;
+            let acknowledged = push_ack
+                .results
+                .iter()
+                .map(|result| result.change_id.as_str())
+                .collect::<std::collections::HashSet<_>>();
+            let missing = change_ids
+                .iter()
+                .filter(|change_id| !acknowledged.contains(change_id.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                scoped_db.requeue_push_batch(lease, &missing, "PARTIAL_ACK")?;
+            }
             pushed = ack_report.applied + ack_report.duplicate;
             conflicts += ack_report.conflicts;
         }
@@ -215,4 +265,33 @@ impl CloudSyncService {
             cursor,
         })
     }
+
+    async fn fetch_capabilities(&self) -> Result<SyncCapabilities, CloudSyncError> {
+        let response = self
+            .http
+            .get(format!("{}/sync/capabilities", self.base_url))
+            .send()
+            .await
+            .map_err(|_| CloudSyncError::Transport)?;
+        if response.status() == reqwest::StatusCode::UPGRADE_REQUIRED {
+            return Err(SyncError::ProtocolUpgradeRequired.into());
+        }
+        if !response.status().is_success() {
+            return Err(CloudSyncError::Transport);
+        }
+        response
+            .json()
+            .await
+            .map_err(|_| CloudSyncError::InvalidResponse)
+    }
+}
+
+fn stable_batch_key(change_ids: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for change_id in change_ids {
+        hasher.update(change_id.as_bytes());
+        hasher.update([0]);
+    }
+    format!("sync-batch-{:x}", hasher.finalize())
 }

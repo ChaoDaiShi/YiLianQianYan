@@ -47,6 +47,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/cloud/sync/status", get(cloud::sync_status_handler))
         .route("/api/cloud/sync/choice", put(cloud::sync_choice_handler))
         .route(
+            "/api/cloud/sync/policy",
+            get(cloud::sync_policy_handler).put(cloud::update_sync_policy_handler),
+        )
+        .route(
             "/api/cloud/sync/conflicts",
             get(cloud::sync_conflicts_handler),
         )

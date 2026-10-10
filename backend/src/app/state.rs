@@ -121,6 +121,7 @@ pub struct DiscoveredSubagent {
 /// Shared application server state
 pub struct AppServer {
     pub db: Database,
+    pub app_data_dir: std::path::PathBuf,
     pub config: Arc<RwLock<AppConfig>>,
     pub tool_registry: Arc<ToolRegistry>,
     /// Application-lifetime registry shared by Bash, ProcessTool, and every

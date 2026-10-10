@@ -71,6 +71,18 @@ pub(super) fn apply_remote_entity(
                     [entity_id],
                 )?;
             }
+            "capability_usage" => {
+                transaction.execute(
+                    "DELETE FROM capability_usage WHERE execution_id=?1",
+                    [entity_id],
+                )?;
+            }
+            "settings" if entity_id == "system_preferences" => {
+                transaction.execute(
+                    "DELETE FROM settings WHERE key='v1.system_preferences.v1'",
+                    [],
+                )?;
+            }
             _ => {
                 return Err(rusqlite::Error::InvalidParameterName(format!(
                     "unsupported entity type for deletion: {entity_type}"
@@ -297,6 +309,25 @@ pub(super) fn apply_remote_entity(
                     json_compact(payload.get("groups")).unwrap_or_else(|| "[]".into()),
                     json_number(&payload, "updated_at").unwrap_or(now)
                 ],
+            )?;
+        }
+        "capability_usage" => {
+            let usage: crate::modules::cloud::payload::SyncCapabilityUsagePayload =
+                serde_json::from_value(payload.clone())
+                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            crate::db::cloud::usage::project_usage_tx(transaction, &usage)?;
+        }
+        "settings" if entity_id == "system_preferences" => {
+            let preferences = payload.get("preferences").ok_or_else(|| {
+                rusqlite::Error::InvalidParameterName(
+                    "missing preferences in settings payload".into(),
+                )
+            })?;
+            transaction.execute(
+                "INSERT INTO settings(key,value) VALUES('v1.system_preferences.v1',?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [serde_json::to_string(preferences)
+                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?],
             )?;
         }
         _ => {

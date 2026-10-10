@@ -1,10 +1,10 @@
 use secrecy::ExposeSecret;
 use std::sync::Arc;
 
-use crate::integrations::secret::{cloud_access_token_ref, SecretStore};
+use crate::integrations::secret::{scoped_cloud_access_token_ref, SecretStore};
 use crate::modules::cloud::contracts::{
     RemoteRecord, ResolveConflictRequest, ResolveConflictResult, ScopeLease, ScopedDb, SyncError,
-    SYNC_PROTOCOL_HEADER,
+    SYNC_EPOCH_HEADER, SYNC_PROTOCOL_HEADER,
 };
 use crate::modules::cloud::domain::SyncOperation;
 
@@ -75,7 +75,7 @@ impl ConflictService {
         // Fetch authoritative snapshot via S1 GET /api/v1/sync/entities/:entity_type/:entity_id
         let token = self
             .secret_store
-            .get(&cloud_access_token_ref())
+            .get(&scoped_cloud_access_token_ref(&lease.scope_id))
             .await
             .map_err(|_| SyncError::AuthenticationRequired)?
             .ok_or(SyncError::AuthenticationRequired)?;
@@ -92,11 +92,14 @@ impl ConflictService {
             )
         };
 
+        let (_, epoch) = self.scoped_db.read_checkpoint(lease)?;
+        let epoch = epoch.ok_or(SyncError::CursorResetRequired)?;
         let res = self
             .http
             .get(&url)
             .bearer_auth(token.expose_secret())
             .header(SYNC_PROTOCOL_HEADER, "2")
+            .header(SYNC_EPOCH_HEADER, epoch)
             .send()
             .await
             .map_err(|e| SyncError::Transport(e.to_string()))?;

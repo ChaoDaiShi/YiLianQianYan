@@ -1,7 +1,8 @@
 use crate::db::Database;
 use crate::modules::cloud::contracts::{
-    compute_canonical_digest, decide_remote_version, validate_sync_payload, ApplyDisposition,
-    ApplyPageReport, PullPage, RemoteRecord, ScopeLease, ScopedDb, SyncError, VersionDecision,
+    compute_canonical_digest, compute_payload_fingerprint, decide_remote_version,
+    validate_sync_payload, ApplyDisposition, ApplyPageReport, PullPage, RemoteRecord, ScopeLease,
+    ScopedDb, SyncError, VersionDecision,
 };
 use crate::modules::cloud::domain::{CloudSyncStatus, SyncOperation};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
@@ -334,7 +335,7 @@ pub fn apply_one_remote_tx(
                 params![
                     &remote.entity_type,
                     &remote.entity_id,
-                    &remote_digest,
+                    compute_payload_fingerprint(remote.payload.as_ref()),
                     remote.revision,
                     if remote.operation == SyncOperation::Delete { 1 } else { 0 },
                     now
@@ -406,7 +407,7 @@ pub fn apply_selected_remote_tx(
         params![
             &remote.entity_type,
             &remote.entity_id,
-            &remote_digest,
+            compute_payload_fingerprint(remote.payload.as_ref()),
             remote.revision,
             if remote.operation == SyncOperation::Delete { 1 } else { 0 },
             now
@@ -553,6 +554,25 @@ impl ScopedDb {
 }
 
 impl Database {
+    pub fn run_reliability_reconciliation_once(
+        &self,
+    ) -> Result<Option<ReconciliationReport>, SyncError> {
+        let version: i64 = self.conn().query_row(
+            "SELECT reconciliation_version FROM cloud_reliability_state WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )?;
+        if version >= 1 {
+            return Ok(None);
+        }
+        let report = reconcile_skipped_history(self)?;
+        self.conn().execute(
+            "UPDATE cloud_reliability_state SET reconciliation_version=1, updated_at=?1 WHERE singleton=1",
+            [chrono::Utc::now().timestamp_millis()],
+        )?;
+        Ok(Some(report))
+    }
+
     pub fn reconcile_skipped_history(&self) -> Result<ReconciliationReport, SyncError> {
         reconcile_skipped_history(self)
     }

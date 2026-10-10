@@ -3,6 +3,53 @@ use crate::modules::cloud::domain::{IdentitySnapshot, IdentityStatus};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 impl Database {
+    pub fn set_cloud_device_id(&self, device_id: &str) -> Result<(), rusqlite::Error> {
+        self.get_or_create_cloud_identity()?;
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE cloud_identity SET device_id=?1, updated_at=?2 WHERE singleton=1",
+            params![device_id, chrono::Utc::now().timestamp_millis()],
+        )?;
+        Ok(())
+    }
+
+    pub fn cloud_secret_refs(
+        &self,
+    ) -> Result<
+        Option<(
+            crate::integrations::secret::SecretRef,
+            crate::integrations::secret::SecretRef,
+        )>,
+        rusqlite::Error,
+    > {
+        let conn = self.conn();
+        let refs: Option<(Option<String>, Option<String>)> = conn
+            .query_row(
+                "SELECT access_token_ref_json, refresh_token_ref_json FROM cloud_identity WHERE singleton=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((Some(access), Some(refresh))) = refs else {
+            return Ok(None);
+        };
+        let access = serde_json::from_str(&access).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        let refresh = serde_json::from_str(&refresh).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        Ok(Some((access, refresh)))
+    }
+
     pub fn get_or_create_cloud_identity(&self) -> Result<IdentitySnapshot, rusqlite::Error> {
         let mut conn = self.conn();
         let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -144,6 +191,19 @@ impl Database {
         let conn = self.conn();
         conn.execute(
             "UPDATE cloud_identity SET account_id=NULL, email=NULL, status='guest',
+                    access_token_ref_json=NULL, refresh_token_ref_json=NULL,
+                    current_session_id=NULL, updated_at=?1 WHERE singleton=1",
+            [now],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_cloud_profile_offline(&self) -> Result<(), rusqlite::Error> {
+        self.get_or_create_cloud_identity()?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE cloud_identity SET status=CASE WHEN account_id IS NULL THEN 'guest' ELSE 'offline_authenticated' END,
                     access_token_ref_json=NULL, refresh_token_ref_json=NULL,
                     current_session_id=NULL, updated_at=?1 WHERE singleton=1",
             [now],

@@ -97,6 +97,31 @@ impl Default for ProfileRegistry {
 pub struct ProfileManager;
 
 impl ProfileManager {
+    pub fn profile_db_path(app_data_dir: &Path, plan: &ActivationPlan) -> PathBuf {
+        app_data_dir
+            .join(PROFILES_DIRNAME)
+            .join(&plan.profile_id)
+            .join("app.db")
+    }
+
+    pub fn prepare_guest_activation(app_data_dir: &Path) -> Result<ActivationPlan, ScopeError> {
+        let registry = Self::load_or_initialize(app_data_dir)?;
+        let entry = registry
+            .profiles
+            .values()
+            .find(|entry| entry.kind == ProfileKind::Guest)
+            .ok_or_else(|| ScopeError::MigrationFailed("guest profile is missing".into()))?;
+        Ok(ActivationPlan {
+            profile_id: entry.profile_id.clone(),
+            lease: ScopeLease {
+                scope_id: entry.scope_id.clone(),
+                generation: Uuid::new_v4().to_string(),
+            },
+            requires_restart: true,
+            import_count: 0,
+        })
+    }
+
     /// Load or initialize the profile registry on disk.
     /// If no active profile exists, creates a fresh guest profile and activates it.
     pub fn load_or_initialize(app_data_dir: &Path) -> Result<ProfileRegistry, ScopeError> {
@@ -376,22 +401,22 @@ impl ProfileManager {
     pub async fn quiesce_runtime(server: &AppServer, timeout: Duration) -> Result<(), ScopeError> {
         // Cancel all active conversation tasks
         {
-            let mut tasks = server.active_tasks.lock();
-            for (_task_id, token) in tasks.drain() {
+            let tasks = server.active_tasks.lock();
+            for token in tasks.values() {
                 token.cancel();
             }
         }
         // Cancel active workflow runs
         {
-            let mut workflow_runs = server.active_workflow_runs.lock();
-            for (_run_id, token) in workflow_runs.drain() {
+            let workflow_runs = server.active_workflow_runs.lock();
+            for token in workflow_runs.values() {
                 token.cancel();
             }
         }
         // Cancel active task executions
         {
-            let mut task_execs = server.active_task_executions.lock();
-            for (_exec_id, token) in task_execs.drain() {
+            let task_execs = server.active_task_executions.lock();
+            for token in task_execs.values() {
                 token.cancel();
             }
         }
@@ -455,54 +480,24 @@ impl ProfileManager {
         timeout: Duration,
     ) -> Result<ActivationPlan, ScopeError> {
         let plan = Self::prepare_profile(app_data_dir, scope_key, choice)?;
-        Self::quiesce_runtime(server, timeout).await?;
-        Self::persist_activation(app_data_dir, &plan)?;
+        Self::activate_prepared_profile(app_data_dir, server, &plan, timeout).await?;
         Ok(plan)
     }
 
-    /// Consistent online SQLite backup for legacy database into `legacy-quarantine/<timestamp>/`
-    /// using SQLite Backup API to ensure WAL changes are captured safely.
-    pub fn quarantine_legacy_db_if_needed(
+    pub async fn activate_prepared_profile(
         app_data_dir: &Path,
-    ) -> Result<Option<PathBuf>, ScopeError> {
-        let legacy_db_path = app_data_dir.join("yilianqianyan-v1.db");
-        if !legacy_db_path.exists() {
-            return Ok(None);
+        server: &AppServer,
+        plan: &ActivationPlan,
+        timeout: Duration,
+    ) -> Result<(), ScopeError> {
+        Self::quiesce_runtime(server, timeout).await?;
+        let previous = server.scoped_db.lease();
+        server.scoped_db.activate_lease(plan.lease.clone());
+        if let Err(error) = Self::persist_activation(app_data_dir, plan) {
+            server.scoped_db.activate_lease(previous);
+            return Err(error);
         }
-
-        let migration_id = format!("quarantine-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"));
-        let quarantine_dir = app_data_dir
-            .join(LEGACY_QUARANTINE_DIRNAME)
-            .join(&migration_id);
-        std::fs::create_dir_all(&quarantine_dir)
-            .map_err(|e| ScopeError::Io(format!("create quarantine dir: {e}")))?;
-
-        let dest_db_path = quarantine_dir.join("yilianqianyan-v1.db");
-        backup_sqlite_db(&legacy_db_path, &dest_db_path)
-            .map_err(|e| ScopeError::MigrationFailed(format!("sqlite backup API failed: {e}")))?;
-
-        // Write quarantine metadata manifest
-        let manifest = serde_json::json!({
-            "migration_id": migration_id,
-            "source_path": legacy_db_path.to_string_lossy(),
-            "destination_path": dest_db_path.to_string_lossy(),
-            "quarantined_at": chrono::Utc::now().timestamp_millis(),
-            "reason": "V1.1 profile isolation quarantine"
-        });
-        let manifest_path = quarantine_dir.join("manifest.json");
-        std::fs::write(&manifest_path, manifest.to_string())
-            .map_err(|e| ScopeError::Io(format!("write quarantine manifest: {e}")))?;
-
-        // Remove legacy db main file and any leftover wal/shm
-        let _ = std::fs::remove_file(&legacy_db_path);
-        let _ = std::fs::remove_file(app_data_dir.join("yilianqianyan-v1.db-wal"));
-        let _ = std::fs::remove_file(app_data_dir.join("yilianqianyan-v1.db-shm"));
-
-        tracing::info!(
-            "Legacy database quarantined successfully to {}",
-            dest_db_path.display()
-        );
-        Ok(Some(dest_db_path))
+        Ok(())
     }
 
     /// Resolves the active profile's `app.db` path and ScopeLease.
@@ -510,7 +505,60 @@ impl ProfileManager {
     pub fn resolve_active_profile_db_path(
         app_data_dir: &Path,
     ) -> Result<(PathBuf, ScopeLease, String), ScopeError> {
-        let _ = Self::quarantine_legacy_db_if_needed(app_data_dir)?;
+        let registry_path = app_data_dir.join(PROFILE_REGISTRY_FILENAME);
+        if !registry_path.exists() {
+            if let Some(backup_path) = Self::quarantine_legacy_db_if_needed(app_data_dir)? {
+                let guest_uuid = Uuid::new_v4().to_string();
+                let profile_id = format!("guest-migrated-{guest_uuid}");
+                let generation = Uuid::new_v4().to_string();
+                let scope_id = format!("guest-{guest_uuid}");
+                let profile_dir = app_data_dir.join(PROFILES_DIRNAME).join(&profile_id);
+                Self::ensure_profile_directories(&profile_dir)?;
+                let db_path = profile_dir.join("app.db");
+                super::profile_migration::backup_sqlite_db(&backup_path, &db_path).map_err(
+                    |error| ScopeError::MigrationFailed(format!("adopt legacy database: {error}")),
+                )?;
+                let db = Database::new(&db_path).map_err(|error| {
+                    ScopeError::MigrationFailed(format!("migrate adopted database: {error}"))
+                })?;
+                let scoped = crate::db::cloud::scoped_db::ScopedDb::new(
+                    db,
+                    ScopeLease {
+                        scope_id: scope_id.clone(),
+                        generation: generation.clone(),
+                    },
+                );
+                scoped
+                    .init_profile_metadata("local://guest", &guest_uuid)
+                    .map_err(|error| {
+                        ScopeError::MigrationFailed(format!("scope adopted database: {error}"))
+                    })?;
+                let now = chrono::Utc::now().timestamp_millis();
+                let mut profiles = BTreeMap::new();
+                profiles.insert(
+                    profile_id.clone(),
+                    ProfileEntry {
+                        profile_id: profile_id.clone(),
+                        kind: ProfileKind::Guest,
+                        scope_key: None,
+                        scope_id,
+                        directory_name: profile_id.clone(),
+                        created_at: now,
+                        last_activated_at: now,
+                    },
+                );
+                Self::save_registry(
+                    app_data_dir,
+                    &ProfileRegistry {
+                        schema_version: 1,
+                        active_profile_id: profile_id,
+                        active_generation: generation,
+                        profiles,
+                        pending_activation: None,
+                    },
+                )?;
+            }
+        }
         let registry = Self::load_or_initialize(app_data_dir)?;
 
         let active_entry = registry
@@ -536,13 +584,4 @@ impl ProfileManager {
 
         Ok((db_path, lease, registry.active_profile_id))
     }
-}
-
-/// Perform consistent SQLite online backup using rusqlite::backup::Backup API
-pub fn backup_sqlite_db(src_path: &Path, dst_path: &Path) -> Result<(), rusqlite::Error> {
-    let src_conn = rusqlite::Connection::open(src_path)?;
-    let mut dst_conn = rusqlite::Connection::open(dst_path)?;
-    let backup = rusqlite::backup::Backup::new(&src_conn, &mut dst_conn)?;
-    backup.run_to_completion(5, Duration::from_millis(20), None)?;
-    Ok(())
 }

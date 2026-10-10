@@ -69,6 +69,12 @@ async fn test_push_ack_never_advances_download_cursor() {
 
     let remote = Router::new()
         .route(
+            "/api/v1/sync/capabilities",
+            get(|| async {
+                Json(serde_json::json!({"sync_protocol":2,"contract_revision":"v1.1-r2","sync_epoch":"test-epoch","entity_schemas":{},"max_push_changes":100,"max_pull_changes":100}))
+            }),
+        )
+        .route(
             "/api/v1/sync/push",
             post(|Json(body): Json<serde_json::Value>| async move {
                 let change_id = body["changes"][0]["change_id"].as_str().unwrap();
@@ -102,7 +108,7 @@ async fn test_push_ack_never_advances_download_cursor() {
                                     "entity_id": "mem-11",
                                     "revision": 1,
                                     "operation": "upsert",
-                                    "payload": {"content": "other device text", "category": "note"},
+                                    "payload": {"schema_version":1,"content":"other device text","category":"note","source":"user","source_conversation_id":null,"created_at":100,"updated_at":100},
                                     "sequence": "11",
                                     "device_id": "other-device",
                                     "changed_at": 100
@@ -113,7 +119,7 @@ async fn test_push_ack_never_advances_download_cursor() {
                                     "entity_id": "mem-12",
                                     "revision": 12,
                                     "operation": "upsert",
-                                    "payload": {"content": "local device text", "category": "note"},
+                                    "payload": {"schema_version":1,"content":"local device text","category":"note","source":"user","source_conversation_id":null,"created_at":200,"updated_at":200},
                                     "sequence": "12",
                                     "device_id": "my-device",
                                     "changed_at": 200
@@ -160,7 +166,7 @@ async fn test_push_ack_never_advances_download_cursor() {
         base_revision: 11,
         revision: 12,
         operation: SyncOperation::Upsert,
-        payload: Some(serde_json::json!({"content": "local device text", "category": "note"})),
+        payload: Some(serde_json::json!({"schema_version":1,"content":"local device text","category":"note","source":"user","source_conversation_id":null,"created_at":200,"updated_at":200})),
     })
     .unwrap();
 

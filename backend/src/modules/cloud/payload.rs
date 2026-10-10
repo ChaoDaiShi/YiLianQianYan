@@ -5,6 +5,7 @@ use super::contracts::SyncError;
 use super::domain::SyncOperation;
 
 pub const MAX_PAYLOAD_SIZE: usize = 512 * 1024; // 512 KiB
+const MAX_NESTED_DEPTH: usize = 24;
 
 fn default_schema_version() -> u16 {
     1
@@ -271,6 +272,7 @@ pub fn validate_sync_payload_strictly(
                     serialized.len()
                 )));
             }
+            validate_nested_structure(payload, 0)?;
 
             match entity_type {
                 "conversation" => {
@@ -278,6 +280,7 @@ pub fn validate_sync_payload_strictly(
                         .map_err(|e| {
                         SyncError::PayloadInvalid(format!("invalid conversation: {e}"))
                     })?;
+                    ensure_schema_version(parsed.schema_version)?;
                     Ok(ValidatedPayload::Conversation(parsed))
                 }
                 "message" => {
@@ -291,6 +294,7 @@ pub fn validate_sync_payload_strictly(
                         .map_err(|e| {
                             SyncError::PayloadInvalid(format!("invalid memory payload: {e}"))
                         })?;
+                    ensure_schema_version(parsed.schema_version)?;
                     Ok(ValidatedPayload::Memory(parsed))
                 }
                 "agent_profile" => {
@@ -298,6 +302,7 @@ pub fn validate_sync_payload_strictly(
                         .map_err(|e| {
                         SyncError::PayloadInvalid(format!("invalid agent_profile: {e}"))
                     })?;
+                    ensure_schema_version(parsed.schema_version)?;
                     Ok(ValidatedPayload::AgentProfile(parsed))
                 }
                 "workflow_metadata" => {
@@ -305,6 +310,7 @@ pub fn validate_sync_payload_strictly(
                         serde_json::from_value(payload.clone()).map_err(|e| {
                             SyncError::PayloadInvalid(format!("invalid workflow_metadata: {e}"))
                         })?;
+                    ensure_schema_version(parsed.schema_version)?;
                     Ok(ValidatedPayload::WorkflowMetadata(parsed))
                 }
                 "artifact_metadata" => {
@@ -312,6 +318,7 @@ pub fn validate_sync_payload_strictly(
                         serde_json::from_value(payload.clone()).map_err(|e| {
                             SyncError::PayloadInvalid(format!("invalid artifact_metadata: {e}"))
                         })?;
+                    ensure_schema_version(parsed.schema_version)?;
                     Ok(ValidatedPayload::ArtifactMetadata(parsed))
                 }
                 "task_graph" => {
@@ -319,6 +326,7 @@ pub fn validate_sync_payload_strictly(
                         .map_err(|e| {
                             SyncError::PayloadInvalid(format!("invalid task_graph: {e}"))
                         })?;
+                    ensure_schema_version(parsed.schema_version)?;
                     Ok(ValidatedPayload::TaskGraph(parsed))
                 }
                 "canvas_view" => {
@@ -326,16 +334,16 @@ pub fn validate_sync_payload_strictly(
                         .map_err(|e| {
                             SyncError::PayloadInvalid(format!("invalid canvas_view: {e}"))
                         })?;
+                    ensure_schema_version(parsed.schema_version)?;
                     Ok(ValidatedPayload::CanvasView(parsed))
                 }
                 "settings" => {
                     let parsed: SyncSettingsPayload = serde_json::from_value(payload.clone())
                         .map_err(|e| SyncError::PayloadInvalid(format!("invalid settings: {e}")))?;
-                    let prohibited_sections =
-                        ["secrets", "api_keys", "auth", "tokens", "credentials"];
-                    if prohibited_sections.contains(&parsed.section.as_str()) {
+                    ensure_schema_version(parsed.schema_version)?;
+                    if parsed.section != "system_preferences" {
                         return Err(SyncError::PayloadInvalid(format!(
-                            "settings section '{}' is prohibited from sync",
+                            "unsupported settings section: {}",
                             parsed.section
                         )));
                     }
@@ -353,6 +361,7 @@ pub fn validate_sync_payload_strictly(
                             parsed.execution_status
                         )));
                     }
+                    ensure_schema_version(parsed.schema_version)?;
                     Ok(ValidatedPayload::CapabilityUsage(parsed))
                 }
                 _ => Err(SyncError::UnsupportedSchema(format!(
@@ -361,4 +370,66 @@ pub fn validate_sync_payload_strictly(
             }
         }
     }
+}
+
+fn ensure_schema_version(version: u16) -> Result<(), SyncError> {
+    if version == 1 {
+        Ok(())
+    } else {
+        Err(SyncError::UnsupportedSchema(format!(
+            "unsupported payload schema version: {version}"
+        )))
+    }
+}
+
+fn validate_nested_structure(value: &Value, depth: usize) -> Result<(), SyncError> {
+    if depth > MAX_NESTED_DEPTH {
+        return Err(SyncError::PayloadInvalid(
+            "payload nesting exceeds the supported limit".into(),
+        ));
+    }
+    match value {
+        Value::Object(map) => {
+            for (key, nested) in map {
+                let normalized = key
+                    .chars()
+                    .filter(|ch| ch.is_ascii_alphanumeric())
+                    .flat_map(char::to_lowercase)
+                    .collect::<String>();
+                if matches!(
+                    normalized.as_str(),
+                    "apikey"
+                        | "password"
+                        | "passwordhash"
+                        | "accesstoken"
+                        | "refreshtoken"
+                        | "authorization"
+                        | "cookie"
+                        | "secret"
+                        | "secretvalue"
+                        | "secretref"
+                        | "envsecretrefs"
+                        | "toolarguments"
+                        | "toolresult"
+                ) {
+                    return Err(SyncError::PayloadInvalid(format!(
+                        "prohibited nested field: {key}"
+                    )));
+                }
+                validate_nested_structure(nested, depth + 1)?;
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                validate_nested_structure(nested, depth + 1)?;
+            }
+        }
+        Value::String(text) if text.len() > 256 * 1024 => {
+            return Err(SyncError::PayloadInvalid(
+                "payload string exceeds the supported limit".into(),
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
 }

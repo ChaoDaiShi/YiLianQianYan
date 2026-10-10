@@ -173,6 +173,13 @@ const CLOUD_LIFECYCLE_CREDENTIALS_SCHEMA: ProductMigrationSpec = ProductMigratio
     include_str!("migrations/2015_lifecycle_credentials.sql"),
 );
 
+const CLOUD_REVIEW_FIXES_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2016,
+    "2016_review_fixes",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2016_review_fixes.sql"),
+);
+
 impl Database {
     pub fn initialize_cloud_schema(&self) -> Result<(), rusqlite::Error> {
         self.apply_product_migrations(&[
@@ -187,6 +194,7 @@ impl Database {
             CLOUD_PENDING_REVOCATIONS_SCHEMA,
             CLOUD_USAGE_PROJECTION_SCHEMA,
             CLOUD_LIFECYCLE_CREDENTIALS_SCHEMA,
+            CLOUD_REVIEW_FIXES_SCHEMA,
         ])
     }
 }

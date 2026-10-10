@@ -157,6 +157,7 @@ impl AppServer {
 
         let server = Self {
             db: db.clone(),
+            app_data_dir: infer_app_data_dir(db_path),
             config,
             tool_registry,
             managed_process_registry,
@@ -202,6 +203,25 @@ impl AppServer {
         server.seed_default_grants();
         Ok(server)
     }
+}
+
+fn infer_app_data_dir(db_path: &std::path::Path) -> std::path::PathBuf {
+    let parent = db_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    if parent
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some("profiles")
+    {
+        return parent
+            .parent()
+            .and_then(std::path::Path::parent)
+            .unwrap_or(parent)
+            .to_path_buf();
+    }
+    parent.to_path_buf()
 }
 
 fn default_data_dir() -> std::path::PathBuf {
@@ -254,9 +274,32 @@ pub(crate) async fn create_server_with_control_session(
         .scoped_db
         .validate_stored_scope()
         .map_err(|e| format!("profile stored scope validation failed: {e}"))?;
+    if let Some(report) = server
+        .db
+        .run_reliability_reconciliation_once()
+        .map_err(|error| format!("cloud reliability reconciliation failed: {error}"))?
+    {
+        tracing::info!(
+            ?report,
+            "completed one-time cloud reliability reconciliation"
+        );
+    }
     // Migrate legacy plaintext secrets BEFORE registering MCP servers, so the
     // runtime manager sees the post-migration `env_secret_refs`.
     server.migrate_secrets().await;
+    match crate::modules::cloud::revocation::RevocationService::new(
+        server.db.clone_connection(),
+        Arc::clone(&server.secret_store),
+    )
+    .retry_pending_revocations(chrono::Utc::now().timestamp_millis())
+    .await
+    {
+        Ok(revoked) if revoked > 0 => {
+            tracing::info!(revoked, "completed pending remote session revocations")
+        }
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "pending session revocation retry deferred"),
+    }
     // Seed base resource grants (workspace read/write + denied paths) so the
     // grant-enforced gateway has a sane starting point.
     server.seed_default_grants();

@@ -1,5 +1,6 @@
 pub mod apply;
 pub mod capture;
+pub mod checkpoint;
 pub mod conflict_resolve;
 pub mod conflicts;
 pub mod identity;

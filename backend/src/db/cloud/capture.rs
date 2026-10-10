@@ -1,7 +1,6 @@
 use crate::db::Database;
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::modules::cloud::domain::SyncOperation;
 use crate::modules::cloud::payload::validate_sync_payload_strictly;
@@ -59,8 +58,43 @@ pub struct CaptureReport {
 }
 
 impl Database {
+    pub fn cloud_sync_policy(&self) -> Result<SyncPolicy, rusqlite::Error> {
+        let conn = self.conn();
+        let encoded: Option<String> = conn
+            .query_row(
+                "SELECT policy_json FROM cloud_sync_policy WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        encoded
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()
+            .map(|policy| policy.unwrap_or_default())
+    }
+
+    pub fn save_cloud_sync_policy(&self, policy: &SyncPolicy) -> Result<(), rusqlite::Error> {
+        let encoded = serde_json::to_string(policy)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO cloud_sync_policy(singleton, policy_json, updated_at) VALUES(1, ?1, ?2)
+             ON CONFLICT(singleton) DO UPDATE SET policy_json=excluded.policy_json, updated_at=excluded.updated_at",
+            params![encoded, chrono::Utc::now().timestamp_millis()],
+        )?;
+        Ok(())
+    }
+
     pub fn capture_sync_candidates(&self) -> Result<usize, rusqlite::Error> {
-        let report = self.capture_sync_candidates_with_policy(&SyncPolicy::default())?;
+        let report = self.capture_sync_candidates_with_policy(&self.cloud_sync_policy()?)?;
         Ok(report.captured)
     }
 
@@ -89,10 +123,9 @@ impl Database {
 
             let payload_json = serde_json::to_string(&source.payload)
                 .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            let fingerprint = Sha256::digest(payload_json.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
+            let fingerprint = crate::modules::cloud::contracts::compute_payload_fingerprint(Some(
+                &source.payload,
+            ));
             let existing: Option<(String, i64, i64, bool)> = transaction
                 .query_row(
                     "SELECT fingerprint, revision, local_generation, deleted FROM cloud_entity_revisions
@@ -416,6 +449,29 @@ pub fn collect_sync_sources(
             })
         })?;
         sources.extend(rows.collect::<Result<Vec<_>, _>>()?);
+    }
+
+    if policy.sync_settings {
+        let stored: Option<String> = transaction
+            .query_row(
+                "SELECT value FROM settings WHERE key='v1.system_preferences.v1'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(stored) = stored {
+            sources.push(SyncSource {
+                entity_type: "settings",
+                entity_id: "system_preferences".into(),
+                payload: serde_json::json!({
+                    "schema_version": 1,
+                    "section": "system_preferences",
+                    "preferences": parse_json_or_string(stored)
+                }),
+            });
+        }
+    } else {
+        report.skipped_by_policy += 1;
     }
 
     if policy.sync_capability_usage

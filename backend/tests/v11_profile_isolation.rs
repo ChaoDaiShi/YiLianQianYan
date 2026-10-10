@@ -361,11 +361,18 @@ fn test_s3_5_legacy_database_quarantine_with_sqlite_backup() {
     let (db_path, lease, profile_id) =
         ProfileManager::resolve_active_profile_db_path(app_data).unwrap();
 
-    // Legacy file at root is quarantined and replaced by active profile db
-    assert!(!legacy_db_path.exists());
+    // The source remains recoverable and its consistent copy becomes the active guest profile.
+    assert!(legacy_db_path.exists());
     assert!(db_path.exists());
     assert_ne!(db_path, legacy_db_path);
-    assert_eq!(profile_id, lease.scope_id);
+    assert!(profile_id.starts_with("guest-migrated-"));
+    assert!(lease.scope_id.starts_with("guest-"));
+
+    let active_conn = rusqlite::Connection::open(&db_path).unwrap();
+    let active_value: String = active_conn
+        .query_row("SELECT val FROM legacy_test", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(active_value, "preserved_in_quarantine");
 
     // Verify quarantine directory contains intact backup
     let quarantine_root = app_data.join("legacy-quarantine");

@@ -12,6 +12,7 @@ use crate::modules::cloud::contracts::{ScopeError, ScopeLease, SyncError};
 pub struct ScopedDb {
     db: Database,
     lease: ScopeLease,
+    active_lease: Arc<RwLock<ScopeLease>>,
     gate: Arc<RwLock<()>>,
 }
 
@@ -27,17 +28,23 @@ impl ScopedDb {
     pub fn new(db: Database, lease: ScopeLease) -> Self {
         Self {
             db,
+            active_lease: Arc::new(RwLock::new(lease.clone())),
             lease,
             gate: Arc::new(RwLock::new(())),
         }
     }
 
     pub fn new_with_gate(db: Database, lease: ScopeLease, gate: Arc<RwLock<()>>) -> Self {
-        Self { db, lease, gate }
+        Self {
+            db,
+            active_lease: Arc::new(RwLock::new(lease.clone())),
+            lease,
+            gate,
+        }
     }
 
-    pub fn lease(&self) -> &ScopeLease {
-        &self.lease
+    pub fn lease(&self) -> ScopeLease {
+        self.active_lease.read().clone()
     }
 
     pub fn db(&self) -> &Database {
@@ -50,10 +57,16 @@ impl ScopedDb {
 
     /// Validate that the provided lease matches this ScopedDb's immutable scope_id and generation.
     pub fn validate_lease(&self, lease: &ScopeLease) -> Result<(), SyncError> {
-        if self.lease.scope_id != lease.scope_id || self.lease.generation != lease.generation {
+        let active = self.active_lease.read();
+        if active.scope_id != lease.scope_id || active.generation != lease.generation {
             return Err(SyncError::ScopeChanged);
         }
         Ok(())
+    }
+
+    pub fn activate_lease(&self, lease: ScopeLease) {
+        let _exclusive = self.gate.write();
+        *self.active_lease.write() = lease;
     }
 
     /// Execute a write closure within an active read lock on the gate latch.
@@ -98,6 +111,7 @@ impl ScopedDb {
     /// Fail closed if not present or mismatched.
     pub fn validate_stored_scope(&self) -> Result<(), SyncError> {
         let conn = self.db.conn();
+        let active = self.active_lease.read();
         let stored_scope: Option<String> = conn
             .query_row(
                 "SELECT scope_id FROM cloud_profile_metadata WHERE singleton = 1",
@@ -107,14 +121,14 @@ impl ScopedDb {
             .optional()?;
 
         match stored_scope {
-            Some(ref stored) if stored == &self.lease.scope_id => Ok(()),
+            Some(ref stored) if stored == &active.scope_id => Ok(()),
             Some(ref mismatch) => Err(SyncError::Scope(ScopeError::ScopeMismatch(format!(
                 "Stored scope {mismatch} does not match active lease scope {}",
-                self.lease.scope_id
+                active.scope_id
             )))),
             None => Err(SyncError::Scope(ScopeError::ScopeMismatch(format!(
                 "No profile metadata found in database for scope {}",
-                self.lease.scope_id
+                active.scope_id
             )))),
         }
     }

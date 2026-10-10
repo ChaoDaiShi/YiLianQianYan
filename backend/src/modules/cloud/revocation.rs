@@ -82,7 +82,7 @@ impl RevocationService {
             });
 
         // Clear local database session
-        let _ = self.db.clear_authenticated_cloud_session();
+        let _ = self.db.mark_cloud_profile_offline();
 
         let (Some(session_id), Some(origin)) = (session_id_opt, service_origin_opt) else {
             // Nothing to revoke remotely

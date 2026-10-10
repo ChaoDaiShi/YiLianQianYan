@@ -32,6 +32,22 @@ pub struct AuthPayload {
 pub struct SyncChoicePayload {
     choice: String,
 }
+
+pub async fn sync_policy_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
+    let policy = server.db.cloud_sync_policy().map_err(internal_error)?;
+    Ok(Json(serde_json::json!({ "policy": policy })))
+}
+
+pub async fn update_sync_policy_handler(
+    State(server): State<Arc<AppServer>>,
+    Json(policy): Json<crate::db::cloud::capture::SyncPolicy>,
+) -> ApiResult {
+    server
+        .db
+        .save_cloud_sync_policy(&policy)
+        .map_err(internal_error)?;
+    Ok(Json(serde_json::json!({ "policy": policy })))
+}
 #[derive(serde::Deserialize)]
 pub struct ResolveConflictPayload {
     pub resolution: Option<String>,
@@ -153,7 +169,7 @@ pub async fn refresh_handler(State(server): State<Arc<AppServer>>) -> ApiResult 
 }
 
 pub async fn logout_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
-    let lease = server.scoped_db.lease().clone();
+    let lease = server.scoped_db.lease();
     let conn_config = server
         .db
         .cloud_connection_config()
@@ -179,17 +195,23 @@ pub async fn logout_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
         )
         .await;
 
-    let updated_identity = server
-        .db
-        .get_or_create_cloud_identity()
-        .map_err(internal_error)?;
-    let sync = server.db.cloud_sync_status().map_err(internal_error)?;
+    let data_dir = server.app_data_dir.clone();
+    let activation =
+        crate::modules::cloud::profile::ProfileManager::prepare_guest_activation(&data_dir)
+            .map_err(profile_error)?;
+    crate::modules::cloud::profile::ProfileManager::activate_prepared_profile(
+        &data_dir,
+        &server,
+        &activation,
+        std::time::Duration::from_secs(5),
+    )
+    .await
+    .map_err(profile_error)?;
 
     Ok(Json(serde_json::json!({
         "report": report,
-        "identity": updated_identity,
-        "sync": sync,
-        "sync_existing_choice": server.db.cloud_sync_existing_choice().map_err(internal_error)?,
+        "activation": activation,
+        "status": "awaiting_restart"
     })))
 }
 
@@ -198,14 +220,6 @@ pub struct ProfileSwitchPayload {
     pub service_origin: String,
     pub account_id: String,
     pub choice: Option<crate::modules::cloud::profile::ActivationChoice>,
-}
-
-fn resolve_data_dir() -> std::path::PathBuf {
-    std::env::var("YILIAN_DATA_DIR")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .or_else(|| dirs::data_dir().map(|d| d.join("yilianqianyan-v1")))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
 pub(crate) fn cloud_base_url(
@@ -226,7 +240,7 @@ pub(crate) fn cloud_base_url(
 }
 
 pub async fn profile_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
-    let data_dir = resolve_data_dir();
+    let data_dir = server.app_data_dir.clone();
 
     let registry = crate::modules::cloud::profile::ProfileManager::load_or_initialize(&data_dir)
         .map_err(|e| {
@@ -249,7 +263,7 @@ pub async fn profile_switch_handler(
     State(server): State<Arc<AppServer>>,
     Json(payload): Json<ProfileSwitchPayload>,
 ) -> ApiResult {
-    let data_dir = resolve_data_dir();
+    let data_dir = server.app_data_dir.clone();
 
     let scope_key = crate::modules::cloud::contracts::ScopeKey {
         service_origin: payload.service_origin,
@@ -327,6 +341,10 @@ pub async fn sync_status_handler(State(server): State<Arc<AppServer>>) -> ApiRes
 }
 
 pub async fn sync_now_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
+    server
+        .scoped_db
+        .validate_stored_scope()
+        .map_err(|error| sync_error(CloudSyncError::Sync(error)))?;
     if server
         .db
         .cloud_sync_existing_choice()
@@ -350,11 +368,15 @@ pub async fn sync_now_handler(State(server): State<Arc<AppServer>>) -> ApiResult
         .db
         .capture_sync_candidates()
         .map_err(internal_error)?;
-    let report = match service.sync_now().await {
+    let lease = server.scoped_db.lease();
+    let report = match service.sync_now_scoped(&server.scoped_db, &lease).await {
         Ok(report) => report,
         Err(CloudSyncError::AuthenticationRequired) => {
             refresh_session(&server).await?;
-            service.sync_now().await.map_err(sync_error)?
+            service
+                .sync_now_scoped(&server.scoped_db, &lease)
+                .await
+                .map_err(sync_error)?
         }
         Err(error) => return Err(sync_error(error)),
     };
@@ -384,16 +406,13 @@ async fn authenticate(server: Arc<AppServer>, payload: AuthPayload, register: bo
             "请输入邮箱和密码",
         ));
     }
-    let identity = server
-        .db
-        .get_or_create_cloud_identity()
-        .map_err(internal_error)?;
+    let device_id = uuid::Uuid::new_v4().to_string();
     let client = CloudApiClient::new(&payload.cloud_base_url).map_err(cloud_client_error)?;
     let request = CloudAuthRequest {
         email: payload.email.trim().to_string(),
         password: payload.password,
         display_name: payload.display_name,
-        device_id: identity.device_id,
+        device_id: device_id.clone(),
         device_label: "Windows device".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
     };
@@ -405,18 +424,54 @@ async fn authenticate(server: Arc<AppServer>, payload: AuthPayload, register: bo
         client.login(request).await
     }
     .map_err(cloud_client_error)?;
-    CloudSessionService::new(
-        server.db.clone_connection(),
-        Arc::clone(&server.secret_store),
+    let data_dir = server.app_data_dir.clone();
+    let scope_key = crate::modules::cloud::contracts::ScopeKey {
+        service_origin: payload.cloud_base_url.trim_end_matches('/').to_string(),
+        account_id: session.account_id.clone(),
+    };
+    let plan = crate::modules::cloud::profile::ProfileManager::prepare_profile(
+        &data_dir,
+        &scope_key,
+        crate::modules::cloud::profile::ActivationChoice::OpenAccountOnly,
     )
-    .persist_authenticated_session(session)
-    .await
-    .map_err(session_error)?;
-    server
-        .db
-        .save_cloud_configuration(payload.cloud_base_url.trim_end_matches('/'), "undecided")
+    .map_err(profile_error)?;
+    let target_db = crate::db::Database::new(
+        &crate::modules::cloud::profile::ProfileManager::profile_db_path(&data_dir, &plan),
+    )
+    .map_err(internal_error)?;
+    target_db
+        .set_cloud_device_id(&device_id)
         .map_err(internal_error)?;
-    identity_handler(State(server)).await
+    CloudSessionService::new(target_db.clone(), Arc::clone(&server.secret_store))
+        .persist_authenticated_session_scoped(session, &plan.lease.scope_id)
+        .await
+        .map_err(session_error)?;
+    target_db
+        .save_cloud_configuration(scope_key.service_origin.as_str(), "undecided")
+        .map_err(internal_error)?;
+    crate::modules::cloud::profile::ProfileManager::activate_prepared_profile(
+        &data_dir,
+        &server,
+        &plan,
+        std::time::Duration::from_secs(5),
+    )
+    .await
+    .map_err(profile_error)?;
+    Ok(Json(serde_json::json!({
+        "activation": plan,
+        "status": "awaiting_restart"
+    })))
+}
+
+fn profile_error(
+    error: crate::modules::cloud::contracts::ScopeError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    tracing::warn!(%error, "cloud profile activation failed");
+    api_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "profile_activation_failed",
+        "账号数据空间切换失败，原有数据空间保持不变",
+    )
 }
 
 fn internal_error(_: rusqlite::Error) -> (StatusCode, Json<serde_json::Value>) {

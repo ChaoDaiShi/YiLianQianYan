@@ -244,6 +244,16 @@ pub fn compute_canonical_digest(
     format!("{:x}", hasher.finalize())
 }
 
+pub fn compute_payload_fingerprint(payload: Option<&Value>) -> String {
+    use sha2::{Digest, Sha256};
+    let normalized = match payload {
+        Some(Value::Null) | None => Value::Null,
+        Some(value) => canonicalize_json_value(value),
+    };
+    let encoded = serde_json::to_vec(&normalized).unwrap_or_else(|_| b"null".to_vec());
+    format!("{:x}", Sha256::digest(encoded))
+}
+
 pub fn canonicalize_json_value(val: &Value) -> Value {
     match val {
         Value::Object(map) => {

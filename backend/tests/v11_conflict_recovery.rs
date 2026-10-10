@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use yilian_backend::db::Database;
 use yilian_backend::integrations::secret::{
-    cloud_access_token_ref, InMemorySecretStore, SecretStore,
+    scoped_cloud_access_token_ref, InMemorySecretStore, SecretStore,
 };
 use yilian_backend::modules::cloud::conflict_service::ConflictService;
 use yilian_backend::modules::cloud::contracts::{
@@ -638,7 +638,7 @@ async fn test_ensure_remote_snapshot_retrieval_and_404_fail_closed() {
                     "entity_id": "conv-found",
                     "revision": 8,
                     "operation": "upsert",
-                    "payload": {"id": "conv-found", "title": "Server Snapshot"},
+                    "payload": {"schema_version":1,"title":"Server Snapshot","created_at":1,"updated_at":1},
                     "sequence": "99",
                     "device_id": "dev-svr",
                     "changed_at": 123456789
@@ -659,9 +659,13 @@ async fn test_ensure_remote_snapshot_retrieval_and_404_fail_closed() {
     let base_url = format!("http://127.0.0.1:{}", addr.port());
     let secret_store: Arc<dyn SecretStore> = Arc::new(InMemorySecretStore::new());
     secret_store
-        .put(&cloud_access_token_ref(), SecretString::from("token-xyz"))
+        .put(
+            &scoped_cloud_access_token_ref(&lease.scope_id),
+            SecretString::from("token-xyz"),
+        )
         .await
         .unwrap();
+    scoped_db.bind_sync_epoch(&lease, "test-epoch").unwrap();
 
     let service = ConflictService::new(scoped_db.clone(), secret_store, &base_url).unwrap();
 

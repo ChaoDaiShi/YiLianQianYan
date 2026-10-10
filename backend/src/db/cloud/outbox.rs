@@ -484,21 +484,6 @@ impl Database {
         tx.commit()?;
         Ok(report)
     }
-
-    pub fn read_checkpoint(
-        &self,
-        _lease: &ScopeLease,
-    ) -> Result<(String, Option<String>), SyncError> {
-        let conn = self.conn();
-        let row: Option<(String, Option<String>)> = conn
-            .query_row(
-                "SELECT download_cursor, sync_epoch FROM cloud_sync_cursor WHERE singleton=1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        Ok(row.unwrap_or_else(|| ("0".into(), None)))
-    }
 }
 
 impl ScopedDb {
@@ -524,14 +509,6 @@ impl ScopedDb {
     pub fn ack_push(&self, lease: &ScopeLease, ack: &PushAck) -> Result<AckReport, SyncError> {
         self.validate_lease(lease)?;
         self.db().ack_push(lease, ack)
-    }
-
-    pub fn read_checkpoint(
-        &self,
-        lease: &ScopeLease,
-    ) -> Result<(String, Option<String>), SyncError> {
-        self.validate_lease(lease)?;
-        self.db().read_checkpoint(lease)
     }
 }
 

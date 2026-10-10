@@ -12,8 +12,8 @@ use secrecy::ExposeSecret;
 use tower::ServiceExt;
 use yilian_backend::db::MessageRow;
 use yilian_backend::integrations::secret::{
-    anysearch_key_ref, cloud_access_token_ref, cloud_refresh_token_ref, InMemorySecretStore,
-    SecretStore,
+    anysearch_key_ref, cloud_access_token_ref, cloud_refresh_token_ref,
+    scoped_cloud_access_token_ref, InMemorySecretStore, SecretStore,
 };
 use yilian_backend::modules::cloud::client::CloudApiClient;
 use yilian_backend::modules::cloud::domain::{
@@ -535,13 +535,18 @@ async fn local_login_proxies_cloud_and_returns_only_redacted_identity() {
     assert!(!text.contains("never-return-access"));
     assert!(!text.contains("never-return-refresh"));
     let body: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(body["identity"]["status"], "authenticated");
-    assert_eq!(body["identity"]["email"], "person@example.com");
+    assert_eq!(body["status"], "awaiting_restart");
+    let scope_id = body["activation"]["lease"]["scope_id"].as_str().unwrap();
+    assert!(secret_store
+        .get(&scoped_cloud_access_token_ref(scope_id))
+        .await
+        .unwrap()
+        .is_some());
     assert!(secret_store
         .get(&cloud_access_token_ref())
         .await
         .unwrap()
-        .is_some());
+        .is_none());
     remote_server.abort();
     let _ = std::fs::remove_dir_all(root);
 }
@@ -632,6 +637,9 @@ async fn search_api_keeps_key_write_only_and_returns_normalized_results() {
 #[tokio::test]
 async fn sync_service_pushes_outbox_pulls_cursor_and_clears_only_applied_changes() {
     let remote = Router::new()
+        .route("/api/v1/sync/capabilities", axum::routing::get(|| async {
+            Json(serde_json::json!({"sync_protocol":2,"contract_revision":"v1.1-r2","sync_epoch":"test-epoch","entity_schemas":{},"max_push_changes":100,"max_pull_changes":100}))
+        }))
         .route("/api/v1/sync/push", post(|Json(body): Json<serde_json::Value>| async move {
             let change_id = body["changes"][0]["change_id"].as_str().unwrap();
             Json(serde_json::json!({
@@ -661,7 +669,7 @@ async fn sync_service_pushes_outbox_pulls_cursor_and_clears_only_applied_changes
         base_revision: 0,
         revision: 1,
         operation: SyncOperation::Upsert,
-        payload: Some(serde_json::json!({"category":"note"})),
+        payload: Some(serde_json::json!({"schema_version":1,"content":"sync note","category":"note","source":"user","source_conversation_id":null,"created_at":1,"updated_at":1})),
     })
     .unwrap();
     let service = CloudSyncService::new(

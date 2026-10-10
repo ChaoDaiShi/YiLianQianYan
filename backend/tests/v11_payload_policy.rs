@@ -139,7 +139,7 @@ fn test_unknown_fields_in_nested_structures_rejected() {
     // 4. Allowed settings section
     let settings_ui = json!({
         "schema_version": 1,
-        "section": "ui",
+        "section": "system_preferences",
         "preferences": { "theme": "dark" }
     });
     assert!(

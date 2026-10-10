@@ -166,8 +166,13 @@ impl CloudLifecycleService {
     }
 
     async fn access_token(&self) -> Result<secrecy::SecretString, CloudLifecycleError> {
+        let access_ref = self
+            .db
+            .cloud_secret_refs()?
+            .map(|refs| refs.0)
+            .unwrap_or_else(cloud_access_token_ref);
         self.secret_store
-            .get(&cloud_access_token_ref())
+            .get(&access_ref)
             .await
             .map_err(|_| CloudLifecycleError::AuthenticationRequired)?
             .ok_or(CloudLifecycleError::AuthenticationRequired)
