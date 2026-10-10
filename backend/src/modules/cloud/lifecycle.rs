@@ -91,7 +91,10 @@ impl CloudLifecycleService {
         Ok(job)
     }
 
-    pub async fn download_export(&self, id: &str) -> Result<(String, Vec<u8>), CloudLifecycleError> {
+    pub async fn download_export(
+        &self,
+        id: &str,
+    ) -> Result<(String, Vec<u8>), CloudLifecycleError> {
         let token = self.access_token().await?;
         let response = self
             .http

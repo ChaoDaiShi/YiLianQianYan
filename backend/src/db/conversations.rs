@@ -202,6 +202,7 @@ impl Database {
     }
 
     pub fn delete_conversation(&self, id: &str) -> Result<(), String> {
+        let identity = self.get_or_create_cloud_identity().ok();
         let mut conn = self.conn();
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -215,6 +216,14 @@ impl Database {
         transaction
             .execute("DELETE FROM conversations WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())?;
+        if let Some(identity) = identity {
+            let _ = crate::db::cloud::capture::record_local_deletion_tx(
+                &transaction,
+                "conversation",
+                id,
+                &identity.device_id,
+            );
+        }
         transaction.commit().map_err(|e| e.to_string())?;
         Ok(())
     }

@@ -1,7 +1,6 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::Response,
     Json,
 };
 use std::sync::Arc;
@@ -10,9 +9,13 @@ use crate::app::state::AppServer;
 use crate::modules::cloud::{
     client::{CloudApiClient, CloudClientError},
     domain::CloudAuthRequest,
-    lifecycle::{CloudLifecycleError, CloudLifecycleService},
     session::{CloudSessionError, CloudSessionService},
     sync::{CloudSyncError, CloudSyncService},
+};
+
+pub use crate::api::cloud_lifecycle::{
+    download_export_handler, lifecycle_job_handler, privacy_summary_handler,
+    request_deletion_handler, request_export_handler,
 };
 
 type ApiResult = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>;
@@ -205,7 +208,9 @@ fn resolve_data_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-fn cloud_base_url(server: &AppServer) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+pub(crate) fn cloud_base_url(
+    server: &AppServer,
+) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
     let (url, _) = server
         .db
         .cloud_connection_config()
@@ -358,87 +363,6 @@ pub async fn sync_now_handler(State(server): State<Arc<AppServer>>) -> ApiResult
     ))
 }
 
-pub async fn privacy_summary_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
-    let service = lifecycle_service(&server)?;
-    let summary = service.data_summary().await.map_err(lifecycle_error)?;
-    Ok(Json(
-        serde_json::json!({"summary":summary,"identity":server.db.get_or_create_cloud_identity().map_err(internal_error)?}),
-    ))
-}
-
-pub async fn request_export_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
-    let job = lifecycle_service(&server)?
-        .request_export()
-        .await
-        .map_err(lifecycle_error)?;
-    Ok(Json(serde_json::json!({"job":job})))
-}
-
-pub async fn request_deletion_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
-    let job = lifecycle_service(&server)?
-        .request_account_deletion()
-        .await
-        .map_err(lifecycle_error)?;
-    server
-        .db
-        .mark_cloud_identity_closing()
-        .map_err(internal_error)?;
-    Ok(Json(
-        serde_json::json!({"job":job,"identity":server.db.cloud_identity().map_err(internal_error)?}),
-    ))
-}
-
-pub async fn lifecycle_job_handler(
-    State(server): State<Arc<AppServer>>,
-    Path((kind, id)): Path<(String, String)>,
-) -> ApiResult {
-    let job = lifecycle_service(&server)?
-        .job(&kind, &id)
-        .await
-        .map_err(lifecycle_error)?;
-    Ok(Json(serde_json::json!({"job":job})))
-}
-
-pub async fn download_export_handler(
-    State(server): State<Arc<AppServer>>,
-    Path(id): Path<String>,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let service = lifecycle_service(&server)?;
-    let (filename, bytes) = service
-        .download_export(&id)
-        .await
-        .map_err(lifecycle_error)?;
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(axum::http::header::CONTENT_TYPE, "application/json")
-        .header(
-            axum::http::header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{filename}\""),
-        )
-        .header(axum::http::header::CACHE_CONTROL, "no-store")
-        .body(axum::body::Body::from(bytes))
-        .map_err(|_| {
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "download_failed",
-                "导出文件读取失败",
-            )
-        })
-}
-
-fn lifecycle_service(
-    server: &Arc<AppServer>,
-) -> Result<CloudLifecycleService, (StatusCode, Json<serde_json::Value>)> {
-    let base_url = cloud_base_url(server)?;
-    CloudLifecycleService::new(
-        server.db.clone_connection(),
-        Arc::clone(&server.secret_store),
-        base_url,
-    )
-    .map_err(lifecycle_error)
-}
-
 async fn refresh_session(
     server: &Arc<AppServer>,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
@@ -504,28 +428,29 @@ fn internal_error(_: rusqlite::Error) -> (StatusCode, Json<serde_json::Value>) {
 }
 
 fn cloud_client_error(error: CloudClientError) -> (StatusCode, Json<serde_json::Value>) {
-    match error {
-        CloudClientError::InvalidBaseUrl => api_error(
+    let (status, code, msg) = match error {
+        CloudClientError::InvalidBaseUrl => (
             StatusCode::BAD_REQUEST,
             "invalid_cloud_url",
             "云服务地址无效",
         ),
-        CloudClientError::Authentication => api_error(
+        CloudClientError::Authentication => (
             StatusCode::UNAUTHORIZED,
             "cloud_authentication_failed",
             "邮箱或密码不正确",
         ),
-        CloudClientError::Unavailable => api_error(
+        CloudClientError::Unavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
             "cloud_unavailable",
             "云服务暂时不可用，本地功能仍可继续使用",
         ),
-        CloudClientError::Rejected | CloudClientError::InvalidResponse => api_error(
+        CloudClientError::Rejected | CloudClientError::InvalidResponse => (
             StatusCode::BAD_GATEWAY,
             "cloud_request_failed",
             "云服务未能完成请求",
         ),
-    }
+    };
+    api_error(status, code, msg)
 }
 
 fn session_error(_: CloudSessionError) -> (StatusCode, Json<serde_json::Value>) {
@@ -538,77 +463,43 @@ fn session_error(_: CloudSessionError) -> (StatusCode, Json<serde_json::Value>) 
 
 fn sync_error(error: CloudSyncError) -> (StatusCode, Json<serde_json::Value>) {
     use crate::modules::cloud::contracts::SyncError;
-    match error {
+    let (status, code, msg) = match error {
         CloudSyncError::AuthenticationRequired
-        | CloudSyncError::Sync(SyncError::AuthenticationRequired) => api_error(
+        | CloudSyncError::Sync(SyncError::AuthenticationRequired) => (
             StatusCode::UNAUTHORIZED,
             "cloud_authentication_required",
             "云会话已失效，请重新登录；本地数据仍会保留",
         ),
-        CloudSyncError::InvalidBaseUrl => api_error(
+        CloudSyncError::InvalidBaseUrl => (
             StatusCode::BAD_REQUEST,
             "invalid_cloud_url",
             "云服务地址无效",
         ),
-        CloudSyncError::Transport | CloudSyncError::InvalidResponse => api_error(
+        CloudSyncError::Transport | CloudSyncError::InvalidResponse => (
             StatusCode::SERVICE_UNAVAILABLE,
             "cloud_sync_unavailable",
             "云同步暂时不可用，本地变更已保留",
         ),
-        CloudSyncError::Database(_) => api_error(
+        CloudSyncError::Database(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "cloud_sync_state_unavailable",
             "本地同步状态暂时不可用",
         ),
         CloudSyncError::Scope(_) | CloudSyncError::Sync(SyncError::ScopeChanged) => {
-            api_error(StatusCode::CONFLICT, "scope_changed", "账号或作用域已改变")
+            (StatusCode::CONFLICT, "scope_changed", "账号或作用域已改变")
         }
-        CloudSyncError::Sync(SyncError::ProtocolUpgradeRequired) => api_error(
+        CloudSyncError::Sync(SyncError::ProtocolUpgradeRequired) => (
             StatusCode::UPGRADE_REQUIRED,
             "sync_upgrade_required",
             "云同步协议版本不匹配，需要升级",
         ),
-        CloudSyncError::Sync(_) => api_error(
+        CloudSyncError::Sync(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "cloud_sync_failed",
             "云同步执行失败",
         ),
-    }
-}
-
-fn lifecycle_error(error: CloudLifecycleError) -> (StatusCode, Json<serde_json::Value>) {
-    match error {
-        CloudLifecycleError::AuthenticationRequired => api_error(
-            StatusCode::UNAUTHORIZED,
-            "cloud_authentication_required",
-            "云会话已失效，请重新登录",
-        ),
-        CloudLifecycleError::InvalidBaseUrl => api_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_cloud_url",
-            "云服务地址无效",
-        ),
-        CloudLifecycleError::Unavailable | CloudLifecycleError::InvalidResponse => api_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "cloud_lifecycle_unavailable",
-            "云端数据生命周期服务暂时不可用",
-        ),
-        CloudLifecycleError::NotFound => api_error(
-            StatusCode::NOT_FOUND,
-            "export_not_found",
-            "导出任务或文件不存在",
-        ),
-        CloudLifecycleError::Expired => api_error(
-            StatusCode::GONE,
-            "export_expired",
-            "导出文件已过期，请重新申请导出",
-        ),
-        CloudLifecycleError::Database(_) => api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lifecycle_state_unavailable",
-            "本地生命周期状态暂时不可用",
-        ),
-    }
+    };
+    api_error(status, code, msg)
 }
 
 fn api_error(

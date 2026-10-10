@@ -382,9 +382,20 @@ impl Database {
     }
 
     pub fn delete_memory(&self, id: &str) -> Result<(), String> {
-        let conn = self.conn();
-        conn.execute("DELETE FROM memories WHERE id = ?1", params![id])
+        let identity = self.get_or_create_cloud_identity().ok();
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM memories WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())?;
+        if let Some(identity) = identity {
+            let _ = crate::db::cloud::capture::record_local_deletion_tx(
+                &tx,
+                "memory",
+                id,
+                &identity.device_id,
+            );
+        }
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 

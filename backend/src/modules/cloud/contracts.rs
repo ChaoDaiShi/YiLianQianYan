@@ -418,48 +418,12 @@ pub use crate::db::cloud::conflicts::{
 };
 pub use crate::db::cloud::scoped_db::ScopedDb;
 
+pub use super::payload::*;
+
 pub fn validate_sync_payload(
     entity_type: &str,
     operation: super::domain::SyncOperation,
     payload: Option<&Value>,
 ) -> Result<(), SyncError> {
-    match operation {
-        super::domain::SyncOperation::Delete => {
-            if payload.is_some() {
-                return Err(SyncError::PayloadInvalid(
-                    "delete operation cannot contain payload".into(),
-                ));
-            }
-        }
-        super::domain::SyncOperation::Upsert => {
-            let Some(payload) = payload else {
-                return Err(SyncError::PayloadInvalid(
-                    "upsert operation must contain payload".into(),
-                ));
-            };
-            if !payload.is_object() {
-                return Err(SyncError::PayloadInvalid(
-                    "upsert payload must be an object".into(),
-                ));
-            }
-        }
-    }
-    let known_entities = [
-        "conversation",
-        "message",
-        "memory",
-        "agent_profile",
-        "workflow_metadata",
-        "artifact_metadata",
-        "task_graph",
-        "canvas_view",
-        "settings",
-        "capability_usage",
-    ];
-    if !known_entities.contains(&entity_type) {
-        return Err(SyncError::UnsupportedSchema(format!(
-            "unknown entity type: {entity_type}"
-        )));
-    }
-    Ok(())
+    validate_sync_payload_strictly(entity_type, operation, payload).map(|_| ())
 }

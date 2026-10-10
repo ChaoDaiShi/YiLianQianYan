@@ -92,14 +92,7 @@ pub(super) fn apply_remote_entity(
                     "missing required title in conversation".into(),
                 )
             })?;
-            let status = json_text(&payload, "run_status")
-                .filter(|value| {
-                    matches!(
-                        *value,
-                        "idle" | "running" | "completed" | "failed" | "interrupted"
-                    )
-                })
-                .unwrap_or("completed");
+            let status = "idle";
             let created = json_number(&payload, "created_at").unwrap_or(now);
             let updated = json_number(&payload, "updated_at").unwrap_or(now);
             transaction.execute(
