@@ -2,10 +2,11 @@ import {
   switchCloudProfile,
   logoutCloud,
   type ActivationPlan,
-  type LogoutReport,
+  type CloudLogoutResponse,
   type ProfileSwitchPayload,
   type RemoteRevocationStatus,
 } from "../../api/cloud";
+import type { ApiResult } from "../../core/api/http";
 
 export type SwitchState =
   | "idle"
@@ -108,20 +109,15 @@ export class ProfileSwitchController {
     }
   }
 
-  public async logoutWithReport(): Promise<LogoutReport> {
+  public async logoutWithReport(): Promise<ApiResult<CloudLogoutResponse>> {
     this.abortInFlight();
     const result = await logoutCloud();
     if (result.ok && result.data.report) {
       this.pendingRevocation = result.data.report.remote_revocation;
-      return result.data.report;
+    } else {
+      this.pendingRevocation = null;
     }
-    // Default fail-closed fallback
-    const fallback: LogoutReport = {
-      local_signed_out: true,
-      remote_revocation: "unknown",
-    };
-    this.pendingRevocation = "unknown";
-    return fallback;
+    return result;
   }
 
   public getPendingRevocation(): RemoteRevocationStatus | null {
@@ -154,6 +150,12 @@ export function revocationPresentation(status: RemoteRevocationStatus | null | u
         label: "远端状态未知",
         tone: "warning",
         detail: "本地已退出登录；建议从其他已登录设备或控制台确认撤销。",
+      };
+    case "not_required":
+      return {
+        label: "无需远端撤销",
+        tone: "default",
+        detail: "当前为游客模式或无远程会话，本地已安全退出。",
       };
     default:
       return {

@@ -47,6 +47,7 @@ export default function AccountCenterPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"login" | "register">("login");
+  const [showSwitchLogin, setShowSwitchLogin] = useState(false);
   const [form, setForm] = useState({ cloud_base_url: "http://127.0.0.1:8787/api/v1", email: "", password: "", display_name: "" });
   const [dataSummary, setDataSummary] = useState<CloudDataSummary | null>(null);
   const [lifecycleJob, setLifecycleJob] = useState<LifecycleJob | null>(null);
@@ -205,8 +206,13 @@ export default function AccountCenterPage() {
           {!loading && !state ? <EmptyState title="账号状态暂时不可用" description="本地核心功能不受影响，请稍后重试。" action={<Button variant="secondary" onClick={() => void refresh()}>重新载入</Button>} /> : null}
           {state && section === "account" ? <section className="cloud-section-stack" aria-labelledby="account-section-title">
             <div className="cloud-section-heading"><div><span>IDENTITY</span><h2 id="account-section-title">账号与设备</h2><p>{identityMeta?.description}</p></div><Button size="sm" variant="secondary" onClick={() => void refresh()}><RefreshCw />刷新</Button></div>
-            {identity?.status === "guest" ? <div className="cloud-card cloud-auth-card">
-              <div className="cloud-mode-switch" role="tablist" aria-label="账号操作"><button type="button" role="tab" aria-selected={mode === "login"} onClick={() => setMode("login")}>登录账号</button><button type="button" role="tab" aria-selected={mode === "register"} onClick={() => setMode("register")}>创建账号</button></div>
+            {identity?.status === "guest" || showSwitchLogin ? <div className="cloud-card cloud-auth-card">
+              <div className="flex items-center justify-between pb-2">
+                <div className="cloud-mode-switch" role="tablist" aria-label="账号操作"><button type="button" role="tab" aria-selected={mode === "login"} onClick={() => setMode("login")}>登录账号</button><button type="button" role="tab" aria-selected={mode === "register"} onClick={() => setMode("register")}>创建账号</button></div>
+                {showSwitchLogin && (
+                  <Button size="sm" variant="secondary" onClick={() => setShowSwitchLogin(false)}>取消切换</Button>
+                )}
+              </div>
               <div className="cloud-form-grid">
                 {mode === "register" ? <Input label="显示名称" value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} autoComplete="name" /> : null}
                 <Input label="邮箱" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" />
@@ -214,11 +220,12 @@ export default function AccountCenterPage() {
               </div>
               <details className="cloud-disclosure"><summary>云服务地址</summary><Input label="Cloud API" value={form.cloud_base_url} onChange={(event) => setForm({ ...form, cloud_base_url: event.target.value })} hint="私有部署默认使用你的 Cloud API 地址。" /></details>
               <div className="cloud-card-actions"><p>登录不会自动上传现有数据，也不会上传本机 Provider 密钥。</p><Button disabled={busy || !form.email.trim() || !form.password} onClick={() => void authenticate()}><LogIn />{busy ? "正在连接…" : mode === "login" ? "登录并连接" : "创建并连接"}</Button></div>
-            </div> : <><div className="cloud-card">
+            </div> : null}
+            {identity?.status !== "guest" ? <><div className="cloud-card">
               <div className="cloud-account-summary"><span className="cloud-account-avatar"><UserCircle /></span><div><h3>{identity?.email || "已登录账号"}</h3><p>本机身份 {identity?.local_identity_id}</p></div><Badge tone="success">会话有效</Badge></div>
               <dl className="cloud-data-list"><div><dt>当前设备</dt><dd>{identity?.device_id}</dd></div><div><dt>云端账号</dt><dd>{identity?.account_id}</dd></div><div><dt>密钥策略</dt><dd>登录凭据保存在系统凭据库；Provider 密钥保持本机专用</dd></div></dl>
               <div className="cloud-card-actions"><p>退出登录只清除本机云会话，不删除云端账号和本地工作数据。</p><Button variant="secondary" disabled={busy} onClick={() => void logout()}><LogOut />退出登录</Button></div>
-            </div>{sessions.length?<div className="cloud-card"><h3>设备与会话</h3><div className="cloud-session-list">{sessions.map(session=><article key={session.id}><div><strong>{session.device_label}</strong><span>最近活动：{new Date(session.last_seen_at).toLocaleString()}</span></div>{session.current?<Badge tone="info">当前设备</Badge>:session.revoked_at?<Badge>已退出</Badge>:<Button size="sm" variant="secondary" disabled={busy} onClick={()=>void revokeSession(session.id)}>退出该设备</Button>}</article>)}</div></div>:null}{state.sync_existing_choice === "undecided" ? <div className="cloud-card"><div className="cloud-card-title"><div><h3>如何处理现有本地数据？</h3><p>登录不会自动上传。请明确选择，之后仍可在同步中心修改。</p></div><Cloud /></div><div className="setup-choice-row"><button type="button" disabled={busy} onClick={() => void chooseSync("sync")}><strong>同步已有数据</strong><span>把选择的数据类型加入增量同步</span></button><button type="button" disabled={busy} onClick={() => void chooseSync("local_only")}><strong>保持仅本地</strong><span>账号保持登录，但不上传工作数据</span></button></div></div> : null}<div className="cloud-card"><AccountProfilePanel lastLogoutReport={state?.report} onRestartPrompt={() => void refresh()} /></div></>}
+            </div>{sessions.length?<div className="cloud-card"><h3>设备与会话</h3><div className="cloud-session-list">{sessions.map(session=><article key={session.id}><div><strong>{session.device_label}</strong><span>最近活动：{new Date(session.last_seen_at).toLocaleString()}</span></div>{session.current?<Badge tone="info">当前设备</Badge>:session.revoked_at?<Badge>已退出</Badge>:<Button size="sm" variant="secondary" disabled={busy} onClick={()=>void revokeSession(session.id)}>退出该设备</Button>}</article>)}</div></div>:null}{state.sync_existing_choice === "undecided" ? <div className="cloud-card"><div className="cloud-card-title"><div><h3>如何处理现有本地数据？</h3><p>登录不会自动上传。请明确选择，之后仍可在同步中心修改。</p></div><Cloud /></div><div className="setup-choice-row"><button type="button" disabled={busy} onClick={() => void chooseSync("sync")}><strong>同步已有数据</strong><span>把选择的数据类型加入增量同步</span></button><button type="button" disabled={busy} onClick={() => void chooseSync("local_only")}><strong>保持仅本地</strong><span>账号保持登录，但不上传工作数据</span></button></div></div> : null}<div className="cloud-card"><AccountProfilePanel lastLogoutReport={state?.report} onRestartPrompt={() => void refresh()} onRequestLogin={() => { setMode("login"); setShowSwitchLogin(true); }} /></div></> : null}
           </section> : null}
           {state && section === "sync" ? <section className="cloud-section-stack" aria-labelledby="sync-section-title">
             <div className="cloud-section-heading"><div><span>SYNC</span><h2 id="sync-section-title">同步中心</h2><p>本地变更先进入 Outbox，联网后按 revision 与 cursor 增量交换。</p></div><Button disabled={busy || identity?.status === "guest" || state.sync_existing_choice !== "sync"} onClick={() => void syncNow()}><RefreshCw />{busy ? "同步中…" : "立即同步"}</Button></div>

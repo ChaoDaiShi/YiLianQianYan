@@ -288,11 +288,10 @@ pub(crate) async fn create_server_with_control_session(
     // Migrate legacy plaintext secrets BEFORE registering MCP servers, so the
     // runtime manager sees the post-migration `env_secret_refs`.
     server.migrate_secrets().await;
-    match crate::modules::cloud::revocation::RevocationService::new(
-        server.db.clone_connection(),
+    match crate::modules::cloud::revocation::retry_registered_profile_revocations(
+        &data_dir,
         Arc::clone(&server.secret_store),
     )
-    .retry_pending_revocations(chrono::Utc::now().timestamp_millis())
     .await
     {
         Ok(revoked) if revoked > 0 => {

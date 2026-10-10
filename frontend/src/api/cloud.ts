@@ -34,11 +34,14 @@ export interface CloudSyncPolicy {
   sync_capability_usage: boolean;
 }
 
-export type RemoteRevocationStatus = "confirmed" | "pending" | "unknown";
+export type LocalCleanupStatus = "cleared" | "failed";
+export type RemoteRevocationStatus = "confirmed" | "pending" | "unknown" | "not_required";
 
 export interface LogoutReport {
   local_signed_out: boolean;
+  local_cleanup: LocalCleanupStatus;
   remote_revocation: RemoteRevocationStatus;
+  error_codes: string[];
 }
 
 export interface CloudIdentityResponse {
@@ -168,6 +171,8 @@ export interface ProfileRecord {
   service_origin: string | null;
   account_id: string | null;
   created_at: number;
+  last_activated_at?: number;
+  reauthentication_required?: boolean;
 }
 
 export interface ProfileView {

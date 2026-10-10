@@ -56,6 +56,8 @@ pub struct ProfileEntry {
     pub directory_name: String,
     pub created_at: i64,
     pub last_activated_at: i64,
+    #[serde(default)]
+    pub reauthentication_required: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,6 +191,7 @@ impl ProfileManager {
             directory_name: guest_profile_id.clone(),
             created_at: now,
             last_activated_at: now,
+            reauthentication_required: false,
         };
 
         let mut registry = ProfileRegistry {
@@ -217,6 +220,20 @@ impl ProfileManager {
             .map_err(|e| ScopeError::Io(format!("write tmp registry: {e}")))?;
         std::fs::rename(&tmp_path, &registry_path)
             .map_err(|e| ScopeError::Io(format!("atomic rename registry: {e}")))?;
+        Ok(())
+    }
+
+    /// Set reauthentication_required flag for a given profile.
+    pub fn set_reauthentication_required(
+        app_data_dir: &Path,
+        profile_id: &str,
+        required: bool,
+    ) -> Result<(), ScopeError> {
+        let mut registry = Self::load_or_initialize(app_data_dir)?;
+        if let Some(entry) = registry.profiles.get_mut(profile_id) {
+            entry.reauthentication_required = required;
+            Self::save_registry(app_data_dir, &registry)?;
+        }
         Ok(())
     }
 
@@ -283,14 +300,20 @@ impl ProfileManager {
         }
 
         let now = chrono::Utc::now().timestamp_millis();
+        let existing = registry.profiles.get(&profile_id);
+        let reauth_req = existing
+            .map(|e| e.reauthentication_required)
+            .unwrap_or(false);
+        let created_at = existing.map(|e| e.created_at).unwrap_or(now);
         let entry = ProfileEntry {
             profile_id: profile_id.clone(),
             kind: ProfileKind::Account,
             scope_key: Some(canonical_key),
             scope_id,
             directory_name: profile_id.clone(),
-            created_at: now,
+            created_at,
             last_activated_at: now,
+            reauthentication_required: reauth_req,
         };
         registry.profiles.insert(profile_id.clone(), entry);
         Self::save_registry(app_data_dir, &registry)?;
@@ -545,6 +568,7 @@ impl ProfileManager {
                         directory_name: profile_id.clone(),
                         created_at: now,
                         last_activated_at: now,
+                        reauthentication_required: false,
                     },
                 );
                 Self::save_registry(
@@ -559,7 +583,96 @@ impl ProfileManager {
                 )?;
             }
         }
-        let registry = Self::load_or_initialize(app_data_dir)?;
+        let mut registry = Self::load_or_initialize(app_data_dir)?;
+        let mut registry_changed = false;
+
+        // Backward compatibility: detect historically logged-out accounts
+        for entry in registry.profiles.values_mut() {
+            if entry.kind == ProfileKind::Account && !entry.reauthentication_required {
+                let db_path = app_data_dir
+                    .join(PROFILES_DIRNAME)
+                    .join(&entry.directory_name)
+                    .join("app.db");
+                if db_path.exists() {
+                    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                        let is_logged_out: bool = conn
+                            .query_row(
+                                "SELECT 1 FROM cloud_identity WHERE singleton=1 AND status='offline_authenticated' AND current_session_id IS NULL",
+                                [],
+                                |_| Ok(true),
+                            )
+                            .unwrap_or(false);
+                        if is_logged_out {
+                            entry.reauthentication_required = true;
+                            registry_changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        let active_needs_reauth = registry
+            .profiles
+            .get(&registry.active_profile_id)
+            .map(|e| e.reauthentication_required)
+            .unwrap_or(false);
+
+        if active_needs_reauth {
+            let guest_entry_opt = registry
+                .profiles
+                .values()
+                .find(|e| e.kind == ProfileKind::Guest)
+                .cloned();
+
+            let guest_entry = match guest_entry_opt {
+                Some(g) => g,
+                None => {
+                    let guest_uuid = Uuid::new_v4().to_string();
+                    let guest_profile_id = format!("guest-{guest_uuid}");
+                    let now = chrono::Utc::now().timestamp_millis();
+                    let guest_dir = app_data_dir.join(PROFILES_DIRNAME).join(&guest_profile_id);
+                    Self::ensure_profile_directories(&guest_dir)?;
+                    let db_path = guest_dir.join("app.db");
+                    let db = Database::new(&db_path)
+                        .map_err(|e| ScopeError::MigrationFailed(format!("init guest db: {e}")))?;
+                    db.initialize_cloud_schema().map_err(|e| {
+                        ScopeError::MigrationFailed(format!("init guest cloud schema: {e}"))
+                    })?;
+                    let scoped = crate::db::cloud::scoped_db::ScopedDb::new(
+                        db,
+                        ScopeLease {
+                            scope_id: guest_profile_id.clone(),
+                            generation: guest_uuid.clone(),
+                        },
+                    );
+                    scoped
+                        .init_profile_metadata("local://guest", &guest_uuid)
+                        .map_err(|e| {
+                            ScopeError::MigrationFailed(format!("init guest meta: {e}"))
+                        })?;
+                    let g = ProfileEntry {
+                        profile_id: guest_profile_id.clone(),
+                        kind: ProfileKind::Guest,
+                        scope_key: None,
+                        scope_id: guest_profile_id.clone(),
+                        directory_name: guest_profile_id.clone(),
+                        created_at: now,
+                        last_activated_at: now,
+                        reauthentication_required: false,
+                    };
+                    registry.profiles.insert(guest_profile_id, g.clone());
+                    g
+                }
+            };
+
+            registry.active_profile_id = guest_entry.profile_id.clone();
+            registry.active_generation = Uuid::new_v4().to_string();
+            registry_changed = true;
+        }
+
+        if registry_changed {
+            Self::save_registry(app_data_dir, &registry)?;
+        }
 
         let active_entry = registry
             .profiles

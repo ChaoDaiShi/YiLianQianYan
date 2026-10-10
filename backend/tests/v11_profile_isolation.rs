@@ -414,10 +414,10 @@ async fn test_s3_6_logout_and_revocation_service_transparent_reporting() {
         .await
         .unwrap();
 
-    // 1. Logout with no session_id -> immediate Confirmed
+    // 1. Logout with no session_id -> immediate NotRequired
     let report_none = revocation_service.logout(&lease, None, None, None).await;
     assert!(report_none.local_signed_out);
-    assert_eq!(report_none.remote_revocation, RemoteRevocation::Confirmed);
+    assert_eq!(report_none.remote_revocation, RemoteRevocation::NotRequired);
 
     // 2. Logout with an unreachable remote origin -> reported as Pending,
     // credentials stored in pending queue and revoke-only ref

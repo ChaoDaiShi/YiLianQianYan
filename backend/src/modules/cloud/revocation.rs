@@ -16,16 +16,26 @@ use crate::modules::cloud::contracts::ScopeLease;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum LocalCleanup {
+    Cleared,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RemoteRevocation {
     Confirmed,
     Pending,
     Unknown,
+    NotRequired,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LogoutReport {
     pub local_signed_out: bool,
+    pub local_cleanup: LocalCleanup,
     pub remote_revocation: RemoteRevocation,
+    pub error_codes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,59 +72,54 @@ impl RevocationService {
         service_origin_opt: Option<&str>,
         account_id_opt: Option<&str>,
     ) -> LogoutReport {
-        // First retrieve active token for remote revocation before local deletion
+        // Retrieve active token for remote revocation before local deletion
         let access_token_ref = scoped_cloud_access_token_ref(&lease.scope_id);
-        let active_token = self
-            .secret_store
-            .get(&access_token_ref)
-            .await
-            .ok()
-            .flatten()
-            .or_else(|| {
-                // Check legacy key as fallback
-                futures::executor::block_on(async {
-                    self.secret_store
-                        .get(&cloud_access_token_ref())
-                        .await
-                        .ok()
-                        .flatten()
-                })
-            });
+        let active_token = match self.secret_store.get(&access_token_ref).await {
+            Ok(Some(t)) => Some(t),
+            Ok(None) => match self.secret_store.get(&cloud_access_token_ref()).await {
+                Ok(t) => t,
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
 
-        // Clear local database session
-        let _ = self.db.mark_cloud_profile_offline();
+        // Clear local database session and delete secrets individually
+        let mut error_codes = Vec::<String>::new();
+        if self.db.mark_cloud_profile_offline().is_err() {
+            error_codes.push("LOCAL_IDENTITY_WRITE_FAILED".into());
+        }
+        for secret_ref in [
+            scoped_cloud_access_token_ref(&lease.scope_id),
+            scoped_cloud_refresh_token_ref(&lease.scope_id),
+            cloud_access_token_ref(),
+            cloud_refresh_token_ref(),
+        ] {
+            if self.secret_store.delete(&secret_ref).await.is_err() {
+                error_codes.push("LOCAL_SECRET_DELETE_FAILED".into());
+            }
+        }
+        error_codes.sort();
+        error_codes.dedup();
+        let local_cleanup = if error_codes.is_empty() {
+            LocalCleanup::Cleared
+        } else {
+            LocalCleanup::Failed
+        };
 
         let (Some(session_id), Some(origin)) = (session_id_opt, service_origin_opt) else {
-            // Nothing to revoke remotely
-            let _ = self.secret_store.delete(&access_token_ref).await;
-            let _ = self
-                .secret_store
-                .delete(&scoped_cloud_refresh_token_ref(&lease.scope_id))
-                .await;
-            let _ = self.secret_store.delete(&cloud_access_token_ref()).await;
-            let _ = self.secret_store.delete(&cloud_refresh_token_ref()).await;
             return LogoutReport {
-                local_signed_out: true,
-                remote_revocation: RemoteRevocation::Confirmed,
+                local_signed_out: local_cleanup == LocalCleanup::Cleared,
+                local_cleanup,
+                remote_revocation: RemoteRevocation::NotRequired,
+                error_codes,
             };
         };
 
         let remote_revocation = if let Some(token) = active_token {
             let remote_res = send_remote_revoke(origin, session_id, token.expose_secret()).await;
             match remote_res {
-                Ok(true) => {
-                    // Confirmed: remove local secrets
-                    let _ = self.secret_store.delete(&access_token_ref).await;
-                    let _ = self
-                        .secret_store
-                        .delete(&scoped_cloud_refresh_token_ref(&lease.scope_id))
-                        .await;
-                    let _ = self.secret_store.delete(&cloud_access_token_ref()).await;
-                    let _ = self.secret_store.delete(&cloud_refresh_token_ref()).await;
-                    RemoteRevocation::Confirmed
-                }
+                Ok(true) => RemoteRevocation::Confirmed,
                 Ok(false) | Err(_) => {
-                    // Store revoke-only credential in secret store
                     let revoke_ref = revoke_session_token_ref(session_id);
                     let store_ok = self
                         .secret_store
@@ -125,45 +130,44 @@ impl RevocationService {
                         .await
                         .is_ok();
 
-                    // Remove normal access and refresh tokens so they can't be used for regular requests
-                    let _ = self.secret_store.delete(&access_token_ref).await;
-                    let _ = self
-                        .secret_store
-                        .delete(&scoped_cloud_refresh_token_ref(&lease.scope_id))
-                        .await;
-                    let _ = self.secret_store.delete(&cloud_access_token_ref()).await;
-                    let _ = self.secret_store.delete(&cloud_refresh_token_ref()).await;
-
-                    if store_ok {
-                        let account_id = account_id_opt.unwrap_or("unknown");
-                        let now = chrono::Utc::now().timestamp_millis();
-                        let inserted = self.insert_pending_revocation(
-                            session_id,
-                            &lease.scope_id,
-                            origin,
-                            account_id,
-                            now + 60_000,
-                            Some("REMOTE_UNREACHABLE"),
-                            now,
-                        );
-                        if inserted.is_ok() {
-                            RemoteRevocation::Pending
-                        } else {
-                            RemoteRevocation::Unknown
-                        }
+                    let account_id = account_id_opt.unwrap_or("unknown");
+                    let now = chrono::Utc::now().timestamp_millis();
+                    let inserted = self.insert_pending_revocation(
+                        session_id,
+                        &lease.scope_id,
+                        origin,
+                        account_id,
+                        now + 60_000,
+                        Some("REMOTE_UNREACHABLE"),
+                        now,
+                    );
+                    if store_ok && inserted.is_ok() {
+                        RemoteRevocation::Pending
                     } else {
                         RemoteRevocation::Unknown
                     }
                 }
             }
         } else {
-            // No token was found in SecretStore
+            let account_id = account_id_opt.unwrap_or("unknown");
+            let now = chrono::Utc::now().timestamp_millis();
+            let _ = self.insert_pending_revocation(
+                session_id,
+                &lease.scope_id,
+                origin,
+                account_id,
+                now + 60_000,
+                Some("REVOKE_CREDENTIAL_MISSING"),
+                now,
+            );
             RemoteRevocation::Unknown
         };
 
         LogoutReport {
-            local_signed_out: true,
+            local_signed_out: local_cleanup == LocalCleanup::Cleared,
+            local_cleanup,
             remote_revocation,
+            error_codes,
         }
     }
 
@@ -210,7 +214,12 @@ impl RevocationService {
         let conn = self.db.conn();
         let mut stmt = conn.prepare(
             "SELECT session_id, scope_id, service_origin, account_id, attempts, next_retry_at, last_error_code, created_at, updated_at
-             FROM cloud_pending_revocations WHERE next_retry_at <= ?1 ORDER BY next_retry_at ASC LIMIT 50",
+             FROM cloud_pending_revocations
+             WHERE attempts < 5
+               AND next_retry_at <= ?1
+               AND COALESCE(last_error_code, '') NOT IN
+                   ('RETRY_EXHAUSTED', 'REVOKE_CREDENTIAL_MISSING')
+             ORDER BY next_retry_at ASC LIMIT 50",
         )?;
         let rows = stmt.query_map(params![now], |row| {
             Ok(PendingRevocationRecord {
@@ -241,14 +250,34 @@ impl RevocationService {
 
         for item in pending {
             let revoke_ref = revoke_session_token_ref(&item.session_id);
-            let token_opt = self.secret_store.get(&revoke_ref).await.ok().flatten();
+            let token_res = self.secret_store.get(&revoke_ref).await;
+            let token_opt = match token_res {
+                Ok(opt) => opt,
+                Err(_) => {
+                    let backoff = (item.attempts as i64 + 1) * 60_000;
+                    let conn = self.db.conn();
+                    let _ = conn.execute(
+                        "UPDATE cloud_pending_revocations SET attempts = attempts + 1, next_retry_at = ?1, last_error_code = 'SECRET_READ_FAILED', updated_at = ?2 WHERE session_id = ?3",
+                        params![now + backoff, now, item.session_id],
+                    );
+                    continue;
+                }
+            };
 
-            // Expire tasks after 5 attempts or if token missing
-            if item.attempts >= 5 || token_opt.is_none() {
+            if token_opt.is_none() {
                 let conn = self.db.conn();
                 let _ = conn.execute(
-                    "DELETE FROM cloud_pending_revocations WHERE session_id = ?1",
-                    params![item.session_id],
+                    "UPDATE cloud_pending_revocations SET last_error_code = 'REVOKE_CREDENTIAL_MISSING', updated_at = ?1 WHERE session_id = ?2",
+                    params![now, item.session_id],
+                );
+                continue;
+            }
+
+            if item.attempts >= 5 {
+                let conn = self.db.conn();
+                let _ = conn.execute(
+                    "UPDATE cloud_pending_revocations SET last_error_code = 'RETRY_EXHAUSTED', updated_at = ?1 WHERE session_id = ?2",
+                    params![now, item.session_id],
                 );
                 let _ = self.secret_store.delete(&revoke_ref).await;
                 continue;
@@ -272,12 +301,21 @@ impl RevocationService {
                     confirmed_count += 1;
                 }
                 _ => {
-                    let backoff = (item.attempts as i64 + 1) * 60_000;
+                    let next_attempts = item.attempts + 1;
                     let conn = self.db.conn();
-                    let _ = conn.execute(
-                        "UPDATE cloud_pending_revocations SET attempts = attempts + 1, next_retry_at = ?1, updated_at = ?2 WHERE session_id = ?3",
-                        params![now + backoff, now, item.session_id],
-                    );
+                    if next_attempts >= 5 {
+                        let _ = conn.execute(
+                            "UPDATE cloud_pending_revocations SET attempts = ?1, last_error_code = 'RETRY_EXHAUSTED', updated_at = ?2 WHERE session_id = ?3",
+                            params![next_attempts, now, item.session_id],
+                        );
+                        let _ = self.secret_store.delete(&revoke_ref).await;
+                    } else {
+                        let backoff = (next_attempts as i64) * 60_000;
+                        let _ = conn.execute(
+                            "UPDATE cloud_pending_revocations SET attempts = ?1, next_retry_at = ?2, last_error_code = 'REMOTE_UNREACHABLE', updated_at = ?3 WHERE session_id = ?4",
+                            params![next_attempts, now + backoff, now, item.session_id],
+                        );
+                    }
                 }
             }
         }
@@ -286,20 +324,54 @@ impl RevocationService {
     }
 }
 
+pub async fn retry_registered_profile_revocations(
+    app_data_dir: &std::path::Path,
+    secret_store: std::sync::Arc<dyn crate::integrations::secret::SecretStore>,
+) -> Result<usize, super::session::CloudSessionError> {
+    let registry =
+        match crate::modules::cloud::profile::ProfileManager::load_or_initialize(app_data_dir) {
+            Ok(r) => r,
+            Err(_) => return Ok(0),
+        };
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut total_confirmed = 0;
+
+    for entry in registry.profiles.values() {
+        let db_path = app_data_dir
+            .join(crate::modules::cloud::profile::PROFILES_DIRNAME)
+            .join(&entry.directory_name)
+            .join("app.db");
+        if !db_path.exists() {
+            tracing::warn!(profile_id = %entry.profile_id, "profile database missing, skipping revocation retry");
+            continue;
+        }
+        let db = match Database::new(&db_path) {
+            Ok(db) => db,
+            Err(e) => {
+                tracing::warn!(profile_id = %entry.profile_id, %e, "failed to open profile database for revocation retry");
+                continue;
+            }
+        };
+        let service = RevocationService::new(db, Arc::clone(&secret_store));
+        match service.retry_pending_revocations(now).await {
+            Ok(count) => total_confirmed += count,
+            Err(e) => {
+                tracing::warn!(profile_id = %entry.profile_id, %e, "error retrying pending revocations");
+            }
+        }
+    }
+
+    Ok(total_confirmed)
+}
+
 async fn send_remote_revoke(
     origin: &str,
     session_id: &str,
     token: &str,
-) -> Result<bool, reqwest::Error> {
-    let url = format!(
-        "{}/sessions/{}/revoke",
-        origin.trim_end_matches('/'),
-        session_id
-    );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()?;
-
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let (client, base) = super::transport::build_cloud_http(origin, Duration::from_secs(10))?;
+    let url = format!("{base}/sessions/{session_id}/revoke");
     let response = client
         .post(&url)
         .header("Idempotency-Key", uuid::Uuid::new_v4().to_string())
@@ -307,5 +379,15 @@ async fn send_remote_revoke(
         .send()
         .await?;
 
-    Ok(response.status().is_success() || response.status() == StatusCode::NOT_FOUND)
+    if response.status().is_success() {
+        return Ok(true);
+    }
+    if response.status() == StatusCode::NOT_FOUND {
+        if let Ok(body) = response.text().await {
+            if body.contains("NOT_FOUND") || body.contains("Session not found") {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }

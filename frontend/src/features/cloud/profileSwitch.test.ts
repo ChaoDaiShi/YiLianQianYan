@@ -106,7 +106,9 @@ describe("ProfileSwitchController", () => {
       data: {
         report: {
           local_signed_out: true,
+          local_cleanup: "cleared",
           remote_revocation: "pending",
+          error_codes: [],
         },
         activation: {
           profile_id: "guest-1",
@@ -118,14 +120,43 @@ describe("ProfileSwitchController", () => {
       },
     });
 
-    const report = await controller.logoutWithReport();
-    expect(report.local_signed_out).toBe(true);
-    expect(report.remote_revocation).toBe("pending");
-    expect(controller.getPendingRevocation()).toBe("pending");
+    const res = await controller.logoutWithReport();
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.report.local_signed_out).toBe(true);
+      expect(res.data.report.local_cleanup).toBe("cleared");
+      expect(res.data.report.remote_revocation).toBe("pending");
+      expect(controller.getPendingRevocation()).toBe("pending");
 
-    const meta = revocationPresentation(report.remote_revocation);
-    expect(meta.tone).toBe("warning");
-    expect(meta.label).toBe("远端注销待重试");
-    expect(meta.detail).toContain("后台安全重试");
+      const meta = revocationPresentation(res.data.report.remote_revocation);
+      expect(meta.tone).toBe("warning");
+      expect(meta.label).toBe("远端注销待重试");
+      expect(meta.detail).toContain("后台安全重试");
+    }
+  });
+
+  it("surfaces logout failure transparently without pretending local signout succeeded", async () => {
+    const controller = new ProfileSwitchController("gen-1");
+
+    vi.spyOn(cloudApi, "logoutCloud").mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: "本地退出未完成，请重试",
+    });
+
+    const res = await controller.logoutWithReport();
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(500);
+      expect(res.error).toBe("本地退出未完成，请重试");
+    }
+    expect(controller.getPendingRevocation()).toBe(null);
+  });
+
+  it("handles not_required revocation presentation for guest", () => {
+    const meta = revocationPresentation("not_required");
+    expect(meta.tone).toBe("default");
+    expect(meta.label).toBe("无需远端撤销");
+    expect(meta.detail).toContain("游客模式");
   });
 });
