@@ -1,7 +1,7 @@
 {
   "contract_revision": "v1.1-r2",
-  "public_sha": null,
-  "private_sha": null,
+  "public_sha": "e4c57ca750af3f235ea0519d772da213094e230e",
+  "private_sha": "a6707ce37bbdf8d55721ee048a46d350dedf40b2",
   "api_running_revision": null,
   "worker_running_revision": null,
   "admin_running_revision": null,
@@ -16,10 +16,10 @@
     "003_v11_server_sync_order_lifecycle"
   ],
   "installer_sha256": null,
-  "test_run_id": null,
+  "test_run_id": "run-20261010-s8-audit",
   "real_database_result": "NOT_TESTED",
-  "desktop_lifecycle_result": "NOT_TESTED",
+  "desktop_lifecycle_result": "PASS",
   "restore_drill_result": "NOT_TESTED",
   "source_hosting_decision": "HUMAN_PENDING",
-  "review_result": "NOT_TESTED"
+  "review_result": "TECHNICAL_PASS_WITH_HUMAN_GATES"
 }
