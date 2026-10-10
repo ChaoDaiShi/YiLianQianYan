@@ -1,6 +1,6 @@
 # S6 数据最小化、插件使用闭环与授权拒绝
 
-> 状态：NOT STARTED。本阶段同时向 S1 提供服务端验证器、向 S2 提供本地采集器。旧授权解析修复可单独合入，数据同步部分按 S0 契约集成。
+> 状态：COMPLETED。本阶段同时向 S1 提供服务端验证器、向 S2 提供本地采集器。旧授权解析修复已合入，数据同步按 S0 契约与严格白名单集成。
 
 ## 1. 文件
 
@@ -133,10 +133,10 @@ fn decode_grant_field<T: serde::de::DeserializeOwned>(
 | corrupt effect、permission、resource、source | 两个 grant 读取路径都报错，真实工具未执行 |
 | 合法 allow/deny/到期授权 | 行为保持原有策略，未知数据不扩大权限 |
 
-- [ ] S6.1 冻结每类字段 schema 和安全 round-trip fixture。
-- [ ] S6.2 用严格 DTO 替代主要黑名单路径，修正采集缺失误判删除。
-- [ ] S6.3 接入网关→usage→outbox→云投影→本地展示闭环。
-- [ ] S6.4 两条 grant 读取路径 fail closed，补实际网关拒绝测试。
-- [ ] S6.5 `cargo test -p yilian-backend --test v11_payload_policy`、PRIVATE `cargo test -p yilian-cloud-core --test payload_policy`；双方 fmt/check，前端 test/build。
+- [x] S6.1 冻结每类字段 schema 和安全 round-trip fixture。
+- [x] S6.2 用严格 DTO 替代主要黑名单路径，修正采集缺失误判删除。
+- [x] S6.3 接入网关→usage→outbox→云投影→本地展示闭环。
+- [x] S6.4 两条 grant 读取路径 fail closed，补实际网关拒绝测试。
+- [x] S6.5 `cargo test -p yilian-backend --test v11_payload_policy`、PRIVATE `cargo test -p yilian-cloud-core --test payload_policy`；双方 fmt/check，前端 test/build。
 
 建议分支 `fix/v1-1-sync-data-policy`；授权修复可拆为 `fix/security-grant-decode`，同属本工作包验收。
