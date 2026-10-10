@@ -1,0 +1,25 @@
+{
+  "contract_revision": "v1.1-r2",
+  "public_sha": null,
+  "private_sha": null,
+  "api_running_revision": null,
+  "worker_running_revision": null,
+  "admin_running_revision": null,
+  "sqlite_migrations": [
+    "001_initial_schema",
+    "002_add_sync_columns",
+    "003_v11_reliability_outbox_conflict"
+  ],
+  "postgres_migrations": [
+    "001_initial_schema",
+    "002_device_owner_lock",
+    "003_v11_server_sync_order_lifecycle"
+  ],
+  "installer_sha256": null,
+  "test_run_id": null,
+  "real_database_result": "NOT_TESTED",
+  "desktop_lifecycle_result": "NOT_TESTED",
+  "restore_drill_result": "NOT_TESTED",
+  "source_hosting_decision": "HUMAN_PENDING",
+  "review_result": "NOT_TESTED"
+}
