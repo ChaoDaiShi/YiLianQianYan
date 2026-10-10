@@ -206,7 +206,7 @@ S4 使用 S2 导出的 `apply_selected_remote_tx(tx, remote, expected_local_gene
 | PRIVATE 0004 | S5 | 租约、删除清单、导出目录登记、状态凭据 |
 | PRIVATE 0005 | S6 | capability_usage 与同步原子投影、schema 标识 |
 
-基线公共迁移为 2000—2004，当前 `MigrationOwner::V11Cloud` 使用 2000—2999；不要引用旧共享基础文档中把该区间分给 V2 的规则。两条冻结代码线不在本轮合并。
+历史说明：本阶段当时以公共迁移 2000—2004 及 `MigrationOwner::V11Cloud` 的 2000—2999 定义为基线。2026-10-10 复审确认该区间与冻结 V2 的预留冲突；后续以[最新 P4 兼容方案](../2026-10-10-v1-1-focused/04-migration-ownership.md)为准，保留已发布迁移，不再新增 2xxx 云迁移。两条冻结代码线不在本轮合并。
 
 ## 7. 可验收任务
 

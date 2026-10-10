@@ -193,6 +193,7 @@ impl AppServer {
                 });
                 crate::db::cloud::scoped_db::ScopedDb::new(db.clone(), lease)
             },
+            cloud_operation_lock: tokio::sync::Mutex::new(()),
         };
         server.set_voice_dispatch_hook(Arc::new(InteractionVoiceDispatch::new(
             server.db.clone_connection(),
