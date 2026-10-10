@@ -9,3 +9,4 @@ pub mod schema;
 pub mod scoped_db;
 pub mod settings;
 pub mod sync;
+pub mod usage;
