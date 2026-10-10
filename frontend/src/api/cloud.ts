@@ -79,13 +79,26 @@ export interface CloudDataSummary {
   object_bytes: number;
 }
 
+export type LifecycleJobStatus =
+  | "queued"
+  | "running"
+  | "waiting_for_producers"
+  | "waiting_backup_expiry"
+  | "completed"
+  | "failed"
+  | "retry_wait";
+
 export interface LifecycleJob {
   id: string;
   kind: "export" | "deletion";
-  status: "queued" | "running" | "completed" | "failed";
+  status: LifecycleJobStatus;
   progress: number;
   result_ref: string | null;
   error_code: string | null;
+  live_data_removed?: boolean;
+  backups_cleared?: boolean;
+  backup_purge_deadline?: number | null;
+  status_credential?: string | null;
   created_at: number;
   updated_at: number;
 }

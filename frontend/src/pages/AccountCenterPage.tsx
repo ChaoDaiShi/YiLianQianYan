@@ -3,6 +3,7 @@ import { Cloud, Database, LogIn, LogOut, RefreshCw, ShieldCheck, UserCircle } fr
 import { useSearchParams } from "react-router-dom";
 import {
   getCloudIdentity,
+  getLifecycleJob,
   getPrivacySummary,
   loginCloud,
   listSyncConflicts,
@@ -23,6 +24,7 @@ import {
 } from "../api/cloud";
 import { Badge, Button, EmptyState, Input, PageHeader, Skeleton } from "../components/ui";
 import { identityPresentation, syncPresentation } from "../features/cloud/cloudPresentation";
+import { LifecycleJobsPanel } from "../features/cloud/LifecycleJobsPanel";
 
 type Section = "account" | "sync" | "privacy";
 
@@ -111,6 +113,13 @@ export default function AccountCenterPage() {
     setBusy(false);
   };
 
+  const refreshJob = useCallback(async (kind: LifecycleJob["kind"], id: string) => {
+    setBusy(true);
+    const result = await getLifecycleJob(kind, id);
+    if (result.ok) setLifecycleJob(result.data.job);
+    setBusy(false);
+  }, []);
+
   const deleteAccount = async () => {
     if (window.prompt("此操作将永久删除云端账号。请输入 DELETE 继续：") !== "DELETE") return;
     setBusy(true); setError("");
@@ -173,7 +182,8 @@ export default function AccountCenterPage() {
             <div className="cloud-section-heading"><div><span>PRIVACY</span><h2 id="privacy-section-title">数据与隐私</h2><p>同步内容、退出登录和永久注销使用不同语义。</p></div></div>
             <div className="cloud-card"><div className="cloud-card-title"><div><h3>默认不上传的内容</h3><p>敏感信息继续由本机 SecretStore 管理。</p></div><ShieldCheck /></div><ul className="cloud-bullet-list"><li>LLM、STT、TTS、AnySearch 与 MCP 密钥</li><li>完整 MCP 参数和完整工具结果</li><li>未经选择的对话、记忆、文件正文与二进制</li></ul></div>
             <div className="cloud-card"><h3>本机与云端生命周期</h3><dl className="cloud-data-list"><div><dt>退出登录</dt><dd>结束当前会话，不删除云端数据</dd></div><div><dt>注销账号</dt><dd>撤销全部会话并启动永久 DeletionJob</dd></div><div><dt>本机清理</dt><dd>始终由你单独选择，不与云端删除混为一体</dd></div></dl></div>
-            {identity?.status !== "guest" ? <div className="cloud-card"><div className="cloud-card-title"><div><h3>云端数据摘要</h3><p>这里只展示实体数量与对象占用，不读取正文。</p></div><Database /></div><dl className="cloud-data-list">{Object.entries(dataSummary?.counts || {}).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{value} 项</dd></div>)}<div><dt>对象存储</dt><dd>{dataSummary ? `${dataSummary.object_bytes} bytes` : "正在读取…"}</dd></div></dl><div className="cloud-card-actions"><Button variant="secondary" disabled={busy} onClick={() => void requestExport()}>导出我的云端数据</Button><Button variant="danger" disabled={busy || identity?.status === "closing"} onClick={() => void deleteAccount()}>永久注销云端账号</Button></div>{lifecycleJob ? <p className="cloud-inline-error" role="status">{lifecycleJob.kind === "export" ? "导出" : "注销"}任务：{lifecycleJob.status} · {lifecycleJob.progress}%{lifecycleJob.error_code ? ` · ${lifecycleJob.error_code}` : ""}</p> : null}</div> : null}
+            {identity?.status !== "guest" ? <div className="cloud-card"><div className="cloud-card-title"><div><h3>云端数据摘要</h3><p>这里只展示实体数量与对象占用，不读取正文。</p></div><Database /></div><dl className="cloud-data-list">{Object.entries(dataSummary?.counts || {}).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{value} 项</dd></div>)}<div><dt>对象存储</dt><dd>{dataSummary ? `${dataSummary.object_bytes} bytes` : "正在读取…"}</dd></div></dl><div className="cloud-card-actions"><Button variant="secondary" disabled={busy} onClick={() => void requestExport()}>导出我的云端数据</Button><Button variant="danger" disabled={busy || identity?.status === "closing"} onClick={() => void deleteAccount()}>永久注销云端账号</Button></div></div> : null}
+            {lifecycleJob ? <LifecycleJobsPanel job={lifecycleJob} onRefresh={() => void refreshJob(lifecycleJob.kind, lifecycleJob.id)} isRefreshing={busy} /> : null}
           </section> : null}
           {error ? <p className="cloud-error" role="alert">{error}</p> : null}
         </main>

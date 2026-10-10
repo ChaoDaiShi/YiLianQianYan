@@ -61,6 +61,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         .route("/api/cloud/export", post(cloud::request_export_handler))
         .route(
+            "/api/cloud/export/:id/download",
+            get(cloud::download_export_handler),
+        )
+        .route(
             "/api/cloud/account/delete",
             post(cloud::request_deletion_handler),
         )

@@ -8,13 +8,70 @@ impl Database {
     ) -> Result<(), rusqlite::Error> {
         let conn = self.conn();
         conn.execute(
-            "INSERT INTO cloud_lifecycle_jobs (id,kind,status,progress,result_ref,error_code,created_at,updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-             ON CONFLICT(id) DO UPDATE SET status=excluded.status,progress=excluded.progress,
-                result_ref=excluded.result_ref,error_code=excluded.error_code,updated_at=excluded.updated_at",
-            params![job.id,job.kind,job.status,job.progress,job.result_ref,job.error_code,job.created_at,job.updated_at],
+            "INSERT INTO cloud_lifecycle_jobs (
+                id, kind, status, progress, result_ref, error_code,
+                live_data_removed, backups_cleared, backup_purge_deadline,
+                created_at, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                progress = excluded.progress,
+                result_ref = excluded.result_ref,
+                error_code = excluded.error_code,
+                live_data_removed = excluded.live_data_removed,
+                backups_cleared = excluded.backups_cleared,
+                backup_purge_deadline = excluded.backup_purge_deadline,
+                updated_at = excluded.updated_at",
+            params![
+                job.id,
+                job.kind,
+                job.status,
+                job.progress,
+                job.result_ref,
+                job.error_code,
+                if job.live_data_removed { 1 } else { 0 },
+                if job.backups_cleared { 1 } else { 0 },
+                job.backup_purge_deadline,
+                job.created_at,
+                job.updated_at
+            ],
         )?;
         Ok(())
+    }
+
+    pub fn get_cloud_lifecycle_job(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::modules::cloud::domain::LifecycleJob>, rusqlite::Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, status, progress, result_ref, error_code,
+                    live_data_removed, backups_cleared, backup_purge_deadline,
+                    created_at, updated_at
+             FROM cloud_lifecycle_jobs WHERE id = ?1",
+        )?;
+        let row = stmt
+            .query_row(params![id], |row| {
+                let live_data_removed: i64 = row.get(6).unwrap_or(0);
+                let backups_cleared: i64 = row.get(7).unwrap_or(0);
+                Ok(crate::modules::cloud::domain::LifecycleJob {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    status: row.get(2)?,
+                    progress: row.get(3)?,
+                    result_ref: row.get(4)?,
+                    error_code: row.get(5)?,
+                    live_data_removed: live_data_removed == 1,
+                    backups_cleared: backups_cleared == 1,
+                    backup_purge_deadline: row.get(8)?,
+                    status_credential: None,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                })
+            })
+            .optional()?;
+        Ok(row)
     }
 
     pub fn cloud_search_config(

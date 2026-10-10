@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::Response,
     Json,
 };
 use std::sync::Arc;
@@ -398,6 +399,34 @@ pub async fn lifecycle_job_handler(
     Ok(Json(serde_json::json!({"job":job})))
 }
 
+pub async fn download_export_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let service = lifecycle_service(&server)?;
+    let (filename, bytes) = service
+        .download_export(&id)
+        .await
+        .map_err(lifecycle_error)?;
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        )
+        .header(axum::http::header::CACHE_CONTROL, "no-store")
+        .body(axum::body::Body::from(bytes))
+        .map_err(|_| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "download_failed",
+                "导出文件读取失败",
+            )
+        })
+}
+
 fn lifecycle_service(
     server: &Arc<AppServer>,
 ) -> Result<CloudLifecycleService, (StatusCode, Json<serde_json::Value>)> {
@@ -563,6 +592,16 @@ fn lifecycle_error(error: CloudLifecycleError) -> (StatusCode, Json<serde_json::
             StatusCode::SERVICE_UNAVAILABLE,
             "cloud_lifecycle_unavailable",
             "云端数据生命周期服务暂时不可用",
+        ),
+        CloudLifecycleError::NotFound => api_error(
+            StatusCode::NOT_FOUND,
+            "export_not_found",
+            "导出任务或文件不存在",
+        ),
+        CloudLifecycleError::Expired => api_error(
+            StatusCode::GONE,
+            "export_expired",
+            "导出文件已过期，请重新申请导出",
         ),
         CloudLifecycleError::Database(_) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,

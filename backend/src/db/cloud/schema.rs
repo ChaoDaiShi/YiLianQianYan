@@ -159,6 +159,20 @@ const CLOUD_PENDING_REVOCATIONS_SCHEMA: ProductMigrationSpec = ProductMigrationS
     include_str!("migrations/2013_pending_revocations.sql"),
 );
 
+const CLOUD_USAGE_PROJECTION_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2014,
+    "2014_usage_projection",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2014_usage_projection.sql"),
+);
+
+const CLOUD_LIFECYCLE_CREDENTIALS_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2015,
+    "2015_lifecycle_credentials",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2015_lifecycle_credentials.sql"),
+);
+
 impl Database {
     pub fn initialize_cloud_schema(&self) -> Result<(), rusqlite::Error> {
         self.apply_product_migrations(&[
@@ -171,6 +185,8 @@ impl Database {
             CLOUD_SYNC_CHECKPOINT_SCHEMA,
             CLOUD_CONFLICT_SNAPSHOT_SCHEMA,
             CLOUD_PENDING_REVOCATIONS_SCHEMA,
+            CLOUD_USAGE_PROJECTION_SCHEMA,
+            CLOUD_LIFECYCLE_CREDENTIALS_SCHEMA,
         ])
     }
 }

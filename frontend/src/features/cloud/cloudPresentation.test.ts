@@ -5,6 +5,7 @@ import {
   buildSearchKnowledgeRecord,
   buildSearchTaskDraft,
   identityPresentation,
+  lifecyclePresentation,
   syncPresentation,
   wizardCanFinish,
 } from "./cloudPresentation";
@@ -49,3 +50,54 @@ it("routes a search result into existing chat task and knowledge shapes", () => 
   });
   expect(buildSearchKnowledgeRecord(result)).toMatchObject({ category: "knowledge", source: "ai_search" });
 });
+
+it("presents lifecycle export and deletion states with accurate boundaries", () => {
+  const exportCompleted = {
+    id: "job-1",
+    kind: "export" as const,
+    status: "completed" as const,
+    progress: 100,
+    result_ref: "export:job-1",
+    error_code: null,
+    created_at: 1000,
+    updated_at: 2000,
+  };
+  const exportPres = lifecyclePresentation(exportCompleted);
+  expect(exportPres.canDownload).toBe(true);
+  expect(exportPres.isTerminal).toBe(true);
+  expect(exportPres.tone).toBe("success");
+
+  const deletionWaitingBackup = {
+    id: "job-2",
+    kind: "deletion" as const,
+    status: "waiting_backup_expiry" as const,
+    progress: 95,
+    result_ref: null,
+    error_code: null,
+    live_data_removed: true,
+    backups_cleared: false,
+    backup_purge_deadline: 1794096000000,
+    created_at: 1000,
+    updated_at: 2000,
+  };
+  const delPres = lifecyclePresentation(deletionWaitingBackup);
+  expect(delPres.waitingForBackups).toBe(true);
+  expect(delPres.isTerminal).toBe(false);
+  expect(delPres.label).toBe("等待备份到期擦除");
+
+  const exportRetrying = {
+    id: "job-3",
+    kind: "export" as const,
+    status: "retry_wait" as const,
+    progress: 10,
+    result_ref: null,
+    error_code: "EXPORT_WRITE_FAILED",
+    created_at: 1000,
+    updated_at: 2000,
+  };
+  const retryPres = lifecyclePresentation(exportRetrying);
+  expect(retryPres.isTerminal).toBe(false);
+  expect(retryPres.label).toBe("等待重试");
+  expect(retryPres.tone).toBe("danger");
+});
+

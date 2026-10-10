@@ -182,6 +182,14 @@ pub struct LifecycleJob {
     pub progress: i64,
     pub result_ref: Option<String>,
     pub error_code: Option<String>,
+    #[serde(default)]
+    pub live_data_removed: bool,
+    #[serde(default)]
+    pub backups_cleared: bool,
+    #[serde(default)]
+    pub backup_purge_deadline: Option<i64>,
+    #[serde(default)]
+    pub status_credential: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

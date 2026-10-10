@@ -45,6 +45,10 @@ pub fn revoke_session_token_ref(session_id: &str) -> SecretRef {
     SecretRef::new(format!("cloud.revoke.{session_id}.token"))
 }
 
+pub fn deletion_status_credential_ref(job_id: &str) -> SecretRef {
+    SecretRef::new(format!("cloud.deletion.{job_id}.credential"))
+}
+
 pub fn anysearch_key_ref() -> SecretRef {
     SecretRef::new("search.anysearch.api_key")
 }
