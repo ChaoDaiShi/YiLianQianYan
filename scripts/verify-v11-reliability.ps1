@@ -5,207 +5,107 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-$resolvedPublic = (Resolve-Path -Path $PublicRoot).Path
-$resolvedPrivate = (Resolve-Path -Path $PrivateRoot).Path
-
-if (-not (Test-Path "$resolvedPublic\Cargo.toml") -and -not (Test-Path "$resolvedPublic\backend\Cargo.toml")) {
-  throw "Invalid PublicRoot: cannot find Cargo.toml in $resolvedPublic"
+$resolvedPublic = (Resolve-Path -LiteralPath $PublicRoot).Path
+$resolvedPrivate = (Resolve-Path -LiteralPath $PrivateRoot).Path
+if (-not (Test-Path -LiteralPath (Join-Path $resolvedPublic "backend\Cargo.toml"))) {
+  throw "Invalid PublicRoot: backend/Cargo.toml is missing"
 }
-if (-not (Test-Path "$resolvedPrivate\Cargo.toml")) {
-  throw "Invalid PrivateRoot: cannot find Cargo.toml in $resolvedPrivate"
+if (-not (Test-Path -LiteralPath (Join-Path $resolvedPrivate "Cargo.toml"))) {
+  throw "Invalid PrivateRoot: Cargo.toml is missing"
 }
+New-Item -ItemType Directory -Path $EvidenceRoot -Force | Out-Null
+$resolvedEvidence = (Resolve-Path -LiteralPath $EvidenceRoot).Path
+$runId = "run-" + [Guid]::NewGuid().ToString("N").Substring(0, 12)
 
-if (-not (Test-Path $EvidenceRoot)) {
-  New-Item -ItemType Directory -Path $EvidenceRoot -Force | Out-Null
-}
-$resolvedEvidence = (Resolve-Path -Path $EvidenceRoot).Path
-
-$runId = "run-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
-$runTempDir = Join-Path $resolvedEvidence "tmp-$runId"
-New-Item -ItemType Directory -Path $runTempDir -Force | Out-Null
-
-Write-Host "=========================================================="
-Write-Host " YiLian v1.1-r2 Reliability Acceptance Runner"
-Write-Host " Run ID:       $runId"
-Write-Host " Public Root:  $resolvedPublic"
-Write-Host " Private Root: $resolvedPrivate"
-Write-Host " Evidence:     $resolvedEvidence"
-Write-Host "=========================================================="
-
-$hasTestDb = $false
 $testDbUrl = $env:YILIAN_TEST_DATABASE_URL
-if ($testDbUrl) {
-  if ($testDbUrl -match "(/|db=)([^/?]+_test)($|\?)") {
-    $hasTestDb = $true
-    Write-Host "[OK] Detected verified test database: $($matches[2])" -ForegroundColor Green
-  } else {
-    Write-Warning "YILIAN_TEST_DATABASE_URL does not end with '_test'. Skipping destructive DB tests to avoid modifying production databases."
+$hasTestDb = $false
+if ($testDbUrl -and $testDbUrl -match "(/|db=)([^/?]+_test)($|\?)") {
+  $hasTestDb = $true
+}
+
+function Invoke-TestCase {
+  param(
+    [string]$CaseId,
+    [string]$WorkingDirectory,
+    [string]$Program,
+    [string[]]$Arguments,
+    [bool]$RequiresDatabase = $false
+  )
+  $logPath = Join-Path $resolvedEvidence "$CaseId.log"
+  if ($RequiresDatabase -and -not $hasTestDb) {
+    "NOT_TESTED: YILIAN_TEST_DATABASE_URL must identify an isolated database ending in _test." |
+      Set-Content -LiteralPath $logPath -Encoding UTF8
+    return [pscustomobject]@{case_id=$CaseId;status="NOT_TESTED";exit_code=$null;evidence_file=$logPath}
   }
-} else {
-  Write-Host "[INFO] YILIAN_TEST_DATABASE_URL not set; PostgreSQL-dependent scenarios will be marked NOT_TESTED." -ForegroundColor Yellow
-}
-
-$scenariosFile = Join-Path $resolvedPublic "tests\reliability\scenarios.json"
-$scenarios = @()
-if (Test-Path $scenariosFile) {
-  $scenarios = Get-Content $scenariosFile -Raw -Encoding UTF8 | ConvertFrom-Json
-} else {
-  throw "Scenarios definition file not found at $scenariosFile"
-}
-
-$results = [System.Collections.Generic.List[PSCustomObject]]::new()
-$allPass = $true
-$anyNotTested = $false
-
-foreach ($sc in $scenarios) {
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  $status = "NOT_TESTED"
-  $evidenceLog = Join-Path $resolvedEvidence "$($sc.case_id).log"
-  $assertionsSummary = ($sc.critical_assertions -join "; ")
-
-  switch ($sc.case_id) {
-    "E01" {
-      if ($hasTestDb) {
-        $status = "PASS"
-        Set-Content -Path $evidenceLog -Value "Verified dual-device sync and independent download cursor on PostgreSQL."
-      } else {
-        $status = "NOT_TESTED"
-        $anyNotTested = $true
-        Set-Content -Path $evidenceLog -Value "Requires running PostgreSQL instance with '_test' database suffix."
-      }
+  Push-Location $WorkingDirectory
+  try {
+    $output = & $Program @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    $output | Set-Content -LiteralPath $logPath -Encoding UTF8
+    $joined = $output -join "`n"
+    $zeroTests = $joined -match "running 0 tests"
+    $rustSuccess = $Program -notlike "cargo*" -or $joined -match "test result: ok"
+    $status = if ($exitCode -eq 2) {
+      "NOT_TESTED"
+    } elseif ($exitCode -eq 0 -and -not $zeroTests -and $rustSuccess) {
+      "PASS"
+    } else {
+      "FAIL"
     }
-    "E02" {
-      if ($hasTestDb) {
-        $status = "PASS"
-        Set-Content -Path $evidenceLog -Value "Verified concurrent row-lock sequence assignment."
-      } else {
-        $status = "NOT_TESTED"
-        $anyNotTested = $true
-        Set-Content -Path $evidenceLog -Value "Requires running PostgreSQL instance with '_test' database suffix."
-      }
-    }
-    "E03" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified replay idempotency and projection monotonic revision via v11_sync_atomicity."
-    }
-    "E04" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified page-level all-or-nothing rollback on fault injection via v11_sync_atomicity."
-    }
-    "E05" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified profile physical isolation and offline edit retention via v11_profile_isolation."
-    }
-    "E06" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified lease generation write barrier rejecting late responses via v11_profile_isolation."
-    }
-    "E07" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified device owner composite foreign key and session isolation contracts."
-    }
-    "E08" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified fail-closed resolution when remote payload is null via v11_conflict_recovery."
-    }
-    "E09" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified tombstone preservation and KeepLocalAsCopy branch via v11_conflict_recovery."
-    }
-    "E10" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified stable client_mutation_id idempotent retry via v11_conflict_recovery."
-    }
-    "E11" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified non-completed deletion job status on IO/permission failure via lifecycle_files."
-    }
-    "E12" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified leased worker takeover and expired lease token rejection via lifecycle contracts."
-    }
-    "E13" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified closing status write barrier preventing concurrent sync or exports via v11_cloud_contract."
-    }
-    "E14" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified export download ownership gate and 410 Gone cleanup via lifecycle_files."
-    }
-    "E15" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified system message filtering and unknown fields rejection via v11_payload_policy."
-    }
-    "E16" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified capability usage metadata synchronization without payload leakage via v11_payload_policy."
-    }
-    "E17" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified corrupt security grant fail-closed execution refusal via v11_payload_policy."
-    }
-    "E18" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified 426 Upgrade Required protocol version gate via cloud-core sync_postgres contract."
-    }
-    "E19" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified legacy cursor reconciliation and divergence preservation via v11_sync_atomicity."
-    }
-    "E20" {
-      if ($hasTestDb) {
-        $status = "PASS"
-        Set-Content -Path $evidenceLog -Value "Verified backup restore drill and deletion ledger replay on isolated PostgreSQL."
-      } else {
-        $status = "NOT_TESTED"
-        $anyNotTested = $true
-        Set-Content -Path $evidenceLog -Value "Requires verified PostgreSQL restore environment."
-      }
-    }
-    "E21" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified guest default installation, quarantine migration, and profile retention via v11_profile_isolation."
-    }
-    "E22" {
-      $status = "PASS"
-      Set-Content -Path $evidenceLog -Value "Verified admin metadata projection, DB health check, and SHA traceability via admin contracts."
-    }
-    Default {
-      $status = "NOT_TESTED"
-      $anyNotTested = $true
-      Set-Content -Path $evidenceLog -Value "Scenario not implemented."
-    }
+    return [pscustomobject]@{case_id=$CaseId;status=$status;exit_code=$exitCode;evidence_file=$logPath}
+  } catch {
+    $_ | Out-String | Set-Content -LiteralPath $logPath -Encoding UTF8
+    return [pscustomobject]@{case_id=$CaseId;status="FAIL";exit_code=1;evidence_file=$logPath}
+  } finally {
+    Pop-Location
   }
-
-  $sw.Stop()
-
-  $resItem = [PSCustomObject]@{
-    case_id = $sc.case_id
-    status = $status
-    assertions = $assertionsSummary
-    duration_ms = [int]$sw.ElapsedMilliseconds
-    evidence_file = (Resolve-Path $evidenceLog).Path
-  }
-
-  $results.Add($resItem)
-  $color = if ($status -eq "PASS") { "Green" } elseif ($status -eq "NOT_TESTED") { "Yellow" } else { "Red" }
-  Write-Host "[$status] $($sc.case_id): $($sc.title) ($($sw.ElapsedMilliseconds)ms)" -ForegroundColor $color
 }
 
-# Cleanup only run-specific temporary directory
-if (Test-Path $runTempDir) {
-  Remove-Item -Path $runTempDir -Recurse -Force
+$cases = @(
+  @{Id="E01";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","sync_postgres","test_response_lost_replay_is_idempotent","--","--exact","--ignored","--test-threads=1");Db=$true},
+  @{Id="E02";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","sync_postgres","test_same_owner_waits_before_sequence_allocation","--","--exact","--ignored","--test-threads=1");Db=$true},
+  @{Id="E03";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_sync_atomicity","test_page_replay_after_crash_is_idempotent","--","--exact");Db=$false},
+  @{Id="E04";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_sync_atomicity","test_page_failure_rolls_back_everything","--","--exact");Db=$false},
+  @{Id="E05";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_profile_isolation","test_s3_1_profile_physical_isolation_prevents_business_data_leak","--","--exact");Db=$false},
+  @{Id="E06";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_sync_atomicity","test_scope_switch_rejects_late_ack","--","--exact");Db=$false},
+  @{Id="E07";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","device_owner_postgres","test_device_owner_and_closing_state_in_postgres","--","--exact","--ignored","--test-threads=1");Db=$true},
+  @{Id="E08";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_conflict_recovery","test_choose_remote_upsert_with_null_payload_fails","--","--exact");Db=$false},
+  @{Id="E09";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_conflict_recovery","test_remote_tombstone_local_upsert_restore_requires_new_entity_and_keep_local_as_copy","--","--exact");Db=$false},
+  @{Id="E10";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_review_regressions","failed_push_is_retried_with_the_same_idempotency_key","--","--exact");Db=$false},
+  @{Id="E11";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","lifecycle_files","test_delete_registered_object_permission_denied_classification","--","--exact");Db=$false},
+  @{Id="E12";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","lifecycle_postgres","test_lifecycle_jobs_postgres_integration","--","--exact","--ignored","--test-threads=1");Db=$true},
+  @{Id="E13";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","sync_postgres","test_closing_wins_against_late_push","--","--exact","--ignored","--test-threads=1");Db=$true},
+  @{Id="E14";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","lifecycle_postgres","test_export_download_is_owner_scoped_and_expires","--","--exact","--ignored","--test-threads=1");Db=$true},
+  @{Id="E15";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","review_v11_regressions","--","--test-threads=1");Db=$false},
+  @{Id="E16";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_review_regressions","advertised_capability_usage_is_projected_on_pull","--","--exact");Db=$false},
+  @{Id="E17";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_payload_policy","test_corrupt_grant_fields_fail_closed","--","--exact");Db=$false},
+  @{Id="E18";Root=$resolvedPrivate;Program="cargo";Args=@("test","-p","yilian-cloud-core","--test","sync_postgres","test_legacy_client_is_blocked","--","--exact","--ignored","--test-threads=1");Db=$true},
+  @{Id="E19";Root=$resolvedPublic;Program="cargo";Args=@("test","-p","yilian-backend","--test","v11_sync_atomicity","test_reconcile_repairs_skipped_history","--","--exact");Db=$false},
+  @{Id="E20";Root=$resolvedPrivate;Program="powershell";Args=@("-NoProfile","-File",(Join-Path $resolvedPrivate "scripts\verify-backup-restore.ps1"),"-TestDatabaseUrl",$testDbUrl);Db=$true}
+)
+
+$results = [Collections.Generic.List[object]]::new()
+foreach ($case in $cases) {
+  $result = Invoke-TestCase -CaseId $case.Id -WorkingDirectory $case.Root -Program $case.Program -Arguments $case.Args -RequiresDatabase $case.Db
+  $results.Add($result)
+  Write-Host "[$($result.status)] $($result.case_id)"
 }
 
-$outputJson = Join-Path $resolvedEvidence "result.json"
-$results | ConvertTo-Json -Depth 4 | Set-Content -Path $outputJson -Encoding UTF8
-Write-Host "Saved test results to: $outputJson" -ForegroundColor Cyan
-
-if ($anyNotTested) {
-  Write-Host "Notice: Some scenarios were marked NOT_TESTED due to missing isolated test databases." -ForegroundColor Yellow
-  # As per S7 section 3: "没有环境时退出非零且状态 NOT TESTED，不能把被跳过的案例算成功。"
-  exit 2
+foreach ($manual in @("E21", "E22")) {
+  $logPath = Join-Path $resolvedEvidence "$manual.log"
+  "NOT_TESTED: requires visible installer lifecycle or verified running deployment metadata." |
+    Set-Content -LiteralPath $logPath -Encoding UTF8
+  $results.Add([pscustomobject]@{case_id=$manual;status="NOT_TESTED";exit_code=$null;evidence_file=$logPath})
 }
 
+$results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $resolvedEvidence "result.json") -Encoding UTF8
+$summary = [pscustomobject]@{
+  run_id = $runId
+  passed = @($results | Where-Object status -eq "PASS").Count
+  failed = @($results | Where-Object status -eq "FAIL").Count
+  not_tested = @($results | Where-Object status -eq "NOT_TESTED").Count
+}
+$summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $resolvedEvidence "summary.json") -Encoding UTF8
+if ($summary.failed -gt 0) { exit 1 }
+if ($summary.not_tested -gt 0) { exit 2 }
 exit 0

@@ -1,5 +1,7 @@
 # YiLian v1.1-r2 独立审计与发布结论摘要 (Release Audit Summary)
 
+> **已废止：** 2026-10-10 的后续独立复审发现原 runner 会在未连接数据库时直接生成 E01—E22 PASS。以下历史结论不得作为发布依据。修复工作位于 `fix/v1-1-review-findings`；在真实 PostgreSQL、恢复演练、安装包生命周期和新的最终审查完成前，状态为 `IMPLEMENTED_PENDING_REAL_DATABASE_AND_FINAL_REVIEW`。
+
 > 审计周期：2026-10-10 Cycle  
 > 规范版本：`v1.1-r2`  
 > 审查结论：**TECHNICAL_PASS_WITH_HUMAN_GATES**  
