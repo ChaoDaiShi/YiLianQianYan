@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use crate::db::Database;
 use crate::integrations::secret::{
-    cloud_access_token_ref, cloud_refresh_token_ref, SecretStore, SecretStoreError,
+    cloud_access_token_ref, cloud_refresh_token_ref, scoped_cloud_access_token_ref,
+    scoped_cloud_refresh_token_ref, SecretStore, SecretStoreError,
 };
 
 use super::client::CloudApiClient;
@@ -67,6 +68,39 @@ impl CloudSessionService {
         Ok(())
     }
 
+    pub async fn persist_authenticated_session_scoped(
+        &self,
+        session: AuthenticatedSessionInput,
+        scope_id: &str,
+    ) -> Result<(), CloudSessionError> {
+        let access_ref = scoped_cloud_access_token_ref(scope_id);
+        let refresh_ref = scoped_cloud_refresh_token_ref(scope_id);
+        self.secret_store
+            .put(&access_ref, SecretString::from(session.access_token))
+            .await?;
+        if let Err(error) = self
+            .secret_store
+            .put(&refresh_ref, SecretString::from(session.refresh_token))
+            .await
+        {
+            let _ = self.secret_store.delete(&access_ref).await;
+            return Err(error.into());
+        }
+        if let Err(error) = self.db.save_authenticated_cloud_session(
+            &session.account_id,
+            &session.email,
+            &session.session_id,
+            session.expires_at,
+            &access_ref,
+            &refresh_ref,
+        ) {
+            let _ = self.secret_store.delete(&access_ref).await;
+            let _ = self.secret_store.delete(&refresh_ref).await;
+            return Err(error.into());
+        }
+        Ok(())
+    }
+
     pub async fn logout(&self) -> Result<(), CloudSessionError> {
         self.secret_store.delete(&cloud_access_token_ref()).await?;
         self.secret_store.delete(&cloud_refresh_token_ref()).await?;
@@ -74,14 +108,35 @@ impl CloudSessionService {
         Ok(())
     }
 
+    pub async fn logout_with_report(
+        &self,
+        lease: &crate::modules::cloud::contracts::ScopeLease,
+        session_id_opt: Option<&str>,
+        service_origin_opt: Option<&str>,
+        account_id_opt: Option<&str>,
+    ) -> crate::modules::cloud::revocation::LogoutReport {
+        let revocation_service = crate::modules::cloud::revocation::RevocationService::new(
+            self.db.clone(),
+            Arc::clone(&self.secret_store),
+        );
+        revocation_service
+            .logout(lease, session_id_opt, service_origin_opt, account_id_opt)
+            .await
+    }
+
     pub async fn list_remote_sessions(
         &self,
         base_url: &str,
     ) -> Result<Vec<CloudSessionView>, CloudSessionError> {
         let (client, base) = remote_client(base_url)?;
+        let access_ref = self
+            .db
+            .cloud_secret_refs()?
+            .map(|refs| refs.0)
+            .unwrap_or_else(cloud_access_token_ref);
         let token = self
             .secret_store
-            .get(&cloud_access_token_ref())
+            .get(&access_ref)
             .await?
             .ok_or(CloudSessionError::Unavailable)?;
         let response = client
@@ -105,9 +160,14 @@ impl CloudSessionService {
     }
 
     pub async fn refresh(&self, base_url: &str) -> Result<(), CloudSessionError> {
+        let refresh_ref = self
+            .db
+            .cloud_secret_refs()?
+            .map(|refs| refs.1)
+            .unwrap_or_else(cloud_refresh_token_ref);
         let refresh = self
             .secret_store
-            .get(&cloud_refresh_token_ref())
+            .get(&refresh_ref)
             .await?
             .ok_or(CloudSessionError::Unavailable)?;
         let client =
@@ -116,7 +176,16 @@ impl CloudSessionService {
             .refresh(refresh.expose_secret())
             .await
             .map_err(|_| CloudSessionError::Unavailable)?;
-        self.persist_authenticated_session(session).await
+        let identity = self.db.get_or_create_cloud_identity()?;
+        if let Some(account_id) = identity.account_id {
+            let (_, scope_id) =
+                crate::modules::cloud::contracts::canonical_scope(base_url, &account_id)
+                    .map_err(|_| CloudSessionError::InvalidBaseUrl)?;
+            self.persist_authenticated_session_scoped(session, &scope_id)
+                .await
+        } else {
+            self.persist_authenticated_session(session).await
+        }
     }
 
     pub async fn revoke_remote_session(
@@ -125,9 +194,14 @@ impl CloudSessionService {
         session_id: &str,
     ) -> Result<(), CloudSessionError> {
         let (client, base) = remote_client(base_url)?;
+        let access_ref = self
+            .db
+            .cloud_secret_refs()?
+            .map(|refs| refs.0)
+            .unwrap_or_else(cloud_access_token_ref);
         let token = self
             .secret_store
-            .get(&cloud_access_token_ref())
+            .get(&access_ref)
             .await?
             .ok_or(CloudSessionError::Unavailable)?;
         let response = client

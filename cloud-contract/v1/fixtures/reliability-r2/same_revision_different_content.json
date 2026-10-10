@@ -1,0 +1,42 @@
+{
+  "entity_type": "memory",
+  "entity_id": "memory-conflict-1",
+  "local_change": {
+    "change_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "entity_type": "memory",
+    "entity_id": "memory-conflict-1",
+    "base_revision": 1,
+    "revision": 2,
+    "operation": "upsert",
+    "payload": {
+      "schema_version": 1,
+      "content": "local branch content",
+      "category": "fact",
+      "source": "user",
+      "created_at": 1791504010000,
+      "updated_at": 1791504010000
+    },
+    "device_id": "11111111-1111-4111-8111-111111111111",
+    "changed_at": 1791504010000
+  },
+  "remote_record": {
+    "change_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "entity_type": "memory",
+    "entity_id": "memory-conflict-1",
+    "revision": 2,
+    "operation": "upsert",
+    "payload": {
+      "schema_version": 1,
+      "content": "remote branch conflicting content",
+      "category": "fact",
+      "source": "user",
+      "created_at": 1791504012000,
+      "updated_at": 1791504012000
+    },
+    "sequence": "1005",
+    "device_id": "22222222-2222-4222-8222-222222222222",
+    "changed_at": 1791504012000
+  },
+  "expected_status": "conflict",
+  "expected_error_code": "REVISION_CONTENT_MISMATCH"
+}

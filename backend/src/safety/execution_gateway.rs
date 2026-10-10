@@ -280,9 +280,18 @@ impl SecurityExecutionGateway {
                     reason: context.reason,
                 })
             }
-            PolicyDecision::Deny(context) => Ok(SecurityExecutionOutcome::Denied {
-                reason: context.reason,
-            }),
+            PolicyDecision::Deny(context) => {
+                self.record_capability_usage_from_outcome(
+                    request,
+                    context.risk_level,
+                    false,
+                    "denied",
+                    0,
+                );
+                Ok(SecurityExecutionOutcome::Denied {
+                    reason: context.reason,
+                })
+            }
         }
     }
 
@@ -331,9 +340,18 @@ impl SecurityExecutionGateway {
         self.record_policy_decided(request, &decision)?;
         match decision {
             PolicyDecision::Allow(context) => self.execute_allowed(request, context, || {}).await,
-            PolicyDecision::Deny(context) => Ok(SecurityExecutionOutcome::Denied {
-                reason: context.reason,
-            }),
+            PolicyDecision::Deny(context) => {
+                self.record_capability_usage_from_outcome(
+                    request,
+                    context.risk_level,
+                    true,
+                    "denied",
+                    0,
+                );
+                Ok(SecurityExecutionOutcome::Denied {
+                    reason: context.reason,
+                })
+            }
             PolicyDecision::RequireApproval(_) => {
                 unreachable!("approved execution must resolve require-approval before dispatch")
             }
@@ -356,6 +374,7 @@ impl SecurityExecutionGateway {
             request.tool_call_id.clone(),
             context.authorized_resources.clone(),
         );
+        let start_time = std::time::Instant::now();
         let tool_result = match self
             .tool_registry
             .execute_with_context(&request.tool_name, request.arguments.clone(), &tool_context)
@@ -364,11 +383,31 @@ impl SecurityExecutionGateway {
             Some(tool_result) => tool_result,
             None => {
                 self.record_execution_finished(request, &context, false)?;
+                self.record_capability_usage_from_outcome(
+                    request,
+                    context.risk_level,
+                    false,
+                    "failed",
+                    start_time.elapsed().as_millis() as i64,
+                );
                 return Err(SecurityGatewayError::ToolNotFound(
                     request.tool_name.clone(),
                 ));
             }
         };
+        let latency_ms = start_time.elapsed().as_millis() as i64;
+        let exec_status = if tool_result.ok {
+            "succeeded"
+        } else {
+            "failed"
+        };
+        self.record_capability_usage_from_outcome(
+            request,
+            context.risk_level,
+            false,
+            exec_status,
+            latency_ms,
+        );
         if let Err(error) = self.record_execution_finished(request, &context, tool_result.ok) {
             tracing::error!(
                 tool_call_id = %request.tool_call_id,
@@ -394,6 +433,35 @@ impl SecurityExecutionGateway {
             tool_result,
             verification,
         })
+    }
+
+    fn record_capability_usage_from_outcome(
+        &self,
+        request: &SecurityExecutionRequest,
+        risk_level: RiskLevel,
+        approval_required: bool,
+        status: &str,
+        latency_ms: i64,
+    ) {
+        if let Some(db) = &self.db {
+            let record = crate::db::cloud::usage::UsageRecord {
+                execution_id: request.tool_call_id.clone(),
+                capability_id: request.tool_name.clone(),
+                plugin_id: "builtin".to_string(),
+                version: "1.0.0".to_string(),
+                used_at: chrono::Utc::now().timestamp_millis(),
+                execution_status: status.to_string(),
+                latency_ms,
+                approval_required,
+                risk_level: risk_level.to_string(),
+                result_digest: None,
+            };
+            let mut conn = db.conn();
+            let _ = conn.transaction().and_then(|tx| {
+                crate::db::cloud::usage::record_capability_usage_tx(&tx, &record)?;
+                tx.commit()
+            });
+        }
     }
 
     fn record_grant_evaluated(

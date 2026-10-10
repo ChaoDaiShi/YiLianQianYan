@@ -131,6 +131,55 @@ const CLOUD_CONFLICT_OPERATION_SCHEMA: ProductMigrationSpec = ProductMigrationSp
      CHECK (remote_operation IN ('upsert','delete'));",
 );
 
+const CLOUD_PROFILE_METADATA_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2010,
+    "2010_profile_scope",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2010_profile_scope.sql"),
+);
+
+const CLOUD_SYNC_CHECKPOINT_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2011,
+    "2011_sync_checkpoint",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2011_sync_checkpoint.sql"),
+);
+
+const CLOUD_CONFLICT_SNAPSHOT_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2012,
+    "2012_conflict_snapshot",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2012_conflict_snapshot.sql"),
+);
+
+const CLOUD_PENDING_REVOCATIONS_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2013,
+    "2013_pending_revocations",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2013_pending_revocations.sql"),
+);
+
+const CLOUD_USAGE_PROJECTION_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2014,
+    "2014_usage_projection",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2014_usage_projection.sql"),
+);
+
+const CLOUD_LIFECYCLE_CREDENTIALS_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2015,
+    "2015_lifecycle_credentials",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2015_lifecycle_credentials.sql"),
+);
+
+const CLOUD_REVIEW_FIXES_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
+    2016,
+    "2016_review_fixes",
+    MigrationOwner::V11Cloud,
+    include_str!("migrations/2016_review_fixes.sql"),
+);
+
 impl Database {
     pub fn initialize_cloud_schema(&self) -> Result<(), rusqlite::Error> {
         self.apply_product_migrations(&[
@@ -139,6 +188,13 @@ impl Database {
             CLOUD_SYNC_ENTITY_SCHEMA,
             CLOUD_LOCAL_REVISION_SCHEMA,
             CLOUD_CONFLICT_OPERATION_SCHEMA,
+            CLOUD_PROFILE_METADATA_SCHEMA,
+            CLOUD_SYNC_CHECKPOINT_SCHEMA,
+            CLOUD_CONFLICT_SNAPSHOT_SCHEMA,
+            CLOUD_PENDING_REVOCATIONS_SCHEMA,
+            CLOUD_USAGE_PROJECTION_SCHEMA,
+            CLOUD_LIFECYCLE_CREDENTIALS_SCHEMA,
+            CLOUD_REVIEW_FIXES_SCHEMA,
         ])
     }
 }

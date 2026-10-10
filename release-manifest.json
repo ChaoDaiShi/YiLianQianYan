@@ -1,0 +1,31 @@
+{
+  "contract_revision": "v1.1-r2",
+  "public_sha": "7fe21e45883e4268be765926765281fc213a6817",
+  "private_sha": "23f790bf9bb58fad1b57fa3d78922c8b5b2ba68e",
+  "api_running_revision": null,
+  "worker_running_revision": null,
+  "admin_running_revision": null,
+  "sqlite_migrations": [
+    "2010_profile_scope",
+    "2011_sync_checkpoint",
+    "2012_conflict_snapshot",
+    "2013_pending_revocations",
+    "2014_usage_projection",
+    "2015_lifecycle_credentials",
+    "2016_review_fixes"
+  ],
+  "postgres_migrations": [
+    "0001_v11_cloud",
+    "0002_sync_reliability",
+    "0003_device_owner",
+    "0004_lifecycle_reliability",
+    "0005_review_fixes"
+  ],
+  "installer_sha256": null,
+  "test_run_id": "run-d1650556b1f4",
+  "real_database_result": "PASS_E01_E19_SCOPED_TEST_DATABASE",
+  "desktop_lifecycle_result": "NOT_TESTED",
+  "restore_drill_result": "NOT_TESTED",
+  "source_hosting_decision": "HUMAN_PENDING",
+  "review_result": "IMPLEMENTED_PENDING_REAL_DATABASE_AND_FINAL_REVIEW"
+}

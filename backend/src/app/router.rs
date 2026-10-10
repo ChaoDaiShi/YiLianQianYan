@@ -30,6 +30,11 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
     let protected = Router::new()
         .route("/api/chat", post(chat::chat_handler))
         .route("/api/cloud/identity", get(cloud::identity_handler))
+        .route("/api/cloud/profile", get(cloud::profile_handler))
+        .route(
+            "/api/cloud/profile/switch",
+            post(cloud::profile_switch_handler),
+        )
         .route("/api/cloud/login", post(cloud::login_handler))
         .route("/api/cloud/register", post(cloud::register_handler))
         .route("/api/cloud/refresh", post(cloud::refresh_handler))
@@ -41,6 +46,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         .route("/api/cloud/sync/status", get(cloud::sync_status_handler))
         .route("/api/cloud/sync/choice", put(cloud::sync_choice_handler))
+        .route(
+            "/api/cloud/sync/policy",
+            get(cloud::sync_policy_handler).put(cloud::update_sync_policy_handler),
+        )
         .route(
             "/api/cloud/sync/conflicts",
             get(cloud::sync_conflicts_handler),
@@ -55,6 +64,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             get(cloud::privacy_summary_handler),
         )
         .route("/api/cloud/export", post(cloud::request_export_handler))
+        .route(
+            "/api/cloud/export/:id/download",
+            get(cloud::download_export_handler),
+        )
         .route(
             "/api/cloud/account/delete",
             post(cloud::request_deletion_handler),

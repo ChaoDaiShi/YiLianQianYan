@@ -121,6 +121,7 @@ pub struct DiscoveredSubagent {
 /// Shared application server state
 pub struct AppServer {
     pub db: Database,
+    pub app_data_dir: std::path::PathBuf,
     pub config: Arc<RwLock<AppConfig>>,
     pub tool_registry: Arc<ToolRegistry>,
     /// Application-lifetime registry shared by Bash, ProcessTool, and every
@@ -168,6 +169,8 @@ pub struct AppServer {
     pub(crate) voice_dispatch_hook: Arc<RwLock<Option<Arc<dyn VoiceDispatchHook>>>>,
     /// Authoritative v1 Task World registry and persistence boundary.
     pub task_world: TaskWorldRuntime,
+    /// Isolated ScopedDb wrapper binding database with active scope lease and gate latch.
+    pub scoped_db: crate::db::cloud::scoped_db::ScopedDb,
 }
 
 impl AppServer {

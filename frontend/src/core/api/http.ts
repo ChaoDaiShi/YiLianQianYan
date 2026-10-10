@@ -98,3 +98,19 @@ export async function requestResult<T>(
     return { ok: false, status: 0, error: String(e) };
   }
 }
+
+export async function requestBlob(path: string): Promise<ApiResult<Blob>> {
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "GET",
+      headers: controlSessionHeaders(),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      return { ok: false, status: res.status, error: text || `HTTP ${res.status}` };
+    }
+    return { ok: true, data: await res.blob() };
+  } catch (error) {
+    return { ok: false, status: 0, error: String(error) };
+  }
+}

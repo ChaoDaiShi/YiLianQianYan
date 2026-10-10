@@ -1,5 +1,13 @@
-mod identity;
-mod projection;
-mod schema;
-mod settings;
-mod sync;
+pub mod apply;
+pub mod capture;
+pub mod checkpoint;
+pub mod conflict_resolve;
+pub mod conflicts;
+pub mod identity;
+pub mod outbox;
+pub mod projection;
+pub mod schema;
+pub mod scoped_db;
+pub mod settings;
+pub mod sync;
+pub mod usage;

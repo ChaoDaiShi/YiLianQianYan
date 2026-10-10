@@ -1,4 +1,4 @@
-import { request, requestResult, type ApiResult } from "../core/api/http";
+import { request, requestBlob, requestResult, type ApiResult } from "../core/api/http";
 
 export type IdentityStatus = "guest" | "authenticated" | "offline_authenticated" | "closing";
 
@@ -21,10 +21,37 @@ export interface CloudSyncStatus {
   last_error_code: string | null;
 }
 
+export interface CloudSyncPolicy {
+  sync_conversations: boolean;
+  sync_messages: boolean;
+  sync_memories: boolean;
+  sync_agent_profiles: boolean;
+  sync_workflow_metadata: boolean;
+  sync_artifact_metadata: boolean;
+  sync_task_graphs: boolean;
+  sync_canvas_views: boolean;
+  sync_settings: boolean;
+  sync_capability_usage: boolean;
+}
+
+export type RemoteRevocationStatus = "confirmed" | "pending" | "unknown";
+
+export interface LogoutReport {
+  local_signed_out: boolean;
+  remote_revocation: RemoteRevocationStatus;
+}
+
 export interface CloudIdentityResponse {
   identity: CloudIdentity;
   sync: CloudSyncStatus;
   sync_existing_choice: "undecided" | "sync" | "local_only";
+  report?: LogoutReport;
+}
+
+export interface CloudLogoutResponse {
+  report: LogoutReport;
+  activation: ActivationPlan;
+  status: "awaiting_restart";
 }
 
 export interface CloudConnectionPayload {
@@ -32,6 +59,11 @@ export interface CloudConnectionPayload {
   email: string;
   password: string;
   display_name?: string;
+}
+
+export interface CloudAuthenticationResponse {
+  activation: ActivationPlan;
+  status: "awaiting_restart";
 }
 
 export interface CloudSyncResponse {
@@ -67,13 +99,26 @@ export interface CloudDataSummary {
   object_bytes: number;
 }
 
+export type LifecycleJobStatus =
+  | "queued"
+  | "running"
+  | "waiting_for_producers"
+  | "waiting_backup_expiry"
+  | "completed"
+  | "failed"
+  | "retry_wait";
+
 export interface LifecycleJob {
   id: string;
   kind: "export" | "deletion";
-  status: "queued" | "running" | "completed" | "failed";
+  status: LifecycleJobStatus;
   progress: number;
   result_ref: string | null;
   error_code: string | null;
+  live_data_removed?: boolean;
+  backups_cleared?: boolean;
+  backup_purge_deadline?: number | null;
+  status_credential?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -104,16 +149,66 @@ export function getCloudIdentity(): Promise<CloudIdentityResponse | null> {
   return request("GET", "/api/cloud/identity");
 }
 
-export function loginCloud(payload: CloudConnectionPayload): Promise<ApiResult<CloudIdentityResponse>> {
+export function loginCloud(payload: CloudConnectionPayload): Promise<ApiResult<CloudAuthenticationResponse>> {
   return requestResult("POST", "/api/cloud/login", payload);
 }
 
-export function registerCloud(payload: CloudConnectionPayload): Promise<ApiResult<CloudIdentityResponse>> {
+export function registerCloud(payload: CloudConnectionPayload): Promise<ApiResult<CloudAuthenticationResponse>> {
   return requestResult("POST", "/api/cloud/register", payload);
 }
 
-export function logoutCloud(): Promise<ApiResult<CloudIdentityResponse>> {
+export interface ScopeLease {
+  scope_id: string;
+  generation: string;
+}
+
+export interface ProfileRecord {
+  id: string;
+  kind: "guest" | "account";
+  service_origin: string | null;
+  account_id: string | null;
+  created_at: number;
+}
+
+export interface ProfileView {
+  active_profile_id: string;
+  active_generation: string;
+  active_lease: ScopeLease;
+  profiles: ProfileRecord[];
+}
+
+export interface ActivationPlan {
+  profile_id: string;
+  lease: ScopeLease;
+  requires_restart: boolean;
+  import_count: number;
+}
+
+export interface ProfileSwitchResponse {
+  plan: ActivationPlan;
+  status: "awaiting_restart";
+}
+
+export type ActivationChoice =
+  | { type: "open_account_only" }
+  | { type: "import_selected_guest"; entity_ids: string[] };
+
+export interface ProfileSwitchPayload {
+  service_origin: string;
+  account_id: string;
+  choice?: ActivationChoice;
+}
+
+export function logoutCloud(): Promise<ApiResult<CloudLogoutResponse>> {
   return requestResult("POST", "/api/cloud/logout");
+}
+
+export function getCloudProfile(): Promise<ApiResult<ProfileView>> {
+  return requestResult("GET", "/api/cloud/profile");
+}
+
+export function switchCloudProfile(payload: ProfileSwitchPayload): Promise<ApiResult<ProfileSwitchResponse>> {
+  return requestResult("POST", "/api/cloud/profile/switch", payload);
 }
 
 export function getCloudSyncStatus(): Promise<CloudSyncResponse | null> {
@@ -126,6 +221,14 @@ export function syncCloudNow(): Promise<ApiResult<{ report: { pushed: number; pu
 
 export function updateSyncChoice(choice: CloudIdentityResponse["sync_existing_choice"]): Promise<ApiResult<CloudSyncResponse>> {
   return requestResult("PUT", "/api/cloud/sync/choice", { choice });
+}
+
+export function getCloudSyncPolicy(): Promise<ApiResult<{ policy: CloudSyncPolicy }>> {
+  return requestResult("GET", "/api/cloud/sync/policy");
+}
+
+export function updateCloudSyncPolicy(policy: CloudSyncPolicy): Promise<ApiResult<{ policy: CloudSyncPolicy }>> {
+  return requestResult("PUT", "/api/cloud/sync/policy", policy);
 }
 
 export function listSyncConflicts(): Promise<ApiResult<{ conflicts: SyncConflict[] }>> {
@@ -157,6 +260,10 @@ export function getPrivacySummary(): Promise<ApiResult<{ summary: CloudDataSumma
 
 export function requestCloudExport(): Promise<ApiResult<{ job: LifecycleJob }>> {
   return requestResult("POST", "/api/cloud/export");
+}
+
+export function downloadCloudExport(id: string): Promise<ApiResult<Blob>> {
+  return requestBlob(`/api/cloud/export/${encodeURIComponent(id)}/download`);
 }
 
 export function requestAccountDeletion(): Promise<ApiResult<{ job: LifecycleJob; identity: CloudIdentity | null }>> {

@@ -132,6 +132,15 @@ fn get_control_session_token(state: tauri::State<'_, ControlSessionState>) -> St
     state.0.clone()
 }
 
+#[tauri::command]
+fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        app.restart();
+    });
+    Ok(())
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -212,7 +221,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(ControlSessionState(control_token))
-        .invoke_handler(tauri::generate_handler![get_control_session_token])
+        .invoke_handler(tauri::generate_handler![
+            get_control_session_token,
+            restart_application
+        ])
         .setup(|_app| {
             tracing::info!("Tauri desktop window ready, backend on http://127.0.0.1:9420");
             Ok(())

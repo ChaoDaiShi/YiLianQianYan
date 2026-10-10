@@ -182,6 +182,14 @@ pub struct LifecycleJob {
     pub progress: i64,
     pub result_ref: Option<String>,
     pub error_code: Option<String>,
+    #[serde(default)]
+    pub live_data_removed: bool,
+    #[serde(default)]
+    pub backups_cleared: bool,
+    #[serde(default)]
+    pub backup_purge_deadline: Option<i64>,
+    #[serde(default)]
+    pub status_credential: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -251,3 +259,12 @@ impl AccountDeletionState {
         }
     }
 }
+
+pub use super::contracts::{
+    apply_pull_page, apply_selected_remote_tx, canonical_scope, compute_canonical_digest,
+    decide_remote_version, reconcile_skipped_history, validate_sync_payload, AckReport,
+    ApplyDisposition, ApplyPageReport, EntityKey, PendingChange, PullPage, PushAck, PushResult,
+    PushStatus, ReconciliationReport, RemoteRecord, ScopeError, ScopeKey, ScopeLease, ScopedDb,
+    SyncCapabilities, SyncError, VersionDecision, CONTRACT_REVISION, SYNC_EPOCH_HEADER,
+    SYNC_PROTOCOL_HEADER, SYNC_PROTOCOL_VERSION,
+};

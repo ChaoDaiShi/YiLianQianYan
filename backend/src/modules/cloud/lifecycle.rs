@@ -1,9 +1,9 @@
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 use std::sync::Arc;
 
 use crate::{
     db::Database,
-    integrations::secret::{cloud_access_token_ref, SecretStore},
+    integrations::secret::{cloud_access_token_ref, deletion_status_credential_ref, SecretStore},
 };
 
 use super::domain::{CloudDataSummary, LifecycleJob};
@@ -18,6 +18,10 @@ pub enum CloudLifecycleError {
     Unavailable,
     #[error("cloud lifecycle response is invalid")]
     InvalidResponse,
+    #[error("export not found")]
+    NotFound,
+    #[error("export has expired")]
+    Expired,
     #[error("local lifecycle persistence failed")]
     Database(#[from] rusqlite::Error),
 }
@@ -67,30 +71,108 @@ impl CloudLifecycleService {
     }
 
     pub async fn request_account_deletion(&self) -> Result<LifecycleJob, CloudLifecycleError> {
-        let job = self
+        let job: LifecycleJob = self
             .post_json(
                 "account/deletion",
                 Some(serde_json::json!({"confirmation":"DELETE"})),
             )
             .await?;
+
+        // If server issued a dedicated deletion status credential, persist to SecretStore
+        if let Some(ref raw_credential) = job.status_credential {
+            let cred_ref = deletion_status_credential_ref(&job.id);
+            let _ = self
+                .secret_store
+                .put(&cred_ref, SecretString::from(raw_credential.clone()))
+                .await;
+        }
+
         self.db.save_cloud_lifecycle_job(&job)?;
         Ok(job)
     }
 
+    pub async fn download_export(
+        &self,
+        id: &str,
+    ) -> Result<(String, Vec<u8>), CloudLifecycleError> {
+        let token = self.access_token().await?;
+        let response = self
+            .http
+            .get(format!("{}/exports/{id}/download", self.base_url))
+            .bearer_auth(token.expose_secret())
+            .send()
+            .await
+            .map_err(|_| CloudLifecycleError::Unavailable)?;
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(CloudLifecycleError::AuthenticationRequired);
+        }
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(CloudLifecycleError::NotFound);
+        }
+        if response.status() == reqwest::StatusCode::GONE {
+            return Err(CloudLifecycleError::Expired);
+        }
+        if !response.status().is_success() {
+            return Err(CloudLifecycleError::Unavailable);
+        }
+
+        let filename = response
+            .headers()
+            .get(reqwest::header::CONTENT_DISPOSITION)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|val| {
+                val.split("filename=")
+                    .nth(1)
+                    .map(|s| s.trim_matches('"').trim().to_string())
+            })
+            .unwrap_or_else(|| format!("yilian-export-{id}.json"));
+
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|_| CloudLifecycleError::InvalidResponse)?
+            .to_vec();
+
+        Ok((filename, bytes))
+    }
+
     pub async fn job(&self, kind: &str, id: &str) -> Result<LifecycleJob, CloudLifecycleError> {
-        let path = match kind {
-            "export" => format!("exports/{id}"),
-            "deletion" => format!("account/deletion/{id}"),
+        let job = match kind {
+            "export" => self.get_json(&format!("exports/{id}")).await?,
+            "deletion" => {
+                // If we have a stored deletion status credential in SecretStore, use it
+                let cred_ref = deletion_status_credential_ref(id);
+                if let Ok(Some(secret)) = self.secret_store.get(&cred_ref).await {
+                    match self
+                        .get_json_with_custom_auth(
+                            &format!("account/deletion/{id}"),
+                            &format!("DeletionCredential {}", secret.expose_secret()),
+                        )
+                        .await
+                    {
+                        Ok(job) => job,
+                        Err(_) => self.get_json(&format!("account/deletion/{id}")).await?,
+                    }
+                } else {
+                    self.get_json(&format!("account/deletion/{id}")).await?
+                }
+            }
             _ => return Err(CloudLifecycleError::InvalidResponse),
         };
-        let job = self.get_json(&path).await?;
+
         self.db.save_cloud_lifecycle_job(&job)?;
         Ok(job)
     }
 
     async fn access_token(&self) -> Result<secrecy::SecretString, CloudLifecycleError> {
+        let access_ref = self
+            .db
+            .cloud_secret_refs()?
+            .map(|refs| refs.0)
+            .unwrap_or_else(cloud_access_token_ref);
         self.secret_store
-            .get(&cloud_access_token_ref())
+            .get(&access_ref)
             .await
             .map_err(|_| CloudLifecycleError::AuthenticationRequired)?
             .ok_or(CloudLifecycleError::AuthenticationRequired)
@@ -105,6 +187,21 @@ impl CloudLifecycleService {
             .http
             .get(format!("{}/{}", self.base_url, path))
             .bearer_auth(token.expose_secret())
+            .send()
+            .await
+            .map_err(|_| CloudLifecycleError::Unavailable)?;
+        parse_response(response).await
+    }
+
+    async fn get_json_with_custom_auth<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        auth_header: &str,
+    ) -> Result<T, CloudLifecycleError> {
+        let response = self
+            .http
+            .get(format!("{}/{}", self.base_url, path))
+            .header(reqwest::header::AUTHORIZATION, auth_header)
             .send()
             .await
             .map_err(|_| CloudLifecycleError::Unavailable)?;
@@ -138,6 +235,12 @@ async fn parse_response<T: serde::de::DeserializeOwned>(
 ) -> Result<T, CloudLifecycleError> {
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Err(CloudLifecycleError::AuthenticationRequired);
+    }
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(CloudLifecycleError::NotFound);
+    }
+    if response.status() == reqwest::StatusCode::GONE {
+        return Err(CloudLifecycleError::Expired);
     }
     if !response.status().is_success() {
         return Err(CloudLifecycleError::Unavailable);

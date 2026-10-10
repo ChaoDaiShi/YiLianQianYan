@@ -13,8 +13,17 @@ fn ser_to_string<T: serde::Serialize>(value: &T) -> String {
         .unwrap_or_default()
 }
 
-fn string_to_ser<T: serde::de::DeserializeOwned>(s: &str) -> Option<T> {
-    serde_json::from_value(serde_json::json!(s)).ok()
+fn decode_grant_field<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    column: usize,
+) -> rusqlite::Result<T> {
+    serde_json::from_value(serde_json::Value::String(raw.to_owned())).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
 }
 
 impl Database {
@@ -25,21 +34,30 @@ impl Database {
              FROM security_grants WHERE subject_id = ?1 ORDER BY created_at",
         )?;
         let rows = stmt.query_map(rusqlite::params![subject_id], |row| {
+            let effect_raw: String = row.get(2)?;
+            let permission_raw: String = row.get(3)?;
+            let resource_raw: String = row.get(4)?;
+            let source_raw: String = row.get(5)?;
+
+            let effect = decode_grant_field::<super::model::GrantEffect>(&effect_raw, 2)?;
+            let permission = decode_grant_field::<crate::safety::PermissionId>(&permission_raw, 3)?;
+            let resource = serde_json::from_str::<super::model::GrantResource>(&resource_raw)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            let source = decode_grant_field::<super::model::GrantSource>(&source_raw, 5)?;
+
             Ok(SecurityGrant {
                 id: row.get(0)?,
                 subject_id: row.get(1)?,
-                effect: string_to_ser(&row.get::<_, String>(2)?)
-                    .unwrap_or(super::model::GrantEffect::Allow),
-                permission: string_to_ser(&row.get::<_, String>(3)?)
-                    .unwrap_or(crate::safety::PermissionId::FilesystemRead),
-                resource: serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(4)?)
-                    .ok()
-                    .and_then(|v| serde_json::from_value(v).ok())
-                    .unwrap_or_else(|| super::model::GrantResource::Shell {
-                        host_escape_acknowledged: false,
-                    }),
-                source: string_to_ser(&row.get::<_, String>(5)?)
-                    .unwrap_or(super::model::GrantSource::User),
+                effect,
+                permission,
+                resource,
+                source,
                 created_at: row.get(6)?,
                 expires_at: row.get(7)?,
             })
@@ -54,21 +72,30 @@ impl Database {
              FROM security_grants WHERE grant_id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            let effect_raw: String = row.get(2)?;
+            let permission_raw: String = row.get(3)?;
+            let resource_raw: String = row.get(4)?;
+            let source_raw: String = row.get(5)?;
+
+            let effect = decode_grant_field::<super::model::GrantEffect>(&effect_raw, 2)?;
+            let permission = decode_grant_field::<crate::safety::PermissionId>(&permission_raw, 3)?;
+            let resource = serde_json::from_str::<super::model::GrantResource>(&resource_raw)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            let source = decode_grant_field::<super::model::GrantSource>(&source_raw, 5)?;
+
             Ok(SecurityGrant {
                 id: row.get(0)?,
                 subject_id: row.get(1)?,
-                effect: string_to_ser(&row.get::<_, String>(2)?)
-                    .unwrap_or(super::model::GrantEffect::Allow),
-                permission: string_to_ser(&row.get::<_, String>(3)?)
-                    .unwrap_or(crate::safety::PermissionId::FilesystemRead),
-                resource: serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(4)?)
-                    .ok()
-                    .and_then(|v| serde_json::from_value(v).ok())
-                    .unwrap_or_else(|| super::model::GrantResource::Shell {
-                        host_escape_acknowledged: false,
-                    }),
-                source: string_to_ser(&row.get::<_, String>(5)?)
-                    .unwrap_or(super::model::GrantSource::User),
+                effect,
+                permission,
+                resource,
+                source,
                 created_at: row.get(6)?,
                 expires_at: row.get(7)?,
             })

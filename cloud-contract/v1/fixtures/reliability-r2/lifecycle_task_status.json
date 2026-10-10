@@ -1,0 +1,32 @@
+{
+  "export_job": {
+    "id": "eeeeeeee-0000-4000-8000-000000000001",
+    "kind": "export",
+    "status": "completed",
+    "progress": 100,
+    "result_ref": "exports/user-1/export-1.tar.gz",
+    "error_code": null,
+    "created_at": 1791504000000,
+    "updated_at": 1791504060000
+  },
+  "deletion_job": {
+    "id": "dddddddd-0000-4000-8000-000000000002",
+    "kind": "deletion",
+    "status": "running",
+    "progress": 50,
+    "result_ref": null,
+    "error_code": null,
+    "created_at": 1791504000000,
+    "updated_at": 1791504030000
+  },
+  "failed_deletion_job": {
+    "id": "dddddddd-0000-4000-8000-000000000003",
+    "kind": "deletion",
+    "status": "failed",
+    "progress": 30,
+    "result_ref": null,
+    "error_code": "DELETE_OBJECT_FAILED",
+    "created_at": 1791504000000,
+    "updated_at": 1791504030000
+  }
+}

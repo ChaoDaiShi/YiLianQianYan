@@ -1,0 +1,266 @@
+[
+  {
+    "case_id": "E01",
+    "stage": "S1/S2",
+    "title": "B 上传→A 上传→A 拉取",
+    "critical_assertions": [
+      "设备 A 成功拉取到设备 B 上传的变更数据",
+      "设备 A 上传本地变更不会重置或修改其下游拉取 checkpoint/游标",
+      "两端变更序列由服务端行级锁与单调递增变更号严格排序"
+    ],
+    "verification_target": "tests/v11_sync_atomicity.rs::test_push_ack_never_advances_download_cursor",
+    "evidence_requirements": "服务端与客户端数据库断言、游标单调性检查"
+  },
+  {
+    "case_id": "E02",
+    "stage": "S1",
+    "title": "同用户并发事务反序风险",
+    "critical_assertions": [
+      "同用户并发事务通过 pg_advisory_xact_lock/FOR UPDATE 串行化分配 sequence",
+      "先持锁者提交结束前，后到达者不能越过分配较小变更号",
+      "并发 push 结果无漏项、无空洞序列"
+    ],
+    "verification_target": "cloud-core/tests/sync_postgres.rs::test_concurrent_push_ordering",
+    "evidence_requirements": "真实 PostgreSQL 并发测试、序列号严格递增验证"
+  },
+  {
+    "case_id": "E03",
+    "stage": "S2",
+    "title": "旧版本和重复页重放",
+    "critical_assertions": [
+      "旧版本 revision 变更不会覆盖更新的本地投影",
+      "重复页拉取或断网重试具备幂等性，不产生重复消息或虚假冲突",
+      "业务实体状态保持单调递增"
+    ],
+    "verification_target": "tests/v11_sync_atomicity.rs::test_page_replay_after_crash_is_idempotent",
+    "evidence_requirements": "SQLite 事务重放断言、投影实体唯一性验证"
+  },
+  {
+    "case_id": "E04",
+    "stage": "S2",
+    "title": "拉取页中途 SQL 故障/进程退出",
+    "critical_assertions": [
+      "单页内的所有实体写入与游标推进处于同一原子事务",
+      "中途故障触发事务全部回滚，游标保持在上一页已确认点",
+      "不会出现游标推进但数据缺失的孤儿状态"
+    ],
+    "verification_target": "tests/v11_sync_atomicity.rs::test_page_failure_rolls_back_everything",
+    "evidence_requirements": "事务失败注入测试、SQLite 回滚状态核验"
+  },
+  {
+    "case_id": "E05",
+    "stage": "S3",
+    "title": "A 登出→B 登录，保留 A 离线编辑",
+    "critical_assertions": [
+      "账号 A 与账号 B 拥有相互隔离的物理目录与 SQLite 数据库",
+      "账号 B 登录后，其业务库、Outbox 队列、全文本地索引及 UI 绝不含账号 A 的数据",
+      "账号 A 离线未上传的编辑完整保留在其专有 profile 中"
+    ],
+    "verification_target": "tests/v11_profile_isolation.rs::test_s3_1_profile_physical_isolation_prevents_business_data_leak",
+    "evidence_requirements": "Profile 文件路径隔离、两库数据不渗透断言"
+  },
+  {
+    "case_id": "E06",
+    "stage": "S2/S3",
+    "title": "账号切换时旧 push/pull 返回",
+    "critical_assertions": [
+      "所有同步网络请求携带所属 Profile 的 ScopeLease",
+      "账号切换后当前租约 generation 递增，旧租约的延迟响应被写入屏障严格拒绝",
+      "旧账号网络响应无法写入新账号数据库，亦不可恢复旧身份"
+    ],
+    "verification_target": "tests/v11_profile_isolation.rs::test_s3_3_scoped_db_lease_validation_and_write_gate",
+    "evidence_requirements": "租约 generation 失效拦截断言、写屏障抛错验证"
+  },
+  {
+    "case_id": "E07",
+    "stage": "S3",
+    "title": "同 device.id 跨账号登录",
+    "critical_assertions": [
+      "服务端 sessions 表建立 (user_id, device_id) 复合外键及租户检查",
+      "设备尝试跨越账号归属调用其他用户会话时被服务端拒绝",
+      "客户端在切换账号时必须重新绑定该账号专属的会话凭证"
+    ],
+    "verification_target": "cloud-core/tests/device_owner_postgres.rs::test_device_owner_session_isolation",
+    "evidence_requirements": "服务端 401/403 租户校验断言、数据库约束检查"
+  },
+  {
+    "case_id": "E08",
+    "stage": "S4",
+    "title": "采用云端但无 payload",
+    "critical_assertions": [
+      "当远端操作为 upsert 但远端 payload 为 null 时，禁止采用云端版本",
+      "UI 禁用该选项并显示 missing_remote_payload 警告",
+      "底层 resolve 接口 fail-closed，冲突不会被静默清除"
+    ],
+    "verification_target": "tests/v11_conflict_recovery.rs::test_choose_remote_upsert_with_null_payload_fails",
+    "evidence_requirements": "冲突校验模型断言、前端禁用状态断言"
+  },
+  {
+    "case_id": "E09",
+    "stage": "S4",
+    "title": "delete/upsert 冲突及长时间离线回归",
+    "critical_assertions": [
+      "云端已标记删除 (tombstone) 的实体，本地编辑禁止以原 UUID 复活",
+      "用户保留本地更改时必须分配全新 UUID (KeepLocalAsCopy)，原有墓碑语义不被破坏",
+      "长时间离线重新连接后，本地 delete 不会转化为 upsert"
+    ],
+    "verification_target": "tests/v11_conflict_recovery.rs::test_remote_tombstone_local_upsert_restore_requires_new_entity_and_keep_local_as_copy",
+    "evidence_requirements": "Tombstone 保护断言、副本实体生成验证"
+  },
+  {
+    "case_id": "E10",
+    "stage": "S1/S2",
+    "title": "POST 已提交但响应丢失",
+    "critical_assertions": [
+      "客户端变更采用稳定 client_mutation_id/change_id",
+      "网络中断重试时，服务端识别相同 mutation_id 仅做幂等应答，不重复插入",
+      "客户端重放只产生一次业务状态变化"
+    ],
+    "verification_target": "tests/v11_conflict_recovery.rs::test_idempotent_retry_with_duplicate_request_id",
+    "evidence_requirements": "稳定 change_id 幂等重放验证"
+  },
+  {
+    "case_id": "E11",
+    "stage": "S5",
+    "title": "注销文件权限失败",
+    "critical_assertions": [
+      "注销执行清理磁盘文件时若遇到权限拒绝或 IO 异常，记录失败清单项",
+      "manifest 中 remaining_items 保持大于零",
+      "任务状态绝不进入 completed，报告 fail-closed 阻断"
+    ],
+    "verification_target": "cloud-core/tests/lifecycle_files.rs::test_delete_registered_object_permission_denied_classification",
+    "evidence_requirements": "真实文件系统权限拒绝模拟与任务状态断言"
+  },
+  {
+    "case_id": "E12",
+    "stage": "S5",
+    "title": "worker 退出/租约过期/旧 worker 回来",
+    "critical_assertions": [
+      "生命周期任务采用带心跳与过期时间的租约机制 (JobLease)",
+      "Worker 崩溃或租约超期后，其他 Worker 能安全接管任务",
+      "旧 Worker 迟到的完成提交因 lease token 失效被拒绝"
+    ],
+    "verification_target": "cloud-core/tests/lifecycle_postgres.rs::test_worker_lease_expiration_and_takeover",
+    "evidence_requirements": "Worker 租约超时重新认领断言"
+  },
+  {
+    "case_id": "E13",
+    "stage": "S1/S3/S5",
+    "title": "注销与导出/同步竞争",
+    "critical_assertions": [
+      "账号进入 closing 状态后，所有同步 push/pull 接口立即被写入屏障拦截",
+      "closing 账号禁止提交新增业务正文或新增导出请求",
+      "进行中的导出完成或清理后，注销清理阶段方可终结账本"
+    ],
+    "verification_target": "tests/v11_cloud_contract.rs::test_deletion_lifecycle_revokes_sessions_before_deleting",
+    "evidence_requirements": "身份状态机拦截断言、并发屏障验证"
+  },
+  {
+    "case_id": "E14",
+    "stage": "S5",
+    "title": "导出下载越权与过期",
+    "critical_assertions": [
+      "数据导出下载接口严格验证拥有者身份，跨用户访问返回 403/404",
+      "导出文件过期后返回 410 Gone，对应对象存储物理文件被可靠清理",
+      "下载链接不包含明文永久 token"
+    ],
+    "verification_target": "cloud-core/tests/lifecycle_files.rs::test_delete_registered_object_idempotency_and_absence",
+    "evidence_requirements": "越权访问拦截测试、410 状态码与文件不存在断言"
+  },
+  {
+    "case_id": "E15",
+    "stage": "S6",
+    "title": "system 消息/未知字段/禁用类型",
+    "critical_assertions": [
+      "客户端同步采集器只采集 user 与 assistant 角色消息，绝不采集 system 角色",
+      "未知字段在客户端和云端入口均被反序列化严格校验拒绝",
+      "用户在设置中禁用的数据分类不会进入 Outbox，亦不会向下游发送 delete 污染云端"
+    ],
+    "verification_target": "tests/v11_payload_policy.rs::test_message_system_role_or_extra_field_rejected",
+    "evidence_requirements": "数据载荷白名单反序列化断言、分类开关测试"
+  },
+  {
+    "case_id": "E16",
+    "stage": "S6",
+    "title": "真实网关执行插件 fixture",
+    "critical_assertions": [
+      "插件执行历史同步仅同步审计元数据 (工具名、耗时、风险等级、执行结果状态)",
+      "工具的完整输入参数、执行输出详情、文件路径及 Secret 绝不同步",
+      "两端设备审计指标能够闭环统计，敏感上下文零泄漏"
+    ],
+    "verification_target": "tests/v11_payload_policy.rs::test_capability_usage_idempotency_and_recording",
+    "evidence_requirements": "审计指标载荷审查、正文剔除断言"
+  },
+  {
+    "case_id": "E17",
+    "stage": "S6",
+    "title": "损坏 allow/deny 记录",
+    "critical_assertions": [
+      "当工具授权或安全策略记录出现格式损坏、解析失败或校验和异常时，系统 Fail-Closed",
+      "拒绝自动执行高风险工具，工具执行计数绝不增加",
+      "向用户明确展示审批与错误提示"
+    ],
+    "verification_target": "tests/v11_payload_policy.rs::test_corrupt_grant_fields_fail_closed",
+    "evidence_requirements": "损坏记录故障注入、拦截与审计计数断言"
+  },
+  {
+    "case_id": "E18",
+    "stage": "S0/S1/S2",
+    "title": "r1 客户端 + r2 服务端 / 反向组合",
+    "critical_assertions": [
+      "云同步采用协议版本门禁 (v1.1-r2)",
+      "协议版本不兼容时服务端返回 426 Upgrade Required",
+      "客户端优雅暂停云同步并提示用户升级，本地核心功能不受影响"
+    ],
+    "verification_target": "cloud-core/tests/sync_postgres.rs::test_legacy_client_is_blocked",
+    "evidence_requirements": "426 协议门禁响应断言、本地功能可用性验证"
+  },
+  {
+    "case_id": "E19",
+    "stage": "S2/S3",
+    "title": "修复前高 cursor 和错误投影迁移",
+    "critical_assertions": [
+      "升级迁移检测历史虚高游标并执行校准补齐，不遗漏服务端有效变更",
+      "迁移保留本地已有实体分歧，不静默覆盖本地数据",
+      "SQLite quick_check 通过"
+    ],
+    "verification_target": "tests/v11_sync_atomicity.rs::test_reconcile_repairs_skipped_history",
+    "evidence_requirements": "历史断层模拟与游标对齐核验"
+  },
+  {
+    "case_id": "E20",
+    "stage": "S5/S7",
+    "title": "备份恢复与已注销账号",
+    "critical_assertions": [
+      "数据库与对象存储备份恢复至独立测试环境成功",
+      "恢复后优先重放删除账本 (Deletion Ledger)，已注销账号绝不复活",
+      "已注销用户的会话、令牌和实体依然保持已销毁状态"
+    ],
+    "verification_target": "cloud-core/tests/lifecycle_postgres.rs::test_deletion_manifest_and_replay",
+    "evidence_requirements": "恢复环境数据断言、注销状态重放验证"
+  },
+  {
+    "case_id": "E21",
+    "stage": "S7",
+    "title": "首装、旧版升级、卸载/保留数据后重装",
+    "critical_assertions": [
+      "全新安装默认以 Guest 身份运行，本地核心 Agent 与任务即刻可用",
+      "旧版升级平滑迁移 SQLite 数据结构至 v1.1-r2",
+      "用户卸载选择保留数据时 Profile 完好，重装后无缝恢复"
+    ],
+    "verification_target": "tests/v11_profile_isolation.rs::test_s3_5_legacy_database_quarantine_with_sqlite_backup",
+    "evidence_requirements": "安装包安装生命周期与 SQLite 隔离检验"
+  },
+  {
+    "case_id": "E22",
+    "stage": "S7",
+    "title": "管理后台与实际服务版本",
+    "critical_assertions": [
+      "管理后台 /health 端点探测真实 PostgreSQL 数据库连接正常",
+      "API、Worker 与 Admin 构建 SHA 版本一致且可审计",
+      "管理后台只展示状态与元数据，绝对不向管理员泄露用户正文或密钥"
+    ],
+    "verification_target": "cloud-core/tests/contracts.rs::admin_user_projection_contains_metadata_only",
+    "evidence_requirements": "Admin 元数据投影断言、版本审计检查"
+  }
+]

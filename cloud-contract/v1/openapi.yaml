@@ -101,10 +101,22 @@ paths:
       parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
       responses:
         "204": { description: All sessions revoked }
+  /sync/capabilities:
+    get:
+      operationId: getSyncCapabilities
+      responses:
+        "200":
+          description: Sync protocol capabilities and entity schema versions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncCapabilities" }
   /sync/push:
     post:
       operationId: pushChanges
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/SyncProtocolHeader"
+        - $ref: "#/components/parameters/SyncEpochHeader"
       requestBody:
         required: true
         content:
@@ -118,6 +130,8 @@ paths:
               schema: { $ref: "#/components/schemas/SyncPushResponse" }
         "401": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "426": { $ref: "#/components/responses/Error" }
   /sync/pull:
     get:
       operationId: pullChanges
@@ -128,12 +142,17 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - $ref: "#/components/parameters/SyncProtocolHeader"
+        - $ref: "#/components/parameters/SyncEpochHeader"
       responses:
         "200":
           description: Ordered server changes
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SyncPullResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "426": { $ref: "#/components/responses/Error" }
   /user-data/summary:
     get:
       operationId: userDataSummary
@@ -232,6 +251,16 @@ components:
       in: header
       required: true
       schema: { type: string, minLength: 16, maxLength: 128 }
+    SyncProtocolHeader:
+      name: X-Yilian-Sync-Protocol
+      in: header
+      required: true
+      schema: { type: integer, const: 2 }
+    SyncEpochHeader:
+      name: X-Yilian-Sync-Epoch
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
   responses:
     AuthSuccess:
       description: Authenticated device session
@@ -324,6 +353,31 @@ components:
           required: [sequence]
           properties:
             sequence: { type: integer, minimum: 1 }
+    RemoteRecord:
+      type: object
+      required: [change_id, entity_type, entity_id, revision, operation, sequence, device_id, changed_at]
+      properties:
+        change_id: { type: string, format: uuid }
+        entity_type: { type: string, maxLength: 64 }
+        entity_id: { type: string, maxLength: 160 }
+        revision: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        operation: { type: string, enum: [upsert, delete] }
+        payload: { type: [object, "null"], additionalProperties: true }
+        sequence: { type: string }
+        device_id: { type: string, format: uuid }
+        changed_at: { type: integer, format: int64 }
+    SyncCapabilities:
+      type: object
+      required: [sync_protocol, contract_revision, sync_epoch, entity_schemas, max_push_changes, max_pull_changes]
+      properties:
+        sync_protocol: { type: integer, const: 2 }
+        contract_revision: { type: string }
+        sync_epoch: { type: string, format: uuid }
+        entity_schemas:
+          type: object
+          additionalProperties: { type: integer, minimum: 1 }
+        max_push_changes: { type: integer, minimum: 1 }
+        max_pull_changes: { type: integer, minimum: 1 }
     SyncPushRequest:
       type: object
       required: [device_id, changes]
@@ -335,7 +389,7 @@ components:
           items: { $ref: "#/components/schemas/SyncChange" }
     SyncPushResponse:
       type: object
-      required: [results, cursor]
+      required: [results]
       properties:
         results:
           type: array
@@ -346,6 +400,7 @@ components:
               change_id: { type: string, format: uuid }
               status: { type: string, enum: [applied, duplicate, conflict, rejected] }
               authoritative_revision: { type: [integer, "null"] }
+              authoritative: { $ref: "#/components/schemas/RemoteRecord" }
               error_code: { type: [string, "null"] }
         cursor: { type: string }
     SyncPullResponse:
@@ -354,7 +409,8 @@ components:
       properties:
         changes:
           type: array
-          items: { $ref: "#/components/schemas/ServerChange" }
+          items:
+            $ref: "#/components/schemas/RemoteRecord"
         next_cursor: { type: string }
         has_more: { type: boolean }
     SearchRequest:
