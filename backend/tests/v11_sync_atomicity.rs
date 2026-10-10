@@ -203,12 +203,12 @@ fn test_stale_change_never_writes_projection() {
         "conv-1",
         8,
         SyncOperation::Upsert,
-        Some(&serde_json::json!({"title": "Authoritative V8", "run_status": "completed"})),
+        Some(&serde_json::json!({"schema_version": 1, "title": "Authoritative V8"})),
     );
     conn.execute(
         "INSERT INTO cloud_synced_entities (entity_type, entity_id, revision, deleted, payload_json, canonical_digest, server_sequence, updated_at)
          VALUES ('conversation', 'conv-1', 8, 0, ?1, ?2, 8, ?3)",
-        rusqlite::params![serde_json::json!({"title": "Authoritative V8"}).to_string(), digest, now],
+        rusqlite::params![serde_json::json!({"schema_version": 1, "title": "Authoritative V8"}).to_string(), digest, now],
     ).unwrap();
     drop(conn);
 
@@ -220,7 +220,7 @@ fn test_stale_change_never_writes_projection() {
             entity_id: "conv-1".into(),
             revision: 7,
             operation: SyncOperation::Upsert,
-            payload: Some(serde_json::json!({"title": "Old V7 Title", "run_status": "completed"})),
+            payload: Some(serde_json::json!({"schema_version": 1, "title": "Old V7 Title"})),
             sequence: "1".into(),
             device_id: "other".into(),
             changed_at: 10,
@@ -338,7 +338,7 @@ fn test_page_failure_rolls_back_everything() {
                 revision: 1,
                 operation: SyncOperation::Upsert,
                 payload: Some(
-                    serde_json::json!({"title": "Valid Atomic Conversation", "run_status": "completed"}),
+                    serde_json::json!({"schema_version": 1, "title": "Valid Atomic Conversation"}),
                 ),
                 sequence: "1".into(),
                 device_id: "other".into(),
@@ -404,9 +404,7 @@ fn test_page_replay_after_crash_is_idempotent() {
             entity_id: "conv-dup".into(),
             revision: 1,
             operation: SyncOperation::Upsert,
-            payload: Some(
-                serde_json::json!({"title": "Duplicate Conv", "run_status": "completed"}),
-            ),
+            payload: Some(serde_json::json!({"schema_version": 1, "title": "Duplicate Conv"})),
             sequence: "1".into(),
             device_id: "other".into(),
             changed_at: 10,
@@ -450,9 +448,7 @@ fn test_pending_local_edit_survives_remote_echo() {
             base_revision: 2,
             revision: 3,
             operation: SyncOperation::Upsert,
-            payload: Some(
-                serde_json::json!({"title": "Version 3 Local", "run_status": "completed"}),
-            ),
+            payload: Some(serde_json::json!({"schema_version": 1, "title": "Version 3 Local"})),
         })
         .unwrap();
 
@@ -464,9 +460,7 @@ fn test_pending_local_edit_survives_remote_echo() {
             entity_id: "conv-echo".into(),
             revision: 3,
             operation: SyncOperation::Upsert,
-            payload: Some(
-                serde_json::json!({"title": "Version 3 Local", "run_status": "completed"}),
-            ),
+            payload: Some(serde_json::json!({"schema_version": 1, "title": "Version 3 Local"})),
             sequence: "1".into(),
             device_id: "".into(),
             changed_at: 10,

@@ -213,7 +213,7 @@ fn capture_local_sync_candidates_tracks_changes_and_deletions_without_tool_paylo
 fn pulled_conversation_changes_restore_and_delete_local_entities() {
     let path = std::env::temp_dir().join(format!("yilian-v11-pull-{}.db", uuid::Uuid::new_v4()));
     let db = Database::new(&path).unwrap();
-    let payload = serde_json::json!({"title":"Restored conversation","run_status":"completed","created_at":10,"updated_at":20});
+    let payload = serde_json::json!({"schema_version": 1, "title":"Restored conversation","created_at":10,"updated_at":20});
     assert!(!db
         .apply_remote_sync_change(
             "conversation",
