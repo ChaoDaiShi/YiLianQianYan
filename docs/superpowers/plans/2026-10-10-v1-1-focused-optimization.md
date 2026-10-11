@@ -93,7 +93,8 @@ P4 独占 `backend/src/db/migrations.rs` 和 `backend/src/db/cloud/schema.rs` �
 - [x] 已将 SERVER 迁出 CLIENT，87 个非缓存文件哈希与 Git 引用核对一致。
 - [x] 已核对 R01—R06 对应代码；没有实施业务修复。
 - [x] P0：独立工作区拆分完成、契约 C01—C04 锁定、公共云操作锁字段与初始化就绪并经 workspace 验证。
-- [ ] P1—P6 分别提交小范围补丁和对应失败复现/通过证据。
+- [x] P1：云连接强制 HTTPS 校验落地，不跟随重定向，7 处云连接点完成接入与集成测试（7 tests pass）。
+- [ ] P2—P6 分别提交小范围补丁和对应失败复现/通过证据。
 - [ ] P7 记录确切客户端、服务端提交与安装包哈希，关闭两设备及 E20—E22。
 - [ ] P8 重新读最终提交及证据，给出 `READY_FOR_RELEASE`、`NEEDS_FIX` 或 `ACCEPTANCE_INCOMPLETE`。
 
