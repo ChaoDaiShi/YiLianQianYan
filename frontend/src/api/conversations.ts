@@ -1,24 +1,28 @@
 // Conversation list and lifecycle. Transport is `core/api/http.ts`, so this
 // module owns its four calls rather than borrowing them from `legacy`.
-//
-// The create / load / delete returns are the untrusted payload shapes the
-// backend sends; a caller that needs a typed row re-reads through
-// `listConversations`.
-import { request } from "../core/api/http";
-import type { ConversationSummary } from "../types";
+import { requestResult } from "../core/api/http";
+import type { Conversation, ConversationSummary } from "../types";
 
-export async function listConversations() {
-  return request<ConversationSummary[]>("GET", "/api/conversations");
+export async function listConversations(): Promise<ConversationSummary[]> {
+  const result = await requestResult<ConversationSummary[]>("GET", "/api/conversations");
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function createConversation(title?: string) {
-  return request<any>("POST", "/api/conversations", { title });
+export async function createConversation(title?: string): Promise<ConversationSummary> {
+  const result = await requestResult<ConversationSummary>("POST", "/api/conversations", { title });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function loadConversation(id: string) {
-  return request<any>("GET", `/api/conversations/${id}`);
+export async function loadConversation(id: string): Promise<Conversation> {
+  const result = await requestResult<Conversation>("GET", `/api/conversations/${id}`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function deleteConversation(id: string) {
-  return request<any>("DELETE", `/api/conversations/${id}`);
+export async function deleteConversation(id: string): Promise<{ status: string }> {
+  const result = await requestResult<{ status: string }>("DELETE", `/api/conversations/${id}`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }

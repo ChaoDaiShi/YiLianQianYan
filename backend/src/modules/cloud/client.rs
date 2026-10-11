@@ -3,10 +3,12 @@ use serde::Deserialize;
 
 use super::domain::{AuthenticatedSessionInput, CloudAuthRequest};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CloudClientError {
     #[error("invalid cloud service URL")]
     InvalidBaseUrl,
+    #[error("remote cloud service requires HTTPS")]
+    HttpsRequired,
     #[error("cloud service is unavailable")]
     Unavailable,
     #[error("cloud authentication failed")]
@@ -17,7 +19,19 @@ pub enum CloudClientError {
     InvalidResponse,
 }
 
-#[derive(Clone)]
+impl From<super::transport::CloudTransportError> for CloudClientError {
+    fn from(err: super::transport::CloudTransportError) -> Self {
+        match err {
+            super::transport::CloudTransportError::InvalidUrl => CloudClientError::InvalidBaseUrl,
+            super::transport::CloudTransportError::HttpsRequired => CloudClientError::HttpsRequired,
+            super::transport::CloudTransportError::ClientUnavailable => {
+                CloudClientError::Unavailable
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct CloudApiClient {
     base_url: String,
     http: reqwest::Client,
@@ -26,21 +40,9 @@ pub struct CloudApiClient {
 impl CloudApiClient {
     pub fn new(base_url: impl Into<String>) -> Result<Self, CloudClientError> {
         let raw = base_url.into();
-        let parsed = url::Url::parse(raw.trim()).map_err(|_| CloudClientError::InvalidBaseUrl)?;
-        if !matches!(parsed.scheme(), "http" | "https")
-            || parsed.username() != ""
-            || parsed.password().is_some()
-        {
-            return Err(CloudClientError::InvalidBaseUrl);
-        }
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .build()
-            .map_err(|_| CloudClientError::Unavailable)?;
-        Ok(Self {
-            base_url: raw.trim().trim_end_matches('/').to_string(),
-            http,
-        })
+        let (http, base_url) =
+            super::transport::build_cloud_http(&raw, std::time::Duration::from_secs(20))?;
+        Ok(Self { base_url, http })
     }
 
     pub async fn login(

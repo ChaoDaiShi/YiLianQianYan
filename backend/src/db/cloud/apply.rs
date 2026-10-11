@@ -444,8 +444,13 @@ pub fn apply_pull_page(
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         assert_checkpoint_tx(&tx, expected_cursor)?;
         validate_page(expected_cursor, page)?;
+        let policy = crate::db::cloud::capture::read_sync_policy_tx(&tx)?;
         let mut report = ApplyPageReport::default();
         for remote in &page.changes {
+            if !policy.allows_type(&remote.entity_type)? {
+                report.skipped_by_policy += 1;
+                continue;
+            }
             let disposition = apply_one_remote_tx(&tx, remote)?;
             match disposition {
                 ApplyDisposition::Applied => report.applied += 1,

@@ -108,7 +108,8 @@ export default function MemoryPage() {
 
   const handleEdit = async () => {
     if (!editingMemory || !editContent.trim()) return;
-    await editMemory(editingMemory.id, { content: editContent.trim() });
+    const saved = await editMemory(editingMemory.id, { content: editContent.trim() });
+    if (!saved) return;
     setEditingMemory(null);
     setEditContent("");
   };

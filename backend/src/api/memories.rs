@@ -4,21 +4,46 @@
 
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     Json,
 };
 use std::sync::Arc;
 
 use crate::app::state::AppServer;
-use crate::db::{CreateMemoryRequest, Memory, MemoryQuery, RetrieveQuery, UpdateMemoryRequest};
+use crate::db::{
+    CreateMemoryRequest, Memory, MemoryQuery, MemoryStats, RetrieveQuery, UpdateMemoryRequest,
+};
 use crate::integrations::llm::client::LlmClient;
 use crate::integrations::llm::types::ChatMessage;
+
+pub type StorageApiError = (StatusCode, Json<serde_json::Value>);
+
+fn storage_error(_: String) -> StorageApiError {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "code": "local_storage_unavailable",
+            "error": "本地数据暂时不可用，请重试"
+        })),
+    )
+}
+
+fn not_found_error(entity: &str) -> StorageApiError {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "code": "not_found",
+            "error": format!("{entity}不存在")
+        })),
+    )
+}
 
 // ── List / Search ──
 
 pub async fn list_handler(
     State(server): State<Arc<AppServer>>,
     Query(query): Query<MemoryQuery>,
-) -> Json<Vec<Memory>> {
+) -> Result<Json<Vec<Memory>>, StorageApiError> {
     // Log query params for debugging
     if query.q.is_some() || query.category.is_some() || query.source.is_some() {
         tracing::debug!(
@@ -28,7 +53,11 @@ pub async fn list_handler(
             query.source
         );
     }
-    Json(server.db.list_memories(&query).unwrap_or_default())
+    server
+        .db
+        .list_memories(&query)
+        .map(Json)
+        .map_err(storage_error)
 }
 
 // ── Get by ID ──
@@ -36,10 +65,11 @@ pub async fn list_handler(
 pub async fn get_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    match server.db.get_memory(&id) {
-        Ok(mem) => Json(serde_json::to_value(mem).unwrap_or_default()),
-        Err(e) => Json(serde_json::json!({"error": e})),
+) -> Result<Json<Memory>, StorageApiError> {
+    match server.db.find_memory(&id) {
+        Ok(Some(mem)) => Ok(Json(mem)),
+        Ok(None) => Err(not_found_error("记忆")),
+        Err(e) => Err(storage_error(e)),
     }
 }
 
@@ -48,28 +78,24 @@ pub async fn get_handler(
 pub async fn create_handler(
     State(server): State<Arc<AppServer>>,
     Json(req): Json<CreateMemoryRequest>,
-) -> Json<serde_json::Value> {
-    match server.db.create_memory(&req) {
-        Ok(mem) => {
-            // Auto-embed: best-effort, never fails the create
-            let model_cfg = server.config.read().model.clone();
-            if model_cfg.has_embedding() {
-                let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
-                match llm.embed(&req.content).await {
-                    Ok(vec) => {
-                        if let Err(e) = server.db.update_memory_embedding(&mem.id, &vec) {
-                            tracing::warn!(memory_id = %mem.id, error = %e, "failed to persist embedding");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(memory_id = %mem.id, error = %e, "embedding generation failed, memory persisted without embedding");
-                    }
+) -> Result<Json<Memory>, StorageApiError> {
+    let mem = server.db.create_memory(&req).map_err(storage_error)?;
+    // Auto-embed: best-effort, never fails the create
+    let model_cfg = server.config.read().model.clone();
+    if model_cfg.has_embedding() {
+        let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
+        match llm.embed(&req.content).await {
+            Ok(vec) => {
+                if let Err(e) = server.db.update_memory_embedding(&mem.id, &vec) {
+                    tracing::warn!(memory_id = %mem.id, error = %e, "failed to persist embedding");
                 }
             }
-            Json(serde_json::to_value(mem).unwrap_or_default())
+            Err(e) => {
+                tracing::warn!(memory_id = %mem.id, error = %e, "embedding generation failed, memory persisted without embedding");
+            }
         }
-        Err(e) => Json(serde_json::json!({"error": e})),
     }
+    Ok(Json(mem))
 }
 
 // ── Update ──
@@ -78,10 +104,15 @@ pub async fn update_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
     Json(req): Json<UpdateMemoryRequest>,
-) -> Json<serde_json::Value> {
-    match server.db.update_memory(&id, &req) {
-        Ok(mem) => Json(serde_json::to_value(mem).unwrap_or_default()),
-        Err(e) => Json(serde_json::json!({"error": e})),
+) -> Result<Json<Memory>, StorageApiError> {
+    match server.db.find_memory(&id) {
+        Ok(Some(_)) => server
+            .db
+            .update_memory(&id, &req)
+            .map(Json)
+            .map_err(storage_error),
+        Ok(None) => Err(not_found_error("记忆")),
+        Err(e) => Err(storage_error(e)),
     }
 }
 
@@ -90,20 +121,24 @@ pub async fn update_handler(
 pub async fn delete_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    match server.db.delete_memory(&id) {
-        Ok(_) => Json(serde_json::json!({"status": "deleted"})),
-        Err(e) => Json(serde_json::json!({"error": e})),
-    }
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    server
+        .db
+        .delete_memory(&id)
+        .map(|_| Json(serde_json::json!({"status": "deleted"})))
+        .map_err(storage_error)
 }
 
 // ── Stats ──
 
-pub async fn stats_handler(State(server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
-    match server.db.get_memory_stats() {
-        Ok(stats) => Json(serde_json::to_value(stats).unwrap_or_default()),
-        Err(e) => Json(serde_json::json!({"error": e})),
-    }
+pub async fn stats_handler(
+    State(server): State<Arc<AppServer>>,
+) -> Result<Json<MemoryStats>, StorageApiError> {
+    server
+        .db
+        .get_memory_stats()
+        .map(Json)
+        .map_err(storage_error)
 }
 
 // ── Retrieve (ranked keyword retrieval, hybrid when embedding is available) ──
@@ -111,13 +146,16 @@ pub async fn stats_handler(State(server): State<Arc<AppServer>>) -> Json<serde_j
 pub async fn retrieve_handler(
     State(server): State<Arc<AppServer>>,
     Query(query): Query<RetrieveQuery>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StorageApiError> {
     let q = query.q.trim().to_string();
     if q.is_empty() {
-        return Json(serde_json::json!({
-            "ok": false,
-            "error": "query parameter 'q' is required and must not be empty"
-        }));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": "invalid_query",
+                "error": "query parameter 'q' is required and must not be empty"
+            })),
+        ));
     }
 
     let model_cfg = server.config.read().model.clone();
@@ -142,16 +180,13 @@ pub async fn retrieve_handler(
         .db
         .retrieve_memories_hybrid(&query, query_embedding.as_deref())
     {
-        Ok(scored) => Json(serde_json::json!({
+        Ok(scored) => Ok(Json(serde_json::json!({
             "query": q,
             "count": scored.len(),
             "mode": mode,
             "memories": scored,
-        })),
-        Err(e) => Json(serde_json::json!({
-            "ok": false,
-            "error": e
-        })),
+        }))),
+        Err(e) => Err(storage_error(e)),
     }
 }
 
@@ -300,46 +335,45 @@ fn build_conversation_text(messages: &[crate::db::MessageRow]) -> String {
 pub async fn extract_handler(
     State(server): State<Arc<AppServer>>,
     Json(req): Json<ExtractRequest>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StorageApiError> {
     let conv_id = match req.conversation_id {
         Some(ref id) if !id.is_empty() => id.clone(),
         _ => {
-            return Json(serde_json::json!({
-                "ok": false,
-                "error": "conversation_id is required"
-            }))
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "code": "invalid_request",
+                    "error": "conversation_id is required"
+                })),
+            ));
         }
     };
 
     // 1. Read conversation messages
-    let conversation = match server.db.get_conversation(&conv_id) {
-        Ok(conv) => conv,
-        Err(e) => {
-            return Json(serde_json::json!({
-                "ok": false,
-                "error": format!("conversation not found: {e}")
-            }))
-        }
+    let conversation = match server.db.find_conversation(&conv_id) {
+        Ok(Some(conv)) => conv,
+        Ok(None) => return Err(not_found_error("对话")),
+        Err(e) => return Err(storage_error(e)),
     };
 
     let messages = conversation.messages;
     if messages.is_empty() {
-        return Json(serde_json::json!({
+        return Ok(Json(serde_json::json!({
             "ok": true,
             "created": 0,
             "skipped": 0,
             "memories": []
-        }));
+        })));
     }
 
     let conversation_text = build_conversation_text(&messages);
     if conversation_text.trim().is_empty() {
-        return Json(serde_json::json!({
+        return Ok(Json(serde_json::json!({
             "ok": true,
             "created": 0,
             "skipped": 0,
             "memories": []
-        }));
+        })));
     }
 
     // 2. Call LLM
@@ -352,10 +386,13 @@ pub async fn extract_handler(
         Ok(resp) => resp,
         Err(e) => {
             tracing::error!("Memory extraction LLM call failed: {e}");
-            return Json(serde_json::json!({
-                "ok": false,
-                "error": format!("LLM call failed: {e}")
-            }));
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "code": "llm_call_failed",
+                    "error": format!("LLM call failed: {e}")
+                })),
+            ));
         }
     };
 
@@ -378,10 +415,13 @@ pub async fn extract_handler(
             if let Ok(parsed) = serde_json::from_str::<ExtractMemoriesArgs>(raw_content.trim()) {
                 return process_extracted_memories(&server, &conv_id, parsed.memories).await;
             }
-            return Json(serde_json::json!({
-                "ok": false,
-                "error": "LLM did not return structured memory output"
-            }));
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "code": "llm_parse_failed",
+                    "error": "LLM did not return structured memory output"
+                })),
+            ));
         }
     };
 
@@ -392,10 +432,13 @@ pub async fn extract_handler(
     let args_str = match extraction_call {
         Some(tc) => &tc.function.arguments,
         None => {
-            return Json(serde_json::json!({
-                "ok": false,
-                "error": "LLM did not call the extraction tool"
-            }))
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "code": "llm_parse_failed",
+                    "error": "LLM did not call the extraction tool"
+                })),
+            ));
         }
     };
 
@@ -403,10 +446,13 @@ pub async fn extract_handler(
         Ok(args) => args,
         Err(e) => {
             tracing::error!("Failed to parse extraction tool arguments: {e}");
-            return Json(serde_json::json!({
-                "ok": false,
-                "error": format!("failed to parse LLM output: {e}")
-            }));
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "code": "llm_parse_failed",
+                    "error": format!("failed to parse LLM output: {e}")
+                })),
+            ));
         }
     };
 
@@ -417,7 +463,7 @@ async fn process_extracted_memories(
     server: &AppServer,
     conv_id: &str,
     candidates: Vec<ExtractedMemory>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StorageApiError> {
     let model_cfg = server.config.read().model.clone();
     let has_embedding = model_cfg.has_embedding();
     let mut created = Vec::new();
@@ -470,8 +516,7 @@ async fn process_extracted_memories(
             Ok(memory) => memory,
             Err(e) => {
                 tracing::error!("Failed to create memory: {e}");
-                skipped += 1;
-                continue;
+                return Err(storage_error(e));
             }
         };
 
@@ -493,12 +538,12 @@ async fn process_extracted_memories(
         created.push(memory);
     }
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "ok": true,
         "created": created.len(),
         "skipped": skipped,
         "memories": created
-    }))
+    })))
 }
 
 // ── Reserved: Batch-import ──
@@ -506,11 +551,14 @@ async fn process_extracted_memories(
 pub async fn batch_import_handler(
     State(_server): State<Arc<AppServer>>,
     Json(_body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "reserved",
-        "message": "Batch import endpoint — reserved for future use"
-    }))
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "code": "not_implemented",
+            "error": "Batch import endpoint — reserved for future use"
+        })),
+    ))
 }
 
 // ── Reserved: Batch-delete ──
@@ -518,20 +566,28 @@ pub async fn batch_import_handler(
 pub async fn batch_delete_handler(
     State(_server): State<Arc<AppServer>>,
     Json(_body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "reserved",
-        "message": "Batch delete endpoint — reserved for future use"
-    }))
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "code": "not_implemented",
+            "error": "Batch delete endpoint — reserved for future use"
+        })),
+    ))
 }
 
 // ── Reserved: Export ──
 
-pub async fn export_handler(State(_server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "reserved",
-        "message": "Export endpoint — reserved for future use"
-    }))
+pub async fn export_handler(
+    State(_server): State<Arc<AppServer>>,
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "code": "not_implemented",
+            "error": "Export endpoint — reserved for future use"
+        })),
+    ))
 }
 
 // ── Reserved: Merge duplicates ──
@@ -539,11 +595,14 @@ pub async fn export_handler(State(_server): State<Arc<AppServer>>) -> Json<serde
 pub async fn merge_handler(
     State(_server): State<Arc<AppServer>>,
     Json(_body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "reserved",
-        "message": "Merge duplicates endpoint — reserved for future use"
-    }))
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "code": "not_implemented",
+            "error": "Merge duplicates endpoint — reserved for future use"
+        })),
+    ))
 }
 
 // ── Reindex embeddings (historical backfill) ──
@@ -564,17 +623,20 @@ fn default_reindex_limit() -> usize {
 pub async fn reindex_handler(
     State(server): State<Arc<AppServer>>,
     Json(req): Json<ReindexRequest>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StorageApiError> {
     // Clamp limit: 1..=MAX_REINDEX_LIMIT
     let requested = req.limit.clamp(1, MAX_REINDEX_LIMIT);
 
     // Reject when embedding provider is not configured
     let config = server.config.read().clone();
     if !config.model.has_embedding() {
-        return Json(serde_json::json!({
-            "ok": false,
-            "error": "embedding provider is not configured"
-        }));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": "embedding_not_configured",
+                "error": "embedding provider is not configured"
+            })),
+        ));
     }
 
     // Load memories missing embedding
@@ -582,10 +644,7 @@ pub async fn reindex_handler(
         Ok(memories) => memories,
         Err(e) => {
             tracing::error!("reindex: failed to load missing-embedding memories: {e}");
-            return Json(serde_json::json!({
-                "ok": false,
-                "error": format!("failed to load memories: {e}")
-            }));
+            return Err(storage_error(e));
         }
     };
 
@@ -626,16 +685,22 @@ pub async fn reindex_handler(
         }
     }
 
-    let remaining = server.db.count_memories_without_embedding().unwrap_or(0);
+    let remaining = match server.db.count_memories_without_embedding() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("reindex: failed to count remaining memories: {e}");
+            return Err(storage_error(e));
+        }
+    };
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "ok": true,
         "requested": requested,
         "processed": processed,
         "succeeded": succeeded,
         "failed": failed,
         "remaining": remaining,
-    }))
+    })))
 }
 
 #[cfg(test)]
@@ -770,7 +835,9 @@ mod tests {
             content: "用户偏好每次只进行最小范围代码修改".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates).await;
+        let json = process_extracted_memories(&server, &conv_id, candidates)
+            .await
+            .unwrap();
         let value = json.0;
         assert_eq!(value["ok"], true);
         assert_eq!(value["created"], 1);
@@ -791,11 +858,15 @@ mod tests {
         }];
 
         // First extraction
-        let json1 = process_extracted_memories(&server, &conv_id, candidates.clone()).await;
+        let json1 = process_extracted_memories(&server, &conv_id, candidates.clone())
+            .await
+            .unwrap();
         assert_eq!(json1.0["created"], 1);
 
         // Second extraction with identical content
-        let json2 = process_extracted_memories(&server, &conv_id, candidates).await;
+        let json2 = process_extracted_memories(&server, &conv_id, candidates)
+            .await
+            .unwrap();
         assert_eq!(json2.0["created"], 0);
         assert_eq!(json2.0["skipped"], 1);
 
@@ -807,7 +878,9 @@ mod tests {
         let (server, db_path, conv_id) = test_server("process-empty");
         let candidates: Vec<ExtractedMemory> = vec![];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates).await;
+        let json = process_extracted_memories(&server, &conv_id, candidates)
+            .await
+            .unwrap();
         assert_eq!(json.0["ok"], true);
         assert_eq!(json.0["created"], 0);
         assert_eq!(json.0["skipped"], 0);
@@ -823,7 +896,9 @@ mod tests {
             content: "some content".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates).await;
+        let json = process_extracted_memories(&server, &conv_id, candidates)
+            .await
+            .unwrap();
         assert_eq!(json.0["created"], 0);
         assert_eq!(json.0["skipped"], 1);
 
@@ -838,7 +913,9 @@ mod tests {
             content: "   ".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates).await;
+        let json = process_extracted_memories(&server, &conv_id, candidates)
+            .await
+            .unwrap();
         assert_eq!(json.0["created"], 0);
         assert_eq!(json.0["skipped"], 1);
 
@@ -853,7 +930,9 @@ mod tests {
             content: "API key is sk-abc123".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates).await;
+        let json = process_extracted_memories(&server, &conv_id, candidates)
+            .await
+            .unwrap();
         assert_eq!(json.0["created"], 0);
         assert_eq!(json.0["skipped"], 1);
 
@@ -868,7 +947,9 @@ mod tests {
             content: "用户长期使用中文内容进行交互，偏好简洁回复".to_string(),
         }];
 
-        let json = process_extracted_memories(&server, &conv_id, candidates).await;
+        let json = process_extracted_memories(&server, &conv_id, candidates)
+            .await
+            .unwrap();
         let value = json.0;
         assert_eq!(value["ok"], true);
         assert_eq!(value["created"], 1);
@@ -1414,14 +1495,16 @@ mod tests {
         seed_memory(&server.db, &conv_id, "fact", "A", 1);
 
         // Default config has empty embedding model → not configured
-        let json = reindex_handler(
+        let err = reindex_handler(
             State(Arc::clone(&server)),
             Json(ReindexRequest { limit: 10 }),
         )
-        .await;
+        .await
+        .expect_err("should fail when provider not configured");
 
-        let value = json.0;
-        assert_eq!(value["ok"], false);
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        let value = err.1 .0;
+        assert_eq!(value["code"], "embedding_not_configured");
         assert!(value["error"].as_str().unwrap().contains("not configured"));
         // No embedding written
         assert_eq!(server.db.count_memories_without_embedding().unwrap(), 1);
@@ -1504,7 +1587,8 @@ mod tests {
             State(Arc::clone(&server)),
             Json(ReindexRequest { limit: 10 }),
         )
-        .await;
+        .await
+        .unwrap();
         let value = json.0;
         assert_eq!(value["ok"], true);
         assert_eq!(value["processed"], 2);
@@ -1534,7 +1618,8 @@ mod tests {
             State(Arc::clone(&server)),
             Json(ReindexRequest { limit: 10 }),
         )
-        .await;
+        .await
+        .unwrap();
         let value = json.0;
         assert_eq!(value["processed"], 3);
         assert_eq!(value["succeeded"], 2);
@@ -1559,7 +1644,8 @@ mod tests {
             State(Arc::clone(&server)),
             Json(ReindexRequest { limit: 10 }),
         )
-        .await;
+        .await
+        .unwrap();
         assert_eq!(json1.0["succeeded"], 2);
         let calls_after_first = counter.load(Ordering::SeqCst);
 
@@ -1568,7 +1654,8 @@ mod tests {
             State(Arc::clone(&server)),
             Json(ReindexRequest { limit: 10 }),
         )
-        .await;
+        .await
+        .unwrap();
         assert_eq!(json2.0["processed"], 0);
         assert_eq!(json2.0["succeeded"], 0);
         // No additional provider calls
@@ -1596,7 +1683,8 @@ mod tests {
             State(Arc::clone(&server)),
             Json(ReindexRequest { limit: 10 }),
         )
-        .await;
+        .await
+        .unwrap();
         // Only 1 memory was missing (the "新 memory")
         assert_eq!(json.0["processed"], 1);
         assert_eq!(json.0["succeeded"], 1);

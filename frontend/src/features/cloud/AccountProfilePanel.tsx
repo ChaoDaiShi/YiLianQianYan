@@ -11,30 +11,33 @@ import {
   revocationPresentation,
   type SwitchState,
 } from "./profileSwitch";
-import { Badge, Button, Input, Spinner } from "../../components/ui";
+import { Badge, Button, Spinner } from "../../components/ui";
 import { AlertTriangle, CheckCircle2, RefreshCw, Shield, User } from "lucide-react";
 
 interface AccountProfilePanelProps {
   controller?: ProfileSwitchController;
   lastLogoutReport?: LogoutReport | null;
   onRestartPrompt?: (plan: ActivationPlan) => void;
+  onRequestLogin?: () => void;
+  initialLoading?: boolean;
+  initialProfileView?: ProfileView | null;
+  guestMode?: boolean;
 }
 
 export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
   controller = new ProfileSwitchController(),
   lastLogoutReport = null,
-  onRestartPrompt,
+  onRestartPrompt: _onRestartPrompt,
+  onRequestLogin,
+  initialLoading = false,
+  initialProfileView = null,
+  guestMode = false,
 }) => {
-  const [profileView, setProfileView] = useState<ProfileView | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [profileView, setProfileView] = useState<ProfileView | null>(initialProfileView);
+  const [loading, setLoading] = useState(initialLoading);
   const [error, setError] = useState<string>("");
-  const [switchState, setSwitchState] = useState<SwitchState>("idle");
-  const [restartPlan, setRestartPlan] = useState<ActivationPlan | null>(null);
-
-  // Form for switching
-  const [targetOrigin, setTargetOrigin] = useState("https://cloud.example.com");
-  const [targetAccount, setTargetAccount] = useState("");
-  const [importGuest, setImportGuest] = useState(false);
+  const [switchState] = useState<SwitchState>("idle");
+  const [restartPlan] = useState<ActivationPlan | null>(null);
 
   const fetchProfile = async () => {
     setLoading(true);
@@ -55,42 +58,6 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
   useEffect(() => {
     void fetchProfile();
   }, []);
-
-  const handleSwitch = async () => {
-    if (!targetOrigin.trim() || !targetAccount.trim()) {
-      setError("请输入完整的服务来源与账号 ID");
-      return;
-    }
-
-    setError("");
-    setSwitchState("quiescing");
-
-    const result = await controller.switchProfile(
-      {
-        service_origin: targetOrigin.trim(),
-        account_id: targetAccount.trim(),
-        choice: importGuest
-          ? { type: "import_selected_guest", entity_ids: [] }
-          : { type: "open_account_only" },
-      },
-      {
-        onRestartRequired: (plan) => {
-          setSwitchState("awaiting_restart");
-          setRestartPlan(plan);
-          onRestartPrompt?.(plan);
-        },
-        onError: (err) => {
-          setSwitchState("failed");
-          setError(err);
-        },
-      }
-    );
-
-    if (result.ok && !result.plan?.requires_restart) {
-      setSwitchState("active");
-      await fetchProfile();
-    }
-  };
 
   const revocationMeta = lastLogoutReport
     ? revocationPresentation(lastLogoutReport.remote_revocation)
@@ -129,7 +96,7 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
           )}
 
           {/* Active Profile Info */}
-          {profileView && (
+          {profileView && !guestMode && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-muted/30 p-4 rounded-md">
               <div>
                 <span className="text-xs text-muted-foreground block">当前激活 Profile</span>
@@ -149,19 +116,49 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
           )}
 
           {/* Revocation Report Banner */}
-          {revocationMeta && (
+          {lastLogoutReport && (
             <div className="p-3 border rounded-md flex items-start space-x-3 bg-muted/20">
-              <Badge tone={revocationMeta.tone}>{revocationMeta.label}</Badge>
-              <div className="text-sm">
-                <p className="font-medium">{revocationMeta.detail}</p>
-                {lastLogoutReport?.remote_revocation === "pending" && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    系统将在后台持专属撤销凭据进行指数退避重试，绝不会重新激活已退出账号。
+              <div className="flex flex-col gap-1 w-full">
+                <div className="flex items-center space-x-2">
+                  <Badge tone={lastLogoutReport.local_cleanup === "cleared" ? "success" : "danger"}>
+                    {lastLogoutReport.local_cleanup === "cleared" ? "本地已退出" : "本地退出未完成"}
+                  </Badge>
+                  {revocationMeta && <Badge tone={revocationMeta.tone}>{revocationMeta.label}</Badge>}
+                </div>
+                <div className="text-sm mt-1">
+                  <p className="font-medium">
+                    {lastLogoutReport.local_cleanup === "cleared" ? "本地凭据已清除。" : "本地仍有未清理凭据，请重试。"}
+                    {revocationMeta ? ` ${revocationMeta.detail}` : ""}
                   </p>
-                )}
+                  {lastLogoutReport.remote_revocation === "pending" && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      系统将在后台持专属撤销凭据进行指数退避重试，绝不会重新激活已退出账号。
+                    </p>
+                  )}
+                  {lastLogoutReport.error_codes?.length > 0 && (
+                    <p className="text-xs text-destructive mt-1 font-mono">
+                      错误代码: {lastLogoutReport.error_codes.join(", ")}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           )}
+
+          {profileView?.pending_revocations?.length ? (
+            <div className="p-3 border rounded-md bg-amber-500/10 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-700">
+                <AlertTriangle className="w-4 h-4" />
+                <span>远端撤销待处理</span>
+              </div>
+              {profileView.pending_revocations.map((item) => (
+                <div key={`${item.profile_id}:${item.session_id}`} className="text-xs text-muted-foreground">
+                  <span>{item.remote_revocation === "unknown" ? "远端状态未知" : "远端会话正在后台重试撤销"}</span>
+                  {item.last_error_code ? <span> · {item.last_error_code}</span> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           {/* Restart Required Warning Banner */}
           {switchState === "awaiting_restart" && restartPlan && (
@@ -182,95 +179,53 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
             </div>
           )}
 
-          {/* Profile Switch Section */}
-          <div className="border-t border-border pt-4 space-y-4">
-            <h3 className="text-sm font-medium flex items-center space-x-2">
-              <User className="w-4 h-4 text-primary" />
-              <span>受控 Profile 切换</span>
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Controlled Profile Switch Section */}
+          {!guestMode && <div className="border-t border-border pt-4 space-y-3">
+            <div className="flex items-center justify-between">
               <div>
-                <label className="text-xs text-muted-foreground block mb-1">
-                  规范化服务来源 (Service Origin)
-                </label>
-                <Input
-                  value={targetOrigin}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargetOrigin(e.target.value)}
-                  placeholder="https://cloud.example.com"
-                  disabled={switchState === "quiescing" || switchState === "awaiting_restart"}
-                />
+                <h3 className="text-sm font-medium flex items-center space-x-2">
+                  <User className="w-4 h-4 text-primary" />
+                  <span>切换账号</span>
+                </h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  切换账号统一通过云端登录认证，目标账号由云端确认，隔离各账号数据。
+                </p>
               </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">
-                  目标账号 ID (Account ID)
-                </label>
-                <Input
-                  value={targetAccount}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargetAccount(e.target.value)}
-                  placeholder="user-uuid-or-id"
-                  disabled={switchState === "quiescing" || switchState === "awaiting_restart"}
-                />
-              </div>
+              {onRequestLogin && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => onRequestLogin()}
+                >
+                  登录目标账号
+                </Button>
+              )}
             </div>
-
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="importGuestCheck"
-                checked={importGuest}
-                onChange={(e) => setImportGuest(e.target.checked)}
-                disabled={switchState === "quiescing" || switchState === "awaiting_restart"}
-                className="rounded border-border"
-              />
-              <label htmlFor="importGuestCheck" className="text-sm text-muted-foreground cursor-pointer">
-                导入选定的游客历史数据（将使用全新 ID 复制，游客库保持隔离）
-              </label>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <Button
-                variant="primary"
-                onClick={() => void handleSwitch()}
-                disabled={
-                  switchState === "quiescing" ||
-                  switchState === "awaiting_restart" ||
-                  !targetOrigin.trim() ||
-                  !targetAccount.trim()
-                }
-              >
-                {switchState === "quiescing" ? (
-                  <>
-                    <Spinner className="w-4 h-4 mr-2" />
-                    正在等待在途事务退出...
-                  </>
-                ) : (
-                  "准备并切换 Profile"
-                )}
-              </Button>
-            </div>
-          </div>
+          </div>}
 
           {/* Existing Profiles List */}
-          {profileView && profileView.profiles.length > 0 && (
+          {!guestMode && profileView && profileView.profiles.length > 0 && (
             <div className="border-t border-border pt-4 space-y-2">
               <h4 className="text-xs font-medium text-muted-foreground">已注册的本地 Profiles</h4>
               <div className="space-y-1">
                 {profileView.profiles.map((record: ProfileRecord) => (
                   <div
-                    key={record.id}
+                    key={record.profile_id}
                     className="flex items-center justify-between p-2 rounded bg-muted/20 text-xs"
                   >
                     <div className="flex items-center space-x-2">
-                      {record.id === profileView.active_profile_id ? (
+                      {record.profile_id === profileView.active_profile_id ? (
                         <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                       ) : (
                         <span className="w-4 h-4 rounded-full border border-border inline-block" />
                       )}
-                      <span className="font-mono font-medium">{record.id}</span>
+                      <span className="font-mono font-medium">{record.profile_id}</span>
                       <Badge tone={record.kind === "guest" ? "default" : "info"}>
                         {record.kind}
                       </Badge>
+                      {record.reauthentication_required && (
+                        <Badge tone="warning">需重新登录</Badge>
+                      )}
                     </div>
                     <span className="text-muted-foreground">
                       {record.service_origin ? `${record.service_origin} (${record.account_id})` : "本地游客"}

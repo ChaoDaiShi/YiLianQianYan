@@ -24,9 +24,13 @@ export default function ConversationSidebar({
   useEffect(() => {
     let mounted = true;
     const refresh = () => {
-      listConversations().then((items) => {
-        if (mounted && items) setConversations(items as ConversationSummary[]);
-      });
+      listConversations()
+        .then((items) => {
+          if (mounted && items) setConversations(items);
+        })
+        .catch((error) => {
+          console.error("刷新任务列表失败:", error);
+        });
     };
     refresh();
     const timer = window.setInterval(refresh, 5000);
@@ -55,12 +59,15 @@ export default function ConversationSidebar({
   };
 
   const removeConversation = async (conversation: ConversationSummary) => {
-    const deleted = await deleteConversation(conversation.id);
-    if (!deleted) return;
-    setConversations((current) =>
-      current.filter((item) => item.id !== conversation.id)
-    );
-    if (activeId === conversation.id) createNew();
+    try {
+      await deleteConversation(conversation.id);
+      setConversations((current) =>
+        current.filter((item) => item.id !== conversation.id)
+      );
+      if (activeId === conversation.id) createNew();
+    } catch (error) {
+      console.error("删除任务失败:", error);
+    }
   };
 
   return (

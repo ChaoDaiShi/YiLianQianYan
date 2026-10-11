@@ -56,6 +56,8 @@ pub struct ProfileEntry {
     pub directory_name: String,
     pub created_at: i64,
     pub last_activated_at: i64,
+    #[serde(default)]
+    pub reauthentication_required: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,6 +191,7 @@ impl ProfileManager {
             directory_name: guest_profile_id.clone(),
             created_at: now,
             last_activated_at: now,
+            reauthentication_required: false,
         };
 
         let mut registry = ProfileRegistry {
@@ -217,6 +220,20 @@ impl ProfileManager {
             .map_err(|e| ScopeError::Io(format!("write tmp registry: {e}")))?;
         std::fs::rename(&tmp_path, &registry_path)
             .map_err(|e| ScopeError::Io(format!("atomic rename registry: {e}")))?;
+        Ok(())
+    }
+
+    /// Set reauthentication_required flag for a given profile.
+    pub fn set_reauthentication_required(
+        app_data_dir: &Path,
+        profile_id: &str,
+        required: bool,
+    ) -> Result<(), ScopeError> {
+        let mut registry = Self::load_or_initialize(app_data_dir)?;
+        if let Some(entry) = registry.profiles.get_mut(profile_id) {
+            entry.reauthentication_required = required;
+            Self::save_registry(app_data_dir, &registry)?;
+        }
         Ok(())
     }
 
@@ -283,14 +300,20 @@ impl ProfileManager {
         }
 
         let now = chrono::Utc::now().timestamp_millis();
+        let existing = registry.profiles.get(&profile_id);
+        let reauth_req = existing
+            .map(|e| e.reauthentication_required)
+            .unwrap_or(false);
+        let created_at = existing.map(|e| e.created_at).unwrap_or(now);
         let entry = ProfileEntry {
             profile_id: profile_id.clone(),
             kind: ProfileKind::Account,
             scope_key: Some(canonical_key),
             scope_id,
             directory_name: profile_id.clone(),
-            created_at: now,
+            created_at,
             last_activated_at: now,
+            reauthentication_required: reauth_req,
         };
         registry.profiles.insert(profile_id.clone(), entry);
         Self::save_registry(app_data_dir, &registry)?;
@@ -505,83 +528,6 @@ impl ProfileManager {
     pub fn resolve_active_profile_db_path(
         app_data_dir: &Path,
     ) -> Result<(PathBuf, ScopeLease, String), ScopeError> {
-        let registry_path = app_data_dir.join(PROFILE_REGISTRY_FILENAME);
-        if !registry_path.exists() {
-            if let Some(backup_path) = Self::quarantine_legacy_db_if_needed(app_data_dir)? {
-                let guest_uuid = Uuid::new_v4().to_string();
-                let profile_id = format!("guest-migrated-{guest_uuid}");
-                let generation = Uuid::new_v4().to_string();
-                let scope_id = format!("guest-{guest_uuid}");
-                let profile_dir = app_data_dir.join(PROFILES_DIRNAME).join(&profile_id);
-                Self::ensure_profile_directories(&profile_dir)?;
-                let db_path = profile_dir.join("app.db");
-                super::profile_migration::backup_sqlite_db(&backup_path, &db_path).map_err(
-                    |error| ScopeError::MigrationFailed(format!("adopt legacy database: {error}")),
-                )?;
-                let db = Database::new(&db_path).map_err(|error| {
-                    ScopeError::MigrationFailed(format!("migrate adopted database: {error}"))
-                })?;
-                let scoped = crate::db::cloud::scoped_db::ScopedDb::new(
-                    db,
-                    ScopeLease {
-                        scope_id: scope_id.clone(),
-                        generation: generation.clone(),
-                    },
-                );
-                scoped
-                    .init_profile_metadata("local://guest", &guest_uuid)
-                    .map_err(|error| {
-                        ScopeError::MigrationFailed(format!("scope adopted database: {error}"))
-                    })?;
-                let now = chrono::Utc::now().timestamp_millis();
-                let mut profiles = BTreeMap::new();
-                profiles.insert(
-                    profile_id.clone(),
-                    ProfileEntry {
-                        profile_id: profile_id.clone(),
-                        kind: ProfileKind::Guest,
-                        scope_key: None,
-                        scope_id,
-                        directory_name: profile_id.clone(),
-                        created_at: now,
-                        last_activated_at: now,
-                    },
-                );
-                Self::save_registry(
-                    app_data_dir,
-                    &ProfileRegistry {
-                        schema_version: 1,
-                        active_profile_id: profile_id,
-                        active_generation: generation,
-                        profiles,
-                        pending_activation: None,
-                    },
-                )?;
-            }
-        }
-        let registry = Self::load_or_initialize(app_data_dir)?;
-
-        let active_entry = registry
-            .profiles
-            .get(&registry.active_profile_id)
-            .ok_or_else(|| {
-                ScopeError::MigrationFailed(format!(
-                    "Active profile entry not found: {}",
-                    registry.active_profile_id
-                ))
-            })?;
-
-        let profile_dir = app_data_dir
-            .join(PROFILES_DIRNAME)
-            .join(&active_entry.directory_name);
-        Self::ensure_profile_directories(&profile_dir)?;
-
-        let db_path = profile_dir.join("app.db");
-        let lease = ScopeLease {
-            scope_id: active_entry.scope_id.clone(),
-            generation: registry.active_generation.clone(),
-        };
-
-        Ok((db_path, lease, registry.active_profile_id))
+        super::profile_resolution::resolve_active_profile_db_path(app_data_dir)
     }
 }

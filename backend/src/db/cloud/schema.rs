@@ -180,21 +180,23 @@ const CLOUD_REVIEW_FIXES_SCHEMA: ProductMigrationSpec = ProductMigrationSpec::ne
     include_str!("migrations/2016_review_fixes.sql"),
 );
 
+pub(crate) const LEGACY_CLOUD_MIGRATIONS: &[ProductMigrationSpec] = &[
+    CLOUD_SCHEMA,
+    CLOUD_SEARCH_SCHEMA,
+    CLOUD_SYNC_ENTITY_SCHEMA,
+    CLOUD_LOCAL_REVISION_SCHEMA,
+    CLOUD_CONFLICT_OPERATION_SCHEMA,
+    CLOUD_PROFILE_METADATA_SCHEMA,
+    CLOUD_SYNC_CHECKPOINT_SCHEMA,
+    CLOUD_CONFLICT_SNAPSHOT_SCHEMA,
+    CLOUD_PENDING_REVOCATIONS_SCHEMA,
+    CLOUD_USAGE_PROJECTION_SCHEMA,
+    CLOUD_LIFECYCLE_CREDENTIALS_SCHEMA,
+    CLOUD_REVIEW_FIXES_SCHEMA,
+];
+
 impl Database {
     pub fn initialize_cloud_schema(&self) -> Result<(), rusqlite::Error> {
-        self.apply_product_migrations(&[
-            CLOUD_SCHEMA,
-            CLOUD_SEARCH_SCHEMA,
-            CLOUD_SYNC_ENTITY_SCHEMA,
-            CLOUD_LOCAL_REVISION_SCHEMA,
-            CLOUD_CONFLICT_OPERATION_SCHEMA,
-            CLOUD_PROFILE_METADATA_SCHEMA,
-            CLOUD_SYNC_CHECKPOINT_SCHEMA,
-            CLOUD_CONFLICT_SNAPSHOT_SCHEMA,
-            CLOUD_PENDING_REVOCATIONS_SCHEMA,
-            CLOUD_USAGE_PROJECTION_SCHEMA,
-            CLOUD_LIFECYCLE_CREDENTIALS_SCHEMA,
-            CLOUD_REVIEW_FIXES_SCHEMA,
-        ])
+        self.apply_product_migrations(LEGACY_CLOUD_MIGRATIONS)
     }
 }

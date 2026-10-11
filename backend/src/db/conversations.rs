@@ -172,12 +172,13 @@ impl Database {
             .map_err(|e| e.to_string())
     }
 
-    pub fn get_conversation(&self, id: &str) -> Result<Conversation, String> {
+    pub fn find_conversation(&self, id: &str) -> Result<Option<Conversation>, String> {
+        use rusqlite::OptionalExtension;
         let conn = self.conn();
         let mut stmt = conn
             .prepare("SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?1")
             .map_err(|e| e.to_string())?;
-        let (conv_id, title, created_at, updated_at) = stmt
+        let row_opt = stmt
             .query_row(params![id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -186,19 +187,31 @@ impl Database {
                     row.get::<_, i64>(3)?,
                 ))
             })
-            .map_err(|e| format!("Conversation not found: {}", e))?;
+            .optional()
+            .map_err(|e| e.to_string())?;
         drop(stmt);
+
+        let Some((conv_id, title, created_at, updated_at)) = row_opt else {
+            return Ok(None);
+        };
 
         let messages = self.get_messages_internal(&conn, &conv_id)?;
         let execution_history = self.get_execution_history_internal(&conn, &conv_id)?;
-        Ok(Conversation {
+        Ok(Some(Conversation {
             id: conv_id,
             title,
             messages,
             execution_history,
             created_at,
             updated_at,
-        })
+        }))
+    }
+
+    pub fn get_conversation(&self, id: &str) -> Result<Conversation, String> {
+        match self.find_conversation(id)? {
+            Some(conv) => Ok(conv),
+            None => Err(format!("Conversation not found: {}", id)),
+        }
     }
 
     pub fn delete_conversation(&self, id: &str) -> Result<(), String> {

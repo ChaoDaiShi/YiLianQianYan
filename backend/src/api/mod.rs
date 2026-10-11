@@ -12,6 +12,7 @@ pub(crate) mod artifact_download;
 pub(crate) mod capabilities;
 pub(crate) mod chat;
 pub(crate) mod cloud;
+mod cloud_errors;
 pub(crate) mod cloud_lifecycle;
 pub(crate) mod commands;
 pub(crate) mod conversations;

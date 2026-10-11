@@ -136,6 +136,7 @@ export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
   }, []);
 
   const handleToggleCategory = async (key: string) => {
+    const previousCategories = categories;
     const updated = categories.map((cat) =>
       cat.key === key ? { ...cat, enabled: !cat.enabled } : cat
     );
@@ -145,7 +146,7 @@ export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
     const result = await updateCloudSyncPolicy(policy);
     setSavingPolicy(false);
     if (!result.ok) {
-      setCategories(categories);
+      setCategories(previousCategories);
       setSummaryError(`同步范围保存失败：${result.error}`);
       return;
     }
@@ -242,6 +243,11 @@ export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
                   <p className="text-xs text-[var(--foreground-muted)] leading-relaxed">
                     {category.description}
                   </p>
+                  {!category.enabled && (
+                    <p className="text-xs text-[var(--warning,#f59e0b)] leading-relaxed pt-1">
+                      已暂停此类数据的上传与恢复。已有本地和云端数据保留；重新开启后会继续同步。
+                    </p>
+                  )}
                   <p className="text-[11px] text-[var(--danger,red)] flex items-center gap-1 pt-1">
                     <EyeOff className="w-3 h-3 shrink-0" />
                     <span>{category.prohibitedNotice}</span>

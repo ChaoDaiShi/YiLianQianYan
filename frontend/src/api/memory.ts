@@ -2,7 +2,7 @@
 //
 // Transport is `core/api/http.ts`; this module owns these calls rather than
 // borrowing them from the legacy bundle.
-import { request } from "../core/api/http";
+import { requestResult } from "../core/api/http";
 
 // ── Memories ──
 
@@ -64,7 +64,7 @@ export interface MemoryQuery {
   offset?: number;
 }
 
-export async function listMemories(query?: MemoryQuery) {
+export async function listMemories(query?: MemoryQuery): Promise<MemoryRecord[]> {
   const params = new URLSearchParams();
   if (query?.category) params.set("category", query.category);
   if (query?.source) params.set("source", query.source);
@@ -72,11 +72,15 @@ export async function listMemories(query?: MemoryQuery) {
   if (query?.limit) params.set("limit", String(query.limit));
   if (query?.offset) params.set("offset", String(query.offset));
   const qs = params.toString();
-  return request<MemoryRecord[]>("GET", `/api/memories${qs ? `?${qs}` : ""}`);
+  const result = await requestResult<MemoryRecord[]>("GET", `/api/memories${qs ? `?${qs}` : ""}`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function getMemory(id: string) {
-  return request<MemoryRecord>("GET", `/api/memories/${id}`);
+export async function getMemory(id: string): Promise<MemoryRecord> {
+  const result = await requestResult<MemoryRecord>("GET", `/api/memories/${id}`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
 export async function createMemory(data: {
@@ -84,53 +88,85 @@ export async function createMemory(data: {
   category?: string;
   source?: string;
   metadata?: string;
-}) {
-  return request<MemoryRecord>("POST", "/api/memories", data);
+}): Promise<MemoryRecord> {
+  const result = await requestResult<MemoryRecord>("POST", "/api/memories", data);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
 export async function updateMemory(
   id: string,
   data: { content?: string; category?: string; metadata?: string }
-) {
-  return request<MemoryRecord>("PUT", `/api/memories/${id}`, data);
+): Promise<MemoryRecord> {
+  const result = await requestResult<MemoryRecord>("PUT", `/api/memories/${id}`, data);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function deleteMemory(id: string) {
-  return request<{ status: string }>("DELETE", `/api/memories/${id}`);
+export async function deleteMemory(id: string): Promise<{ status: string }> {
+  const result = await requestResult<{ status: string }>("DELETE", `/api/memories/${id}`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function getMemoryStats() {
-  return request<MemoryStats>("GET", "/api/memories/stats");
+export async function getMemoryStats(): Promise<MemoryStats> {
+  const result = await requestResult<MemoryStats>("GET", "/api/memories/stats");
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function extractMemories(conversationId?: string) {
-  return request<{ status: string; message: string }>("POST", "/api/memories/extract", {
+export async function extractMemories(conversationId?: string): Promise<{
+  ok: boolean;
+  created: number;
+  skipped: number;
+  memories: MemoryRecord[];
+}> {
+  const result = await requestResult<{
+    ok: boolean;
+    created: number;
+    skipped: number;
+    memories: MemoryRecord[];
+  }>("POST", "/api/memories/extract", {
     conversation_id: conversationId,
   });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
 export async function batchImportMemories(items: Array<{ content: string; category?: string }>) {
-  return request<any>("POST", "/api/memories/batch-import", { items });
+  const result = await requestResult<any>("POST", "/api/memories/batch-import", { items });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
 export async function batchDeleteMemories(ids: string[]) {
-  return request<any>("POST", "/api/memories/batch-delete", { ids });
+  const result = await requestResult<any>("POST", "/api/memories/batch-delete", { ids });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
 export async function exportMemories() {
-  return request<any>("GET", "/api/memories/export");
+  const result = await requestResult<any>("GET", "/api/memories/export");
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
 export async function mergeMemories(ids: string[]) {
-  return request<any>("POST", "/api/memories/merge", { ids });
+  const result = await requestResult<any>("POST", "/api/memories/merge", { ids });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function reindexMemories() {
-  return request<MemoryReindexResult>("POST", "/api/memories/reindex", { limit: 50 });
+export async function reindexMemories(): Promise<MemoryReindexResult> {
+  const result = await requestResult<MemoryReindexResult>("POST", "/api/memories/reindex", { limit: 50 });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
 
-export async function retrieveMemories(q: string, topK = 10, category?: string) {
+export async function retrieveMemories(q: string, topK = 10, category?: string): Promise<MemoryRetrieveResponse> {
   const params = new URLSearchParams({ q, top_k: String(topK) });
   if (category) params.set("category", category);
-  return request<MemoryRetrieveResponse>("GET", `/api/memories/retrieve?${params.toString()}`);
+  const result = await requestResult<MemoryRetrieveResponse>("GET", `/api/memories/retrieve?${params.toString()}`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }

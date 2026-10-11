@@ -56,8 +56,12 @@ export default function SearchPage() {
     setNotice(`已加入任务：${task.data.title}`);
   };
   const saveKnowledge = async (result: SearchResult) => {
-    const saved = await createMemory(buildSearchKnowledgeRecord(result));
-    if (saved) setNotice(`已保存到知识记忆：${result.title}`); else setError("保存知识失败，请稍后重试。");
+    try {
+      const saved = await createMemory(buildSearchKnowledgeRecord(result));
+      if (saved) setNotice(`已保存到知识记忆：${result.title}`); else setError("保存知识失败，请稍后重试。");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存知识失败，请稍后重试。");
+    }
   };
 
   return <div className="cloud-page search-page page-canvas">

@@ -34,11 +34,14 @@ export interface CloudSyncPolicy {
   sync_capability_usage: boolean;
 }
 
-export type RemoteRevocationStatus = "confirmed" | "pending" | "unknown";
+export type LocalCleanupStatus = "cleared" | "failed";
+export type RemoteRevocationStatus = "confirmed" | "pending" | "unknown" | "not_required";
 
 export interface LogoutReport {
   local_signed_out: boolean;
+  local_cleanup: LocalCleanupStatus;
   remote_revocation: RemoteRevocationStatus;
+  error_codes: string[];
 }
 
 export interface CloudIdentityResponse {
@@ -163,11 +166,13 @@ export interface ScopeLease {
 }
 
 export interface ProfileRecord {
-  id: string;
+  profile_id: string;
   kind: "guest" | "account";
   service_origin: string | null;
   account_id: string | null;
   created_at: number;
+  last_activated_at?: number;
+  reauthentication_required?: boolean;
 }
 
 export interface ProfileView {
@@ -175,6 +180,12 @@ export interface ProfileView {
   active_generation: string;
   active_lease: ScopeLease;
   profiles: ProfileRecord[];
+  pending_revocations: Array<{
+    profile_id: string;
+    session_id: string;
+    remote_revocation: "pending" | "unknown";
+    last_error_code: string | null;
+  }>;
 }
 
 export interface ActivationPlan {

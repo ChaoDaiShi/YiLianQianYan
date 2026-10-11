@@ -291,6 +291,8 @@ export default function ChatView({
           dispatchExecution({ type: "agent_event", event: reconciliation.event });
         }
       });
+    }).catch((error) => {
+      console.error("加载任务详情失败:", error);
     });
 
     return () => {

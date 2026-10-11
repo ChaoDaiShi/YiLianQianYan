@@ -22,20 +22,25 @@ impl ConflictService {
         base_url: impl Into<String>,
     ) -> Result<Self, SyncError> {
         let raw = base_url.into();
-        let url = url::Url::parse(raw.trim())
-            .map_err(|e| SyncError::Transport(format!("invalid base url: {e}")))?;
-        if !matches!(url.scheme(), "http" | "https") {
-            return Err(SyncError::Transport("invalid base url scheme".into()));
-        }
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .build()
-            .map_err(|e| SyncError::Transport(e.to_string()))?;
+        let (http, base_url) =
+            super::transport::build_cloud_http(&raw, std::time::Duration::from_secs(20)).map_err(
+                |e| match e {
+                    super::transport::CloudTransportError::InvalidUrl => {
+                        SyncError::Transport("invalid base url".into())
+                    }
+                    super::transport::CloudTransportError::HttpsRequired => {
+                        SyncError::Transport("remote cloud service requires HTTPS".into())
+                    }
+                    super::transport::CloudTransportError::ClientUnavailable => {
+                        SyncError::Transport("cloud client unavailable".into())
+                    }
+                },
+            )?;
 
         Ok(Self {
             scoped_db,
             secret_store,
-            base_url: raw.trim().trim_end_matches('/').to_string(),
+            base_url,
             http,
         })
     }

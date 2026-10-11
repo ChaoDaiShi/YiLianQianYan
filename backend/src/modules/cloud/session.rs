@@ -20,10 +20,26 @@ pub enum CloudSessionError {
     Database(#[from] rusqlite::Error),
     #[error("invalid cloud service URL")]
     InvalidBaseUrl,
+    #[error("remote cloud service requires HTTPS")]
+    HttpsRequired,
     #[error("cloud session service is unavailable")]
     Unavailable,
     #[error("cloud session response is invalid")]
     InvalidResponse,
+}
+
+impl From<super::transport::CloudTransportError> for CloudSessionError {
+    fn from(err: super::transport::CloudTransportError) -> Self {
+        match err {
+            super::transport::CloudTransportError::InvalidUrl => CloudSessionError::InvalidBaseUrl,
+            super::transport::CloudTransportError::HttpsRequired => {
+                CloudSessionError::HttpsRequired
+            }
+            super::transport::CloudTransportError::ClientUnavailable => {
+                CloudSessionError::Unavailable
+            }
+        }
+    }
 }
 
 pub struct CloudSessionService {
@@ -219,16 +235,7 @@ impl CloudSessionService {
 }
 
 fn remote_client(base_url: &str) -> Result<(reqwest::Client, String), CloudSessionError> {
-    let parsed = url::Url::parse(base_url.trim()).map_err(|_| CloudSessionError::InvalidBaseUrl)?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-    {
-        return Err(CloudSessionError::InvalidBaseUrl);
-    }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|_| CloudSessionError::Unavailable)?;
-    Ok((client, base_url.trim().trim_end_matches('/').to_string()))
+    let (client, base) =
+        super::transport::build_cloud_http(base_url, std::time::Duration::from_secs(20))?;
+    Ok((client, base))
 }
