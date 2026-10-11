@@ -104,6 +104,11 @@ fn lifecycle_error(error: CloudLifecycleError) -> (StatusCode, Json<serde_json::
             "invalid_cloud_url",
             "云服务地址无效",
         ),
+        CloudLifecycleError::HttpsRequired => (
+            StatusCode::BAD_REQUEST,
+            "cloud_https_required",
+            "远程云服务地址必须使用 HTTPS",
+        ),
         CloudLifecycleError::Unavailable | CloudLifecycleError::InvalidResponse => (
             StatusCode::SERVICE_UNAVAILABLE,
             "cloud_lifecycle_unavailable",
