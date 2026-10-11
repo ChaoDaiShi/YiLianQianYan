@@ -46,6 +46,7 @@ describe('SyncPrivacyPanel', () => {
     expect(html).toContain('自定义数据');
     expect(html).toContain('仅保留本地');
     expect(html).toContain('aria-checked="false"');
+    expect(html).toContain('已暂停此类数据的上传与恢复。已有本地和云端数据保留；重新开启后会继续同步。');
   });
 
   it('maps persisted profile policy to the category controls and back', () => {

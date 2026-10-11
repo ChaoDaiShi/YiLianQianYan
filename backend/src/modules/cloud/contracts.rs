@@ -278,6 +278,8 @@ pub struct ApplyPageReport {
     pub duplicate: usize,
     pub stale: usize,
     pub conflicts: usize,
+    #[serde(default)]
+    pub skipped_by_policy: usize,
     pub download_cursor: String,
 }
 
@@ -422,6 +424,7 @@ pub use super::conflict_service::{resolve_conflict, ConflictService};
 pub use crate::db::cloud::apply::{
     apply_pull_page, apply_selected_remote_tx, reconcile_skipped_history, ReconciliationReport,
 };
+pub use crate::db::cloud::capture::SyncPolicy;
 pub use crate::db::cloud::conflicts::{
     build_resolution_change, clone_entity_with_references_tx, finalize_resolution_ack_tx,
     get_conflict_tx, store_conflict_tx, validate_resolution,

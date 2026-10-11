@@ -259,6 +259,7 @@ impl Database {
         let now = chrono::Utc::now().timestamp_millis();
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let policy = crate::db::cloud::capture::read_sync_policy_tx(&tx)?;
 
         let mut in_flight_set: HashSet<(String, String)> = HashSet::new();
         {
@@ -287,6 +288,9 @@ impl Database {
         let mut rows = stmt.query(params![now])?;
         while let Some(row) = rows.next()? {
             let entity_type: String = row.get(1)?;
+            if !policy.allows_type(&entity_type)? {
+                continue;
+            }
             let entity_id: String = row.get(2)?;
             let key = (entity_type.clone(), entity_id.clone());
             if in_flight_set.contains(&key) || seen_in_batch.contains(&key) {

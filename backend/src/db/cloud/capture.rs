@@ -50,6 +50,51 @@ impl Default for SyncPolicy {
     }
 }
 
+impl SyncPolicy {
+    pub fn allows_type(
+        &self,
+        entity_type: &str,
+    ) -> Result<bool, crate::modules::cloud::contracts::SyncError> {
+        use crate::modules::cloud::contracts::SyncError;
+        Ok(match entity_type {
+            "conversation" | "message" => self.sync_conversations && self.sync_messages,
+            "memory" => self.sync_memories,
+            "agent_profile" => self.sync_agent_profiles,
+            "workflow_metadata" => self.sync_workflow_metadata,
+            "artifact_metadata" => self.sync_artifact_metadata,
+            "task_graph" | "canvas_view" => self.sync_task_graphs && self.sync_canvas_views,
+            "settings" => self.sync_settings,
+            "capability_usage" => self.sync_capability_usage,
+            other => return Err(SyncError::UnsupportedSchema(other.to_owned())),
+        })
+    }
+}
+
+pub(crate) fn read_sync_policy_tx(
+    tx: &rusqlite::Transaction<'_>,
+) -> Result<SyncPolicy, rusqlite::Error> {
+    use rusqlite::OptionalExtension;
+    let encoded: Option<String> = tx
+        .query_row(
+            "SELECT policy_json FROM cloud_sync_policy WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    encoded
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()
+        .map(|policy| policy.unwrap_or_default())
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CaptureReport {
     pub captured: usize,
@@ -82,14 +127,38 @@ impl Database {
     }
 
     pub fn save_cloud_sync_policy(&self, policy: &SyncPolicy) -> Result<(), rusqlite::Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let old = read_sync_policy_tx(&tx)?;
+        let any_re_enabled = (!old.sync_conversations && policy.sync_conversations)
+            || (!old.sync_messages && policy.sync_messages)
+            || (!old.sync_memories && policy.sync_memories)
+            || (!old.sync_agent_profiles && policy.sync_agent_profiles)
+            || (!old.sync_workflow_metadata && policy.sync_workflow_metadata)
+            || (!old.sync_artifact_metadata && policy.sync_artifact_metadata)
+            || (!old.sync_task_graphs && policy.sync_task_graphs)
+            || (!old.sync_canvas_views && policy.sync_canvas_views)
+            || (!old.sync_settings && policy.sync_settings)
+            || (!old.sync_capability_usage && policy.sync_capability_usage);
+
+        let now = chrono::Utc::now().timestamp_millis();
+        if any_re_enabled {
+            tx.execute(
+                "UPDATE cloud_sync_cursor
+                 SET download_cursor='0', cursor='0', updated_at=?1
+                 WHERE singleton=1",
+                params![now],
+            )?;
+        }
+
         let encoded = serde_json::to_string(policy)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-        let conn = self.conn();
-        conn.execute(
+        tx.execute(
             "INSERT INTO cloud_sync_policy(singleton, policy_json, updated_at) VALUES(1, ?1, ?2)
              ON CONFLICT(singleton) DO UPDATE SET policy_json=excluded.policy_json, updated_at=excluded.updated_at",
-            params![encoded, chrono::Utc::now().timestamp_millis()],
+            params![encoded, now],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
