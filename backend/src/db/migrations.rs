@@ -6,8 +6,8 @@ const SHARED_VERSION_MIN: i64 = 0;
 const SHARED_VERSION_MAX: i64 = 999;
 const V1_TASK_WORLD_VERSION_MIN: i64 = 1000;
 const V1_TASK_WORLD_VERSION_MAX: i64 = 1999;
-const V11_CLOUD_VERSION_MIN: i64 = 2000;
-const V11_CLOUD_VERSION_MAX: i64 = 2999;
+const V11_CLOUD_VERSION_MIN: i64 = 3000;
+const V11_CLOUD_VERSION_MAX: i64 = 3999;
 
 const SCHEMA_MIGRATIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -149,9 +149,24 @@ fn validate_version(owner: MigrationOwner, version: i64) -> rusqlite::Result<()>
     )))
 }
 
+fn is_legacy_cloud_spec(spec: &MigrationSpec) -> bool {
+    spec.owner == MigrationOwner::V11Cloud
+        && crate::db::cloud::schema::LEGACY_CLOUD_MIGRATIONS
+            .iter()
+            .any(|old| {
+                old.version == spec.version
+                    && old.name == spec.name
+                    && old.owner == spec.owner
+                    && old.digest() == spec.digest()
+            })
+}
+
 fn validate_spec(spec: &MigrationSpec) -> rusqlite::Result<()> {
     if spec.name.is_empty() {
         return Err(migration_error("migration name must not be empty"));
+    }
+    if is_legacy_cloud_spec(spec) {
+        return Ok(());
     }
     validate_version(spec.owner, spec.version)
 }
@@ -604,5 +619,121 @@ mod tests {
         assert!(validate_shared_version(999).is_ok());
         assert!(validate_shared_version(1000).is_err());
         assert!(validate_shared_version(2000).is_err());
+    }
+
+    #[test]
+    fn test_legacy_cloud_migrations_snapshot() {
+        let specs = crate::db::cloud::schema::LEGACY_CLOUD_MIGRATIONS;
+        assert_eq!(specs.len(), 12);
+        let versions: Vec<i64> = specs.iter().map(|s| s.version).collect();
+        assert_eq!(
+            versions,
+            vec![2000, 2001, 2002, 2003, 2004, 2010, 2011, 2012, 2013, 2014, 2015, 2016]
+        );
+        for spec in specs {
+            assert_eq!(spec.owner, MigrationOwner::V11Cloud);
+            assert!(is_legacy_cloud_spec(spec));
+            assert!(validate_spec(spec).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_p4_01_and_p4_03_legacy_cloud_migrations_on_empty_and_repeat() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_product_migrations(&mut conn, crate::db::cloud::schema::LEGACY_CLOUD_MIGRATIONS)
+            .unwrap();
+        assert_eq!(
+            versions(&conn),
+            vec![2000, 2001, 2002, 2003, 2004, 2010, 2011, 2012, 2013, 2014, 2015, 2016]
+        );
+        // Repeat application is idempotent (P4-01)
+        apply_product_migrations(&mut conn, crate::db::cloud::schema::LEGACY_CLOUD_MIGRATIONS)
+            .unwrap();
+        assert_eq!(
+            versions(&conn),
+            vec![2000, 2001, 2002, 2003, 2004, 2010, 2011, 2012, 2013, 2014, 2015, 2016]
+        );
+    }
+
+    #[test]
+    fn test_p4_02_partial_legacy_migrations_upgrade() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // Apply only first 5 (2000-2004)
+        apply_product_migrations(
+            &mut conn,
+            &crate::db::cloud::schema::LEGACY_CLOUD_MIGRATIONS[..5],
+        )
+        .unwrap();
+        assert_eq!(versions(&conn), vec![2000, 2001, 2002, 2003, 2004]);
+
+        // Then apply all 12: 2010-2016 are completed
+        apply_product_migrations(&mut conn, crate::db::cloud::schema::LEGACY_CLOUD_MIGRATIONS)
+            .unwrap();
+        assert_eq!(
+            versions(&conn),
+            vec![2000, 2001, 2002, 2003, 2004, 2010, 2011, 2012, 2013, 2014, 2015, 2016]
+        );
+    }
+
+    #[test]
+    fn test_p4_04_rejects_arbitrary_2xxx_cloud_specs() {
+        let fake_2017 = MigrationSpec {
+            version: 2017,
+            name: "2017_fake_cloud_spec",
+            owner: MigrationOwner::V11Cloud,
+            sql: "CREATE TABLE fake_2017 (id INT);",
+        };
+        assert!(validate_spec(&fake_2017).is_err());
+        assert!(!is_legacy_cloud_spec(&fake_2017));
+
+        let fake_2005 = MigrationSpec {
+            version: 2005,
+            name: "2005_fake_cloud_spec",
+            owner: MigrationOwner::V11Cloud,
+            sql: "CREATE TABLE fake_2005 (id INT);",
+        };
+        assert!(validate_spec(&fake_2005).is_err());
+        assert!(!is_legacy_cloud_spec(&fake_2005));
+    }
+
+    #[test]
+    fn test_p4_05_accepts_3000_cloud_spec() {
+        let spec_3000 = MigrationSpec {
+            version: 3000,
+            name: "3000_new_cloud_spec",
+            owner: MigrationOwner::V11Cloud,
+            sql: "CREATE TABLE new_cloud_3000 (id INT PRIMARY KEY);",
+        };
+        assert!(validate_spec(&spec_3000).is_ok());
+        assert_eq!(spec_3000.owner.as_str(), "v1_1_cloud");
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_product_migration(&mut conn, &spec_3000).unwrap();
+        assert!(table_exists(&conn, "new_cloud_3000").unwrap());
+        assert_eq!(
+            metadata(&conn, 3000),
+            ("3000_new_cloud_spec".into(), "v1_1_cloud".into())
+        );
+    }
+
+    #[test]
+    fn test_p4_06_rejects_tampered_legacy_cloud_sql_or_mismatched_owner() {
+        let tampered_2000 = MigrationSpec {
+            version: 2000,
+            name: "2000_v11_cloud_client",
+            owner: MigrationOwner::V11Cloud,
+            sql: "CREATE TABLE tampered_2000 (id INT);",
+        };
+        assert!(!is_legacy_cloud_spec(&tampered_2000));
+        assert!(validate_spec(&tampered_2000).is_err());
+
+        let wrong_owner_2000 = MigrationSpec {
+            version: 2000,
+            name: "2000_v11_cloud_client",
+            owner: MigrationOwner::V1TaskWorld,
+            sql: crate::db::cloud::schema::LEGACY_CLOUD_MIGRATIONS[0].sql,
+        };
+        assert!(!is_legacy_cloud_spec(&wrong_owner_2000));
+        assert!(validate_spec(&wrong_owner_2000).is_err());
     }
 }
