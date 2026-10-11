@@ -21,6 +21,7 @@ interface AccountProfilePanelProps {
   onRequestLogin?: () => void;
   initialLoading?: boolean;
   initialProfileView?: ProfileView | null;
+  guestMode?: boolean;
 }
 
 export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
@@ -30,6 +31,7 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
   onRequestLogin,
   initialLoading = false,
   initialProfileView = null,
+  guestMode = false,
 }) => {
   const [profileView, setProfileView] = useState<ProfileView | null>(initialProfileView);
   const [loading, setLoading] = useState(initialLoading);
@@ -94,7 +96,7 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
           )}
 
           {/* Active Profile Info */}
-          {profileView && (
+          {profileView && !guestMode && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-muted/30 p-4 rounded-md">
               <div>
                 <span className="text-xs text-muted-foreground block">当前激活 Profile</span>
@@ -143,6 +145,21 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
             </div>
           )}
 
+          {profileView?.pending_revocations?.length ? (
+            <div className="p-3 border rounded-md bg-amber-500/10 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-700">
+                <AlertTriangle className="w-4 h-4" />
+                <span>远端撤销待处理</span>
+              </div>
+              {profileView.pending_revocations.map((item) => (
+                <div key={`${item.profile_id}:${item.session_id}`} className="text-xs text-muted-foreground">
+                  <span>{item.remote_revocation === "unknown" ? "远端状态未知" : "远端会话正在后台重试撤销"}</span>
+                  {item.last_error_code ? <span> · {item.last_error_code}</span> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           {/* Restart Required Warning Banner */}
           {switchState === "awaiting_restart" && restartPlan && (
             <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-md space-y-2">
@@ -163,7 +180,7 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
           )}
 
           {/* Controlled Profile Switch Section */}
-          <div className="border-t border-border pt-4 space-y-3">
+          {!guestMode && <div className="border-t border-border pt-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-medium flex items-center space-x-2">
@@ -184,25 +201,25 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
                 </Button>
               )}
             </div>
-          </div>
+          </div>}
 
           {/* Existing Profiles List */}
-          {profileView && profileView.profiles.length > 0 && (
+          {!guestMode && profileView && profileView.profiles.length > 0 && (
             <div className="border-t border-border pt-4 space-y-2">
               <h4 className="text-xs font-medium text-muted-foreground">已注册的本地 Profiles</h4>
               <div className="space-y-1">
                 {profileView.profiles.map((record: ProfileRecord) => (
                   <div
-                    key={record.id}
+                    key={record.profile_id}
                     className="flex items-center justify-between p-2 rounded bg-muted/20 text-xs"
                   >
                     <div className="flex items-center space-x-2">
-                      {record.id === profileView.active_profile_id ? (
+                      {record.profile_id === profileView.active_profile_id ? (
                         <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                       ) : (
                         <span className="w-4 h-4 rounded-full border border-border inline-block" />
                       )}
-                      <span className="font-mono font-medium">{record.id}</span>
+                      <span className="font-mono font-medium">{record.profile_id}</span>
                       <Badge tone={record.kind === "guest" ? "default" : "info"}>
                         {record.kind}
                       </Badge>

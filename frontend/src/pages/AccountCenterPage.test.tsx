@@ -20,6 +20,14 @@ describe("AccountCenterPage and AccountProfilePanel contracts (P2)", () => {
     expect(accountCenterSource).toContain("取消切换");
   });
 
+  it("keeps the real logout report and renders profile status for guests", () => {
+    expect(accountCenterSource).toContain("setLastLogoutReport(result.data.report)");
+    expect(accountCenterSource).toContain("lastLogoutReport={lastLogoutReport}");
+    expect(accountCenterSource).toContain("identity?.status === \"guest\"");
+    expect(accountPanelSource).toContain("pending_revocations");
+    expect(accountPanelSource).toContain("远端撤销待处理");
+  });
+
   it("renders AccountProfilePanel with onRequestLogin button", () => {
     const onRequestLogin = vi.fn();
     const html = renderToStaticMarkup(

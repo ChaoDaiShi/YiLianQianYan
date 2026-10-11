@@ -173,6 +173,8 @@ pub struct AppServer {
     pub scoped_db: crate::db::cloud::scoped_db::ScopedDb,
     /// Shared operation lock protecting cloud sync, policy updates, login activation, and logout.
     pub cloud_operation_lock: tokio::sync::Mutex<()>,
+    /// Cancels the application-lifetime pending cloud revocation retry loop.
+    pub cloud_revocation_retry_cancel: CancellationToken,
 }
 
 impl AppServer {

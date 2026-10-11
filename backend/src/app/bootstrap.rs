@@ -194,6 +194,7 @@ impl AppServer {
                 crate::db::cloud::scoped_db::ScopedDb::new(db.clone(), lease)
             },
             cloud_operation_lock: tokio::sync::Mutex::new(()),
+            cloud_revocation_retry_cancel: tokio_util::sync::CancellationToken::new(),
         };
         server.set_voice_dispatch_hook(Arc::new(InteractionVoiceDispatch::new(
             server.db.clone_connection(),
@@ -300,6 +301,14 @@ pub(crate) async fn create_server_with_control_session(
         Ok(_) => {}
         Err(error) => tracing::warn!(%error, "pending session revocation retry deferred"),
     }
+    tokio::spawn(
+        crate::modules::cloud::revocation::run_registered_profile_revocation_retry_loop(
+            data_dir.clone(),
+            Arc::clone(&server.secret_store),
+            std::time::Duration::from_secs(30),
+            server.cloud_revocation_retry_cancel.child_token(),
+        ),
+    );
     // Seed base resource grants (workspace read/write + denied paths) so the
     // grant-enforced gateway has a sane starting point.
     server.seed_default_grants();

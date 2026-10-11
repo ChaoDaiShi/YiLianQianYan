@@ -8,6 +8,7 @@ pub mod lifecycle;
 pub mod payload;
 pub mod profile;
 mod profile_migration;
+mod profile_resolution;
 pub mod revocation;
 pub mod search;
 pub mod session;

@@ -100,11 +100,27 @@ describe("memoryStore persistence error resilience", () => {
       new Error("更新失败")
     );
 
-    await useMemoryStore.getState().editMemory("mem-1", { content: "修改后的记忆" });
+    const saved = await useMemoryStore.getState().editMemory("mem-1", { content: "修改后的记忆" });
 
     const state = useMemoryStore.getState();
+    expect(saved).toBe(false);
     expect(state.error).toBe("更新失败");
     expect(state.memories[0].content).toBe("原始记忆");
+  });
+
+  it("editMemory reports success so the editor closes only after persistence", async () => {
+    useMemoryStore.setState({ memories: [mockMemory] });
+    vi.mocked(memoryApi.updateMemory).mockResolvedValueOnce({
+      ...mockMemory,
+      content: "修改后的记忆",
+    });
+
+    const saved = await useMemoryStore.getState().editMemory("mem-1", {
+      content: "修改后的记忆",
+    });
+
+    expect(saved).toBe(true);
+    expect(useMemoryStore.getState().memories[0].content).toBe("修改后的记忆");
   });
 
   it("addMemory does not modify list if creation fails", async () => {

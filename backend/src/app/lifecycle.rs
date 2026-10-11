@@ -36,6 +36,7 @@ pub async fn serve(addr: &str) {
 /// MCP sessions and managed child processes are closed before the process
 /// exits so no external server or child process is orphaned.
 pub async fn shutdown(server: &AppServer) {
+    server.cloud_revocation_retry_cancel.cancel();
     server.mcp_runtime_manager.shutdown_all().await;
     server.managed_process_registry.shutdown_all();
 }

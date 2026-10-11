@@ -23,7 +23,7 @@ interface MemoryStore {
   // Actions
   loadMemories: (query?: { category?: string; source?: string; q?: string }) => Promise<void>;
   addMemory: (data: { content: string; category?: string; source?: string; metadata?: string }) => Promise<MemoryRecord | null>;
-  editMemory: (id: string, data: { content?: string; category?: string; metadata?: string }) => Promise<void>;
+  editMemory: (id: string, data: { content?: string; category?: string; metadata?: string }) => Promise<boolean>;
   removeMemory: (id: string) => Promise<void>;
   loadStats: () => Promise<void>;
   triggerExtraction: (conversationId?: string) => Promise<void>;
@@ -68,8 +68,10 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
         error: null,
       }));
       get().loadStats();
+      return true;
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });
+      return false;
     }
   },
 

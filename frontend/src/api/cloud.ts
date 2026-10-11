@@ -166,7 +166,7 @@ export interface ScopeLease {
 }
 
 export interface ProfileRecord {
-  id: string;
+  profile_id: string;
   kind: "guest" | "account";
   service_origin: string | null;
   account_id: string | null;
@@ -180,6 +180,12 @@ export interface ProfileView {
   active_generation: string;
   active_lease: ScopeLease;
   profiles: ProfileRecord[];
+  pending_revocations: Array<{
+    profile_id: string;
+    session_id: string;
+    remote_revocation: "pending" | "unknown";
+    last_error_code: string | null;
+  }>;
 }
 
 export interface ActivationPlan {

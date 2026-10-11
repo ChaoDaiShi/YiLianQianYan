@@ -19,7 +19,8 @@ use yilian_backend::integrations::secret::{
 use yilian_backend::modules::cloud::contracts::ScopeKey;
 use yilian_backend::modules::cloud::profile::{ActivationChoice, ProfileKind, ProfileManager};
 use yilian_backend::modules::cloud::revocation::{
-    retry_registered_profile_revocations, RevocationService,
+    list_registered_profile_revocations, retry_registered_profile_revocations,
+    run_registered_profile_revocation_retry_loop, RevocationService,
 };
 use yilian_backend::safety::{ControlSession, CONTROL_SESSION_HEADER};
 
@@ -619,4 +620,317 @@ async fn test_p2_08_restart_after_logout_switches_to_guest() {
     assert_eq!(registry.active_profile_id, active_id);
     let account_entry = registry.profiles.get(&plan.profile_id).unwrap();
     assert_eq!(account_entry.reauthentication_required, true);
+}
+
+async fn seed_authenticated_account(
+    app_data: &std::path::Path,
+    origin: &str,
+    secret_store: Arc<dyn SecretStore>,
+) -> yilian_backend::modules::cloud::profile::ActivationPlan {
+    let scope = ScopeKey {
+        service_origin: origin.into(),
+        account_id: "review-account".into(),
+    };
+    let plan = ProfileManager::prepare_profile(app_data, &scope, ActivationChoice::OpenAccountOnly)
+        .unwrap();
+    let db = Database::new(&ProfileManager::profile_db_path(app_data, &plan)).unwrap();
+    yilian_backend::modules::cloud::session::CloudSessionService::new(db.clone(), secret_store)
+        .persist_authenticated_session_scoped(
+            yilian_backend::modules::cloud::domain::AuthenticatedSessionInput {
+                account_id: "review-account".into(),
+                email: "review@example.test".into(),
+                session_id: "review-session".into(),
+                access_token: "synthetic-review-access-value-20261011".into(),
+                refresh_token: "synthetic-review-refresh-value-20261011".into(),
+                expires_at: chrono::Utc::now().timestamp_millis() + 3_600_000,
+            },
+            &plan.lease.scope_id,
+        )
+        .await
+        .unwrap();
+    db.save_cloud_configuration(origin, "sync").unwrap();
+    ProfileManager::persist_activation(app_data, &plan).unwrap();
+    plan
+}
+
+#[tokio::test]
+async fn logout_retry_clears_the_original_account_scope() {
+    let tmp = TempDir::new();
+    let cloud = Router::new().route(
+        "/sessions/:id/revoke",
+        post(|| async { Json(serde_json::json!({"ok": true})) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, cloud).await.unwrap() });
+    let store = Arc::new(FaultySecretStore::new());
+    let plan = seed_authenticated_account(tmp.path(), &origin, store.clone()).await;
+    let access_ref = scoped_cloud_access_token_ref(&plan.lease.scope_id);
+    let (server, token) = create_test_server(tmp.path(), store.clone());
+
+    store.fail_delete.store(true, Ordering::SeqCst);
+    let (first_status, _) = protected_request(
+        server.clone(),
+        &token,
+        Method::POST,
+        "/api/cloud/logout",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(first_status, StatusCode::INTERNAL_SERVER_ERROR);
+
+    store.fail_delete.store(false, Ordering::SeqCst);
+    let (retry_status, retry) = protected_request(
+        server,
+        &token,
+        Method::POST,
+        "/api/cloud/logout",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(retry_status, StatusCode::OK, "retry response: {retry}");
+    assert_eq!(retry["report"]["local_signed_out"], true);
+    assert!(
+        store.get(&access_ref).await.unwrap().is_none(),
+        "logout retry must delete the original account credential"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn background_loop_finishes_original_scope_cleanup_after_guest_restart() {
+    let tmp = TempDir::new();
+    let cloud = Router::new().route(
+        "/sessions/:id/revoke",
+        post(|| async { Json(serde_json::json!({"ok": true})) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let cloud_task = tokio::spawn(async move { axum::serve(listener, cloud).await.unwrap() });
+    let store = Arc::new(FaultySecretStore::new());
+    let plan = seed_authenticated_account(tmp.path(), &origin, store.clone()).await;
+    let access_ref = scoped_cloud_access_token_ref(&plan.lease.scope_id);
+    let (server, token) = create_test_server(tmp.path(), store.clone());
+
+    store.fail_delete.store(true, Ordering::SeqCst);
+    let (status, _) = protected_request(
+        server,
+        &token,
+        Method::POST,
+        "/api/cloud/logout",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(store.get(&access_ref).await.unwrap().is_some());
+
+    let (_, _, active_profile) =
+        ProfileManager::resolve_active_profile_db_path(tmp.path()).unwrap();
+    assert!(active_profile.starts_with("guest-"));
+    store.fail_delete.store(false, Ordering::SeqCst);
+
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let loop_task = tokio::spawn(run_registered_profile_revocation_retry_loop(
+        tmp.path().to_path_buf(),
+        store.clone(),
+        std::time::Duration::from_millis(10),
+        cancellation.clone(),
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if store.get(&access_ref).await.unwrap().is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background cleanup should remove the original profile credential");
+    cancellation.cancel();
+    loop_task.await.unwrap();
+    cloud_task.abort();
+}
+
+#[tokio::test]
+async fn refresh_and_logout_are_serialized_by_the_cloud_operation_lock() {
+    let tmp = TempDir::new();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let started = entered.clone();
+    let unblock = release.clone();
+    let cloud = Router::new()
+        .route(
+            "/identity/refresh",
+            post(move || {
+                let started = started.clone();
+                let unblock = unblock.clone();
+                async move {
+                    started.notify_one();
+                    unblock.notified().await;
+                    Json(serde_json::json!({
+                        "account":{"id":"review-account","email":"review@example.test"},
+                        "session":{"id":"review-session"},
+                        "access_token":"synthetic-refreshed-access-20261011",
+                        "refresh_token":"synthetic-refreshed-refresh-20261011",
+                        "expires_in":3600
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/sessions/:id/revoke",
+            post(|| async { Json(serde_json::json!({"ok": true})) }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let cloud_task = tokio::spawn(async move { axum::serve(listener, cloud).await.unwrap() });
+    let store = Arc::new(InMemorySecretStore::new());
+    let plan = seed_authenticated_account(tmp.path(), &origin, store.clone()).await;
+    let access_ref = scoped_cloud_access_token_ref(&plan.lease.scope_id);
+    let (server, token) = create_test_server(tmp.path(), store.clone());
+
+    let refresh_server = server.clone();
+    let refresh_token = token.clone();
+    let refresh_task = tokio::spawn(async move {
+        protected_request(
+            refresh_server,
+            &refresh_token,
+            Method::POST,
+            "/api/cloud/refresh",
+            serde_json::json!({}),
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+        .await
+        .unwrap();
+
+    let (busy_status, busy_body) = protected_request(
+        server.clone(),
+        &token,
+        Method::POST,
+        "/api/cloud/logout",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(busy_status, StatusCode::CONFLICT, "response: {busy_body}");
+
+    release.notify_one();
+    assert_eq!(refresh_task.await.unwrap().0, StatusCode::OK);
+    let (logout_status, logout) = protected_request(
+        server,
+        &token,
+        Method::POST,
+        "/api/cloud/logout",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(logout_status, StatusCode::OK, "response: {logout}");
+    assert!(store.get(&access_ref).await.unwrap().is_none());
+    cloud_task.abort();
+}
+
+#[tokio::test]
+async fn background_revocation_loop_processes_a_due_task_without_another_restart() {
+    let tmp = TempDir::new();
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let route_hits = hits.clone();
+    let cloud = Router::new().route(
+        "/sessions/:id/revoke",
+        post(move || {
+            let route_hits = route_hits.clone();
+            async move {
+                route_hits.fetch_add(1, Ordering::SeqCst);
+                Json(serde_json::json!({"ok": true}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let cloud_task = tokio::spawn(async move { axum::serve(listener, cloud).await.unwrap() });
+    let store = Arc::new(InMemorySecretStore::new());
+    let plan = seed_authenticated_account(tmp.path(), &origin, store.clone()).await;
+    let db = Database::new(&ProfileManager::profile_db_path(tmp.path(), &plan)).unwrap();
+    let service = RevocationService::new(db.clone(), store.clone());
+    let session_id = "background-retry-session";
+    store
+        .put(
+            &revoke_session_token_ref(session_id),
+            secrecy::SecretString::from("synthetic-revoke-value-20261011".to_string()),
+        )
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    service
+        .insert_pending_revocation(
+            session_id,
+            &plan.lease.scope_id,
+            &origin,
+            "review-account",
+            now - 1,
+            Some("REMOTE_UNREACHABLE"),
+            now,
+        )
+        .unwrap();
+
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let task_cancellation = cancellation.clone();
+    let data_dir = tmp.path().to_path_buf();
+    let loop_task = tokio::spawn(run_registered_profile_revocation_retry_loop(
+        data_dir,
+        store,
+        std::time::Duration::from_millis(10),
+        task_cancellation,
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if hits.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    cancellation.cancel();
+    loop_task.await.unwrap();
+
+    let remaining: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM cloud_pending_revocations WHERE session_id=?1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining, 0);
+    cloud_task.abort();
+}
+
+#[tokio::test]
+async fn guest_profile_can_read_pending_revocation_summaries_from_account_databases() {
+    let tmp = TempDir::new();
+    let store = Arc::new(InMemorySecretStore::new());
+    let plan = seed_authenticated_account(tmp.path(), "http://127.0.0.1:59991", store).await;
+    let db = Database::new(&ProfileManager::profile_db_path(tmp.path(), &plan)).unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    RevocationService::new(db, Arc::new(InMemorySecretStore::new()))
+        .insert_pending_revocation(
+            "summary-session",
+            &plan.lease.scope_id,
+            "http://127.0.0.1:59991",
+            "review-account",
+            now + 60_000,
+            Some("REMOTE_UNREACHABLE"),
+            now,
+        )
+        .unwrap();
+    let guest = ProfileManager::prepare_guest_activation(tmp.path()).unwrap();
+    ProfileManager::persist_activation(tmp.path(), &guest).unwrap();
+
+    let summaries = list_registered_profile_revocations(tmp.path()).unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].profile_id, plan.profile_id);
+    assert_eq!(summaries[0].session_id, "summary-session");
+    assert_eq!(summaries[0].remote_revocation, "pending");
 }

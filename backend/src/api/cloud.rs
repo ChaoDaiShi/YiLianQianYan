@@ -5,11 +5,12 @@ use axum::{
 };
 use std::sync::Arc;
 
+use crate::api::cloud_errors::*;
 use crate::app::state::AppServer;
 use crate::modules::cloud::{
-    client::{CloudApiClient, CloudClientError},
+    client::CloudApiClient,
     domain::CloudAuthRequest,
-    session::{CloudSessionError, CloudSessionService},
+    session::CloudSessionService,
     sync::{CloudSyncError, CloudSyncService},
 };
 
@@ -182,8 +183,15 @@ pub async fn register_handler(
 }
 
 pub async fn refresh_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
+    let _lock = server.cloud_operation_lock.try_lock().map_err(|_| {
+        api_error(
+            StatusCode::CONFLICT,
+            "cloud_operation_in_progress",
+            "当前正在同步，请完成后重试",
+        )
+    })?;
     refresh_session(&server).await?;
-    identity_handler(State(server)).await
+    identity_handler(State(Arc::clone(&server))).await
 }
 
 pub async fn logout_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
@@ -254,6 +262,11 @@ pub async fn logout_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
         )
         .await;
 
+    if report.local_cleanup == crate::modules::cloud::revocation::LocalCleanup::Failed {
+        report.local_signed_out = false;
+        return Err(local_logout_incomplete(report));
+    }
+
     let activation_res =
         crate::modules::cloud::profile::ProfileManager::prepare_guest_activation(&data_dir);
     let activation = match activation_res {
@@ -288,15 +301,7 @@ pub async fn logout_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
         && activation.is_some();
 
     if !report.local_signed_out {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "code": "local_logout_incomplete",
-                "error": "本地退出未完成，请重试",
-                "message": "本地退出未完成，请重试",
-                "report": report
-            })),
-        ));
+        return Err(local_logout_incomplete(report));
     }
 
     Ok(Json(serde_json::json!({
@@ -343,27 +348,9 @@ pub async fn profile_handler(State(server): State<Arc<AppServer>>) -> ApiResult 
             )
         })?;
 
-    let pending_revocations: Vec<serde_json::Value> = server
-        .db
-        .conn()
-        .prepare("SELECT session_id, last_error_code FROM cloud_pending_revocations")
-        .and_then(|mut stmt| {
-            let rows = stmt.query_map([], |row| {
-                let session_id: String = row.get(0)?;
-                let last_error_code: Option<String> = row.get(1)?;
-                let remote_revocation = match last_error_code.as_deref() {
-                    Some("RETRY_EXHAUSTED") | Some("REVOKE_CREDENTIAL_MISSING") => "unknown",
-                    _ => "pending",
-                };
-                Ok(serde_json::json!({
-                    "session_id": session_id,
-                    "remote_revocation": remote_revocation,
-                    "last_error_code": last_error_code,
-                }))
-            })?;
-            rows.collect::<Result<Vec<_>, _>>()
-        })
-        .unwrap_or_default();
+    let pending_revocations =
+        crate::modules::cloud::revocation::list_registered_profile_revocations(&data_dir)
+            .map_err(session_error)?;
 
     Ok(Json(serde_json::json!({
         "active_profile_id": registry.active_profile_id,
@@ -554,11 +541,12 @@ async fn authenticate(server: Arc<AppServer>, payload: AuthPayload, register: bo
     target_db
         .save_cloud_configuration(scope_key.service_origin.as_str(), "undecided")
         .map_err(internal_error)?;
-    let _ = crate::modules::cloud::profile::ProfileManager::set_reauthentication_required(
+    crate::modules::cloud::profile::ProfileManager::set_reauthentication_required(
         &data_dir,
         &plan.profile_id,
         false,
-    );
+    )
+    .map_err(profile_error)?;
     crate::modules::cloud::profile::ProfileManager::activate_prepared_profile(
         &data_dir,
         &server,
@@ -571,135 +559,4 @@ async fn authenticate(server: Arc<AppServer>, payload: AuthPayload, register: bo
         "activation": plan,
         "status": "awaiting_restart"
     })))
-}
-
-fn profile_error(
-    error: crate::modules::cloud::contracts::ScopeError,
-) -> (StatusCode, Json<serde_json::Value>) {
-    tracing::warn!(%error, "cloud profile activation failed");
-    api_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "profile_activation_failed",
-        "账号数据空间切换失败，原有数据空间保持不变",
-    )
-}
-
-fn internal_error(_: rusqlite::Error) -> (StatusCode, Json<serde_json::Value>) {
-    api_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "cloud_state_unavailable",
-        "本地云状态暂时不可用",
-    )
-}
-
-fn cloud_client_error(error: CloudClientError) -> (StatusCode, Json<serde_json::Value>) {
-    let (status, code, msg) = match error {
-        CloudClientError::InvalidBaseUrl => (
-            StatusCode::BAD_REQUEST,
-            "invalid_cloud_url",
-            "云服务地址无效",
-        ),
-        CloudClientError::HttpsRequired => (
-            StatusCode::BAD_REQUEST,
-            "cloud_https_required",
-            "远程云服务地址必须使用 HTTPS",
-        ),
-        CloudClientError::Authentication => (
-            StatusCode::UNAUTHORIZED,
-            "cloud_authentication_failed",
-            "邮箱或密码不正确",
-        ),
-        CloudClientError::Unavailable => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "cloud_unavailable",
-            "云服务暂时不可用，本地功能仍可继续使用",
-        ),
-        CloudClientError::Rejected | CloudClientError::InvalidResponse => (
-            StatusCode::BAD_GATEWAY,
-            "cloud_request_failed",
-            "云服务未能完成请求",
-        ),
-    };
-    api_error(status, code, msg)
-}
-
-fn session_error(error: CloudSessionError) -> (StatusCode, Json<serde_json::Value>) {
-    match error {
-        CloudSessionError::HttpsRequired => api_error(
-            StatusCode::BAD_REQUEST,
-            "cloud_https_required",
-            "远程云服务地址必须使用 HTTPS",
-        ),
-        CloudSessionError::InvalidBaseUrl => api_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_cloud_url",
-            "云服务地址无效",
-        ),
-        _ => api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "cloud_session_not_saved",
-            "登录凭据未能安全保存，登录状态未启用",
-        ),
-    }
-}
-
-fn sync_error(error: CloudSyncError) -> (StatusCode, Json<serde_json::Value>) {
-    use crate::modules::cloud::contracts::SyncError;
-    let (status, code, msg) = match error {
-        CloudSyncError::AuthenticationRequired
-        | CloudSyncError::Sync(SyncError::AuthenticationRequired) => (
-            StatusCode::UNAUTHORIZED,
-            "cloud_authentication_required",
-            "云会话已失效，请重新登录；本地数据仍会保留",
-        ),
-        CloudSyncError::InvalidBaseUrl => (
-            StatusCode::BAD_REQUEST,
-            "invalid_cloud_url",
-            "云服务地址无效",
-        ),
-        CloudSyncError::HttpsRequired => (
-            StatusCode::BAD_REQUEST,
-            "cloud_https_required",
-            "远程云服务地址必须使用 HTTPS",
-        ),
-        CloudSyncError::Transport | CloudSyncError::InvalidResponse => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "cloud_sync_unavailable",
-            "云同步暂时不可用，本地变更已保留",
-        ),
-        CloudSyncError::Database(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "cloud_sync_state_unavailable",
-            "本地同步状态暂时不可用",
-        ),
-        CloudSyncError::Scope(_) | CloudSyncError::Sync(SyncError::ScopeChanged) => {
-            (StatusCode::CONFLICT, "scope_changed", "账号或作用域已改变")
-        }
-        CloudSyncError::Sync(SyncError::ProtocolUpgradeRequired) => (
-            StatusCode::UPGRADE_REQUIRED,
-            "sync_upgrade_required",
-            "云同步协议版本不匹配，需要升级",
-        ),
-        CloudSyncError::Sync(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "cloud_sync_failed",
-            "云同步执行失败",
-        ),
-    };
-    api_error(status, code, msg)
-}
-
-fn api_error(
-    status: StatusCode,
-    error: &str,
-    message: &str,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        status,
-        Json(serde_json::json!({
-            "code": error,
-            "error": message,
-            "message": message,
-        })),
-    )
 }

@@ -51,6 +51,14 @@ pub struct PendingRevocationRecord {
     pub updated_at: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegisteredRevocationSummary {
+    pub profile_id: String,
+    pub session_id: String,
+    pub remote_revocation: String,
+    pub last_error_code: Option<String>,
+}
+
 pub struct RevocationService {
     db: Database,
     secret_store: Arc<dyn SecretStore>,
@@ -274,11 +282,13 @@ impl RevocationService {
             }
 
             if item.attempts >= 5 {
-                let conn = self.db.conn();
-                let _ = conn.execute(
-                    "UPDATE cloud_pending_revocations SET last_error_code = 'RETRY_EXHAUSTED', updated_at = ?1 WHERE session_id = ?2",
-                    params![now, item.session_id],
-                );
+                {
+                    let conn = self.db.conn();
+                    let _ = conn.execute(
+                        "UPDATE cloud_pending_revocations SET last_error_code = 'RETRY_EXHAUSTED', updated_at = ?1 WHERE session_id = ?2",
+                        params![now, item.session_id],
+                    );
+                }
                 let _ = self.secret_store.delete(&revoke_ref).await;
                 continue;
             }
@@ -292,29 +302,35 @@ impl RevocationService {
             .await;
             match res {
                 Ok(true) => {
-                    let conn = self.db.conn();
-                    let _ = conn.execute(
-                        "DELETE FROM cloud_pending_revocations WHERE session_id = ?1",
-                        params![item.session_id],
-                    );
+                    {
+                        let conn = self.db.conn();
+                        let _ = conn.execute(
+                            "DELETE FROM cloud_pending_revocations WHERE session_id = ?1",
+                            params![item.session_id],
+                        );
+                    }
                     let _ = self.secret_store.delete(&revoke_ref).await;
                     confirmed_count += 1;
                 }
                 _ => {
                     let next_attempts = item.attempts + 1;
-                    let conn = self.db.conn();
+                    {
+                        let conn = self.db.conn();
+                        if next_attempts >= 5 {
+                            let _ = conn.execute(
+                                "UPDATE cloud_pending_revocations SET attempts = ?1, last_error_code = 'RETRY_EXHAUSTED', updated_at = ?2 WHERE session_id = ?3",
+                                params![next_attempts, now, item.session_id],
+                            );
+                        } else {
+                            let backoff = (next_attempts as i64) * 60_000;
+                            let _ = conn.execute(
+                                "UPDATE cloud_pending_revocations SET attempts = ?1, next_retry_at = ?2, last_error_code = 'REMOTE_UNREACHABLE', updated_at = ?3 WHERE session_id = ?4",
+                                params![next_attempts, now + backoff, now, item.session_id],
+                            );
+                        }
+                    }
                     if next_attempts >= 5 {
-                        let _ = conn.execute(
-                            "UPDATE cloud_pending_revocations SET attempts = ?1, last_error_code = 'RETRY_EXHAUSTED', updated_at = ?2 WHERE session_id = ?3",
-                            params![next_attempts, now, item.session_id],
-                        );
                         let _ = self.secret_store.delete(&revoke_ref).await;
-                    } else {
-                        let backoff = (next_attempts as i64) * 60_000;
-                        let _ = conn.execute(
-                            "UPDATE cloud_pending_revocations SET attempts = ?1, next_retry_at = ?2, last_error_code = 'REMOTE_UNREACHABLE', updated_at = ?3 WHERE session_id = ?4",
-                            params![next_attempts, now + backoff, now, item.session_id],
-                        );
                     }
                 }
             }
@@ -363,6 +379,112 @@ pub async fn retry_registered_profile_revocations(
     }
 
     Ok(total_confirmed)
+}
+
+pub fn list_registered_profile_revocations(
+    app_data_dir: &std::path::Path,
+) -> Result<Vec<RegisteredRevocationSummary>, super::session::CloudSessionError> {
+    let registry = crate::modules::cloud::profile::ProfileManager::load_or_initialize(app_data_dir)
+        .map_err(|_| super::session::CloudSessionError::Unavailable)?;
+    let mut summaries = Vec::new();
+    for entry in registry.profiles.values() {
+        let db_path = app_data_dir
+            .join(crate::modules::cloud::profile::PROFILES_DIRNAME)
+            .join(&entry.directory_name)
+            .join("app.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let db = Database::new(&db_path)?;
+        let conn = db.conn();
+        let mut statement = conn.prepare(
+            "SELECT session_id, last_error_code FROM cloud_pending_revocations ORDER BY created_at",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let last_error_code: Option<String> = row.get(1)?;
+            let remote_revocation = match last_error_code.as_deref() {
+                Some("RETRY_EXHAUSTED") | Some("REVOKE_CREDENTIAL_MISSING") => "unknown",
+                _ => "pending",
+            };
+            Ok(RegisteredRevocationSummary {
+                profile_id: entry.profile_id.clone(),
+                session_id: row.get(0)?,
+                remote_revocation: remote_revocation.to_string(),
+                last_error_code,
+            })
+        })?;
+        summaries.extend(rows.collect::<Result<Vec<_>, _>>()?);
+    }
+    Ok(summaries)
+}
+
+pub async fn run_registered_profile_revocation_retry_loop(
+    app_data_dir: std::path::PathBuf,
+    secret_store: Arc<dyn SecretStore>,
+    interval: Duration,
+    cancellation: tokio_util::sync::CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = cancellation.cancelled() => break,
+            _ = tokio::time::sleep(interval) => {
+                retry_registered_profile_local_cleanup(
+                    &app_data_dir,
+                    Arc::clone(&secret_store),
+                ).await;
+                if let Err(error) = retry_registered_profile_revocations(
+                    &app_data_dir,
+                    Arc::clone(&secret_store),
+                ).await {
+                    tracing::warn!(%error, "pending session revocation retry deferred");
+                }
+            }
+        }
+    }
+}
+
+async fn retry_registered_profile_local_cleanup(
+    app_data_dir: &std::path::Path,
+    secret_store: Arc<dyn SecretStore>,
+) {
+    let registry =
+        match crate::modules::cloud::profile::ProfileManager::load_or_initialize(app_data_dir) {
+            Ok(registry) => registry,
+            Err(error) => {
+                tracing::warn!(%error, "profile registry unavailable for local logout cleanup");
+                return;
+            }
+        };
+    let profiles = registry
+        .profiles
+        .values()
+        .filter(|entry| {
+            entry.kind == crate::modules::cloud::profile::ProfileKind::Account
+                && entry.reauthentication_required
+        })
+        .collect::<Vec<_>>();
+    if profiles.is_empty() {
+        return;
+    }
+    for entry in profiles {
+        for secret_ref in [
+            scoped_cloud_access_token_ref(&entry.scope_id),
+            scoped_cloud_refresh_token_ref(&entry.scope_id),
+        ] {
+            if let Err(error) = secret_store.delete(&secret_ref).await {
+                tracing::warn!(
+                    profile_id = %entry.profile_id,
+                    %error,
+                    "original profile credential cleanup deferred"
+                );
+            }
+        }
+    }
+    for secret_ref in [cloud_access_token_ref(), cloud_refresh_token_ref()] {
+        if let Err(error) = secret_store.delete(&secret_ref).await {
+            tracing::warn!(%error, "legacy cloud credential cleanup deferred");
+        }
+    }
 }
 
 async fn send_remote_revoke(

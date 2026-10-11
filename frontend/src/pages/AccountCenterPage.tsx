@@ -21,6 +21,7 @@ import {
   type LifecycleJob,
   type SyncConflict,
   type CloudSession,
+  type LogoutReport,
 } from "../api/cloud";
 import { Badge, Button, EmptyState, Input, PageHeader, Skeleton } from "../components/ui";
 import { identityPresentation, syncPresentation } from "../features/cloud/cloudPresentation";
@@ -53,6 +54,7 @@ export default function AccountCenterPage() {
   const [lifecycleJob, setLifecycleJob] = useState<LifecycleJob | null>(null);
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
   const [sessions,setSessions]=useState<CloudSession[]>([]);
+  const [lastLogoutReport, setLastLogoutReport] = useState<LogoutReport | null>(null);
 
   const refresh = useCallback(async () => {
     const next = await getCloudIdentity();
@@ -94,6 +96,7 @@ export default function AccountCenterPage() {
     setBusy(true); setError("");
     const result = await logoutCloud();
     if (result.ok) {
+      setLastLogoutReport(result.data.report);
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         await invoke("restart_application");
@@ -221,11 +224,12 @@ export default function AccountCenterPage() {
               <details className="cloud-disclosure"><summary>云服务地址</summary><Input label="Cloud API" value={form.cloud_base_url} onChange={(event) => setForm({ ...form, cloud_base_url: event.target.value })} hint="私有部署默认使用你的 Cloud API 地址。" /></details>
               <div className="cloud-card-actions"><p>登录不会自动上传现有数据，也不会上传本机 Provider 密钥。</p><Button disabled={busy || !form.email.trim() || !form.password} onClick={() => void authenticate()}><LogIn />{busy ? "正在连接…" : mode === "login" ? "登录并连接" : "创建并连接"}</Button></div>
             </div> : null}
+            {identity?.status === "guest" ? <div className="cloud-card"><AccountProfilePanel guestMode lastLogoutReport={lastLogoutReport} /></div> : null}
             {identity?.status !== "guest" ? <><div className="cloud-card">
               <div className="cloud-account-summary"><span className="cloud-account-avatar"><UserCircle /></span><div><h3>{identity?.email || "已登录账号"}</h3><p>本机身份 {identity?.local_identity_id}</p></div><Badge tone="success">会话有效</Badge></div>
               <dl className="cloud-data-list"><div><dt>当前设备</dt><dd>{identity?.device_id}</dd></div><div><dt>云端账号</dt><dd>{identity?.account_id}</dd></div><div><dt>密钥策略</dt><dd>登录凭据保存在系统凭据库；Provider 密钥保持本机专用</dd></div></dl>
               <div className="cloud-card-actions"><p>退出登录只清除本机云会话，不删除云端账号和本地工作数据。</p><Button variant="secondary" disabled={busy} onClick={() => void logout()}><LogOut />退出登录</Button></div>
-            </div>{sessions.length?<div className="cloud-card"><h3>设备与会话</h3><div className="cloud-session-list">{sessions.map(session=><article key={session.id}><div><strong>{session.device_label}</strong><span>最近活动：{new Date(session.last_seen_at).toLocaleString()}</span></div>{session.current?<Badge tone="info">当前设备</Badge>:session.revoked_at?<Badge>已退出</Badge>:<Button size="sm" variant="secondary" disabled={busy} onClick={()=>void revokeSession(session.id)}>退出该设备</Button>}</article>)}</div></div>:null}{state.sync_existing_choice === "undecided" ? <div className="cloud-card"><div className="cloud-card-title"><div><h3>如何处理现有本地数据？</h3><p>登录不会自动上传。请明确选择，之后仍可在同步中心修改。</p></div><Cloud /></div><div className="setup-choice-row"><button type="button" disabled={busy} onClick={() => void chooseSync("sync")}><strong>同步已有数据</strong><span>把选择的数据类型加入增量同步</span></button><button type="button" disabled={busy} onClick={() => void chooseSync("local_only")}><strong>保持仅本地</strong><span>账号保持登录，但不上传工作数据</span></button></div></div> : null}<div className="cloud-card"><AccountProfilePanel lastLogoutReport={state?.report} onRestartPrompt={() => void refresh()} onRequestLogin={() => { setMode("login"); setShowSwitchLogin(true); }} /></div></> : null}
+            </div>{sessions.length?<div className="cloud-card"><h3>设备与会话</h3><div className="cloud-session-list">{sessions.map(session=><article key={session.id}><div><strong>{session.device_label}</strong><span>最近活动：{new Date(session.last_seen_at).toLocaleString()}</span></div>{session.current?<Badge tone="info">当前设备</Badge>:session.revoked_at?<Badge>已退出</Badge>:<Button size="sm" variant="secondary" disabled={busy} onClick={()=>void revokeSession(session.id)}>退出该设备</Button>}</article>)}</div></div>:null}{state.sync_existing_choice === "undecided" ? <div className="cloud-card"><div className="cloud-card-title"><div><h3>如何处理现有本地数据？</h3><p>登录不会自动上传。请明确选择，之后仍可在同步中心修改。</p></div><Cloud /></div><div className="setup-choice-row"><button type="button" disabled={busy} onClick={() => void chooseSync("sync")}><strong>同步已有数据</strong><span>把选择的数据类型加入增量同步</span></button><button type="button" disabled={busy} onClick={() => void chooseSync("local_only")}><strong>保持仅本地</strong><span>账号保持登录，但不上传工作数据</span></button></div></div> : null}<div className="cloud-card"><AccountProfilePanel lastLogoutReport={lastLogoutReport} onRestartPrompt={() => void refresh()} onRequestLogin={() => { setMode("login"); setShowSwitchLogin(true); }} /></div></> : null}
           </section> : null}
           {state && section === "sync" ? <section className="cloud-section-stack" aria-labelledby="sync-section-title">
             <div className="cloud-section-heading"><div><span>SYNC</span><h2 id="sync-section-title">同步中心</h2><p>本地变更先进入 Outbox，联网后按 revision 与 cursor 增量交换。</p></div><Button disabled={busy || identity?.status === "guest" || state.sync_existing_choice !== "sync"} onClick={() => void syncNow()}><RefreshCw />{busy ? "同步中…" : "立即同步"}</Button></div>
