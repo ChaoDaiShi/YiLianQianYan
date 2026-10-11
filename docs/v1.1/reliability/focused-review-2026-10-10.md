@@ -2,8 +2,10 @@
 
 > 2026-10-11 更新：本报告的“R01—R06 全部修复”结论曾被后续复审推翻；发现的问题已经在当前工作树修复并重新验证。最新代码修复记录见 [2026-10-11 复审问题修复记录](review-repair-2026-10-11.md)。D01—D05、完整 E20、E21、E22 仍按实际证据保持未完成。
 
-> 日期：2026-10-11  
-> 审查基准计划：`docs/superpowers/plans/2026-10-10-v1-1-focused-optimization.md`、`docs/superpowers/plans/2026-10-10-v1-1-focused/08-final-review.md`  
+> 日期：2026-10-11
+>
+> 审查基准计划：`docs/superpowers/plans/2026-10-10-v1-1-focused-optimization.md`、`docs/superpowers/plans/2026-10-10-v1-1-focused/08-final-review.md`
+>
 > 审查原则：严格基于代码实现与实际运行用例证据，不把计划文本或自设指标当事实，严禁防御性过度设计，严格按既定规则给出判定。
 
 ---
