@@ -273,7 +273,8 @@ impl Database {
         })
     }
 
-    pub fn get_memory(&self, id: &str) -> Result<Memory, String> {
+    pub fn find_memory(&self, id: &str) -> Result<Option<Memory>, String> {
+        use rusqlite::OptionalExtension;
         let conn = self.conn();
         conn.query_row(
             "SELECT id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at
@@ -287,7 +288,14 @@ impl Database {
                     created_at: row.get(7)?, updated_at: row.get(8)?,
                 })
             },
-        ).map_err(|e| format!("Memory not found: {}", e))
+        ).optional().map_err(|e| e.to_string())
+    }
+
+    pub fn get_memory(&self, id: &str) -> Result<Memory, String> {
+        match self.find_memory(id)? {
+            Some(mem) => Ok(mem),
+            None => Err(format!("Memory not found: {}", id)),
+        }
     }
 
     pub fn list_memories(&self, query: &MemoryQuery) -> Result<Vec<Memory>, String> {

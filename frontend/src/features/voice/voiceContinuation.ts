@@ -89,7 +89,7 @@ async function waitForPersistedAssistant(
 ): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     if (signal?.aborted) throw abortError();
-    const conversation = await loadConversation(conversationId);
+    const conversation = await loadConversation(conversationId).catch(() => null);
     const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
     const persisted = messages.some(
       (message: { id?: string; role?: string; content?: string }) =>

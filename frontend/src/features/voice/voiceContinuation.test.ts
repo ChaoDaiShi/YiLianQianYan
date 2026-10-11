@@ -48,7 +48,7 @@ describe("voice continuation evidence", () => {
     );
   });
   it("settles cancellation even when the chat stream never sends another event", async () => {
-    vi.mocked(loadConversation).mockResolvedValueOnce({ id: "conversation-a", messages: [] } as Awaited<ReturnType<typeof loadConversation>>);
+    vi.mocked(loadConversation).mockResolvedValueOnce({ id: "conversation-a", messages: [] } as unknown as Awaited<ReturnType<typeof loadConversation>>);
     const controller = new AbortController();
     let started!: () => void;
     const start = new Promise<void>((resolve) => { started = resolve; });
@@ -63,7 +63,7 @@ describe("voice continuation evidence", () => {
     let current = true;
     vi.mocked(loadConversation).mockImplementationOnce(async () => {
       current = false;
-      return { id: "conversation-a", messages: [] } as Awaited<ReturnType<typeof loadConversation>>;
+      return { id: "conversation-a", messages: [] } as unknown as Awaited<ReturnType<typeof loadConversation>>;
     });
     vi.mocked(sendMessage).mockImplementationOnce((_message, _conversation, onEvent) => {
       onEvent({ type: "done", conversation_id: "conversation-a" });

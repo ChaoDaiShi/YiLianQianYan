@@ -116,7 +116,12 @@ export default function TaskCenterPage() {
     const [taskResult, workspaceResult, conversationResult, graphResult] = await Promise.all([
       listTasks({ limit: 200 }),
       listWorkspaces(),
-      listConversations(),
+      listConversations()
+        .then((data) => ({ ok: true as const, data }))
+        .catch((err) => ({
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        })),
       listTaskGraphs(),
     ]);
     if (taskResult.ok) {
@@ -131,12 +136,12 @@ export default function TaskCenterPage() {
     } else {
       setWorkspaceError(workspaceResult.error);
     }
-    if (conversationResult) {
-      setConversations(conversationResult);
+    if (conversationResult.ok) {
+      setConversations(conversationResult.data);
       setConversationError(null);
     } else {
       setConversations([]);
-      setConversationError("对话记录暂时无法加载");
+      setConversationError(conversationResult.error || "对话记录暂时无法加载");
     }
     if (graphResult.ok) setTaskGraphs(graphResult.data);
     else setTaskGraphError(graphResult.error);

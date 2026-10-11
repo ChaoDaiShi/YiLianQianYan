@@ -32,6 +32,15 @@ export interface Message {
   created_at: number;
 }
 
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: Message[];
+  execution_history?: any[];
+  created_at: number;
+  updated_at: number;
+}
+
 export interface ConversationSummary {
   id: string;
   title: string;
