@@ -12,6 +12,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+
+const defaultTasks = JSON.parse(fs.readFileSync(new URL('../../backend/tests/fixtures/proofloop/benchmark-tasks.json', import.meta.url), 'utf8')).tasks;
 
 /**
  * 计算数字数组的中位数与 P90
@@ -23,7 +27,8 @@ export function calculatePercentiles(values) {
   const sorted = [...values].filter((v) => typeof v === 'number' && !Number.isNaN(v)).sort((a, b) => a - b);
   if (sorted.length === 0) return { median: null, p90: null, count: 0 };
 
-  const median = sorted[Math.floor(sorted.length / 2)];
+  const midpoint = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 ? sorted[midpoint] : (sorted[midpoint - 1] + sorted[midpoint]) / 2;
   const p90Index = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9));
   const p90 = sorted[p90Index];
 
@@ -43,24 +48,61 @@ export function verifyRunEvidence(run, taskSpec) {
     return { pass: false, reason: '存在未授权工具或非法越权执行' };
   }
 
-  // 如果任务有交付物要求，必须在证据中体现
-  if (taskSpec?.deliverables && taskSpec.deliverables.length > 0) {
-    const evidencePaths = run.evidence_paths || [];
-    if (evidencePaths.length === 0 && !run.artifact_digest) {
-      return { pass: false, reason: '交付物文件或产物摘要缺失' };
+  if (!taskSpec || taskSpec.task_id !== run.task_id) return { pass: false, reason: '缺少匹配的任务验收规格' };
+  const required = taskSpec.criteria?.filter((criterion) => criterion.required) || [];
+  if (!required.length) return { pass: false, reason: '缺少必需验收条件' };
+  const artifacts = new Map();
+  try {
+    for (const deliverable of taskSpec.deliverables || []) {
+      let record = run.artifacts?.find((item) => item.deliverable_id === deliverable.id);
+      if (!record && taskSpec.deliverables.length === 1 && run.evidence_paths?.length === 1) record = { path: run.evidence_paths[0], sha256: run.artifact_digest };
+      if (!record?.path || !fs.statSync(record.path).isFile()) continue;
+      const bytes = fs.readFileSync(record.path);
+      const digest = createHash('sha256').update(bytes).digest('hex');
+      if (record.sha256 && record.sha256 !== digest) return { pass: false, reason: '产物摘要与实际文件不一致' };
+      artifacts.set(deliverable.id, { bytes, text: bytes.toString('utf8'), digest, expectedDigest: record.sha256 });
     }
+    for (const criterion of required) {
+      const check = criterion.check;
+      const artifact = artifacts.get(check.deliverable_id);
+      let pass = false;
+      if (check.kind === 'artifact_exists') pass = Boolean(artifact?.bytes.length);
+      else if (check.kind === 'artifact_digest_matches') pass = Boolean(artifact?.expectedDigest && artifact.expectedDigest === artifact.digest);
+      else if (check.kind === 'required_sections') {
+        const headings = markdownHeadings(artifact?.text || '');
+        pass = Boolean(artifact && check.headings.every((heading) => headings.has(normalizeHeading(heading))));
+      } else if (check.kind === 'source_traceability') {
+        const sources = new Set();
+        for (const source of run.sources || []) {
+          if (!artifact || !source.uri || source.retrieved_at_ms <= 0 || !source.cited_by_deliverable_ids?.includes(check.deliverable_id) || !artifact.text.includes(source.uri) || !source.evidence_path) continue;
+          const evidence = JSON.parse(fs.readFileSync(source.evidence_path, 'utf8'));
+          if (evidence.status !== 'succeeded' || evidence.validation?.status !== 'accepted') continue;
+          const declared = evidence.output?.structured?.sources || [];
+          if (declared.some((item) => (item.uri || item.url) === source.uri)) sources.add(source.uri);
+        }
+        pass = Boolean(artifact && sources.size >= check.min_sources);
+      } else if (check.kind === 'human_review') {
+        pass = Boolean(artifact && run.human_reviews?.some((review) => review.criterion_id === criterion.id && review.decision === 'pass' && review.reason?.trim() && review.reviewer_subject && review.reviewed_at_ms > 0));
+      }
+      if (!pass) return { pass: false, reason: `必需条件未通过：${criterion.id} (${check.kind})` };
+    }
+    return { pass: true, reason: '实际成果文件与全部必需验收条件一致' };
+  } catch (error) {
+    return { pass: false, reason: `成果证据不可读取：${error.message}` };
   }
+}
 
-  // 人工评审项判定
-  if (run.human_pending && !run.human_approved) {
-    return { pass: false, reason: '人工审核未完成或被驳回' };
+const normalizeHeading = (value) => value.trim().toLowerCase().replace(/\s+/g, '');
+function markdownHeadings(text) {
+  const headings = new Set(); let fence = null;
+  for (const line of text.split(/\r?\n/)) {
+    const marker = line.trim().match(/^(`{3,}|~{3,})/);
+    if (marker) { if (!fence) fence = marker[1][0]; else if (marker[1][0] === fence) fence = null; continue; }
+    if (fence) continue;
+    const heading = line.trim().match(/^#{1,6}\s+(.+?)(?:\s+#+)?$/);
+    if (heading) headings.add(normalizeHeading(heading[1]));
   }
-
-  // 判定是否通过
-  return {
-    pass: Boolean(run.goal_pass),
-    reason: run.goal_pass ? '全部必需验收准则满足并具备确凿证据' : (run.failure_code || '准则核对未通过'),
-  };
+  return headings;
 }
 
 /**
@@ -129,7 +171,7 @@ export function aggregateGroup(runs, groupName, taskSpecsMap = {}) {
 /**
  * 计算对照组间的相对提升指标
  */
-export function summarizeBenchmark(runs, taskSpecs = []) {
+export function summarizeBenchmark(runs, taskSpecs = defaultTasks) {
   const taskSpecsMap = Object.fromEntries(taskSpecs.map((t) => [t.task_id, t]));
 
   const b0 = aggregateGroup(runs, 'B0', taskSpecsMap);
@@ -149,14 +191,17 @@ export function summarizeBenchmark(runs, taskSpecs = []) {
 
   // 3. 人工操作量减少比例 (B2 vs B0)
   let humanOpsReduction = null;
-  if (b0.human_operations.median && b2.human_operations.median) {
+  if (b0.human_operations.median > 0 && b2.human_operations.median !== null) {
     humanOpsReduction = (b0.human_operations.median - b2.human_operations.median) / b0.human_operations.median;
   }
 
   // 4. 故障恢复对比 (B2 vs BR)
   let recoveryAdvantage = null;
-  if (b2.goal_pass_rate !== null && br.goal_pass_rate !== null) {
-    recoveryAdvantage = b2.goal_pass_rate - br.goal_pass_rate;
+  const recoverableRuns = runs.filter((run) => run.recoverable_fault === true);
+  const repairFaults = aggregateGroup(recoverableRuns, 'B2', taskSpecsMap);
+  const retryFaults = aggregateGroup(recoverableRuns, 'BR', taskSpecsMap);
+  if (repairFaults.goal_pass_rate !== null && retryFaults.goal_pass_rate !== null) {
+    recoveryAdvantage = repairFaults.goal_pass_rate - retryFaults.goal_pass_rate;
   }
 
   return {
@@ -206,7 +251,7 @@ export function formatReportMarkdown(summary) {
 }
 
 // CLI runner
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'))) {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   const jsonlPath = process.argv[2];
   if (!jsonlPath) {
     console.log('Usage: node scripts/proofloop/summarize.mjs <benchmark_runs.jsonl>');
@@ -222,7 +267,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   const lines = content.split('\n').filter((line) => line.trim().length > 0);
   const runs = lines.map((l) => JSON.parse(l));
 
-  const summary = summarizeBenchmark(runs);
+  const tasks = process.argv[3] ? JSON.parse(fs.readFileSync(process.argv[3], 'utf8')).tasks : defaultTasks;
+  for (const run of runs) {
+    run.evidence_paths = run.evidence_paths?.map((item) => path.resolve(path.dirname(jsonlPath), item));
+    run.artifacts = run.artifacts?.map((item) => ({ ...item, path: path.resolve(path.dirname(jsonlPath), item.path) }));
+    run.sources = run.sources?.map((item) => ({ ...item, evidence_path: item.evidence_path ? path.resolve(path.dirname(jsonlPath), item.evidence_path) : null }));
+  }
+  const summary = summarizeBenchmark(runs, tasks);
   const markdown = formatReportMarkdown(summary);
   console.log(markdown);
 }

@@ -29,7 +29,7 @@ pub struct ValidatedRepairPatch {
 pub fn classify_failure(
     failed_execution: &NodeExecution,
     _failed_criterion: Option<&CriterionResult>,
-    snapshot: &CapabilitySnapshot,
+    _snapshot: &CapabilitySnapshot,
     contract: &GoalContract,
     current_round: u32,
     graph_revision: u64,
@@ -78,63 +78,50 @@ pub fn classify_failure(
     if let Some(code) = failed_execution.failure_code.as_deref() {
         match code {
             "missing_required_argument" | "invalid_argument" => {
-                rationale = format!("节点 '{}' 输入参数缺失或非法，提议修正输入参数", node_id);
-                operations.push(RepairOperation::ReplaceLiteral {
-                    node_id: node_id.clone(),
-                    target_path: vec!["query".to_string()],
-                    value: Value::String("default_repair_query".to_string()),
-                });
+                return Err(ProofError::new(
+                    "repair_needs_input",
+                    "没有可验证的正确参数值，请在节点属性中补充真实值后重新编译；不会生成占位参数",
+                ));
             }
-            "binding_failed" | "input_binding_schema_mismatch" => {
-                rationale = format!(
-                    "节点 '{}' 动态数据流绑定不匹配，建议重选兼容输出字段",
-                    node_id
-                );
-                // Suggest rerun after binding check
-                operations.push(RepairOperation::RerunNode {
-                    node_id: node_id.clone(),
-                });
+            "binding_failed"
+            | "input_binding_schema_mismatch"
+            | "input_binding_path_missing"
+            | "input_binding_type_mismatch" => {
+                return Err(ProofError::new(
+                    "repair_needs_input",
+                    "请根据真实输出选择兼容的绑定路径，再请求局部重跑",
+                ));
             }
             "capability_unavailable" => {
-                // Look for alternative capability
-                let alt = snapshot.capabilities.iter().find(|c| {
-                    c.readiness == "ready"
-                        && contract.allowed_capability_ids.contains(&c.capability_id)
-                });
-
-                if let Some(alt_cap) = alt {
-                    rationale = format!(
-                        "节点 '{}' 依赖能力不可用，提议切换为可用备选能力 '{}'",
-                        node_id, alt_cap.capability_id
-                    );
-                    operations.push(RepairOperation::ReplaceCapability {
-                        node_id: node_id.clone(),
-                        capability_id: alt_cap.capability_id.clone(),
-                        literal_input: serde_json::Map::new(),
-                        bindings: Vec::new(),
-                    });
-                } else {
-                    return Err(ProofError::new(
-                        "no_compatible_capability",
-                        format!("未找到允许且就绪的备选能力用于修复节点 '{}'", node_id),
-                    ));
-                }
+                return Err(ProofError::new(
+                    "repair_needs_input",
+                    "尚无输入输出兼容的替代能力证据，请先选择有效能力；不会任意替换工具",
+                ));
             }
-            _ => {
+            "provider_unavailable" | "input_binding_source_missing" | "execution_interrupted" => {
                 rationale = format!("节点 '{}' 执行异常 ({})，提议受控重跑该节点", node_id, code);
                 operations.push(RepairOperation::RerunNode {
                     node_id: node_id.clone(),
                 });
             }
+            "security_denied" | "approval_rejected" => {
+                return Err(ProofError::new(
+                    "repair_aborted",
+                    "授权或审批已拒绝，不能通过修复绕过",
+                ))
+            }
+            _ => {
+                return Err(ProofError::new(
+                    "repair_needs_input",
+                    "尚未证明该失败可安全重跑，请核实结果或修正节点后重试",
+                ))
+            }
         }
     } else {
-        rationale = format!(
-            "节点 '{}' 未成功完成，提议在保留历史的前提下受控重跑",
-            node_id
-        );
-        operations.push(RepairOperation::RerunNode {
-            node_id: node_id.clone(),
-        });
+        return Err(ProofError::new(
+            "repair_needs_input",
+            "缺少明确的失败代码，不能生成重跑提案",
+        ));
     }
 
     Ok(RepairProposal {
@@ -168,7 +155,9 @@ pub fn validate_repair(
         ));
     }
 
-    if proposal.expected_graph_revision != current_revision {
+    if proposal.expected_graph_revision != current_revision
+        || current_graph.revision.value() != current_revision
+    {
         return Err(ProofError::new(
             "proofloop_stale_revision",
             format!(
@@ -256,9 +245,11 @@ pub fn validate_repair(
                         .or_insert_with(|| Value::Object(serde_json::Map::new()));
 
                     if let Some(input_map) = capability_input.as_object_mut() {
-                        if let Some(first_key) = target_path.first() {
-                            input_map.insert(first_key.clone(), value.clone());
-                        }
+                        let mut destination = Value::Object(input_map.clone());
+                        super::super::input_binding::validate_path(target_path)
+                            .map_err(|error| ProofError::new(error.code, error.reason))?;
+                        set_literal_path(&mut destination, target_path, value.clone())?;
+                        *input_map = destination.as_object().unwrap().clone();
                     }
                 }
                 diff_summary.push(format!(
@@ -403,6 +394,20 @@ pub fn validate_repair(
         updated_graph,
         diff_summary,
     })
+}
+
+fn set_literal_path(target: &mut Value, path: &[String], value: Value) -> Result<(), ProofError> {
+    let object = target.as_object_mut().ok_or_else(|| {
+        ProofError::new("input_binding_type_mismatch", "固定参数父路径必须是 object")
+    })?;
+    if path.len() == 1 {
+        object.insert(path[0].clone(), value);
+        return Ok(());
+    }
+    let child = object
+        .entry(path[0].clone())
+        .or_insert_with(|| serde_json::json!({}));
+    set_literal_path(child, &path[1..], value)
 }
 
 /// Applies a validated repair patch, advancing the graph revision and returning affected node ids.

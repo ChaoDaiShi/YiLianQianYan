@@ -2,6 +2,8 @@
 //!
 //! Migration 1014 in the v1 Task World namespace (1000-1999).
 
+mod evaluations;
+
 use rusqlite::{params, OptionalExtension};
 use thiserror::Error;
 
@@ -116,6 +118,132 @@ fn status_from_str(s: &str) -> Option<DraftStatus> {
 }
 
 impl Database {
+    pub fn confirmed_proof_draft_for_goal(
+        &self,
+        goal_id: &str,
+        version: u32,
+    ) -> Result<Option<ProofDraft>, ProofLoopDbError> {
+        self.initialize_proofloop_schema()?;
+        let text: Option<String> = self.conn().query_row("SELECT payload_json FROM proofloop_drafts WHERE goal_id=?1 AND goal_version=?2 AND status='confirmed' ORDER BY updated_at DESC LIMIT 1", params![goal_id, version], |row| row.get(0)).optional()?;
+        text.map(|value| {
+            serde_json::from_str(&value).map_err(|error| ProofLoopDbError::Json {
+                field: "payload_json",
+                message: error.to_string(),
+            })
+        })
+        .transpose()
+    }
+
+    pub fn confirmed_proof_draft_for_graph(
+        &self,
+        graph_id: &str,
+    ) -> Result<Option<ProofDraft>, ProofLoopDbError> {
+        self.initialize_proofloop_schema()?;
+        let text: Option<String> = self.conn().query_row("SELECT payload_json FROM proofloop_drafts WHERE graph_id=?1 AND status='confirmed' ORDER BY updated_at DESC LIMIT 1", [graph_id], |row| row.get(0)).optional()?;
+        text.map(|value| {
+            serde_json::from_str(&value).map_err(|error| ProofLoopDbError::Json {
+                field: "payload_json",
+                message: error.to_string(),
+            })
+        })
+        .transpose()
+    }
+
+    pub(crate) fn confirm_proof_draft_with_graph(
+        &self,
+        supervisor: &crate::modules::task::TaskSupervisor,
+        draft: &ProofDraft,
+        now: i64,
+    ) -> Result<(), super::TaskWorldPersistenceError> {
+        let contract = serde_json::to_string(&draft.contract)
+            .map_err(|error| super::TaskWorldPersistenceError::Integrity(error.to_string()))?;
+        let payload = serde_json::to_string(draft)
+            .map_err(|error| super::TaskWorldPersistenceError::Integrity(error.to_string()))?;
+        self.save_task_snapshot_with_executions_and_hook(supervisor, now, "created", &[], |tx| {
+            tx.execute("INSERT INTO proofloop_goal_versions (goal_id,version,workspace_id,contract_json,confirmed_at) VALUES (?1,?2,?3,?4,?5)",params![draft.contract.goal_id,draft.contract.version,draft.contract.workspace_id,contract,now])?;
+            let changed = tx.execute("UPDATE proofloop_drafts SET status='confirmed',confirmed_graph_revision=?1,payload_json=?2,updated_at=?3 WHERE draft_id=?4 AND revision=?5 AND status!='confirmed'",params![supervisor.graph_revision().value(),payload,now,draft.draft_id,draft.revision])?;
+            if changed != 1 { return Err(rusqlite::Error::InvalidParameterName("proofloop_stale_revision".into())); }
+            Ok(())
+        })
+    }
+
+    pub fn repair_rounds_used(&self, goal_id: &str, version: u32) -> Result<u32, ProofLoopDbError> {
+        self.initialize_proofloop_eval_schema()?;
+        Ok(self.conn().query_row(
+            "SELECT COUNT(*) FROM proofloop_repairs WHERE goal_id=?1 AND goal_version=?2",
+            params![goal_id, version],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn save_repair_proposal_with_budget(
+        &self,
+        proposal: &mut RepairProposal,
+        contract: &GoalContract,
+        now: i64,
+    ) -> Result<(), ProofLoopDbError> {
+        self.initialize_proofloop_eval_schema()?;
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let used: u32 = tx.query_row(
+            "SELECT COUNT(*) FROM proofloop_repairs WHERE goal_id=?1 AND goal_version=?2",
+            params![proposal.goal_id, proposal.goal_version],
+            |row| row.get(0),
+        )?;
+        if used >= contract.budget.max_repair_rounds {
+            return Err(ProofLoopDbError::Integrity(
+                "proofloop_budget_exhausted".into(),
+            ));
+        }
+        let confirmed_at: i64 = tx.query_row(
+            "SELECT confirmed_at FROM proofloop_goal_versions WHERE goal_id=?1 AND version=?2",
+            params![proposal.goal_id, proposal.goal_version],
+            |row| row.get(0),
+        )?;
+        if now.saturating_sub(confirmed_at) as u64 >= contract.budget.max_wall_time_ms {
+            return Err(ProofLoopDbError::Integrity(
+                "proofloop_budget_exhausted".into(),
+            ));
+        }
+        proposal.round = used + 1;
+        let payload = serde_json::to_string(proposal)
+            .map_err(|error| ProofLoopDbError::Integrity(error.to_string()))?;
+        tx.execute("INSERT INTO proofloop_repairs (repair_id,goal_id,goal_version,source_report_id,proposal_json,status,created_at) VALUES (?1,?2,?3,?4,?5,'proposed',?6)",params![proposal.repair_id,proposal.goal_id,proposal.goal_version,proposal.source_report_id,payload,now])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn repair_applied_revision(
+        &self,
+        repair_id: &str,
+    ) -> Result<Option<u64>, ProofLoopDbError> {
+        Ok(self.conn().query_row("SELECT applied_revision FROM proofloop_repairs WHERE repair_id=?1 AND status='applied'",[repair_id],|row|row.get::<_, Option<u64>>(0)).optional()?.flatten())
+    }
+
+    pub fn goal_confirmed_at(&self, goal_id: &str, version: u32) -> Result<i64, ProofLoopDbError> {
+        Ok(self.conn().query_row(
+            "SELECT confirmed_at FROM proofloop_goal_versions WHERE goal_id=?1 AND version=?2",
+            params![goal_id, version],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub(crate) fn save_proofloop_repair_execution(
+        &self,
+        supervisor: &crate::modules::task::TaskSupervisor,
+        changed: &[crate::modules::task::NodeExecution],
+        execution: &crate::modules::task::NodeExecution,
+        repair_id: &str,
+        now: i64,
+    ) -> Result<(), super::TaskWorldPersistenceError> {
+        self.save_task_snapshot_with_executions_and_hook(supervisor, now, "proofloop_repaired", changed, |tx| {
+            let updated = tx.execute("UPDATE proofloop_repairs SET status='applied',applied_revision=?1 WHERE repair_id=?2 AND status='proposed'",params![supervisor.graph_revision().value(),repair_id])?;
+            if updated != 1 { return Err(rusqlite::Error::InvalidParameterName("repair already applied or missing".into())); }
+            super::task_execution::insert_node_execution_on(tx, execution).map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
+            Ok(())
+        })
+    }
+
     pub fn initialize_proofloop_schema(&self) -> Result<(), ProofLoopDbError> {
         self.apply_product_migration(&PROOFLOOP_SCHEMA_MIGRATION)
             .map_err(ProofLoopDbError::Database)
@@ -299,184 +427,5 @@ impl Database {
         };
 
         Ok(rows)
-    }
-
-    pub fn initialize_proofloop_eval_schema(&self) -> Result<(), ProofLoopDbError> {
-        self.apply_product_migration(&PROOFLOOP_EVAL_SCHEMA_MIGRATION)
-            .map_err(ProofLoopDbError::Database)
-    }
-
-    pub fn save_acceptance_report(
-        &self,
-        report: &AcceptanceReport,
-        evidence: &EvidenceSnapshot,
-        created_at: i64,
-    ) -> Result<(), ProofLoopDbError> {
-        self.initialize_proofloop_eval_schema()?;
-        let evidence_json =
-            serde_json::to_string(evidence).map_err(|e| ProofLoopDbError::Json {
-                field: "evidence_json",
-                message: e.to_string(),
-            })?;
-        let report_json = serde_json::to_string(report).map_err(|e| ProofLoopDbError::Json {
-            field: "report_json",
-            message: e.to_string(),
-        })?;
-
-        let conn = self.conn();
-        conn.execute(
-            "INSERT INTO proofloop_acceptance_reports
-             (report_id, goal_id, goal_version, graph_id, graph_revision, evidence_json, report_json, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(report_id) DO UPDATE SET
-                report_json = excluded.report_json",
-            params![
-                report.report_id,
-                report.goal_id,
-                report.goal_version,
-                report.graph_id,
-                report.graph_revision,
-                evidence_json,
-                report_json,
-                created_at,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn list_acceptance_reports(
-        &self,
-        goal_id: &str,
-    ) -> Result<Vec<AcceptanceReport>, ProofLoopDbError> {
-        self.initialize_proofloop_eval_schema()?;
-        let conn = self.conn();
-        let mut statement = conn.prepare(
-            "SELECT report_json FROM proofloop_acceptance_reports
-             WHERE goal_id=?1 ORDER BY created_at DESC",
-        )?;
-        let rows = statement.query_map([goal_id], |row| {
-            let json_str: String = row.get(0)?;
-            Ok(json_str)
-        })?;
-
-        let mut reports = Vec::new();
-        for row in rows {
-            let json_str = row?;
-            let report: AcceptanceReport =
-                serde_json::from_str(&json_str).map_err(|e| ProofLoopDbError::Json {
-                    field: "report_json",
-                    message: e.to_string(),
-                })?;
-            reports.push(report);
-        }
-        Ok(reports)
-    }
-
-    pub fn get_acceptance_report(
-        &self,
-        report_id: &str,
-    ) -> Result<Option<(AcceptanceReport, EvidenceSnapshot)>, ProofLoopDbError> {
-        self.initialize_proofloop_eval_schema()?;
-        let conn = self.conn();
-        let row: Option<(String, String)> = conn
-            .query_row(
-                "SELECT report_json, evidence_json FROM proofloop_acceptance_reports WHERE report_id=?1",
-                params![report_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-
-        match row {
-            Some((report_str, evidence_str)) => {
-                let report: AcceptanceReport =
-                    serde_json::from_str(&report_str).map_err(|e| ProofLoopDbError::Json {
-                        field: "report_json",
-                        message: e.to_string(),
-                    })?;
-                let evidence: EvidenceSnapshot =
-                    serde_json::from_str(&evidence_str).map_err(|e| ProofLoopDbError::Json {
-                        field: "evidence_json",
-                        message: e.to_string(),
-                    })?;
-                Ok(Some((report, evidence)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub fn save_repair_proposal(
-        &self,
-        proposal: &RepairProposal,
-        status: &str,
-        created_at: i64,
-    ) -> Result<(), ProofLoopDbError> {
-        self.initialize_proofloop_eval_schema()?;
-        let proposal_json =
-            serde_json::to_string(proposal).map_err(|e| ProofLoopDbError::Json {
-                field: "proposal_json",
-                message: e.to_string(),
-            })?;
-
-        let conn = self.conn();
-        conn.execute(
-            "INSERT INTO proofloop_repairs
-             (repair_id, goal_id, goal_version, source_report_id, proposal_json, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(repair_id) DO UPDATE SET
-                proposal_json = excluded.proposal_json,
-                status = excluded.status",
-            params![
-                proposal.repair_id,
-                proposal.goal_id,
-                proposal.goal_version,
-                proposal.source_report_id,
-                proposal_json,
-                status,
-                created_at,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_repair_proposal(
-        &self,
-        repair_id: &str,
-    ) -> Result<Option<RepairProposal>, ProofLoopDbError> {
-        self.initialize_proofloop_eval_schema()?;
-        let conn = self.conn();
-        let row: Option<String> = conn
-            .query_row(
-                "SELECT proposal_json FROM proofloop_repairs WHERE repair_id=?1",
-                params![repair_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        match row {
-            Some(json_str) => {
-                let proposal: RepairProposal =
-                    serde_json::from_str(&json_str).map_err(|e| ProofLoopDbError::Json {
-                        field: "proposal_json",
-                        message: e.to_string(),
-                    })?;
-                Ok(Some(proposal))
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub fn update_repair_status(
-        &self,
-        repair_id: &str,
-        status: &str,
-        applied_revision: Option<u64>,
-    ) -> Result<(), ProofLoopDbError> {
-        self.initialize_proofloop_eval_schema()?;
-        let conn = self.conn();
-        conn.execute(
-            "UPDATE proofloop_repairs SET status=?1, applied_revision=?2 WHERE repair_id=?3",
-            params![status, applied_revision, repair_id],
-        )?;
-        Ok(())
     }
 }

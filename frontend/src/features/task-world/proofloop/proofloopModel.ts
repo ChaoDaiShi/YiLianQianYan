@@ -1,5 +1,7 @@
 import type {
   AcceptanceReport,
+  CandidatePlan,
+  Json,
   Criterion,
   CriterionResult,
   FieldPath,
@@ -8,6 +10,28 @@ import type {
   ProofError,
   RepairOperation,
 } from "../../../api/proofloop";
+
+export function withFixedInput(plan: CandidatePlan, pending: PendingInput, value: unknown): CandidatePlan {
+  return { ...plan, nodes: plan.nodes.map((node) => {
+    if (node.id !== pending.node_id) return node;
+    const literal = structuredClone(node.literal_input);
+    let destination = literal;
+    for (const segment of pending.target_path.slice(0, -1)) {
+      const child = destination[segment];
+      if (child !== undefined && (child === null || typeof child !== "object" || Array.isArray(child))) throw new Error("参数父路径必须是对象");
+      if (child === undefined) destination[segment] = {};
+      destination = destination[segment] as typeof literal;
+    }
+    const last = pending.target_path[pending.target_path.length - 1];
+    if (!last) throw new Error("无法为未支持的参数结构补充固定值");
+    destination[last] = value as Json;
+    const bindings = node.bindings.filter((binding) => {
+      const sameOrParent = (a: string[], b: string[]) => a.length <= b.length && a.every((part, index) => part === b[index]);
+      return !sameOrParent(binding.target_path, pending.target_path) && !sameOrParent(pending.target_path, binding.target_path);
+    });
+    return { ...node, literal_input: literal, bindings };
+  }) };
+}
 
 export type DraftDisplayStatus = {
   tone: "default" | "info" | "warning" | "danger" | "success";

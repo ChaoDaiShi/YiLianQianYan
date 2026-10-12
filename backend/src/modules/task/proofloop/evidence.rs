@@ -11,7 +11,8 @@ use super::contracts::{
 };
 use crate::db::{ArtifactQuery, Database};
 use crate::modules::task::artifact::ArtifactService;
-use crate::modules::task::execution::{NodeExecution, NodeExecutionId};
+use crate::modules::task::execution::{NodeExecution, NodeExecutionId, NodeExecutionStatus};
+use crate::modules::task::TaskGraphId;
 use crate::workspace::WorkspaceId;
 
 pub fn collect_evidence(
@@ -24,6 +25,19 @@ pub fn collect_evidence(
     allowed_root: &str,
     _now_ms: i64,
 ) -> Result<(EvidenceSnapshot, HashMap<String, Vec<u8>>), ProofError> {
+    check_graph_revision(db, graph_id, graph_revision)?;
+    let draft = db
+        .confirmed_proof_draft_for_goal(&contract.goal_id, contract.version)
+        .map_err(|error| ProofError::new("db_error", error.to_string()))?;
+    if draft
+        .as_ref()
+        .is_some_and(|draft| draft.graph_id != graph_id)
+    {
+        return Err(ProofError::new(
+            "execution_graph_mismatch",
+            "目标与任务图关联不一致",
+        ));
+    }
     if execution_ids.is_empty() {
         return Err(ProofError::new(
             "empty_execution_ids",
@@ -62,6 +76,19 @@ pub fn collect_evidence(
                 ),
             ));
         }
+        let latest = db
+            .load_node_executions(&exec.graph_id, &exec.node_id)
+            .map_err(|error| ProofError::new("db_error", error.to_string()))?
+            .into_iter()
+            .max_by_key(|item| item.attempt);
+        if exec.status == NodeExecutionStatus::Stale
+            || latest.is_some_and(|item| item.id != exec.id)
+        {
+            return Err(ProofError::new(
+                "proofloop_evidence_stale",
+                "执行记录已失效或已被新的 attempt 替代",
+            ));
+        }
 
         let exec_ref = ExecutionRef {
             graph_id: exec.graph_id.as_str().to_string(),
@@ -95,7 +122,7 @@ pub fn collect_evidence(
         });
 
         // Normalize structured sources if present in output
-        if let Some(val) = &exec.output {
+        if let Some(val) = exec.output.as_ref().filter(|_| verified_execution(&exec)) {
             let sources_val = val
                 .get("structured")
                 .and_then(|s| s.get("sources"))
@@ -117,15 +144,12 @@ pub fn collect_evidence(
                             .and_then(|t| t.as_i64())
                             .unwrap_or(observed_at);
 
-                        let cited_deliverables: Vec<String> =
-                            contract.deliverables.iter().map(|d| d.id.clone()).collect();
-
                         sources.push(EvidenceSource {
                             source_id: format!("{}_{}", ev_id, idx),
                             evidence_id: ev_id.clone(),
                             uri,
                             retrieved_at_ms: retrieved_at,
-                            cited_by_deliverable_ids: cited_deliverables,
+                            cited_by_deliverable_ids: Vec::new(),
                         });
                     }
                 }
@@ -152,15 +176,25 @@ pub fn collect_evidence(
         .map_err(|e| ProofError::new("db_error", e.to_string()))?;
 
     for del in &contract.deliverables {
+        let expected_node = draft
+            .as_ref()
+            .and_then(|draft| draft.candidate.as_ref())
+            .and_then(|plan| {
+                plan.deliverable_nodes
+                    .iter()
+                    .find(|item| item.deliverable_id == del.id)
+            })
+            .map(|item| item.node_id.as_str());
         let matched = artifacts.iter().find(|art| {
             let matches_exec = loaded_executions
                 .iter()
-                .any(|e| e.id.as_str() == art.task_execution_id.as_str());
-
-            matches_exec
-                || art.name == del.title
-                || art.name.contains(&del.id)
-                || art.id.as_str() == del.id
+                .any(|e| verified_execution(e) && e.id.as_str() == art.task_execution_id.as_str()
+                    && expected_node == Some(e.node_id.as_str()));
+            let matches_source = db.artifact_provenance(art.id.as_str()).ok().flatten().is_some_and(|provenance| {
+                matches!(provenance.source, crate::modules::task::artifact::ArtifactSource::Node { graph_id: ref source_graph, node_id: ref source_node, execution_id: ref source_execution, workspace_id: ref source_workspace }
+                    if source_graph == graph_id && Some(source_node.as_str()) == expected_node && source_execution == art.task_execution_id.as_str() && source_workspace == &contract.workspace_id)
+            });
+            matches_exec && matches_source && (art.name == del.title || art.id.as_str() == del.id)
         });
 
         if let Some(art) = matched {
@@ -181,18 +215,21 @@ pub fn collect_evidence(
             };
 
             let digest = format!("{:x}", Sha256::digest(&bytes));
+            let text = String::from_utf8_lossy(&bytes);
+            for source in &mut sources {
+                if text.contains(&source.uri) {
+                    source.cited_by_deliverable_ids.push(del.id.clone());
+                }
+            }
             evidence_content.insert(art_id_str.clone(), bytes);
 
             let origin_exec_ref = executions
                 .iter()
                 .find(|e| e.execution_id == art.task_execution_id.as_str())
                 .cloned()
-                .unwrap_or_else(|| ExecutionRef {
-                    graph_id: graph_id.to_string(),
-                    graph_revision,
-                    node_id: "artifact".to_string(),
-                    execution_id: art.task_execution_id.as_str().to_string(),
-                });
+                .ok_or_else(|| {
+                    ProofError::new("proofloop_evidence_stale", "产物没有对应的选定执行证据")
+                })?;
 
             evidence_refs.push(EvidenceRef {
                 evidence_id: format!("art_{}", art_id_str),
@@ -218,4 +255,76 @@ pub fn collect_evidence(
     };
 
     Ok((snapshot, evidence_content))
+}
+
+fn verified_execution(execution: &NodeExecution) -> bool {
+    execution.status == NodeExecutionStatus::Succeeded
+        && execution.validation.as_ref().is_some_and(|validation| {
+            validation.status == crate::modules::task::execution::ValidationStatus::Accepted
+        })
+}
+
+fn check_graph_revision(db: &Database, graph_id: &str, revision: u64) -> Result<(), ProofError> {
+    let id = TaskGraphId::new(graph_id)
+        .map_err(|error| ProofError::new("invalid_graph_id", error.to_string()))?;
+    let stored = db
+        .load_task_supervisor_snapshot(&id)
+        .map_err(|error| ProofError::new("db_error", error.to_string()))?
+        .ok_or_else(|| ProofError::new("graph_not_found", "找不到任务图"))?;
+    if stored.supervisor.graph_revision().value() != revision {
+        return Err(ProofError::new(
+            "proofloop_evidence_stale",
+            "图版本已改变，请重新选择执行证据",
+        ));
+    }
+    Ok(())
+}
+
+pub fn reload_snapshot_contents(
+    db: &Database,
+    artifacts: &ArtifactService,
+    snapshot: &EvidenceSnapshot,
+    allowed_root: &str,
+) -> Result<HashMap<String, Vec<u8>>, ProofError> {
+    check_graph_revision(db, &snapshot.graph_id, snapshot.graph_revision)?;
+    for selected in &snapshot.executions {
+        let id = NodeExecutionId::new(&selected.execution_id)
+            .map_err(|error| ProofError::new("invalid_execution_id", error.to_string()))?;
+        let current = db
+            .load_node_execution(&id)
+            .map_err(|error| ProofError::new("db_error", error.to_string()))?
+            .ok_or_else(|| ProofError::new("proofloop_evidence_stale", "执行证据不存在"))?;
+        let latest = db
+            .load_node_executions(&current.graph_id, &current.node_id)
+            .map_err(|error| ProofError::new("db_error", error.to_string()))?
+            .into_iter()
+            .max_by_key(|execution| execution.attempt);
+        if current.graph_id.as_str() != snapshot.graph_id
+            || current.status == NodeExecutionStatus::Stale
+            || latest.is_some_and(|execution| execution.id != id)
+        {
+            return Err(ProofError::new(
+                "proofloop_evidence_stale",
+                "执行证据已被重跑或失效",
+            ));
+        }
+    }
+    let mut content = HashMap::new();
+    for evidence in &snapshot.evidence {
+        if let Some(id) = &evidence.artifact_id {
+            let artifact_id = crate::modules::task::model::ArtifactId::new(id)
+                .map_err(|error| ProofError::new("invalid_artifact_id", error.to_string()))?;
+            let (_, bytes) = artifacts
+                .read_bytes(&artifact_id, allowed_root)
+                .map_err(|error| ProofError::new("artifact_read_failed", error.to_string()))?;
+            if format!("{:x}", Sha256::digest(&bytes)) != evidence.digest {
+                return Err(ProofError::new(
+                    "proofloop_evidence_stale",
+                    "产物内容与原验收快照不一致",
+                ));
+            }
+            content.insert(id.clone(), bytes);
+        }
+    }
+    Ok(content)
 }

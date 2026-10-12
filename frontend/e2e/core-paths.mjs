@@ -157,7 +157,7 @@ try {
   } else {
     browser = await chromium.launch({ executablePath, headless: true });
   }
-  page = mcpU3 || mcpU3c || typedU31
+  page = mcpU3 || mcpU3c || typedU31 || proofloopE2E
     ? await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage()
     : await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on("response", (response) => {
@@ -197,7 +197,10 @@ try {
   }
   if (proofloopE2E) {
     const result = await proofloop({ page, frontendPort, backendPort, controlToken, evidenceDir });
-    if (browserErrors.length) throw new Error(browserErrors.join(' | '));
+    const expected = browserErrors.filter((error) => error === 'Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)');
+    if (expected.length !== result.expected_browser_422_errors) throw new Error(`Unexpected negative-control diagnostics: ${browserErrors.join(' | ')}`);
+    const unexpected = browserErrors.filter((error) => !expected.includes(error));
+    if (unexpected.length) throw new Error(unexpected.join(' | '));
     await writeFile(join(evidenceDir, 'result.json'), JSON.stringify({ ...result, browser: executablePath, browser_version: browser.version() }, null, 2));
     process.stdout.write(JSON.stringify(result) + '\n');
     testExitCode = 0;

@@ -13,7 +13,7 @@ use super::contracts::{
     CapabilitySnapshot, CompileStatus, ConfirmProofDraftResponse, CreateProofDraftRequest,
     DraftStatus, ProofDraft, ProofDraftSummary, ProofError, UpdateProofDraftRequest,
 };
-use super::planner::propose_candidate;
+use super::planner::propose_candidate_with_usage;
 
 pub struct DraftService {
     db: Database,
@@ -33,7 +33,7 @@ impl DraftService {
         cancel: &CancellationToken,
         now: i64,
     ) -> Result<ProofDraft, ProofError> {
-        let (contract, candidate) = propose_candidate(
+        let (contract, candidate, planning_usage) = propose_candidate_with_usage(
             &request.workspace_id,
             &request.user_goal,
             &snapshot,
@@ -64,6 +64,7 @@ impl DraftService {
             compilation,
             status,
             confirmed_graph_revision: None,
+            planning_usage,
         };
 
         self.db
@@ -124,6 +125,8 @@ impl DraftService {
         let confirmations = request
             .binding_confirmations
             .unwrap_or_else(|| existing.binding_confirmations.clone());
+        let confirmations =
+            self.verify_confirmations(request.candidate.as_ref(), &confirmations, now)?;
 
         let compilation = match &request.candidate {
             Some(cand) => compile_candidate(
@@ -158,6 +161,7 @@ impl DraftService {
             compilation,
             status,
             confirmed_graph_revision: None,
+            planning_usage: existing.planning_usage,
         };
 
         self.db
@@ -207,6 +211,8 @@ impl DraftService {
             .candidate
             .as_ref()
             .ok_or_else(|| ProofError::new("no_candidate_plan", "草稿未包含可执行的候选计划"))?;
+        draft.binding_confirmations =
+            self.verify_confirmations(Some(candidate), &draft.binding_confirmations, now)?;
 
         let graph_id = TaskGraphId::new(&draft.graph_id)
             .map_err(|e| ProofError::new("invalid_graph_id", format!("草稿图标识无效: {e}")))?;
@@ -239,29 +245,12 @@ impl DraftService {
             ProofError::new("graph_compilation_missing", "编译未生成有效 TaskGraph")
         })?;
 
-        // 1. Persist goal version
-        self.db
-            .save_goal_version(&draft.contract, now)
-            .map_err(|e| ProofError::new("goal_version_save_failed", e.to_string()))?;
-
-        // 2. Create and persist TaskGraph through TaskWorldRuntime
-        let created_graph = runtime
-            .create_graph(
-                compiled_graph.id.clone(),
-                compiled_graph.nodes,
-                compiled_graph.edges,
-                now,
-            )
-            .map_err(|e| ProofError::new("task_graph_create_failed", e.to_string()))?;
-
-        // 3. Mark draft confirmed
         draft.status = DraftStatus::Confirmed;
-        draft.confirmed_graph_revision = Some(created_graph.revision.value());
+        draft.confirmed_graph_revision = Some(compiled_graph.revision.value());
         draft.compilation = fresh_compilation;
-
-        self.db
-            .save_proof_draft(&draft, now)
-            .map_err(|e| ProofError::new("draft_save_failed", e.to_string()))?;
+        let created_graph = runtime
+            .confirm_proofloop_draft(&draft, now)
+            .map_err(|error| ProofError::new("draft_confirmation_failed", error.to_string()))?;
 
         Ok(ConfirmProofDraftResponse {
             graph_id: created_graph.id.to_string(),
@@ -269,5 +258,82 @@ impl DraftService {
             goal_id: draft.contract.goal_id,
             goal_version: draft.contract.version,
         })
+    }
+
+    fn verify_confirmations(
+        &self,
+        candidate: Option<&super::contracts::CandidatePlan>,
+        confirmations: &[super::contracts::BindingConfirmation],
+        now: i64,
+    ) -> Result<Vec<super::contracts::BindingConfirmation>, ProofError> {
+        let mut verified = Vec::new();
+        for confirmation in confirmations {
+            let source_node = candidate
+                .and_then(|plan| {
+                    plan.nodes
+                        .iter()
+                        .find(|node| node.id == confirmation.source_node_id)
+                })
+                .ok_or_else(|| {
+                    ProofError::new("invalid_binding_confirmation", "确认的来源节点不存在")
+                })?;
+            if source_node.capability_id != confirmation.source_capability_id {
+                return Err(ProofError::new(
+                    "invalid_binding_confirmation",
+                    "来源能力已改变，请重新选择真实输出",
+                ));
+            }
+            let id = super::super::NodeExecutionId::new(&confirmation.source_execution_id)
+                .map_err(|error| {
+                    ProofError::new("invalid_binding_confirmation", error.to_string())
+                })?;
+            let execution = self
+                .db
+                .load_node_execution(&id)
+                .map_err(|error| ProofError::new("db_error", error.to_string()))?
+                .ok_or_else(|| {
+                    ProofError::new("invalid_binding_confirmation", "确认引用的执行不存在")
+                })?;
+            if execution.status != super::super::NodeExecutionStatus::Succeeded
+                || !execution.validation.as_ref().is_some_and(|validation| {
+                    validation.status == super::super::execution::ValidationStatus::Accepted
+                })
+                || execution
+                    .executor_ref
+                    .as_ref()
+                    .map(|reference| reference.as_str())
+                    != Some(format!("capability://{}", confirmation.source_capability_id).as_str())
+            {
+                return Err(ProofError::new(
+                    "invalid_binding_confirmation",
+                    "来源执行没有通过验证或能力身份不一致",
+                ));
+            }
+            let mut value = execution.output.as_ref().ok_or_else(|| {
+                ProofError::new("invalid_binding_confirmation", "执行没有结构化结果")
+            })?;
+            for segment in &confirmation.source_path {
+                value = value
+                    .as_object()
+                    .and_then(|object| object.get(segment))
+                    .ok_or_else(|| {
+                        ProofError::new("invalid_binding_confirmation", "真实输出中不存在该路径")
+                    })?;
+            }
+            let mut item = confirmation.clone();
+            item.observed_type = match value {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "boolean",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Object(_) => "object",
+                serde_json::Value::Number(n) if n.is_i64() || n.is_u64() => "integer",
+                _ => "number",
+            }
+            .into();
+            item.confirmed_at_ms = now;
+            verified.push(item);
+        }
+        Ok(verified)
     }
 }

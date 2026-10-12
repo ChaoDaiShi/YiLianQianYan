@@ -3,6 +3,7 @@
 //! Defined in docs/superpowers/plans/2026-10-12-proofloop-parallel-development.md
 
 pub mod acceptance;
+pub mod budget;
 pub mod capabilities;
 pub mod compiler;
 pub mod contracts;

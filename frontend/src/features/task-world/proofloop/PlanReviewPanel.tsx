@@ -10,7 +10,6 @@ import {
   confirmProofDraft,
   updateProofDraft,
   type ConfirmProofDraftResponse,
-  type FieldPath,
   type PendingInput,
   type ProofDraft,
 } from "../../../api/proofloop";
@@ -21,6 +20,7 @@ import {
   formatFieldPath,
   formatPendingInputReason,
   isDraftSubmittable,
+  withFixedInput,
 } from "./proofloopModel";
 
 export interface PlanReviewPanelProps {
@@ -88,21 +88,13 @@ export default function PlanReviewPanel({
         parsedValue = value;
       }
 
-      const updatedCandidate = {
-        ...draft.candidate,
-        nodes: draft.candidate.nodes.map((n) => {
-          if (n.id !== pending.node_id) return n;
-          const nextLiteral = { ...n.literal_input };
-          setDeepValue(nextLiteral, pending.target_path, parsedValue);
-          return { ...n, literal_input: nextLiteral };
-        }),
-      };
+      const updatedCandidate = withFixedInput(draft.candidate, pending, parsedValue);
 
       const result = await updateProofDraft(draft.draft_id, {
         expected_revision: draft.revision,
         contract: draft.contract,
         candidate: updatedCandidate,
-        binding_confirmations: draft.binding_confirmations,
+        binding_confirmations: draft.binding_confirmations.filter((confirmation) => !(confirmation.node_id === pending.node_id && JSON.stringify(confirmation.target_path) === JSON.stringify(pending.target_path))),
       });
 
       if (result.ok) {
@@ -305,17 +297,4 @@ export default function PlanReviewPanel({
       </div>
     </div>
   );
-}
-
-function setDeepValue(obj: Record<string, unknown>, path: FieldPath, value: unknown) {
-  if (path.length === 0) return;
-  let curr = obj;
-  for (let i = 0; i < path.length - 1; i++) {
-    const key = path[i];
-    if (typeof curr[key] !== "object" || curr[key] === null) {
-      curr[key] = {};
-    }
-    curr = curr[key] as Record<string, unknown>;
-  }
-  curr[path[path.length - 1]] = value;
 }

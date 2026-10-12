@@ -238,6 +238,23 @@ pub enum DraftStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanningUsage {
+    pub model_calls: u32,
+    pub total_tokens: Option<u64>,
+    pub started_at_ms: i64,
+}
+
+impl Default for PlanningUsage {
+    fn default() -> Self {
+        Self {
+            model_calls: 1,
+            total_tokens: None,
+            started_at_ms: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProofDraft {
     pub draft_id: String,
     pub revision: u32,
@@ -252,6 +269,8 @@ pub struct ProofDraft {
     pub status: DraftStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmed_graph_revision: Option<u64>,
+    #[serde(default)]
+    pub planning_usage: PlanningUsage,
 }
 
 // Evidence and Acceptance models

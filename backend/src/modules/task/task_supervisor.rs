@@ -668,6 +668,24 @@ impl TaskSupervisor {
         self.apply_graph_candidate(candidate, vec![node_id], now)
     }
 
+    pub(crate) fn replace_proofloop_nodes(
+        &mut self,
+        nodes: Vec<TaskNode>,
+        root: TaskNodeId,
+        now: i64,
+    ) -> Result<GraphRevision, TaskSupervisorError> {
+        if nodes.len() != self.graph.nodes.len()
+            || nodes.iter().any(|node| self.graph.node(&node.id).is_none())
+        {
+            return Err(TaskSupervisorError::InvalidCheckpoint(
+                "repair cannot add or remove nodes".into(),
+            ));
+        }
+        let mut candidate = self.graph.clone();
+        candidate.nodes = nodes;
+        self.apply_graph_candidate(candidate, vec![root], now)
+    }
+
     /// Remove a node and all incident edges.  Existing downstream nodes are
     /// invalidated because their dependency definition has changed.
     pub fn remove_node(

@@ -29,6 +29,7 @@ export interface AcceptancePanelProps {
   onRefreshEvaluation?: () => void;
   onRequestRepair?: (report: AcceptanceReport) => void;
   onOpenArtifact?: (artifactId: string) => void;
+  onReportUpdated?: (report: AcceptanceReport) => void;
   className?: string;
 }
 
@@ -39,6 +40,7 @@ export default function AcceptancePanel({
   onRefreshEvaluation,
   onRequestRepair,
   onOpenArtifact,
+  onReportUpdated,
   className = "",
 }: AcceptancePanelProps) {
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -64,7 +66,8 @@ export default function AcceptancePanel({
       if (result.ok) {
         setActiveReviewCriterionId(null);
         setReviewReason("");
-        onRefreshEvaluation?.();
+        if (onReportUpdated) onReportUpdated(result.data);
+        else onRefreshEvaluation?.();
       } else {
         setReviewError(result.error.message || "提交审核决定失败。");
       }

@@ -321,7 +321,11 @@ fn evaluate_criterion(
                 .map(|s| s.evidence_id.clone())
                 .collect();
 
-            let count = matching_sources.len() as u32;
+            let count = matching_sources
+                .iter()
+                .map(|source| source.uri.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len() as u32;
             if count >= *min_sources {
                 (
                     CriterionStatus::Pass,

@@ -40,9 +40,14 @@ import {
   evaluateGoal,
   listGoalEvaluations,
   proposeRepair,
+  getGraphGoal,
+  getEvaluationDetail,
+  type GraphGoalBinding,
+  type EvidenceSnapshot,
   type AcceptanceReport,
   type RepairProposal,
 } from "../../api/proofloop";
+import { downloadArtifact } from "../../api/evidence";
 
 type StudioPanel = "trail" | "inspector" | "tools" | "proofloop" | null;
 
@@ -91,6 +96,9 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const [saveError, setSaveError] = useState<ApiError | null>(null);
   const [modelUnavailable, setModelUnavailable] = useState(false);
   const [proofReport, setProofReport] = useState<AcceptanceReport | null>(null);
+  const [proofGoal, setProofGoal] = useState<GraphGoalBinding | null>(null);
+  const [proofSnapshot, setProofSnapshot] = useState<EvidenceSnapshot | null>(null);
+  const proofRequest = useRef<AbortController | null>(null);
   const [proofLoading, setProofLoading] = useState(false);
   const [proofError, setProofError] = useState<string | null>(null);
   const [activeRepairProposal, setActiveRepairProposal] = useState<RepairProposal | null>(null);
@@ -163,33 +171,44 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
     return () => window.clearInterval(timer);
   }, [graphLocked, refreshDetail]);
 
-  const loadProofEvaluation = useCallback(async () => {
+  const loadProofEvaluation = useCallback(async (force = false) => {
     if (!graphId) return;
+    proofRequest.current?.abort();
+    const controller = new AbortController();
+    proofRequest.current = controller;
     setProofLoading(true);
     setProofError(null);
     try {
-      const res = await listGoalEvaluations(graphId);
-      if (res.ok && res.data.reports.length > 0) {
-        setProofReport(res.data.reports[0]);
-      } else {
-        const execIds = detail?.nodes
-          .map((n) => n.latest_execution?.execution_id)
-          .filter((id): id is string => Boolean(id)) || [];
-        if (execIds.length > 0 && detail) {
-          const evalRes = await evaluateGoal(graphId, {
-            goal_version: 1,
-            graph_revision: detail.revision,
-            execution_ids: execIds,
-          });
-          if (evalRes.ok) {
-            setProofReport(evalRes.data);
-          }
-        }
+      const binding = await getGraphGoal(graphId, controller.signal);
+      if (controller.signal.aborted) return;
+      if (!binding.ok) { setProofGoal(null); setProofReport(null); throw new Error(binding.error.message); }
+      setProofGoal(binding.data);
+      const res = await listGoalEvaluations(binding.data.goal_id, controller.signal);
+      if (!res.ok) throw new Error(res.error.message);
+      const execIds = detail?.nodes.map((node) => node.latest_execution?.execution_id).filter((id): id is string => Boolean(id)) || [];
+      let report = res.data.reports.find((item) => item.graph_revision === detail?.revision && item.goal_version === binding.data.goal_version);
+      if (report && !force) {
+        const evidence = await getEvaluationDetail(report.report_id, controller.signal);
+        if (!evidence.ok) throw new Error(evidence.error.message);
+        if (execIds.some((id) => !evidence.data.snapshot.executions.some((execution) => execution.execution_id === id))) report = undefined;
+        else if (!controller.signal.aborted) setProofSnapshot(evidence.data.snapshot);
       }
+      if (!report || force) {
+        setProofReport(null);
+        if (detail?.nodes.some((node) => isActiveExecution(node.latest_execution?.status))) return;
+        if (execIds.length === 0 || !detail) return;
+        const result = await evaluateGoal(binding.data.goal_id, { goal_version: binding.data.goal_version, graph_revision: detail.revision, execution_ids: execIds }, controller.signal);
+        if (!result.ok) throw new Error(result.error.message);
+        report = result.data;
+        const evidence = await getEvaluationDetail(report.report_id, controller.signal);
+        if (!evidence.ok) throw new Error(evidence.error.message);
+        if (!controller.signal.aborted) setProofSnapshot(evidence.data.snapshot);
+      }
+      if (!controller.signal.aborted) setProofReport(report || null);
     } catch (e: unknown) {
-      setProofError(e instanceof Error ? e.message : String(e));
+      if (!controller.signal.aborted) setProofError(e instanceof Error ? e.message : String(e));
     } finally {
-      setProofLoading(false);
+      if (!controller.signal.aborted) setProofLoading(false);
     }
   }, [graphId, detail]);
 
@@ -197,6 +216,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
     if (activePanel === "proofloop") {
       void loadProofEvaluation();
     }
+    return () => proofRequest.current?.abort();
   }, [activePanel, loadProofEvaluation]);
 
   if (!graphId) return <ErrorState title="任务图地址无效" description="缺少 graph id。" />;
@@ -218,7 +238,8 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
       .filter((n) => n.latest_execution?.status === "failed")
       .map((n) => n.latest_execution?.execution_id)
       .filter((id): id is string => Boolean(id)) || [];
-    const res = await proposeRepair(graphId, {
+    if (!proofGoal) return;
+    const res = await proposeRepair(proofGoal.goal_id, {
       report_id: report.report_id,
       failure_execution_ids: failedExecIds,
     });
@@ -325,15 +346,20 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
               currentGraphRevision={projection.revision}
               onApplyRepair={() => {
                 setActiveRepairProposal(null);
+                setProofReport(null);
+                setProofSnapshot(null);
                 void reload();
               }}
               onCancel={() => setActiveRepairProposal(null)}
             />
           ) : (
             <AcceptancePanel
-              goalId={graphId}
+              goalId={proofGoal?.goal_id || graphId}
               report={proofReport}
-              onRefreshEvaluation={() => void loadProofEvaluation()}
+              evidenceSnapshot={proofSnapshot}
+              onRefreshEvaluation={() => void loadProofEvaluation(true)}
+              onReportUpdated={(report) => { setProofReport(report); }}
+              onOpenArtifact={(id) => { void downloadArtifact(id).then((blob) => { const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `${id}.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }).catch((error: unknown) => setProofError(error instanceof Error ? error.message : String(error))); }}
               onRequestRepair={(rep) => void handleRequestRepair(rep)}
             />
           )}
