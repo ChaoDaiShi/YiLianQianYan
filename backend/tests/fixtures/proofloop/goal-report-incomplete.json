@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "fixture_id": "goal-report-incomplete",
+  "description": "任务图节点均执行 succeeded，但交付物产物缺失或必需准则未满足，证明节点成功不自动等于目标达成",
+  "contract": {
+    "schema_version": 1,
+    "goal_id": "goal-incomplete-demo",
+    "version": 1,
+    "workspace_id": "ws-fixture",
+    "user_goal": "生成系统性能基准测试报告",
+    "deliverables": [
+      {
+        "id": "deliv-perf-report",
+        "title": "perf-benchmark.md",
+        "mime_type": "text/markdown"
+      }
+    ],
+    "criteria": [
+      {
+        "id": "crit-file-exists",
+        "description": "必需生成 perf-benchmark.md 产物",
+        "required": true,
+        "check": {
+          "kind": "artifact_exists",
+          "deliverable_id": "deliv-perf-report"
+        }
+      },
+      {
+        "id": "crit-p99-section",
+        "description": "报告必须包含 P99 延迟小节",
+        "required": true,
+        "check": {
+          "kind": "required_sections",
+          "deliverable_id": "deliv-perf-report",
+          "headings": ["P99 延迟分析"]
+        }
+      }
+    ],
+    "constraints": [],
+    "allowed_capability_ids": ["mcp__benchmark_runner", "mcp__markdown_formatter"],
+    "budget": {
+      "max_model_calls": 4,
+      "max_total_tokens": 16000,
+      "max_wall_time_ms": 300000,
+      "max_repair_rounds": 2
+    }
+  },
+  "executions": [
+    {
+      "node_id": "node-bench",
+      "execution_id": "exec-bench-01",
+      "status": "succeeded",
+      "result_summary": "测试完成，输出部分日志",
+      "output": {
+        "raw_text": "benchmark finished without structured summary"
+      }
+    },
+    {
+      "node_id": "node-report",
+      "execution_id": "exec-report-01",
+      "status": "succeeded",
+      "result_summary": "执行成功但未写入任何交付物",
+      "output": {
+        "status": "done"
+      }
+    }
+  ],
+  "evidence_snapshot": {
+    "snapshot_id": "snap-incomplete-evidence",
+    "goal_id": "goal-incomplete-demo",
+    "goal_version": 1,
+    "graph_id": "graph-incomplete",
+    "graph_revision": 1,
+    "executions": [
+      {
+        "graph_id": "graph-incomplete",
+        "graph_revision": 1,
+        "node_id": "node-bench",
+        "execution_id": "exec-bench-01"
+      },
+      {
+        "graph_id": "graph-incomplete",
+        "graph_revision": 1,
+        "node_id": "node-report",
+        "execution_id": "exec-report-01"
+      }
+    ],
+    "evidence": [],
+    "deliverables": [],
+    "sources": []
+  },
+  "expected_acceptance_report": {
+    "report_id": "report-incomplete-01",
+    "goal_id": "goal-incomplete-demo",
+    "goal_version": 1,
+    "graph_id": "graph-incomplete",
+    "graph_revision": 1,
+    "snapshot_id": "snap-incomplete-evidence",
+    "status": "fail",
+    "results": [
+      {
+        "criterion_id": "crit-file-exists",
+        "status": "fail",
+        "evidence_ids": [],
+        "reason": "目标关联的交付物 perf-benchmark.md 未在产物库中物化"
+      },
+      {
+        "criterion_id": "crit-p99-section",
+        "status": "not_checked",
+        "evidence_ids": [],
+        "reason": "交付物缺失，无法核验必需小节"
+      }
+    ],
+    "human_reviews": [],
+    "checked_at_ms": 1728691300000
+  }
+}

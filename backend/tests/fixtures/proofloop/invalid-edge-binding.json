@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "fixture_id": "invalid-edge-binding",
+  "description": "输入绑定引用了非直接上游节点，或在缺少拓扑依赖边的情况下尝试跨节点传递数据，属于非法绑定",
+  "contract": {
+    "schema_version": 1,
+    "goal_id": "goal-invalid-binding",
+    "version": 1,
+    "workspace_id": "ws-fixture",
+    "user_goal": "三节点跨层数据传递",
+    "deliverables": [],
+    "criteria": [],
+    "constraints": [],
+    "allowed_capability_ids": ["mcp__step_a", "mcp__step_b", "mcp__step_c"],
+    "budget": {
+      "max_model_calls": 3,
+      "max_total_tokens": 10000,
+      "max_wall_time_ms": 120000,
+      "max_repair_rounds": 1
+    }
+  },
+  "snapshot": {
+    "snapshot_id": "snap-three-nodes",
+    "captured_at_ms": 1728691200000,
+    "capabilities": [
+      {
+        "capability_id": "mcp__step_a",
+        "executor_ref": "capability://mcp__step_a",
+        "kind": "mcp_tool",
+        "name": "步骤A",
+        "description": "根节点",
+        "input_schema": {},
+        "output_schema": {
+          "type": "object",
+          "properties": { "val_a": { "type": "string" } }
+        },
+        "output_path_prefix": [],
+        "output_provenance": "declared",
+        "risk": "low",
+        "readiness": "ready",
+        "unavailable_reason": null
+      },
+      {
+        "capability_id": "mcp__step_b",
+        "executor_ref": "capability://mcp__step_b",
+        "kind": "mcp_tool",
+        "name": "步骤B",
+        "description": "中间节点",
+        "input_schema": {
+          "type": "object",
+          "properties": { "in_b": { "type": "string" } }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": { "val_b": { "type": "string" } }
+        },
+        "output_path_prefix": [],
+        "output_provenance": "declared",
+        "risk": "low",
+        "readiness": "ready",
+        "unavailable_reason": null
+      },
+      {
+        "capability_id": "mcp__step_c",
+        "executor_ref": "capability://mcp__step_c",
+        "kind": "mcp_tool",
+        "name": "步骤C",
+        "description": "叶子节点",
+        "input_schema": {
+          "type": "object",
+          "properties": { "in_c": { "type": "string" } }
+        },
+        "output_schema": {},
+        "output_path_prefix": [],
+        "output_provenance": "declared",
+        "risk": "low",
+        "readiness": "ready",
+        "unavailable_reason": null
+      }
+    ]
+  },
+  "candidate": {
+    "schema_version": 1,
+    "nodes": [
+      {
+        "id": "node-a",
+        "title": "A",
+        "instruction": "step a",
+        "capability_id": "mcp__step_a",
+        "literal_input": {},
+        "bindings": []
+      },
+      {
+        "id": "node-b",
+        "title": "B",
+        "instruction": "step b",
+        "capability_id": "mcp__step_b",
+        "literal_input": {},
+        "bindings": []
+      },
+      {
+        "id": "node-c",
+        "title": "C",
+        "instruction": "step c",
+        "capability_id": "mcp__step_c",
+        "literal_input": {},
+        "bindings": [
+          {
+            "target_path": ["in_c"],
+            "source": {
+              "kind": "dependency_output",
+              "node_id": "node-a",
+              "path": ["val_a"]
+            }
+          }
+        ]
+      }
+    ],
+    "edges": [
+      { "from": "node-a", "to": "node-b" },
+      { "from": "node-b", "to": "node-c" }
+    ],
+    "deliverable_nodes": []
+  },
+  "expected_compilation": {
+    "status": "invalid",
+    "diagnostics": [
+      {
+        "code": "invalid_edge_binding",
+        "message": "节点 node-c 的输入绑定引用了非直接依赖 node-a，在当前边拓扑中不可达",
+        "node_id": "node-c",
+        "target_path": ["in_c"]
+      }
+    ],
+    "pending_inputs": []
+  }
+}

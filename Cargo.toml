@@ -10,3 +10,13 @@ codegen-units = 1
 [profile.dev.package."*"]
 debug = 0
 codegen-units = 1
+
+[profile.test]
+debug = 0
+incremental = false
+codegen-units = 4
+
+[profile.test.package."*"]
+debug = 0
+codegen-units = 4
+

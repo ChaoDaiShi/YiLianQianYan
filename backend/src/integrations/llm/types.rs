@@ -42,6 +42,28 @@ pub struct ChatMessage {
     pub name: Option<String>,
 }
 
+impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,

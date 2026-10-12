@@ -123,6 +123,8 @@ pub struct CapabilityDescriptor {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
     pub risk: CapabilityRisk,
     #[serde(default)]
     pub permissions: Vec<CapabilityPermission>,
@@ -169,6 +171,14 @@ pub fn validate_descriptor(descriptor: &CapabilityDescriptor) -> Result<(), Capa
         return Err(CapabilityModelError::TooManyPermissions);
     }
     if let Some(schema) = &descriptor.input_schema {
+        if !schema.is_object() {
+            return Err(CapabilityModelError::InvalidSchema);
+        }
+        if schema.to_string().chars().count() > MAX_INPUT_SCHEMA_CHARS {
+            return Err(CapabilityModelError::SchemaTooLong(MAX_INPUT_SCHEMA_CHARS));
+        }
+    }
+    if let Some(schema) = &descriptor.output_schema {
         if !schema.is_object() {
             return Err(CapabilityModelError::InvalidSchema);
         }

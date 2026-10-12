@@ -646,7 +646,10 @@ impl AppServer {
             .collect();
         let providers: Vec<Arc<dyn crate::modules::capability::CapabilityProvider>> = vec![
             Arc::new(BuiltinToolProvider::new(Arc::clone(&tool_registry))),
-            Arc::new(McpToolProvider::new(Arc::clone(&tool_registry))),
+            Arc::new(McpToolProvider::with_runtime_manager(
+                Arc::clone(&tool_registry),
+                Some(Arc::clone(&self.mcp_runtime_manager)),
+            )),
             Arc::new(SubagentProvider::new(self.subagents.clone())),
             Arc::new(AgentProvider::new(self.db.clone_connection())),
             Arc::new(WorkflowProvider::new(self.db.clone_connection())),

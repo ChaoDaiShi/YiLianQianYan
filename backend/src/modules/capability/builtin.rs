@@ -38,6 +38,7 @@ fn tool_descriptor(
         name: info.name.clone(),
         description: info.description.clone(),
         input_schema: Some(info.parameters.clone()),
+        output_schema: None,
         risk: map_risk(info.risk_level),
         permissions: Vec::<CapabilityPermission>::new(),
         status: CapabilityRuntimeStatus::Ready,
@@ -92,11 +93,25 @@ impl CapabilityProvider for BuiltinToolProvider {
 /// registry, which only contains servers that probed successfully).
 pub struct McpToolProvider {
     registry: Arc<ToolRegistry>,
+    runtime_manager: Option<Arc<crate::integrations::mcp::runtime::manager::McpRuntimeManager>>,
 }
 
 impl McpToolProvider {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            runtime_manager: None,
+        }
+    }
+
+    pub fn with_runtime_manager(
+        registry: Arc<ToolRegistry>,
+        runtime_manager: Option<Arc<crate::integrations::mcp::runtime::manager::McpRuntimeManager>>,
+    ) -> Self {
+        Self {
+            registry,
+            runtime_manager,
+        }
     }
 }
 
@@ -135,6 +150,19 @@ impl CapabilityProvider for McpToolProvider {
                         {
                             descriptor.name = tool_name.clone();
                             descriptor.metadata.source_name = Some(server_id.clone());
+                            if let Some(manager) = &self.runtime_manager {
+                                if let Some(server) = manager
+                                    .list_servers()
+                                    .into_iter()
+                                    .find(|s| &s.server_id == server_id)
+                                {
+                                    if let Some(mcp_tool) =
+                                        server.tools.iter().find(|t| &t.name == tool_name)
+                                    {
+                                        descriptor.output_schema = mcp_tool.output_schema.clone();
+                                    }
+                                }
+                            }
                         }
                     }
                 }

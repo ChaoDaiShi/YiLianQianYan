@@ -44,6 +44,7 @@
 .canvas-studio .studio-tools { right: 72px; width: 420px; max-width: calc(100% - 92px); display: block; overflow-y: auto; padding-bottom: 12px; }
 .studio-tools > .ui-button { margin: 12px; }
 .studio-tools [aria-label="画布视图工具"] { margin-inline: 12px; background: var(--surface-solid); }
+.canvas-studio .studio-proofloop { right: 72px; width: 460px; max-width: calc(100% - 92px); display: block; overflow-y: auto; }
 .studio-detail { border-top: 1px solid var(--studio-line); margin-top: 14px; padding-top: 10px; }
 .studio-detail > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: var(--font-size-control); min-height: 32px; }
 .studio-detail > summary::before { content: "›"; font-size: 18px; }

@@ -33,6 +33,7 @@ fn descriptor(
         name: name.to_string(),
         description: description.to_string(),
         input_schema: None,
+        output_schema: None,
         risk: CapabilityRisk::Dynamic,
         permissions: Vec::<CapabilityPermission>::new(),
         status,
