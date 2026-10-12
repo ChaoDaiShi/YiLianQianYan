@@ -224,6 +224,19 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             "/api/task-world/graphs/:graph_id/restore",
             post(task_world::restore),
         )
+        // ProofLoop engine routes (I1)
+        .route(
+            "/api/task-world/proofloop/drafts",
+            get(task_world::list_drafts_handler).post(task_world::create_draft_handler),
+        )
+        .route(
+            "/api/task-world/proofloop/drafts/:id",
+            get(task_world::get_draft_handler).put(task_world::update_draft_handler),
+        )
+        .route(
+            "/api/task-world/proofloop/drafts/:id/confirm",
+            post(task_world::confirm_draft_handler),
+        )
         .route("/api/conversations", get(conversations::list_handler))
         .route("/api/conversations", post(conversations::create_handler))
         .route("/api/conversations/:id", get(conversations::load_handler))

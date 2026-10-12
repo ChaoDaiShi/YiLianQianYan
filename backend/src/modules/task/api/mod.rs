@@ -29,6 +29,7 @@ pub mod execution_routes;
 pub mod graph_routes;
 pub(crate) mod mapping;
 pub mod node_routes;
+pub mod proofloop_routes;
 pub mod review_routes;
 pub(crate) mod shared;
 
@@ -42,5 +43,6 @@ pub use execution_routes::*;
 pub use graph_routes::*;
 pub(crate) use mapping::*;
 pub use node_routes::*;
+pub use proofloop_routes::*;
 pub use review_routes::*;
 pub(crate) use shared::*;
