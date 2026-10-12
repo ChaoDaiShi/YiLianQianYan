@@ -59,6 +59,7 @@ fn descriptor(id: &str, kind: CapabilityKind) -> CapabilityDescriptor {
         name: format!("name-{id}"),
         description: format!("description {id}"),
         input_schema: Some(serde_json::json!({"type": "object"})),
+        output_schema: None,
         risk: CapabilityRisk::Low,
         permissions: vec![],
         status: CapabilityRuntimeStatus::Ready,
@@ -435,4 +436,40 @@ fn plan_reference_validation_still_rejects_stale_capability() {
         false,
     )]);
     assert!(validate_plan_references(&plan, &stale).is_err());
+}
+
+#[test]
+fn output_schema_validation_and_compatibility() {
+    let mut d = descriptor("builtin.tool.test", CapabilityKind::Tool);
+    assert!(validate_descriptor(&d).is_ok());
+
+    // Non-object output schema should be rejected
+    d.output_schema = Some(serde_json::json!("not-an-object"));
+    assert_eq!(
+        validate_descriptor(&d).unwrap_err(),
+        CapabilityModelError::InvalidSchema
+    );
+
+    // Valid object output schema passes
+    d.output_schema = Some(serde_json::json!({
+        "type": "object",
+        "properties": {
+            "result": { "type": "string" }
+        }
+    }));
+    assert!(validate_descriptor(&d).is_ok());
+
+    // Deserialization without output_schema yields None
+    let json_no_output = serde_json::json!({
+        "id": "builtin.tool.test",
+        "kind": "tool",
+        "provider": "builtin",
+        "name": "test",
+        "description": "test tool",
+        "risk": "low",
+        "status": "ready",
+        "enabled": true
+    });
+    let parsed: CapabilityDescriptor = serde_json::from_value(json_no_output).unwrap();
+    assert_eq!(parsed.output_schema, None);
 }
