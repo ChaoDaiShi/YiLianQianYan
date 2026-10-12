@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "fixture_id": "missing-output-schema",
+  "description": "上游能力未声明 output_schema，自动类型绑定无法静默生成，需人工指定数据路径或补充字面值",
+  "contract": {
+    "schema_version": 1,
+    "goal_id": "goal-missing-schema",
+    "version": 1,
+    "workspace_id": "ws-fixture",
+    "user_goal": "从日志分析并生成故障简报",
+    "deliverables": [
+      {
+        "id": "deliv-incident-report",
+        "title": "incident-brief.md",
+        "mime_type": "text/markdown"
+      }
+    ],
+    "criteria": [
+      {
+        "id": "crit-report-exists",
+        "description": "必须产出 incident-brief.md",
+        "required": true,
+        "check": {
+          "kind": "artifact_exists",
+          "deliverable_id": "deliv-incident-report"
+        }
+      }
+    ],
+    "constraints": [],
+    "allowed_capability_ids": ["mcp.fixture_raw_fetch", "mcp.fixture_process"],
+    "budget": {
+      "max_model_calls": 4,
+      "max_total_tokens": 16000,
+      "max_wall_time_ms": 300000,
+      "max_repair_rounds": 2
+    }
+  },
+  "snapshot": {
+    "snapshot_id": "snap-missing-schema",
+    "captured_at_ms": 1728691200000,
+    "capabilities": [
+      {
+        "capability_id": "mcp.fixture_raw_fetch",
+        "executor_ref": "capability://mcp.fixture_raw_fetch",
+        "kind": "mcp_tool",
+        "name": "旧版原始抓取工具",
+        "description": "抓取日志文件，无结构化输出声明",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" }
+          },
+          "required": ["path"]
+        },
+        "output_schema": null,
+        "output_path_prefix": ["structured"],
+        "output_provenance": "unknown",
+        "risk": "low",
+        "readiness": "ready",
+        "unavailable_reason": null
+      },
+      {
+        "capability_id": "mcp.fixture_process",
+        "executor_ref": "capability://mcp.fixture_process",
+        "kind": "mcp_tool",
+        "name": "数据加工工具",
+        "description": "加工处理原始数据结构",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "payload": { "type": "object" }
+          },
+          "required": ["payload"]
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "result": { "type": "string" },
+            "artifact_id": { "type": "string" }
+          },
+          "required": ["result"]
+        },
+        "output_path_prefix": ["structured"],
+        "output_provenance": "declared",
+        "risk": "medium",
+        "readiness": "ready",
+        "unavailable_reason": null
+      }
+    ]
+  },
+  "candidate": {
+    "schema_version": 1,
+    "nodes": [
+      {
+        "id": "fetch",
+        "title": "抓取原始日志",
+        "instruction": "读取并解析运行日志",
+        "capability_id": "mcp.fixture_raw_fetch",
+        "literal_input": {
+          "path": "logs/app.log"
+        },
+        "bindings": []
+      },
+      {
+        "id": "process",
+        "title": "加工分析数据",
+        "instruction": "根据解析结果生成结构化结果",
+        "capability_id": "mcp.fixture_process",
+        "literal_input": {},
+        "bindings": [
+          {
+            "target_path": ["payload"],
+            "source": {
+              "kind": "dependency_output",
+              "node_id": "fetch",
+              "path": ["structured", "raw_payload"]
+            }
+          }
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "from": "fetch",
+        "to": "process"
+      }
+    ],
+    "deliverable_nodes": [
+      {
+        "deliverable_id": "deliv-incident-report",
+        "node_id": "process"
+      }
+    ]
+  },
+  "expected_compilation": {
+    "status": "needs_input",
+    "diagnostics": [
+      {
+        "code": "proofloop_unknown_output",
+        "message": "上游能力未声明输出 schema",
+        "node_id": "process",
+        "target_path": ["payload"]
+      }
+    ],
+    "pending_inputs": [
+      {
+        "node_id": "process",
+        "target_path": ["payload"],
+        "reason": "unknown_output"
+      }
+    ]
+  }
+}

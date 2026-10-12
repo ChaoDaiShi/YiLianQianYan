@@ -1,0 +1,660 @@
+{
+  "schema_version": 1,
+  "description": "30个固定评测基准任务集，涵盖调研分析(A01-A10)、数据传递与类型绑定(T01-T10)、规划与实施(P01-P10)",
+  "tasks": [
+    {
+      "task_id": "A01",
+      "category": "analysis",
+      "title": "桌面框架维度对比",
+      "user_goal": "比较 Tauri 与 Electron 两个桌面框架的内存占用、启动速度和生态成熟度，输出选型对比报告及来源引用",
+      "deliverables": [
+        { "id": "deliv-a01", "title": "framework-comparison.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a01-artifact",
+          "description": "必须产出 framework-comparison.md 文件",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a01" }
+        },
+        {
+          "id": "crit-a01-sections",
+          "description": "必须包含内存占用、启动速度、生态对比、选型建议等小节",
+          "required": true,
+          "check": {
+            "kind": "required_sections",
+            "deliverable_id": "deliv-a01",
+            "headings": ["内存占用", "启动速度", "选型建议"]
+          }
+        },
+        {
+          "id": "crit-a01-sources",
+          "description": "至少包含2处可追溯资料引用",
+          "required": true,
+          "check": { "kind": "source_traceability", "deliverable_id": "deliv-a01", "min_sources": 2 }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "frameworks": ["Tauri", "Electron"] }
+    },
+    {
+      "task_id": "A02",
+      "category": "analysis",
+      "title": "本地持久化方案对比",
+      "user_goal": "比较 SQLite 与 sled 两种嵌入式本地持久化方案，输出包含性能对比与并发事务约束的调研报告",
+      "deliverables": [
+        { "id": "deliv-a02", "title": "storage-benchmark-analysis.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a02-artifact",
+          "description": "必须生成 storage-benchmark-analysis.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a02" }
+        },
+        {
+          "id": "crit-a02-sections",
+          "description": "必须包含约束说明和实施步骤小节",
+          "required": true,
+          "check": {
+            "kind": "required_sections",
+            "deliverable_id": "deliv-a02",
+            "headings": ["约束说明", "实施步骤"]
+          }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "options": ["SQLite", "sled"] }
+    },
+    {
+      "task_id": "A03",
+      "category": "analysis",
+      "title": "官方API变更说明整理",
+      "user_goal": "整理官方 API 从 v1 到 v2 的破坏性变更，输出版本迁移清单与代码替换示例",
+      "deliverables": [
+        { "id": "deliv-a03", "title": "migration-guide.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a03-artifact",
+          "description": "必须产出 migration-guide.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a03" }
+        },
+        {
+          "id": "crit-a03-sources",
+          "description": "变更项必须关联官方文档来源",
+          "required": true,
+          "check": { "kind": "source_traceability", "deliverable_id": "deliv-a03", "min_sources": 1 }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "api": "Tauri API v2" }
+    },
+    {
+      "task_id": "A04",
+      "category": "analysis",
+      "title": "论文实验方法提取",
+      "user_goal": "从给定科研论文资料中提取数据分布、实验基线和评价指标，整理为结构化指标对比表",
+      "deliverables": [
+        { "id": "deliv-a04", "title": "experiment-methods.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a04-artifact",
+          "description": "必须生成 experiment-methods.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a04" }
+        },
+        {
+          "id": "crit-a04-sections",
+          "description": "必须包含数据分布与评价指标小节",
+          "required": true,
+          "check": {
+            "kind": "required_sections",
+            "deliverable_id": "deliv-a04",
+            "headings": ["数据分布", "评价指标"]
+          }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "paper_ref": "reflexion-arxiv" }
+    },
+    {
+      "task_id": "A05",
+      "category": "analysis",
+      "title": "检索方案三方对比",
+      "user_goal": "对比 BM25、向量检索和混合检索三种方案在本地资源限制下的召回率与计算开销",
+      "deliverables": [
+        { "id": "deliv-a05", "title": "retrieval-comparison.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a05-artifact",
+          "description": "必须生成 retrieval-comparison.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a05" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "options": ["BM25", "Embedding", "Hybrid"] }
+    },
+    {
+      "task_id": "A06",
+      "category": "analysis",
+      "title": "技术调研风险清单转化",
+      "user_goal": "将开源依赖技术调研转换为风险等级清单，每项风险需关联证据与防护措施",
+      "deliverables": [
+        { "id": "deliv-a06", "title": "dependency-risks.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a06-artifact",
+          "description": "必须产出 dependency-risks.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a06" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "dependencies": ["tokio", "rusqlite", "enigo"] }
+    },
+    {
+      "task_id": "A07",
+      "category": "analysis",
+      "title": "冲突来源汇总与标注",
+      "user_goal": "汇总两份相互冲突的性能实测数据来源，明确标注测试条件差异，不得人为抹平成一致结论",
+      "deliverables": [
+        { "id": "deliv-a07", "title": "conflict-analysis.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a07-artifact",
+          "description": "必须产出 conflict-analysis.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a07" }
+        },
+        {
+          "id": "crit-a07-sections",
+          "description": "必须包含冲突标注小节",
+          "required": true,
+          "check": { "kind": "required_sections", "deliverable_id": "deliv-a07", "headings": ["冲突标注"] }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "source_a": "bench_report_1", "source_b": "bench_report_2" }
+    },
+    {
+      "task_id": "A08",
+      "category": "analysis",
+      "title": "资料不足时形成说明报告",
+      "user_goal": "在缺少关键硬件基准测试数据时，形成包含明确未知项与补充调研计划的实用报告",
+      "deliverables": [
+        { "id": "deliv-a08", "title": "preliminary-report.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a08-artifact",
+          "description": "必须生成 preliminary-report.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a08" }
+        },
+        {
+          "id": "crit-a08-sections",
+          "description": "必须包含未知项清单小节",
+          "required": true,
+          "check": { "kind": "required_sections", "deliverable_id": "deliv-a08", "headings": ["未知项清单"] }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "status": "incomplete_data" }
+    },
+    {
+      "task_id": "A09",
+      "category": "analysis",
+      "title": "科研研究里程碑计划生成",
+      "user_goal": "根据研究规划资料，拆解为阶段明确、依赖清楚的研发推进里程碑计划",
+      "deliverables": [
+        { "id": "deliv-a09", "title": "research-milestones.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a09-artifact",
+          "description": "必须生成 research-milestones.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a09" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "phases": ["I0", "I1", "I2", "I3"] }
+    },
+    {
+      "task_id": "A10",
+      "category": "analysis",
+      "title": "用更新资料修订既有调研",
+      "user_goal": "结合最新版本的发布说明修订原有的调研结论，生成包含变更对照与新版建议的成果",
+      "deliverables": [
+        { "id": "deliv-a10", "title": "revised-survey.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-a10-artifact",
+          "description": "必须生成 revised-survey.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-a10" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 6, "max_total_tokens": 24000, "max_wall_time_ms": 600000, "max_repair_rounds": 2 },
+      "fixture_input": { "previous_doc": "v1.0-survey", "update_doc": "v1.1-release-notes" }
+    },
+    {
+      "task_id": "T01",
+      "category": "typed_transfer",
+      "title": "检索结果数组传递报告工具",
+      "user_goal": "检索工具返回数组类型结果，自动类型化绑定到下游报告生成工具的列表参数",
+      "deliverables": [
+        { "id": "deliv-t01", "title": "array-report.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t01-artifact",
+          "description": "必须生成 array-report.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t01" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__search_tool", "mcp__aggregate_tool"],
+      "budget": { "max_model_calls": 4, "max_total_tokens": 16000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "query": "rust async runtime" }
+    },
+    {
+      "task_id": "T02",
+      "category": "typed_transfer",
+      "title": "数据统计数值传递摘要工具",
+      "user_goal": "数值统计节点输出 number/integer 类型指标，传递给下游摘要工具时保持数字类型无强制字符串转换",
+      "deliverables": [
+        { "id": "deliv-t02", "title": "metrics-summary.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t02-artifact",
+          "description": "必须产出 metrics-summary.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t02" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__stats_calculator", "mcp__summary_tool"],
+      "budget": { "max_model_calls": 4, "max_total_tokens": 16000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "metric_values": [12, 18, 25, 40] }
+    },
+    {
+      "task_id": "T03",
+      "category": "typed_transfer",
+      "title": "嵌套对象字段抽取传递",
+      "user_goal": "上游返回深层嵌套对象，通过明确的 FieldPath 正确抽取目标字段传递给下游节点",
+      "deliverables": [
+        { "id": "deliv-t03", "title": "nested-extract.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t03-artifact",
+          "description": "必须产出 nested-extract.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t03" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__nested_source", "mcp__leaf_consumer"],
+      "budget": { "max_model_calls": 4, "max_total_tokens": 16000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "path_to_extract": ["data", "user", "profile", "displayName"] }
+    },
+    {
+      "task_id": "T04",
+      "category": "typed_transfer",
+      "title": "双直接依赖汇聚到单一节点",
+      "user_goal": "下游节点同时消费来自两个独立上游节点的结构化输出，路径无冲突且直接依赖拓扑合法",
+      "deliverables": [
+        { "id": "deliv-t04", "title": "joined-output.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t04-artifact",
+          "description": "必须产出 joined-output.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t04" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__source_left", "mcp__source_right", "mcp__joiner"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": {}
+    },
+    {
+      "task_id": "T05",
+      "category": "typed_transfer",
+      "title": "固定参数与动态绑定混合",
+      "user_goal": "节点同时接收固定字面参数（literal_input）与上游依赖动态绑定（bindings），覆盖 required 字段",
+      "deliverables": [
+        { "id": "deliv-t05", "title": "mixed-input-result.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t05-artifact",
+          "description": "必须产出 mixed-input-result.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t05" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__data_provider", "mcp__mixed_consumer"],
+      "budget": { "max_model_calls": 4, "max_total_tokens": 16000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "constant_env": "production" }
+    },
+    {
+      "task_id": "T06",
+      "category": "typed_transfer",
+      "title": "可选字段缺失处理",
+      "user_goal": "工具 input_schema 包含可选字段，缺失时不产生伪造假值，保持合法执行",
+      "deliverables": [
+        { "id": "deliv-t06", "title": "optional-fields-result.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t06-artifact",
+          "description": "必须产出 optional-fields-result.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t06" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__optional_tool"],
+      "budget": { "max_model_calls": 3, "max_total_tokens": 12000, "max_wall_time_ms": 180000, "max_repair_rounds": 1 },
+      "fixture_input": {}
+    },
+    {
+      "task_id": "T07",
+      "category": "typed_transfer",
+      "title": "纯文本工具输出防御",
+      "user_goal": "工具仅返回非结构化纯文本时，编译器不虚构 JSON 对象字段，提示用户选择字面值或降级处理",
+      "deliverables": [
+        { "id": "deliv-t07", "title": "text-defense.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t07-artifact",
+          "description": "必须产出 text-defense.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t07" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__text_only_tool", "mcp__text_receiver"],
+      "budget": { "max_model_calls": 3, "max_total_tokens": 12000, "max_wall_time_ms": 180000, "max_repair_rounds": 1 },
+      "fixture_input": {}
+    },
+    {
+      "task_id": "T08",
+      "category": "typed_transfer",
+      "title": "中间节点声明与返回类型不符拦截",
+      "user_goal": "上游运行时实际返回类型与声明 schema 发生冲突时，下游节点零调用阻断，错误准确报告",
+      "deliverables": [
+        { "id": "deliv-t08", "title": "type-mismatch-log.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t08-artifact",
+          "description": "必须记录类型不符阻断信息",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t08" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__lying_schema_tool", "mcp__strict_consumer"],
+      "budget": { "max_model_calls": 3, "max_total_tokens": 12000, "max_wall_time_ms": 180000, "max_repair_rounds": 1 },
+      "fixture_input": {}
+    },
+    {
+      "task_id": "T09",
+      "category": "typed_transfer",
+      "title": "不同服务同名工具防串用",
+      "user_goal": "两个注册服务具有同名工具函数时，依赖唯一的 capability_id 隔离，禁止串用路由",
+      "deliverables": [
+        { "id": "deliv-t09", "title": "identity-isolation.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t09-artifact",
+          "description": "必须产出 identity-isolation.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t09" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp_srv1__read", "mcp_srv2__read"],
+      "budget": { "max_model_calls": 4, "max_total_tokens": 16000, "max_wall_time_ms": 300000, "max_repair_rounds": 1 },
+      "fixture_input": {}
+    },
+    {
+      "task_id": "T10",
+      "category": "typed_transfer",
+      "title": "兼容能力替代局部失败节点",
+      "user_goal": "某个能力服务不可用时，在允许集合内选择具备兼容输入输出 schema 的替代能力完成任务分支",
+      "deliverables": [
+        { "id": "deliv-t10", "title": "fallback-result.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-t10-artifact",
+          "description": "必须产出 fallback-result.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-t10" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__primary_service", "mcp__backup_service", "mcp__consumer"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": {}
+    },
+    {
+      "task_id": "P01",
+      "category": "planning",
+      "title": "自然语言需求拆解为可执行节点",
+      "user_goal": "将复合研发需求拆解为依赖清楚的任务节点，每个节点对应具体的 MCP 能力及交付物映射",
+      "deliverables": [
+        { "id": "deliv-p01", "title": "plan-breakdown.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p01-artifact",
+          "description": "必须生成 plan-breakdown.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p01" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__planner_helper", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "spec": "从零构建一个支持离线缓存的HTTP客户端模块" }
+    },
+    {
+      "task_id": "P02",
+      "category": "planning",
+      "title": "根据文件清单生成变更计划",
+      "user_goal": "根据待重构文件列表分析依赖关系，生成不可编造虚假路径的代码修改步骤计划",
+      "deliverables": [
+        { "id": "deliv-p02", "title": "refactor-plan.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p02-artifact",
+          "description": "必须产出 refactor-plan.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p02" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__file_lister", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "files": ["src/api/client.ts", "src/core/http.ts"] }
+    },
+    {
+      "task_id": "P03",
+      "category": "planning",
+      "title": "已知缺陷转为结构化修复任务",
+      "user_goal": "整理 Issue 描述中的偶现崩溃问题，生成包含复现验证条件与依赖的前置检查任务",
+      "deliverables": [
+        { "id": "deliv-p03", "title": "bug-fix-tasks.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p03-artifact",
+          "description": "必须产出 bug-fix-tasks.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p03" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__issue_reader", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "issue_id": "#104" }
+    },
+    {
+      "task_id": "P04",
+      "category": "planning",
+      "title": "软件技术选型实施路线图",
+      "user_goal": "为团队制定新技术栈替换实施路线，明确每个阶段的交付物与验收门槛",
+      "deliverables": [
+        { "id": "deliv-p04", "title": "adoption-roadmap.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p04-artifact",
+          "description": "必须产出 adoption-roadmap.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p04" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__planner_helper", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "target_tech": "Rust Axum" }
+    },
+    {
+      "task_id": "P05",
+      "category": "planning",
+      "title": "从测试结果汇总发布质量检查",
+      "user_goal": "分析单元测试与集成测试日志，未测试项或失败项绝不误报通过，形成严格发布清单",
+      "deliverables": [
+        { "id": "deliv-p05", "title": "release-checklist.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p05-artifact",
+          "description": "必须生成 release-checklist.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p05" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__test_log_reader", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "test_suite": "v1.1-reliability" }
+    },
+    {
+      "task_id": "P06",
+      "category": "planning",
+      "title": "版本发布说明整理",
+      "user_goal": "汇总提交历史生成规范的 Release Notes，改动依据真实关联 Commit 与 PR 引用",
+      "deliverables": [
+        { "id": "deliv-p06", "title": "release-notes.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p06-artifact",
+          "description": "必须生成 release-notes.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p06" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__git_history", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "version": "v1.1.0" }
+    },
+    {
+      "task_id": "P07",
+      "category": "planning",
+      "title": "从调研结果生成可保存任务图",
+      "user_goal": "将文本调研成果转化为可持久化存储的 TaskGraph，保存并重开后节点与绑定保持完全一致",
+      "deliverables": [
+        { "id": "deliv-p07", "title": "graph-spec.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p07-artifact",
+          "description": "必须生成 graph-spec.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p07" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__doc_fetcher", "mcp__graph_compiler"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": {}
+    },
+    {
+      "task_id": "P08",
+      "category": "planning",
+      "title": "代码审查问题转为分步工作包",
+      "user_goal": "将 PR 评审中的审查评论梳理为具备责任边界与核查步骤的独立工作任务",
+      "deliverables": [
+        { "id": "deliv-p08", "title": "review-work-packages.md", "mime_type": "text/markdown" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p08-artifact",
+          "description": "必须产出 review-work-packages.md",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p08" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__review_reader", "mcp__markdown_formatter"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": {}
+    },
+    {
+      "task_id": "P09",
+      "category": "planning",
+      "title": "修订单条失败任务而不影响成功分支",
+      "user_goal": "在多分支执行图的一个分支失败时，精准修订该分支的参数，成功分支不受任何影响保持历史",
+      "deliverables": [
+        { "id": "deliv-p09", "title": "branch-repair-spec.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p09-artifact",
+          "description": "必须生成 branch-repair-spec.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p09" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__graph_repair_tool"],
+      "budget": { "max_model_calls": 5, "max_total_tokens": 20000, "max_wall_time_ms": 300000, "max_repair_rounds": 2 },
+      "fixture_input": { "failed_branch": "node-db-migrate" }
+    },
+    {
+      "task_id": "P10",
+      "category": "planning",
+      "title": "生成成果交付包与验收摘要",
+      "user_goal": "打包所有生成的文件交付物，计算 SHA-256 摘要与来源映射，形成可归档交付物包",
+      "deliverables": [
+        { "id": "deliv-p10", "title": "delivery-manifest.json", "mime_type": "application/json" }
+      ],
+      "criteria": [
+        {
+          "id": "crit-p10-artifact",
+          "description": "必须生成 delivery-manifest.json",
+          "required": true,
+          "check": { "kind": "artifact_exists", "deliverable_id": "deliv-p10" }
+        }
+      ],
+      "allowed_capability_ids": ["mcp__packager_tool"],
+      "budget": { "max_model_calls": 4, "max_total_tokens": 16000, "max_wall_time_ms": 300000, "max_repair_rounds": 1 },
+      "fixture_input": {}
+    }
+  ]
+}

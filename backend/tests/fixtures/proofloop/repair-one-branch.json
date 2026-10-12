@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "fixture_id": "repair-one-branch",
+  "description": "受控局部修复样例：仅修改失败根节点及其受影响下游分支，保留其他无关节点，限制单分支重跑",
+  "proposal": {
+    "schema_version": 1,
+    "repair_id": "repair-perf-branch",
+    "goal_id": "goal-incomplete-demo",
+    "goal_version": 1,
+    "expected_graph_revision": 1,
+    "source_report_id": "report-incomplete-01",
+    "failure_execution_ids": ["exec-report-01"],
+    "round": 1,
+    "operations": [
+      {
+        "kind": "replace_literal",
+        "node_id": "node-report",
+        "target_path": ["output_file"],
+        "value": "perf-benchmark.md"
+      },
+      {
+        "kind": "replace_literal",
+        "node_id": "node-report",
+        "target_path": ["sections"],
+        "value": ["概述", "吞吐量测试", "P99 延迟分析", "总结建议"]
+      },
+      {
+        "kind": "rerun_node",
+        "node_id": "node-report"
+      }
+    ],
+    "rerun_root_node_id": "node-report",
+    "affected_node_ids": ["node-report"],
+    "rationale": "上游 node-bench 执行成功，仅下游 node-report 缺少 output_file 与 sections 参数导致交付物缺失。补充参数后仅重跑 node-report"
+  },
+  "expected_applied": {
+    "graph_revision": 2,
+    "affected_node_ids": ["node-report"]
+  }
+}
