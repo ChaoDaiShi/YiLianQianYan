@@ -2,7 +2,7 @@ import type { CapabilityDescriptor } from "../../api/capabilities";
 import CapabilityPicker from "./capability-picker/CapabilityPicker";
 import { useCanvasCapabilities } from "./capability-picker/useCanvasCapabilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ListTree, RefreshCw, Settings2, SlidersHorizontal, X } from "lucide-react";
+import { FileCheck, ListTree, RefreshCw, Settings2, SlidersHorizontal, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   addTaskEdge,
@@ -34,8 +34,17 @@ import { useTaskWorldEvents } from "./hooks/useTaskEvents";
 import { useTaskGraph } from "./hooks/useTaskGraph";
 import { useTaskGraphReview } from "./hooks/useTaskReview";
 import { getExecutorAvailability, isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
+import AcceptancePanel from "./proofloop/AcceptancePanel";
+import RepairReviewPanel from "./proofloop/RepairReviewPanel";
+import {
+  evaluateGoal,
+  listGoalEvaluations,
+  proposeRepair,
+  type AcceptanceReport,
+  type RepairProposal,
+} from "../../api/proofloop";
 
-type StudioPanel = "trail" | "inspector" | "tools" | null;
+type StudioPanel = "trail" | "inspector" | "tools" | "proofloop" | null;
 
 /**
  * Task World page.
@@ -81,6 +90,10 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<ApiError | null>(null);
   const [modelUnavailable, setModelUnavailable] = useState(false);
+  const [proofReport, setProofReport] = useState<AcceptanceReport | null>(null);
+  const [proofLoading, setProofLoading] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const [activeRepairProposal, setActiveRepairProposal] = useState<RepairProposal | null>(null);
 
   useEffect(() => {
     updateContext({
@@ -164,6 +177,58 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const canRun = !!selectedNode && !saving && !graphLocked && getExecutorAvailability(selectedNode.executor_ref, selectedNode.capability).kind === "configured";
   const runSelected = () => { if (canRun && selectedNode) void mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision)); };
 
+  const loadProofEvaluation = useCallback(async () => {
+    if (!graphId) return;
+    setProofLoading(true);
+    setProofError(null);
+    try {
+      const res = await listGoalEvaluations(graphId);
+      if (res.ok && res.data.reports.length > 0) {
+        setProofReport(res.data.reports[0]);
+      } else {
+        const execIds = detail?.nodes
+          .map((n) => n.latest_execution?.execution_id)
+          .filter((id): id is string => Boolean(id)) || [];
+        if (execIds.length > 0 && detail) {
+          const evalRes = await evaluateGoal(graphId, {
+            goal_version: 1,
+            graph_revision: detail.revision,
+            execution_ids: execIds,
+          });
+          if (evalRes.ok) {
+            setProofReport(evalRes.data);
+          }
+        }
+      }
+    } catch (e: unknown) {
+      setProofError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProofLoading(false);
+    }
+  }, [graphId, detail]);
+
+  useEffect(() => {
+    if (activePanel === "proofloop") {
+      void loadProofEvaluation();
+    }
+  }, [activePanel, loadProofEvaluation]);
+
+  const handleRequestRepair = async (report: AcceptanceReport) => {
+    const failedExecIds = detail?.nodes
+      .filter((n) => n.latest_execution?.status === "failed")
+      .map((n) => n.latest_execution?.execution_id)
+      .filter((id): id is string => Boolean(id)) || [];
+    const res = await proposeRepair(graphId, {
+      report_id: report.report_id,
+      failure_execution_ids: failedExecIds,
+    });
+    if (res.ok) {
+      setActiveRepairProposal(res.data);
+    } else {
+      setProofError(res.error.message || "生成修复建议失败。");
+    }
+  };
+
   return (
     <div className="canvas-studio page-canvas">
       <CapabilityPicker open={pickerOpen} onClose={()=>setPickerOpen(false)} items={capabilities.items} onSelect={tool=>void addCapability(tool)} onRefresh={()=>void capabilities.refresh(true)} loading={capabilities.loading} error={capabilities.error}/>
@@ -203,6 +268,15 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
             expanded: activePanel === "tools",
             onSelect: () => changePanel(activePanel === "tools" ? null : "tools"),
           },
+          {
+            id: "proofloop",
+            label: "证行验收",
+            icon: FileCheck,
+            controls: "studio-proofloop",
+            expanded: activePanel === "proofloop",
+            statusTone: (proofReport?.status === "pass" ? "success" : proofReport?.status === "fail" ? "danger" : undefined) as ContextRailStatusTone | undefined,
+            onSelect: () => changePanel(activePanel === "proofloop" ? null : "proofloop"),
+          },
         ]}
       />
       <aside id="studio-tools" className="studio-panel studio-tools" aria-label="更多画布工具" hidden={activePanel!=="tools"}>
@@ -233,6 +307,37 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
           </article>)}
         </div>}
       </section>}
+      </aside>
+      <aside id="studio-proofloop" className="studio-panel studio-proofloop" aria-label="目标验收与修复" hidden={activePanel!=="proofloop"}>
+        <div className="studio-panel-heading"><h2>目标验收与修复</h2><button type="button" aria-label="关闭证行面板" onClick={()=>changePanel(null)}><X size={16}/></button></div>
+        <div className="p-3">
+          {proofLoading && (
+            <div className="mb-2 text-xs text-[var(--text-faint)]">正在加载验收与证据状态…</div>
+          )}
+          {proofError && (
+            <div className="mb-3 rounded-[var(--radius-md)] border border-[var(--danger-border)] bg-[var(--danger-soft)] p-2 text-xs text-[var(--danger-fg)]" role="alert">
+              {proofError}
+            </div>
+          )}
+          {activeRepairProposal ? (
+            <RepairReviewPanel
+              proposal={activeRepairProposal}
+              currentGraphRevision={projection.revision}
+              onApplyRepair={() => {
+                setActiveRepairProposal(null);
+                void reload();
+              }}
+              onCancel={() => setActiveRepairProposal(null)}
+            />
+          ) : (
+            <AcceptancePanel
+              goalId={graphId}
+              report={proofReport}
+              onRefreshEvaluation={() => void loadProofEvaluation()}
+              onRequestRepair={(rep) => void handleRequestRepair(rep)}
+            />
+          )}
+        </div>
       </aside>
           {view ? <TaskWorldCanvas
             projection={projection}

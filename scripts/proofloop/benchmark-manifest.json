@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "1.0.0",
+  "created_at": "2026-10-12",
+  "target_metrics": {
+    "initial_compile_ready_rate": 0.85,
+    "goal_completion_relative_lift": 0.15,
+    "human_operations_reduction": 0.30,
+    "illegal_executions_allowed": 0,
+    "false_pass_allowed": 0
+  },
+  "groups": {
+    "B0": {
+      "name": "当前方案基线",
+      "description": "基于已有 TaskGraph 自然语言规划与手动配置，关闭自动类型约束与目标验收修复"
+    },
+    "B1": {
+      "name": "能力约束编译",
+      "description": "引入 ProofLoop 编译器与类型化输出绑定，关闭目标驱动修复"
+    },
+    "B2": {
+      "name": "完整证行方案",
+      "description": "包含能力编译 + 目标成果验收 + 有限局部修复受控重跑"
+    },
+    "BR": {
+      "name": "固定重试对照",
+      "description": "与 B2 相同的初始计划和故障注入，失败后原样盲重试最多两轮"
+    }
+  },
+  "task_count": 30,
+  "runs_per_group": 3,
+  "categories": ["analysis", "typed_transfer", "planning"]
+}

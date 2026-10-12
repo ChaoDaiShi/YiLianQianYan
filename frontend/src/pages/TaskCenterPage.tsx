@@ -40,6 +40,10 @@ import {
   type TaskGraphSummary,
 } from "../api/taskWorld";
 import { getProviderReadiness } from "../api/providerConnection";
+import GoalComposer from "../features/task-world/proofloop/GoalComposer";
+import PlanReviewPanel from "../features/task-world/proofloop/PlanReviewPanel";
+import type { ProofDraft } from "../api/proofloop";
+import { useCanvasCapabilities } from "../features/task-world/capability-picker/useCanvasCapabilities";
 
 const FILTERS: Array<{ id: TaskFilter; label: string }> = [
   { id: "all", label: "全部" },
@@ -110,6 +114,9 @@ export default function TaskCenterPage() {
   const taskGraphCreationInFlight = useRef(false);
   const [planningGoal, setPlanningGoal] = useState("");
   const [modelUnavailable, setModelUnavailable] = useState(false);
+  const [plannerMode, setPlannerMode] = useState<"standard" | "proofloop">("standard");
+  const [activeDraft, setActiveDraft] = useState<ProofDraft | null>(null);
+  const canvasCapabilities = useCanvasCapabilities();
 
   const reload = useCallback(async () => {
     setError(null);
@@ -233,18 +240,76 @@ export default function TaskCenterPage() {
       <div className="task-center-body flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 pt-4">
         <Panel padding={false} className="shrink-0 overflow-hidden">
           <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
-            <div><h2 className="text-sm font-semibold text-[var(--text)]">TaskGraph 控制面</h2><p className="mt-0.5 text-xs text-[var(--text-faint)]">真实语义图与独立画布视图</p></div>
-            <span className="text-xs text-[var(--text-faint)]">{taskGraphs.length} 个图</span>
-          </div>
-          <div className="space-y-2 border-b border-[var(--border-soft)] p-4">
-            <Textarea label="描述任务目标" value={planningGoal} onChange={(event) => setPlanningGoal(event.target.value)} rows={2} maxLength={4000} placeholder="描述你想完成的任务，使用已配置的模型生成可编辑计划" />
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" disabled={creatingTaskGraph || !planningGoal.trim()} onClick={() => void handlePlanTaskGraph()}>{creatingTaskGraph ? "处理中…" : "生成任务计划"}</Button>
-              <Button type="button" variant="secondary" disabled={creatingTaskGraph} onClick={() => void handleCreateTaskGraph()}>新建任务画布</Button>
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--text)]">TaskGraph 控制面</h2>
+              <p className="mt-0.5 text-xs text-[var(--text-faint)]">真实语义图与独立画布视图</p>
             </div>
-            <p className="text-xs text-[var(--text-faint)]">计划经校验后保存，不会自动执行。未配置模型时，可先创建空白画布。</p>
-            {modelUnavailable ? <p className="text-xs text-[var(--warning-fg)]">还没有配置可用的模型服务。 <button type="button" className="underline" onClick={() => navigate("/settings?section=model")}>前往模型设置</button></p> : null}
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlannerMode("standard");
+                    setActiveDraft(null);
+                  }}
+                  className={`rounded-[var(--radius-xs)] px-2 py-0.5 transition-colors ${
+                    plannerMode === "standard"
+                      ? "bg-[var(--surface)] font-medium text-[var(--text)] shadow-xs"
+                      : "text-[var(--text-faint)] hover:text-[var(--text)]"
+                  }`}
+                >
+                  快速规划
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlannerMode("proofloop")}
+                  className={`rounded-[var(--radius-xs)] px-2 py-0.5 transition-colors ${
+                    plannerMode === "proofloop"
+                      ? "bg-[var(--accent)] font-medium text-white shadow-xs"
+                      : "text-[var(--text-faint)] hover:text-[var(--text)]"
+                  }`}
+                >
+                  证行目标编译
+                </button>
+              </div>
+              <span className="text-xs text-[var(--text-faint)]">{taskGraphs.length} 个图</span>
+            </div>
           </div>
+          {plannerMode === "proofloop" ? (
+            <div className="border-b border-[var(--border-soft)] p-4">
+              {activeDraft ? (
+                <PlanReviewPanel
+                  draft={activeDraft}
+                  onUpdateDraft={(updated) => setActiveDraft(updated)}
+                  onConfirmed={(confirmed) => {
+                    setActiveDraft(null);
+                    setPlannerMode("standard");
+                    navigate(`/task-world/${encodeURIComponent(confirmed.graph_id)}`);
+                  }}
+                  onBackToEdit={() => setActiveDraft(null)}
+                />
+              ) : (
+                <GoalComposer
+                  workspaceId={workspaces[0]?.id || "default"}
+                  initialGoal={planningGoal}
+                  availableCapabilities={canvasCapabilities.items}
+                  modelUnavailable={modelUnavailable}
+                  onDraftCreated={(draft) => setActiveDraft(draft)}
+                  onCancel={() => setPlannerMode("standard")}
+                />
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2 border-b border-[var(--border-soft)] p-4">
+              <Textarea label="描述任务目标" value={planningGoal} onChange={(event) => setPlanningGoal(event.target.value)} rows={2} maxLength={4000} placeholder="描述你想完成的任务，使用已配置的模型生成可编辑计划" />
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" disabled={creatingTaskGraph || !planningGoal.trim()} onClick={() => void handlePlanTaskGraph()}>{creatingTaskGraph ? "处理中…" : "生成任务计划"}</Button>
+                <Button type="button" variant="secondary" disabled={creatingTaskGraph} onClick={() => void handleCreateTaskGraph()}>新建任务画布</Button>
+              </div>
+              <p className="text-xs text-[var(--text-faint)]">计划经校验后保存，不会自动执行。未配置模型时，可先创建空白画布。</p>
+              {modelUnavailable ? <p className="text-xs text-[var(--warning-fg)]">还没有配置可用的模型服务。 <button type="button" className="underline" onClick={() => navigate("/settings?section=model")}>前往模型设置</button></p> : null}
+            </div>
+          )}
           {taskGraphError && (
             <p className="mx-4 mt-3 text-xs text-[var(--danger)]" role="alert">
               {taskGraphError.message}
