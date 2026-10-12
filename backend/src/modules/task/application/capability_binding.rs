@@ -150,6 +150,7 @@ mod tests {
             name: "echo".into(),
             description: "fixture".into(),
             input_schema: Some(json!({"type":"object","properties":{"text":{"type":"string"}}})),
+            output_schema: None,
             risk: CapabilityRisk::High,
             permissions: vec![],
             status: CapabilityRuntimeStatus::Ready,

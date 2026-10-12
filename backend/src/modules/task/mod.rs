@@ -28,6 +28,7 @@ pub mod orchestrator;
 pub mod planner;
 pub mod presence;
 pub mod projection;
+pub mod proofloop;
 pub mod recovery;
 pub mod runtime;
 pub mod scheduler;
@@ -77,6 +78,7 @@ pub use planner::{
 };
 pub use presence::TaskPresenceAdapter;
 pub use projection::*;
+pub use proofloop::*;
 pub use recovery::{recover_interrupted, RecoveryReport};
 pub use runtime::{TaskWorldRuntime, TaskWorldRuntimeError};
 pub use service::{OrchestratorBuilder, TaskRunner};
