@@ -71,8 +71,12 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
   logStep('draft_api_probed', { result: draftTest });
 
   // 5. Navigate to a Task World canvas and test ProofLoop Acceptance Panel
-  await page.goto(`http://127.0.0.1:${frontendPort}/tasks`);
-  await page.getByRole('button', { name: '快速规划' }).click();
+  await page.goto(`http://127.0.0.1:${frontendPort}/tasks`, { waitUntil: 'networkidle' });
+  await page.getByRole('heading', { name: '任务中心' }).waitFor();
+  const quickPlanBtn = page.getByRole('button', { name: '快速规划' });
+  if (await quickPlanBtn.isVisible()) {
+    await quickPlanBtn.click();
+  }
   await page.getByRole('button', { name: '新建任务画布' }).click();
   await page.waitForURL(/\/task-world\/[^/]+$/);
 
@@ -81,24 +85,34 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
   logStep('entered_task_world_canvas', { graphId: currentGraphId });
   await capture('03-canvas-initial');
 
+  // Add a task node to test 240x128 geometry
+  const addNodeButton = page.getByRole('button', { name: '添加任务节点' });
+  await addNodeButton.waitFor({ timeout: 10000 });
+  await addNodeButton.click();
+  await page.locator('.studio-node').first().waitFor({ timeout: 10000 });
+
   // 6. Check node geometry stability (must preserve 240x128)
   const nodeGeometry = await page.evaluate(() => {
     const nodes = document.querySelectorAll('.studio-node');
     return Array.from(nodes).map((n) => ({
-      width: n.clientWidth,
-      height: n.clientHeight,
+      width: n.offsetWidth,
+      height: n.offsetHeight,
     }));
   });
-  logStep('verified_node_geometry', { count: nodeGeometry.length });
+  logStep('verified_node_geometry', { count: nodeGeometry.length, geometry: nodeGeometry });
+  assert.ok(nodeGeometry.length > 0, 'Should have at least 1 node on canvas');
+  for (const g of nodeGeometry) {
+    assert.equal(g.width, 240, `Node width should be 240px, got ${g.width}`);
+    assert.equal(g.height, 128, `Node height should be 128px, got ${g.height}`);
+  }
 
   // 7. Open ProofLoop Acceptance Rail
-  const proofloopRail = page.locator('[aria-controls="studio-proofloop"]');
-  if (await proofloopRail.count()) {
-    await proofloopRail.click();
-    await page.locator('#studio-proofloop').waitFor({ state: 'visible' });
-    logStep('opened_proofloop_aside');
-    await capture('04-proofloop-aside-open');
-  }
+  const proofloopRail = page.getByRole('button', { name: '证行验收' });
+  await proofloopRail.waitFor({ timeout: 10000 });
+  await proofloopRail.click();
+  await page.locator('#studio-proofloop').waitFor({ state: 'visible', timeout: 10000 });
+  logStep('opened_proofloop_aside');
+  await capture('04-proofloop-aside-open');
 
   logStep('completed_proofloop_e2e');
 

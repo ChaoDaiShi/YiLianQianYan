@@ -163,20 +163,6 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
     return () => window.clearInterval(timer);
   }, [graphLocked, refreshDetail]);
 
-  if (!graphId) return <ErrorState title="任务图地址无效" description="缺少 graph id。" />;
-  if (error && !detail) return <ErrorState title="任务图暂时无法加载" description={error.message} action={<Button onClick={() => void reload()}>重试</Button>} />;
-  if (!projection) return <TaskWorldLoading />;
-
-  const addNode = () => { void mutate(() => addTaskNode(graphId, projection.revision, { id: crypto.randomUUID(), kind: "work", title: "新任务", input: { instruction: "", acceptance_criteria: [] }, retry_policy: { max_attempts: 1 } })); };
-  const addCapability = async (tool: CapabilityDescriptor) => {
-    const id = crypto.randomUUID();
-    if (await mutate(() => addTaskNode(graphId, projection.revision, {id,kind:"work",title:tool.name,input:{executor_ref:`capability://${tool.id}`,capability_input:{}},retry_policy:{max_attempts:1}}))) {
-      setPickerOpen(false); setFocusedNodeId(id); changePanel("inspector");
-    }
-  };
-  const canRun = !!selectedNode && !saving && !graphLocked && getExecutorAvailability(selectedNode.executor_ref, selectedNode.capability).kind === "configured";
-  const runSelected = () => { if (canRun && selectedNode) void mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision)); };
-
   const loadProofEvaluation = useCallback(async () => {
     if (!graphId) return;
     setProofLoading(true);
@@ -212,6 +198,20 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
       void loadProofEvaluation();
     }
   }, [activePanel, loadProofEvaluation]);
+
+  if (!graphId) return <ErrorState title="任务图地址无效" description="缺少 graph id。" />;
+  if (error && !detail) return <ErrorState title="任务图暂时无法加载" description={error.message} action={<Button onClick={() => void reload()}>重试</Button>} />;
+  if (!projection) return <TaskWorldLoading />;
+
+  const addNode = () => { void mutate(() => addTaskNode(graphId, projection.revision, { id: crypto.randomUUID(), kind: "work", title: "新任务", input: { instruction: "", acceptance_criteria: [] }, retry_policy: { max_attempts: 1 } })); };
+  const addCapability = async (tool: CapabilityDescriptor) => {
+    const id = crypto.randomUUID();
+    if (await mutate(() => addTaskNode(graphId, projection.revision, {id,kind:"work",title:tool.name,input:{executor_ref:`capability://${tool.id}`,capability_input:{}},retry_policy:{max_attempts:1}}))) {
+      setPickerOpen(false); setFocusedNodeId(id); changePanel("inspector");
+    }
+  };
+  const canRun = !!selectedNode && !saving && !graphLocked && getExecutorAvailability(selectedNode.executor_ref, selectedNode.capability).kind === "configured";
+  const runSelected = () => { if (canRun && selectedNode) void mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision)); };
 
   const handleRequestRepair = async (report: AcceptanceReport) => {
     const failedExecIds = detail?.nodes

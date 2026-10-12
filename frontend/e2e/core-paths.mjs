@@ -171,7 +171,19 @@ try {
     if (message.type() === "error") browserErrors.push(message.text());
   });
 
+  await page.addInitScript(() => {
+    window.sessionStorage.setItem("yilian.setup.deferred", "true");
+  });
+
   await page.goto(`http://127.0.0.1:${frontendPort}/tasks`, { waitUntil: "networkidle" });
+  if (page.url().includes("/setup")) {
+    const deferButton = page.locator("button.setup-defer");
+    if (await deferButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await deferButton.click();
+      await page.waitForURL(/\/chat/);
+    }
+    await page.goto(`http://127.0.0.1:${frontendPort}/tasks`, { waitUntil: "networkidle" });
+  }
   await page.getByRole("heading", { name: "任务中心" }).waitFor();
   const finishSetup = page.getByRole("button", { name: "确认并保存" });
   if (await finishSetup.isVisible()) {

@@ -436,3 +436,34 @@ pub struct ProofDraftSummary {
     pub user_goal: String,
     pub status: DraftStatus,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvaluateGoalRequest {
+    pub goal_version: u32,
+    pub graph_revision: u64,
+    pub execution_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubmitHumanReviewRequest {
+    pub criterion_id: String,
+    pub decision: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposeRepairRequest {
+    pub report_id: String,
+    pub failure_execution_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyRepairRequest {
+    pub expected_graph_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyRepairResponse {
+    pub graph_revision: u64,
+    pub affected_node_ids: Vec<String>,
+}
