@@ -27,6 +27,8 @@ pub async fn executor_resolver(
     graph_id: &TaskGraphId,
     node_id: &TaskNodeId,
 ) -> Result<ExecutorResolver, TaskWorldRuntimeError> {
+    let proof_budget = super::super::proofloop::budget::graph_execution_budget(server, graph_id)
+        .map_err(|error| TaskHarnessError::Graph(format!("{}: {}", error.code, error.message)))?;
     let graph = server
         .task_world
         .get_graph(graph_id)
@@ -34,6 +36,16 @@ pub async fn executor_resolver(
     let node = graph.node(node_id).ok_or_else(|| {
         TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownNode(node_id.clone()))
     })?;
+    if proof_budget.is_some() {
+        ensure_workflow_budget_supported(server, node)?;
+    }
+    executor_resolver_for_node(server, node).await
+}
+
+pub async fn executor_resolver_for_node(
+    server: &AppServer,
+    node: &super::super::TaskNode,
+) -> Result<ExecutorResolver, TaskWorldRuntimeError> {
     let Some(reference) = node.input.get("executor_ref").and_then(Value::as_str) else {
         return Err(TaskWorldRuntimeError::Harness(TaskHarnessError::Resolver(
             ExecutorResolutionError::MissingExecutorRef,
@@ -79,6 +91,36 @@ pub(crate) struct ExistingWorkflowProvider {
     cancel: CancellationToken,
 }
 
+pub fn ensure_workflow_budget_supported(
+    server: &AppServer,
+    node: &super::super::TaskNode,
+) -> Result<(), TaskWorldRuntimeError> {
+    if let Some(workflow_id) = node
+        .input
+        .get("executor_ref")
+        .and_then(Value::as_str)
+        .and_then(|reference| reference.strip_prefix("workflow://"))
+    {
+        if server
+            .db
+            .get_workflow_graph(workflow_id)
+            .map_err(|error| TaskHarnessError::Graph(error))?
+            .is_some_and(|workflow| {
+                workflow.definition.nodes.iter().any(|node| {
+                    matches!(
+                        node.kind,
+                        crate::modules::workflow::WorkflowNodeKind::Agent
+                            | crate::modules::workflow::WorkflowNodeKind::Subagent
+                    )
+                })
+            })
+        {
+            return Err(TaskHarnessError::Graph("proofloop_usage_unavailable: 此工作流中的模型循环尚不能计入目标预算，请使用既有工作流入口单独运行".into()).into());
+        }
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl WorkflowExecutionProvider for ExistingWorkflowProvider {
     async fn execute(
@@ -104,6 +146,19 @@ pub async fn dispatch_execution(
     graph_id: TaskGraphId,
     execution_id: NodeExecutionId,
 ) -> Result<NodeExecution, TaskWorldRuntimeError> {
+    let remaining_budget =
+        match super::super::proofloop::budget::graph_execution_budget(&server, &graph_id) {
+            Ok(remaining) => remaining,
+            Err(error) => {
+                return server.task_world.fail_execution(
+                    &graph_id,
+                    &execution_id,
+                    &error.code,
+                    &error.message,
+                    now(),
+                )
+            }
+        };
     let execution = server
         .task_world
         .find_execution(&execution_id)
@@ -118,6 +173,7 @@ pub async fn dispatch_execution(
         .task_world
         .claim_execution_dispatch(&graph_id, &execution_id)?;
     let cancel = ownership.cancellation_token();
+    let budget_cancel = cancel.clone();
     let plan = server.task_world.execution_plan(&graph_id, &execution_id)?;
     let registry = AdapterRegistry::new()
         .with_adapter(CommandExecutor::new(server.command_router.clone()))
@@ -131,7 +187,23 @@ pub async fn dispatch_execution(
                 cancel,
             },
         )));
-    let result = registry.dispatch(&plan, &execution).await;
+    let result = if let Some(remaining) = remaining_budget {
+        match tokio::time::timeout(remaining, registry.dispatch(&plan, &execution)).await {
+            Ok(result) => result,
+            Err(_) => {
+                budget_cancel.cancel();
+                return server.task_world.fail_execution(
+                    &graph_id,
+                    &execution_id,
+                    "proofloop_budget_exhausted_result_unknown",
+                    "执行耗时预算已耗尽，外部操作结果需核实，未自动重试",
+                    now(),
+                );
+            }
+        }
+    } else {
+        registry.dispatch(&plan, &execution).await
+    };
     // A cooperative cancellation may settle after an in-flight atomic call.
     // Preserve the authoritative cancelled row and discard its late output.
     if let Some((_, current)) = server.task_world.find_execution(&execution_id) {

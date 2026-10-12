@@ -223,6 +223,26 @@ impl Database {
         change_summary: &str,
         executions: &[crate::modules::task::NodeExecution],
     ) -> Result<(), super::TaskWorldPersistenceError> {
+        self.save_task_snapshot_with_executions_and_hook(
+            supervisor,
+            updated_at,
+            change_summary,
+            executions,
+            |_| Ok(()),
+        )
+    }
+
+    pub(crate) fn save_task_snapshot_with_executions_and_hook<F>(
+        &self,
+        supervisor: &TaskSupervisor,
+        updated_at: i64,
+        change_summary: &str,
+        executions: &[crate::modules::task::NodeExecution],
+        commit_related: F,
+    ) -> Result<(), super::TaskWorldPersistenceError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<()>,
+    {
         let graph = supervisor.graph();
         let checkpoint = crate::modules::task::TaskCheckpoint {
             id: crate::modules::task::TaskCheckpointId::generate(),
@@ -307,6 +327,7 @@ impl Database {
             super::task_execution::update_node_execution_on(&transaction, execution)
                 .map_err(|error| super::TaskWorldPersistenceError::Integrity(error.to_string()))?;
         }
+        commit_related(&transaction)?;
         transaction.commit()?;
         Ok(())
     }

@@ -519,3 +519,7 @@ export async function applyRepair(
     signal,
   );
 }
+
+export interface GraphGoalBinding { goal_id: string; goal_version: number; graph_id: string; contract: GoalContract }
+export const getGraphGoal = (graphId: string, signal?: AbortSignal) => requestProofLoop<GraphGoalBinding>("GET", `/api/task-world/proofloop/graphs/${encodeURIComponent(graphId)}/goal`, undefined, signal);
+export const getEvaluationDetail = (reportId: string, signal?: AbortSignal) => requestProofLoop<{ report: AcceptanceReport; snapshot: EvidenceSnapshot }>("GET", `/api/task-world/proofloop/evaluations/${encodeURIComponent(reportId)}`, undefined, signal);

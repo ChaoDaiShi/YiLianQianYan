@@ -5,13 +5,20 @@
 //! Evaluates candidate nodes and bindings strictly against capability schemas
 //! and goal contracts. Does not call tools or grant permissions.
 
+mod inputs;
+use inputs::{
+    collect_missing_inputs, literal_contains_path, remove_required_checks,
+    resolve_input_property_type, resolve_output_property_type, types_compatible,
+};
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
 use super::contracts::{
-    BindingConfirmation, CandidateNode, CandidatePlan, CapabilitySnapshot, CapabilitySpec,
-    CompileResult, CompileStatus, GoalContract, PendingInput, PendingInputReason, ProofError,
+    BindingConfirmation, CandidateNode, CandidatePlan, CapabilityKindSpec, CapabilitySnapshot,
+    CapabilitySpec, CompileResult, CompileStatus, GoalContract, PendingInput, PendingInputReason,
+    ProofError,
 };
 use crate::modules::task::{
     application::capability_binding::has_header_binding,
@@ -33,6 +40,13 @@ pub fn compile_candidate(
 ) -> CompileResult {
     let mut diagnostics: Vec<ProofError> = Vec::new();
     let mut pending_inputs: Vec<PendingInput> = Vec::new();
+
+    if goal.schema_version != 1 || candidate.schema_version != 1 {
+        diagnostics.push(ProofError::new(
+            "unsupported_schema_version",
+            "目标或候选计划版本不受支持",
+        ));
+    }
 
     // 1. Check node count bounds
     if candidate.nodes.is_empty() {
@@ -239,6 +253,40 @@ pub fn compile_candidate(
             );
         }
 
+        if cap_spec.kind == CapabilityKindSpec::Workflow && !node.bindings.is_empty() {
+            diagnostics.push(
+                ProofError::new(
+                    "proofloop_unsupported_schema",
+                    "工作流继续使用既有输入契约，当前不支持 MCP 类型化参数绑定",
+                )
+                .with_node(&node.id),
+            );
+        }
+        if let Some(schema) = &cap_spec.input_schema {
+            let mut literal_schema = schema.clone();
+            remove_required_checks(&mut literal_schema);
+            if let Err(error) = super::super::binding_schema::validate_arguments(
+                &Value::Object(node.literal_input.clone()),
+                &literal_schema,
+            ) {
+                diagnostics.push(ProofError::new(error.code, error.reason).with_node(&node.id));
+            }
+            collect_missing_inputs(
+                schema,
+                &Value::Object(node.literal_input.clone()),
+                &node.bindings,
+                &[],
+                &node.id,
+                &mut pending_inputs,
+            );
+        } else if cap_spec.kind == CapabilityKindSpec::McpTool {
+            pending_inputs.push(PendingInput {
+                node_id: node.id.clone(),
+                target_path: vec![],
+                reason: PendingInputReason::UnsupportedSchema,
+            });
+        }
+
         // Check header forbidden
         if cap_spec
             .input_schema
@@ -270,20 +318,19 @@ pub fn compile_candidate(
 
         // Check collision between literal_input and bindings
         for binding in &node.bindings {
-            if let Some(first_seg) = binding.target_path.first() {
-                if node.literal_input.contains_key(first_seg) {
-                    diagnostics.push(
-                        ProofError::new(
-                            "binding_target_collision",
-                            format!(
-                                "节点 '{}' 参数 '{}' 既有固定输入又有动态绑定，目标发生冲突",
-                                node.id, first_seg
-                            ),
-                        )
-                        .with_node(&node.id)
-                        .with_target_path(binding.target_path.clone()),
-                    );
-                }
+            if literal_contains_path(&node.literal_input, &binding.target_path) {
+                diagnostics.push(
+                    ProofError::new(
+                        "binding_target_collision",
+                        format!(
+                            "节点 '{}' 参数 '{}' 既有固定输入又有动态绑定，目标发生冲突",
+                            node.id,
+                            binding.target_path.join(".")
+                        ),
+                    )
+                    .with_node(&node.id)
+                    .with_target_path(binding.target_path.clone()),
+                );
             }
         }
 
@@ -347,6 +394,9 @@ pub fn compile_candidate(
                             && c.target_path == binding.target_path
                             && c.source_node_id == source_id
                             && c.source_path == source_path
+                            && c.source_capability_id == source_cap.capability_id
+                            && c.confirmed_at_ms > 0
+                            && !c.source_execution_id.is_empty()
                     });
 
                     let effective_source_type = match (resolved_source_type, observed_confirmation)
@@ -383,28 +433,11 @@ pub fn compile_candidate(
                                     .with_target_path(binding.target_path.clone()),
                                 );
                             }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Required parameters check for this node
-        if let Some(input_schema) = cap_spec.input_schema.as_ref() {
-            if let Some(required_list) = input_schema.get("required").and_then(Value::as_array) {
-                for req_val in required_list {
-                    if let Some(field_name) = req_val.as_str() {
-                        let has_literal = node.literal_input.contains_key(field_name);
-                        let has_binding = node
-                            .bindings
-                            .iter()
-                            .any(|b| b.target_path.first().map(|s| s.as_str()) == Some(field_name));
-
-                        if !has_literal && !has_binding {
+                        } else {
                             pending_inputs.push(PendingInput {
                                 node_id: node.id.clone(),
-                                target_path: vec![field_name.to_string()],
-                                reason: PendingInputReason::MissingLiteral,
+                                target_path: binding.target_path.clone(),
+                                reason: PendingInputReason::UnsupportedSchema,
                             });
                         }
                     }
@@ -439,7 +472,10 @@ pub fn compile_candidate(
     for node in &candidate.nodes {
         let cap_spec = cap_map.get(node.capability_id.as_str()).unwrap();
         let input_value = serde_json::json!({
-            "executor_ref": format!("capability://{}", cap_spec.capability_id),
+            "executor_ref": match cap_spec.kind {
+                CapabilityKindSpec::McpTool => format!("capability://{}", cap_spec.capability_id),
+                CapabilityKindSpec::Workflow => cap_spec.capability_id.strip_prefix("workflow.").map(|id| format!("workflow://{id}")).unwrap_or_else(|| cap_spec.executor_ref.clone()),
+            },
             "instruction": node.instruction,
             "acceptance_criteria": Vec::<String>::new(),
             "capability_input": node.literal_input,
@@ -517,40 +553,4 @@ pub fn compile_candidate(
         diagnostics,
         pending_inputs,
     }
-}
-
-fn resolve_output_property_type(schema: Option<&Value>, path: &[String]) -> Option<String> {
-    let mut current = schema?;
-    for segment in path {
-        let properties = current.get("properties")?.as_object()?;
-        current = properties.get(segment)?;
-    }
-    extract_schema_type(current)
-}
-
-fn resolve_input_property_type(schema: Option<&Value>, path: &[String]) -> Option<String> {
-    let mut current = schema?;
-    for segment in path {
-        let properties = current.get("properties")?.as_object()?;
-        current = properties.get(segment)?;
-    }
-    extract_schema_type(current)
-}
-
-fn extract_schema_type(schema: &Value) -> Option<String> {
-    if let Some(t) = schema.get("type").and_then(Value::as_str) {
-        return Some(t.to_string());
-    }
-    None
-}
-
-fn types_compatible(source: &str, target: &str) -> bool {
-    if source == target {
-        return true;
-    }
-    // integer can flow into number (integer is a subtype of number in JSON)
-    if source == "integer" && target == "number" {
-        return true;
-    }
-    false
 }

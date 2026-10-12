@@ -77,8 +77,7 @@ export default function GoalComposer({
         {
           workspace_id: workspaceId || "default",
           user_goal: trimmedGoal,
-          allowed_capability_ids:
-            selectedCapabilities.length > 0 ? selectedCapabilities : undefined,
+          allowed_capability_ids: selectedCapabilities,
         },
         controller.signal,
       );

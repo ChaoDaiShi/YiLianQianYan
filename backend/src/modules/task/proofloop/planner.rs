@@ -22,6 +22,19 @@ pub async fn propose_candidate(
     llm_client: Option<&LlmClient>,
     cancel: &CancellationToken,
 ) -> Result<(GoalContract, CandidatePlan), ProofError> {
+    let (goal, candidate, _) =
+        propose_candidate_with_usage(workspace_id, user_goal, snapshot, llm_client, cancel).await?;
+    Ok((goal, candidate))
+}
+
+pub async fn propose_candidate_with_usage(
+    workspace_id: &str,
+    user_goal: &str,
+    snapshot: &CapabilitySnapshot,
+    llm_client: Option<&LlmClient>,
+    cancel: &CancellationToken,
+) -> Result<(GoalContract, CandidatePlan, super::contracts::PlanningUsage), ProofError> {
+    let started_at_ms = chrono::Utc::now().timestamp_millis();
     if cancel.is_cancelled() {
         return Err(ProofError::new("aborted", "规划请求已被取消"));
     }
@@ -50,6 +63,7 @@ pub async fn propose_candidate(
    - deliverables: [ { \"id\": string, \"title\": string, \"mime_type\": string } ]\n\
    - criteria: [ { \"id\": string, \"description\": string, \"required\": bool, \"check\": { \"kind\": \"artifact_exists\", \"deliverable_id\": string } } ]\n\
    - candidate: {\n\
+       \"schema_version\": 1,\n\
        \"nodes\": [ { \"id\": string, \"title\": string, \"instruction\": string, \"capability_id\": string, \"literal_input\": {}, \"bindings\": [] } ],\n\
        \"edges\": [ { \"from\": string, \"to\": string } ],\n\
        \"deliverable_nodes\": [ { \"deliverable_id\": string, \"node_id\": string } ]\n\
@@ -92,10 +106,14 @@ pub async fn propose_candidate(
         },
     ];
 
-    let response = client
-        .invoke(&messages, &[])
-        .await
-        .map_err(|e| ProofError::new("llm_invoke_failed", format!("模型调用失败: {e}")))?;
+    let response = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(ProofError::new("aborted", "规划请求已被取消")),
+        result = tokio::time::timeout(std::time::Duration::from_millis(Budget::default().max_wall_time_ms), client.invoke(&messages, &[])) => {
+            result.map_err(|_| ProofError::new("proofloop_budget_exhausted", "规划耗时超过目标预算"))?
+                .map_err(|e| ProofError::new("llm_invoke_failed", format!("模型调用失败: {e}")))?
+        }
+    };
 
     if cancel.is_cancelled() {
         return Err(ProofError::new("aborted", "规划请求已被取消"));
@@ -140,17 +158,24 @@ pub async fn propose_candidate(
                 .collect()
         });
 
-    let mut candidate_plan: CandidatePlan = parsed
+    let mut raw_candidate = parsed
         .get("candidate")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .ok_or_else(|| {
+        .cloned()
+        .ok_or_else(|| ProofError::new("invalid_candidate_plan", "缺少 candidate 字段"))?;
+    // The enclosing response owns the protocol version. Preserve compatibility
+    // with the original prompt, which omitted this field.
+    if let Some(object) = raw_candidate.as_object_mut() {
+        object
+            .entry("schema_version")
+            .or_insert(serde_json::json!(PROOFLOOP_SCHEMA_VERSION));
+    }
+    let candidate_plan: CandidatePlan =
+        serde_json::from_value(raw_candidate).ok().ok_or_else(|| {
             ProofError::new(
                 "invalid_candidate_plan",
                 "返回的 JSON 中缺少有效的 candidate 字段",
             )
         })?;
-
-    candidate_plan.schema_version = PROOFLOOP_SCHEMA_VERSION;
 
     let allowed_capability_ids: Vec<String> = snapshot
         .capabilities
@@ -173,7 +198,25 @@ pub async fn propose_candidate(
         budget: Budget::default(),
     };
 
-    Ok((contract, candidate_plan))
+    let total_tokens = response
+        .usage
+        .as_ref()
+        .map(|usage| u64::from(usage.total_tokens));
+    if total_tokens.is_some_and(|tokens| tokens > contract.budget.max_total_tokens) {
+        return Err(ProofError::new(
+            "proofloop_budget_exhausted",
+            "模型消耗超过目标总 token 预算",
+        ));
+    }
+    Ok((
+        contract,
+        candidate_plan,
+        super::contracts::PlanningUsage {
+            model_calls: 1,
+            total_tokens,
+            started_at_ms,
+        },
+    ))
 }
 
 fn extract_json_block(text: &str) -> &str {

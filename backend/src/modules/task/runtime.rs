@@ -1208,6 +1208,105 @@ impl TaskWorldRuntime {
         edges: Vec<TaskEdge>,
         now: i64,
     ) -> Result<TaskGraph, TaskWorldRuntimeError> {
+        self.create_graph_committed(graph_id, nodes, edges, now, |supervisor| {
+            self.database
+                .save_task_supervisor_snapshot_with_revision(supervisor, now, "created")
+        })
+    }
+
+    pub fn confirm_proofloop_draft(
+        &self,
+        draft: &super::proofloop::ProofDraft,
+        now: i64,
+    ) -> Result<TaskGraph, TaskWorldRuntimeError> {
+        let graph = draft.compilation.graph.as_ref().ok_or_else(|| {
+            TaskWorldRuntimeError::InvalidCommandResult("missing compiled graph".into())
+        })?;
+        self.create_graph_committed(
+            graph.id.clone(),
+            graph.nodes.clone(),
+            graph.edges.clone(),
+            now,
+            |supervisor| {
+                self.database
+                    .confirm_proof_draft_with_graph(supervisor, draft, now)
+            },
+        )
+    }
+
+    pub fn apply_proofloop_repair(
+        &self,
+        patch: super::proofloop::ValidatedRepairPatch,
+        expected_revision: u64,
+        resolver: ExecutorResolver,
+        now: i64,
+    ) -> Result<(TaskGraph, NodeExecution), TaskWorldRuntimeError> {
+        let _guard = self.control_dispatch_lock.lock();
+        let graph_id = patch.updated_graph.id.clone();
+        self.ensure_execution_allowed(&graph_id)?;
+        self.ensure_no_active_harness_execution(&graph_id)?;
+        let mut supervisors = self.supervisors.write();
+        let current = supervisors
+            .get(&graph_id)
+            .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        ensure_revision(current, GraphRevision::new(expected_revision)?)?;
+        let root = TaskNodeId::new(&patch.rerun_root_node_id)?;
+        let mut candidate = current.clone();
+        candidate.replace_proofloop_nodes(patch.updated_graph.nodes, root.clone(), now)?;
+        let graph = candidate.graph().clone();
+        let mut harnesses = self.harnesses.write();
+        let mut harness = harnesses
+            .get(&graph_id)
+            .cloned()
+            .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        harness.update_graph(graph.clone())?;
+        let affected = harness.rerun_from_node(&root, now)?;
+        let changed: Vec<_> = harness
+            .all_attempts()
+            .into_iter()
+            .filter(|attempt| affected.contains(&attempt.node_id))
+            .collect();
+        harness.set_resolver(resolver);
+        let execution_id = harness.start_node(&root, now)?;
+        let execution = harness
+            .execution(&execution_id)
+            .cloned()
+            .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
+        self.database.save_proofloop_repair_execution(
+            &candidate,
+            &changed,
+            &execution,
+            &patch.repair_id,
+            now,
+        )?;
+        supervisors.insert(graph_id.clone(), candidate);
+        harnesses.insert(graph_id.clone(), harness);
+        self.execution_tokens.lock().insert(
+            execution_id.clone(),
+            ExecutionCancellation {
+                graph_id: graph_id.clone(),
+                token: CancellationToken::new(),
+                in_flight: false,
+            },
+        );
+        drop(harnesses);
+        drop(supervisors);
+        self.publish_graph_updated(&graph, "proofloop_repaired");
+        self.publish("task.execution.created", json!({"graph_id":graph.id,"node_id":root,"execution_id":execution_id,"attempt":execution.attempt,"status":execution.status}));
+        Ok((graph, execution))
+    }
+
+    fn create_graph_committed<F>(
+        &self,
+        graph_id: TaskGraphId,
+        nodes: Vec<TaskNode>,
+        edges: Vec<TaskEdge>,
+        now: i64,
+        persist: F,
+    ) -> Result<TaskGraph, TaskWorldRuntimeError>
+    where
+        F: FnOnce(&TaskSupervisor) -> Result<(), TaskWorldPersistenceError>,
+    {
         let graph = TaskGraph::new(graph_id.clone(), GraphRevision::initial(), nodes, edges)?;
         let mut harness = TaskHarness::new(graph.clone(), ExecutorResolver::new())?;
         harness.set_context_builder(
@@ -1221,8 +1320,7 @@ impl TaskWorldRuntime {
                 graph_id.to_string(),
             ));
         }
-        self.database
-            .save_task_supervisor_snapshot_with_revision(&supervisor, now, "created")?;
+        persist(&supervisor)?;
         let graph = supervisor.graph().clone();
         let ready = supervisor.runnable_nodes();
         supervisors.insert(graph_id.clone(), supervisor);

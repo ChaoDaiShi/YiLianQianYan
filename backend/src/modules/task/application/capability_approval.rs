@@ -81,6 +81,8 @@ pub async fn resolve(
         }
     };
     let ownership = if approve {
+        super::super::proofloop::budget::graph_execution_budget(&server, &execution.graph_id)
+            .map_err(|error| format!("{}: {}", error.code, error.message))?;
         Some(
             server
                 .task_world
@@ -162,8 +164,18 @@ pub async fn resolve(
         arguments: consumed.arguments,
         subject: SecuritySubject::from_subject_id(consumed.subject_id),
     };
+    let remaining =
+        super::super::proofloop::budget::graph_execution_budget(&server, &execution.graph_id)
+            .map_err(|error| format!("{}: {}", error.code, error.message))?;
+    let deadline = async {
+        match remaining {
+            Some(duration) => tokio::time::sleep(duration).await,
+            None => std::future::pending::<()>().await,
+        }
+    };
     let outcome = tokio::select! {biased;
         _=cancel.cancelled()=>return Err("task_execution_cancelled".into()),
+        _=deadline=>{cancel.cancel();return fail(&server,&execution,"proofloop_budget_exhausted_result_unknown","目标耗时预算已耗尽，远程结果需核实");},
         outcome=gateway.execute_approved(&request,consumed.risk_level)=>outcome,
     };
     if let Some((_, current)) = server.task_world.find_execution(&execution.id) {
