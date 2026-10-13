@@ -1251,14 +1251,17 @@ impl TaskWorldRuntime {
             .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
         ensure_revision(current, GraphRevision::new(expected_revision)?)?;
         let root = TaskNodeId::new(&patch.rerun_root_node_id)?;
-        let mut candidate = current.clone();
-        candidate.replace_proofloop_nodes(patch.updated_graph.nodes, root.clone(), now)?;
-        let graph = candidate.graph().clone();
+
         let mut harnesses = self.harnesses.write();
         let mut harness = harnesses
             .get(&graph_id)
             .cloned()
             .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        harness.ensure_repair_sources_current_failure(&patch.failure_execution_ids)?;
+
+        let mut candidate = current.clone();
+        candidate.replace_proofloop_nodes(patch.updated_graph.nodes, root.clone(), now)?;
+        let graph = candidate.graph().clone();
         harness.update_graph(graph.clone())?;
         let affected = harness.rerun_from_node(&root, now)?;
         let changed: Vec<_> = harness
@@ -2770,6 +2773,132 @@ mod tests {
                 .len(),
             3
         );
+    }
+
+    #[test]
+    fn persisted_retry_policy_cannot_override_unknown_result() {
+        let database = Database::new(Path::new(":memory:")).unwrap();
+        let events = EventHub::new(16);
+        let runtime = TaskWorldRuntime::new(&database, events.clone()).unwrap();
+        let graph_id = TaskGraphId::new("unknown-retry").unwrap();
+        let node_id = TaskNodeId::new("write").unwrap();
+        runtime
+            .create_graph(
+                graph_id.clone(),
+                vec![TaskNode::new(
+                    node_id.clone(),
+                    TaskNodeKind::Work,
+                    "Write",
+                    json!({"executor_ref":"workflow://local"}),
+                )
+                .unwrap()],
+                vec![],
+                1,
+            )
+            .unwrap();
+        let started = runtime
+            .start_execution_with_resolver(
+                &graph_id,
+                &node_id,
+                1,
+                ExecutorResolver::new().with_workflow("local"),
+                2,
+            )
+            .unwrap();
+        let mut interrupted = started.clone();
+        interrupted.retry_policy = crate::modules::task::execution::ExecutionRetryPolicy::new(
+            2,
+            0,
+            vec!["execution_interrupted".to_string()],
+        )
+        .unwrap();
+        interrupted.set_failure("execution_interrupted", "provider result unknown");
+        interrupted
+            .transition(NodeExecutionStatus::Failed, 3)
+            .unwrap();
+        database.update_node_execution(&interrupted).unwrap();
+        drop(runtime);
+
+        let reloaded = TaskWorldRuntime::new(&database, events).unwrap();
+        assert!(matches!(
+            reloaded.retry_node(&graph_id, &node_id, 4),
+            Err(TaskWorldRuntimeError::Harness(
+                TaskHarnessError::ExternalResultUnknown(id)
+            )) if id == interrupted.id
+        ));
+        let attempts = reloaded.list_node_executions(&graph_id, &node_id).unwrap();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].failure_code(), Some("execution_interrupted"));
+    }
+
+    #[test]
+    fn repair_rejects_replaced_source_attempt_before_graph_mutation() {
+        let database = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+        let graph_id = TaskGraphId::new("stale-repair-source").unwrap();
+        let node_id = TaskNodeId::new("work").unwrap();
+        let node = TaskNode::new(
+            node_id.clone(),
+            TaskNodeKind::Work,
+            "Work",
+            json!({"executor_ref":"workflow://local"}),
+        )
+        .unwrap()
+        .with_retry_policy(crate::modules::task::RetryPolicy::new(2).unwrap());
+        let graph = runtime
+            .create_graph(graph_id.clone(), vec![node], vec![], 1)
+            .unwrap();
+
+        let first = runtime
+            .start_execution_with_resolver(
+                &graph_id,
+                &node_id,
+                1,
+                ExecutorResolver::new().with_workflow("local"),
+                2,
+            )
+            .unwrap();
+        runtime
+            .fail_execution(&graph_id, &first.id, "provider_error", "first", 3)
+            .unwrap();
+        let second = runtime.retry_node(&graph_id, &node_id, 4).unwrap();
+        runtime
+            .fail_execution(&graph_id, &second.id, "provider_error", "second", 5)
+            .unwrap();
+
+        let updated_graph = TaskGraph::new(
+            graph_id.clone(),
+            GraphRevision::new(2).unwrap(),
+            graph.nodes,
+            graph.edges,
+        )
+        .unwrap();
+        let patch = crate::modules::task::proofloop::ValidatedRepairPatch {
+            repair_id: "stale-source-repair".to_string(),
+            rerun_root_node_id: node_id.to_string(),
+            failure_execution_ids: vec![first.id.clone()],
+            affected_node_ids: vec![node_id.to_string()],
+            updated_graph,
+            diff_summary: vec![],
+        };
+
+        assert!(matches!(
+            runtime.apply_proofloop_repair(
+                patch,
+                1,
+                ExecutorResolver::new().with_workflow("local"),
+                6,
+            ),
+            Err(TaskWorldRuntimeError::Harness(
+                TaskHarnessError::RepairSourceStale(id)
+            )) if id == first.id
+        ));
+        assert_eq!(runtime.get_graph(&graph_id).unwrap().revision.value(), 1);
+        let attempts = runtime.list_node_executions(&graph_id, &node_id).unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert!(attempts
+            .iter()
+            .all(|attempt| attempt.status == NodeExecutionStatus::Failed));
     }
 
     #[test]

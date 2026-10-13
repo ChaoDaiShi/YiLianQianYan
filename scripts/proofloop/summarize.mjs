@@ -62,6 +62,8 @@ export function verifyRunEvidence(run, taskSpec) {
       if (record.sha256 && record.sha256 !== digest) return { pass: false, reason: '产物摘要与实际文件不一致' };
       artifacts.set(deliverable.id, { bytes, text: bytes.toString('utf8'), digest, expectedDigest: record.sha256 });
     }
+    const missingDeliverable = (taskSpec.deliverables || []).find((deliverable) => !artifacts.has(deliverable.id));
+    if (missingDeliverable) return { pass: false, reason: `声明交付物缺失：${missingDeliverable.id}` };
     for (const criterion of required) {
       const check = criterion.check;
       const artifact = artifacts.get(check.deliverable_id);

@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 use super::contracts::{
-    AcceptanceReport, CriterionCheck, CriterionResult, CriterionStatus, EvidenceSnapshot,
-    GoalContract, GoalStatus, HumanReview, ProofError,
+    AcceptanceReport, CriterionCheck, CriterionResult, CriterionStatus, DeliverableResult,
+    EvidenceSnapshot, GoalContract, GoalStatus, HumanReview, ProofError,
 };
 
 /// Evaluates a GoalContract against an EvidenceSnapshot and loaded artifact contents.
@@ -38,6 +38,7 @@ pub fn evaluate_goal(
         ));
     }
 
+    let deliverable_results = evaluate_deliverables(contract, snapshot, evidence_content);
     let mut results = Vec::with_capacity(contract.criteria.len());
 
     for criterion in &contract.criteria {
@@ -45,6 +46,7 @@ pub fn evaluate_goal(
             &criterion.check,
             snapshot,
             evidence_content,
+            &deliverable_results,
             existing_reviews,
             &criterion.id,
         );
@@ -57,15 +59,21 @@ pub fn evaluate_goal(
         });
     }
 
-    let required_statuses: Vec<CriterionStatus> = contract
+    let has_required_criteria = contract.criteria.iter().any(|criterion| criterion.required);
+    let mut required_statuses: Vec<CriterionStatus> = contract
         .criteria
         .iter()
         .zip(&results)
         .filter(|(c, _)| c.required)
         .map(|(_, r)| r.status)
         .collect();
+    required_statuses.extend(deliverable_results.iter().map(|result| result.status));
 
-    let goal_status = aggregate_required(&required_statuses);
+    let goal_status = if contract.deliverables.is_empty() || !has_required_criteria {
+        GoalStatus::Incomplete
+    } else {
+        aggregate_required(&required_statuses)
+    };
 
     Ok(AcceptanceReport {
         report_id: uuid::Uuid::new_v4().to_string(),
@@ -76,9 +84,140 @@ pub fn evaluate_goal(
         snapshot_id: snapshot.snapshot_id.clone(),
         status: goal_status,
         results,
+        deliverable_results,
         human_reviews: existing_reviews.to_vec(),
         checked_at_ms: now_ms,
     })
+}
+
+/// Checks every declared deliverable independently of the quality criteria.
+pub fn evaluate_deliverables(
+    contract: &GoalContract,
+    snapshot: &EvidenceSnapshot,
+    contents: &HashMap<String, Vec<u8>>,
+) -> Vec<DeliverableResult> {
+    contract
+        .deliverables
+        .iter()
+        .map(|deliverable| {
+            let mappings: Vec<_> = snapshot
+                .deliverables
+                .iter()
+                .filter(|mapping| mapping.deliverable_id == deliverable.id)
+                .collect();
+            if mappings.is_empty() {
+                return deliverable_result(
+                    deliverable.id.clone(),
+                    "artifact_missing",
+                    CriterionStatus::Fail,
+                    Vec::new(),
+                    format!("未找到交付物 '{}' 的产物映射", deliverable.id),
+                );
+            }
+            if mappings.len() != 1 {
+                return deliverable_result(
+                    deliverable.id.clone(),
+                    "artifact_origin_mismatch",
+                    CriterionStatus::Fail,
+                    Vec::new(),
+                    format!("交付物 '{}' 存在多个产物映射", deliverable.id),
+                );
+            }
+
+            let artifact_id = mappings[0].artifact_id.as_str();
+            let artifact_evidence: Vec<_> = snapshot
+                .evidence
+                .iter()
+                .filter(|evidence| evidence.artifact_id.as_deref() == Some(artifact_id))
+                .collect();
+            if artifact_evidence.len() != 1 {
+                return deliverable_result(
+                    deliverable.id.clone(),
+                    "artifact_origin_mismatch",
+                    CriterionStatus::Fail,
+                    Vec::new(),
+                    format!("产物 '{}' 没有唯一的执行来源证据", artifact_id),
+                );
+            }
+
+            let evidence = artifact_evidence[0];
+            let origin = &evidence.origin;
+            let selected_execution = snapshot.executions.iter().any(|execution| {
+                execution.graph_id == snapshot.graph_id
+                    && execution.graph_revision == snapshot.graph_revision
+                    && origin.graph_id == snapshot.graph_id
+                    && origin.graph_revision == snapshot.graph_revision
+                    && execution.node_id == origin.node_id
+                    && execution.execution_id == origin.execution_id
+            });
+            if !selected_execution {
+                return deliverable_result(
+                    deliverable.id.clone(),
+                    "artifact_origin_mismatch",
+                    CriterionStatus::Fail,
+                    vec![evidence.evidence_id.clone()],
+                    format!("产物 '{}' 不属于本次选定的图、节点和执行", artifact_id),
+                );
+            }
+
+            let content = match contents.get(artifact_id) {
+                Some(content) => content,
+                None => {
+                    return deliverable_result(
+                        deliverable.id.clone(),
+                        "artifact_missing",
+                        CriterionStatus::Fail,
+                        vec![evidence.evidence_id.clone()],
+                        format!("交付物 '{}' 的实际文件不存在", deliverable.id),
+                    );
+                }
+            };
+            if content.is_empty() {
+                return deliverable_result(
+                    deliverable.id.clone(),
+                    "artifact_empty",
+                    CriterionStatus::Fail,
+                    vec![evidence.evidence_id.clone()],
+                    format!("交付物 '{}' 的实际文件内容为空", deliverable.id),
+                );
+            }
+
+            let actual_digest = format!("{:x}", Sha256::digest(content));
+            if actual_digest != evidence.digest {
+                return deliverable_result(
+                    deliverable.id.clone(),
+                    "artifact_digest_mismatch",
+                    CriterionStatus::Fail,
+                    vec![evidence.evidence_id.clone()],
+                    format!("产物 '{}' 实际摘要与快照证据摘要不符", artifact_id),
+                );
+            }
+
+            deliverable_result(
+                deliverable.id.clone(),
+                "verified",
+                CriterionStatus::Pass,
+                vec![evidence.evidence_id.clone()],
+                format!("交付物 '{}' 的实际文件、来源和摘要已核验", deliverable.id),
+            )
+        })
+        .collect()
+}
+
+fn deliverable_result(
+    deliverable_id: String,
+    code: &str,
+    status: CriterionStatus,
+    evidence_ids: Vec<String>,
+    reason: String,
+) -> DeliverableResult {
+    DeliverableResult {
+        deliverable_id,
+        status,
+        code: code.into(),
+        evidence_ids,
+        reason,
+    }
 }
 
 /// Aggregates required criterion statuses into GoalStatus.
@@ -104,6 +243,7 @@ fn evaluate_criterion(
     check: &CriterionCheck,
     snapshot: &EvidenceSnapshot,
     evidence_content: &HashMap<String, Vec<u8>>,
+    deliverable_results: &[DeliverableResult],
     existing_reviews: &[HumanReview],
     criterion_id: &str,
 ) -> (CriterionStatus, Vec<String>, String) {
@@ -342,9 +482,25 @@ fn evaluate_criterion(
         }
 
         CriterionCheck::HumanReview {
-            deliverable_id: _,
+            deliverable_id,
             rubric,
         } => {
+            let deliverable = deliverable_results
+                .iter()
+                .find(|result| result.deliverable_id == *deliverable_id);
+            if !deliverable.is_some_and(|result| result.status == CriterionStatus::Pass) {
+                let reason = deliverable.map_or_else(
+                    || format!("人工复核引用了未声明的交付物 '{}'", deliverable_id),
+                    |result| format!("人工复核不能替代交付物基础检查: {}", result.reason),
+                );
+                return (
+                    CriterionStatus::Fail,
+                    deliverable
+                        .map(|result| result.evidence_ids.clone())
+                        .unwrap_or_default(),
+                    reason,
+                );
+            }
             if let Some(review) = existing_reviews
                 .iter()
                 .find(|r| r.criterion_id == criterion_id)

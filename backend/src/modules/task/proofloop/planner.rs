@@ -35,6 +35,7 @@ pub async fn propose_candidate_with_usage(
     cancel: &CancellationToken,
 ) -> Result<(GoalContract, CandidatePlan, super::contracts::PlanningUsage), ProofError> {
     let started_at_ms = chrono::Utc::now().timestamp_millis();
+    let planning_started = std::time::Instant::now();
     if cancel.is_cancelled() {
         return Err(ProofError::new("aborted", "规划请求已被取消"));
     }
@@ -215,6 +216,7 @@ pub async fn propose_candidate_with_usage(
             model_calls: 1,
             total_tokens,
             started_at_ms,
+            elapsed_ms: Some(planning_started.elapsed().as_millis().min(u64::MAX as u128) as u64),
         },
     ))
 }

@@ -446,8 +446,8 @@ impl NodeExecution {
     }
 
     /// Normalize active attempts on startup. A restarted process has no proof
-    /// that the provider kept running, so it fails closed and leaves evidence
-    /// for a future retry instead of pretending work continued.
+    /// that the provider kept running, so the outcome remains unknown and is
+    /// preserved for review instead of pretending work continued.
     pub fn recover_after_restart(&mut self, now: i64) -> NodeExecutionStatus {
         if self.status.is_active() {
             self.status = NodeExecutionStatus::Failed;
@@ -472,6 +472,17 @@ impl NodeExecution {
             self.finished_at = Some(now);
         }
     }
+}
+
+/// Whether the persisted failure code records an external outcome that the
+/// runtime cannot prove safe to repeat.
+pub fn external_result_is_uncertain(code: Option<&str>) -> bool {
+    matches!(
+        code,
+        Some("execution_interrupted")
+            | Some("proofloop_budget_exhausted_result_unknown")
+            | Some("external_mutation_uncertain")
+    )
 }
 
 /// Short name retained inside the execution module for callers that import
@@ -677,6 +688,21 @@ mod tests {
         let first = NodeExecutionId::new("attempt-1").unwrap();
         let second = NodeExecutionId::new("attempt-2").unwrap();
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn external_result_uncertainty_uses_only_persisted_unknown_result_codes() {
+        assert!(external_result_is_uncertain(Some("execution_interrupted")));
+        assert!(external_result_is_uncertain(Some(
+            "proofloop_budget_exhausted_result_unknown"
+        )));
+        assert!(external_result_is_uncertain(Some(
+            "external_mutation_uncertain"
+        )));
+        assert!(!external_result_is_uncertain(Some(
+            "input_binding_source_missing"
+        )));
+        assert!(!external_result_is_uncertain(None));
     }
 
     #[test]

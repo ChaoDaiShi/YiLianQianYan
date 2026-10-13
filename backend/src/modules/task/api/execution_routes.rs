@@ -63,7 +63,7 @@ pub async fn start_execution(
             Json(json!({ "execution": execution_summary(&execution) })),
         )
             .into_response(),
-        Err(error) => runtime_error(error),
+        Err(error) => execution_runtime_error(error),
     }
 }
 
@@ -103,6 +103,21 @@ pub async fn list_executions(
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(error) => runtime_error(error),
+    }
+}
+
+fn execution_runtime_error(error: TaskWorldRuntimeError) -> Response {
+    match &error {
+        TaskWorldRuntimeError::Harness(TaskHarnessError::ExternalResultUnknown(execution_id)) => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "external_mutation_uncertain",
+                "message": "上次调用的外部结果尚未核实，当前不能再次执行该节点",
+                "execution_id": execution_id.as_str(),
+            })),
+        )
+            .into_response(),
+        _ => runtime_error(error),
     }
 }
 
@@ -167,6 +182,6 @@ pub async fn rerun(
             })),
         )
             .into_response(),
-        Err(error) => runtime_error(error),
+        Err(error) => execution_runtime_error(error),
     }
 }

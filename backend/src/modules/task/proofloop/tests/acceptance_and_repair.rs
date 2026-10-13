@@ -1,4 +1,5 @@
 use super::*;
+use sha2::Digest;
 
 // ── Line C Tests: Acceptance Evaluator ──
 
@@ -67,14 +68,30 @@ fn test_line_c_acceptance_aggregation_and_checks() {
         budget: Budget::default(),
     };
 
+    let md_text = "# 调研报告\n\n## 背景\n介绍背景。\n\n## 技术对比\n方案A与方案B。\n\n## 结论\n采用方案A。\n";
+    let md_bytes = md_text.as_bytes().to_vec();
+    let digest = format!("{:x}", sha2::Sha256::digest(&md_bytes));
+    let selected_execution = ExecutionRef {
+        graph_id: "graph_1".into(),
+        graph_revision: 1,
+        node_id: "report_node".into(),
+        execution_id: "exec_1".into(),
+    };
     let snapshot = EvidenceSnapshot {
         snapshot_id: "snap_1".into(),
         goal_id: "goal_1".into(),
         goal_version: 1,
         graph_id: "graph_1".into(),
         graph_revision: 1,
-        executions: vec![],
-        evidence: vec![],
+        executions: vec![selected_execution.clone()],
+        evidence: vec![EvidenceRef {
+            evidence_id: "ev_art_1".into(),
+            origin: selected_execution,
+            artifact_id: Some("art_1".into()),
+            output_path: None,
+            digest,
+            observed_at_ms: 1000,
+        }],
         deliverables: vec![DeliverableArtifactMapping {
             deliverable_id: "report_md".into(),
             artifact_id: "art_1".into(),
@@ -83,8 +100,7 @@ fn test_line_c_acceptance_aggregation_and_checks() {
     };
 
     let mut content_map = HashMap::new();
-    let md_text = "# 调研报告\n\n## 背景\n介绍背景。\n\n## 技术对比\n方案A与方案B。\n\n## 结论\n采用方案A。\n";
-    content_map.insert("art_1".into(), md_text.as_bytes().to_vec());
+    content_map.insert("art_1".into(), md_bytes);
 
     let report = evaluate_goal(&contract, &snapshot, &content_map, &[], 2000).unwrap();
     // Required criteria pass, optional human review is HumanPending -> GoalStatus is Pass!
