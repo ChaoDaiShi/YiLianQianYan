@@ -1,6 +1,15 @@
 //! Goal evaluation HTTP handlers.
 use super::*;
 
+fn acceptance_report_save_error(error: crate::db::ProofLoopDbError) -> Response {
+    match error {
+        crate::db::ProofLoopDbError::Integrity(message) => {
+            proof_error_response(ProofError::new("proofloop_evidence_stale", message))
+        }
+        error => proof_error_response(ProofError::new("db_error", error.to_string())),
+    }
+}
+
 pub async fn list_goal_evaluations_handler(
     State(server): State<Arc<AppServer>>,
     Path(goal_id): Path<String>,
@@ -101,8 +110,11 @@ pub async fn evaluate_goal_handler(
         Err(err) => return proof_error_response(err),
     };
 
-    if let Err(err) = server.db.save_acceptance_report(&report, &snapshot, now_ms) {
-        return proof_error_response(ProofError::new("db_error", err.to_string()));
+    if let Err(err) = server
+        .db
+        .save_acceptance_report_if_current(&report, &snapshot, now_ms)
+    {
+        return acceptance_report_save_error(err);
     }
 
     (StatusCode::OK, Json(report)).into_response()
@@ -184,11 +196,12 @@ pub async fn submit_human_review_handler(
         Err(err) => return proof_error_response(err),
     };
 
-    if let Err(err) = server
-        .db
-        .save_acceptance_report(&updated_report, &snapshot, now_ms)
+    if let Err(err) =
+        server
+            .db
+            .save_acceptance_report_if_current(&updated_report, &snapshot, now_ms)
     {
-        return proof_error_response(ProofError::new("db_error", err.to_string()));
+        return acceptance_report_save_error(err);
     }
 
     (StatusCode::OK, Json(updated_report)).into_response()

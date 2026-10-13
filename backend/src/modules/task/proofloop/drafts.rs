@@ -4,7 +4,7 @@
 
 use tokio_util::sync::CancellationToken;
 
-use crate::db::Database;
+use crate::db::{Database, DraftWriteConflict, ProofLoopDbError};
 use crate::integrations::llm::client::LlmClient;
 use crate::modules::task::{runtime::TaskWorldRuntime, task_graph::TaskGraphId};
 
@@ -14,6 +14,44 @@ use super::contracts::{
     DraftStatus, ProofDraft, ProofDraftSummary, ProofError, UpdateProofDraftRequest,
 };
 use super::planner::propose_candidate_with_usage;
+
+fn draft_write_error(error: ProofLoopDbError) -> ProofError {
+    match error {
+        ProofLoopDbError::DraftConflict(DraftWriteConflict::NotFound) => {
+            ProofError::new("draft_not_found", "指定的任务草稿不存在")
+        }
+        ProofLoopDbError::DraftConflict(DraftWriteConflict::AlreadyConfirmed) => ProofError::new(
+            "draft_already_confirmed",
+            "已确认的草稿不可直接修改，请基于新目标创建草稿",
+        ),
+        ProofLoopDbError::DraftConflict(DraftWriteConflict::StaleRevision { expected, actual }) => {
+            ProofError::new(
+                "proofloop_stale_revision",
+                format!("草稿版本冲突：预期版本 {expected}，实际当前版本 {actual}"),
+            )
+        }
+        error => ProofError::new("draft_save_failed", error.to_string()),
+    }
+}
+
+fn next_draft_revision(revision: u32) -> Result<u32, ProofError> {
+    revision
+        .checked_add(1)
+        .ok_or_else(|| ProofError::new("draft_revision_overflow", "草稿版本号已到上限"))
+}
+
+fn confirmed_response(draft: ProofDraft) -> Option<ConfirmProofDraftResponse> {
+    if draft.status != DraftStatus::Confirmed {
+        return None;
+    }
+    let graph_revision = draft.confirmed_graph_revision?;
+    Some(ConfirmProofDraftResponse {
+        graph_id: draft.graph_id,
+        graph_revision,
+        goal_id: draft.contract.goal_id,
+        goal_version: draft.contract.version,
+    })
+}
 
 pub struct DraftService {
     db: Database,
@@ -68,7 +106,7 @@ impl DraftService {
         };
 
         self.db
-            .save_proof_draft(&draft, now)
+            .insert_proof_draft(&draft, now)
             .map_err(|e| ProofError::new("draft_save_failed", e.to_string()))?;
 
         Ok(draft)
@@ -152,7 +190,7 @@ impl DraftService {
 
         let updated_draft = ProofDraft {
             draft_id: existing.draft_id,
-            revision: existing.revision + 1,
+            revision: next_draft_revision(existing.revision)?,
             graph_id: existing.graph_id,
             contract: request.contract,
             snapshot: current_snapshot,
@@ -165,8 +203,8 @@ impl DraftService {
         };
 
         self.db
-            .save_proof_draft(&updated_draft, now)
-            .map_err(|e| ProofError::new("draft_save_failed", e.to_string()))?;
+            .update_proof_draft_if_current(request.expected_revision, &updated_draft, now)
+            .map_err(draft_write_error)?;
 
         Ok(updated_draft)
     }
@@ -233,7 +271,11 @@ impl DraftService {
                 CompileStatus::NeedsInput => DraftStatus::NeedsInput,
                 _ => DraftStatus::Invalid,
             };
-            let _ = self.db.save_proof_draft(&draft, now);
+            let expected_revision = draft.revision;
+            draft.revision = next_draft_revision(expected_revision)?;
+            self.db
+                .update_proof_draft_if_current(expected_revision, &draft, now)
+                .map_err(draft_write_error)?;
 
             return Err(ProofError::new(
                 "proofloop_not_ready_for_confirmation",
@@ -248,9 +290,48 @@ impl DraftService {
         draft.status = DraftStatus::Confirmed;
         draft.confirmed_graph_revision = Some(compiled_graph.revision.value());
         draft.compilation = fresh_compilation;
-        let created_graph = runtime
-            .confirm_proofloop_draft(&draft, now)
-            .map_err(|error| ProofError::new("draft_confirmation_failed", error.to_string()))?;
+        let created_graph = match runtime.confirm_proofloop_draft(&draft, now) {
+            Ok(graph) => graph,
+            Err(error) => {
+                let latest = self.get_draft(draft_id)?;
+                if let Some(latest) = latest {
+                    if latest.status == DraftStatus::Confirmed
+                        && latest.revision == expected_revision
+                        && latest.draft_id == draft.draft_id
+                        && latest.graph_id == draft.graph_id
+                        && latest.contract.goal_id == draft.contract.goal_id
+                        && latest.contract.version == draft.contract.version
+                        && latest.confirmed_graph_revision == draft.confirmed_graph_revision
+                    {
+                        return confirmed_response(latest).ok_or_else(|| {
+                            ProofError::new(
+                                "draft_confirmation_failed",
+                                "确认草稿缺少已提交的任务图版本",
+                            )
+                        });
+                    }
+                    if latest.status == DraftStatus::Confirmed {
+                        return Err(ProofError::new(
+                            "draft_already_confirmed",
+                            "草稿已由另一确认请求提交",
+                        ));
+                    }
+                    if latest.revision != expected_revision {
+                        return Err(ProofError::new(
+                            "proofloop_stale_revision",
+                            format!(
+                                "草稿版本冲突：预期版本 {expected_revision}，实际当前版本 {}",
+                                latest.revision
+                            ),
+                        ));
+                    }
+                }
+                return Err(ProofError::new(
+                    "draft_confirmation_failed",
+                    error.to_string(),
+                ));
+            }
+        };
 
         Ok(ConfirmProofDraftResponse {
             graph_id: created_graph.id.to_string(),

@@ -62,7 +62,10 @@ fn draft(
         compilation: compile_candidate(c, p, s, graph, &[]),
         status: DraftStatus::ReadyForConfirmation,
         confirmed_graph_revision: None,
-        planning_usage: PlanningUsage::default(),
+        planning_usage: PlanningUsage {
+            elapsed_ms: Some(0),
+            ..PlanningUsage::default()
+        },
     }
 }
 fn setup(srv: &AppServer) -> (GoalContract, TaskGraphId, String) {
@@ -562,12 +565,17 @@ async fn repair_checks_model_token_and_elapsed_budgets() {
             }
             _ => {
                 c.budget.max_wall_time_ms = 10;
+                c.budget.time_basis = BudgetTimeBasis::WallClock;
                 d.planning_usage.started_at_ms = now() - 100;
             }
         }
         d.contract = c.clone();
         srv.db.save_goal_version(&c, now()).unwrap();
-        srv.db.save_proof_draft(&d, now()).unwrap();
+        // This isolated fixture changes confirmed budget inputs deliberately.
+        srv.db.conn().execute(
+            "UPDATE proofloop_drafts SET payload_json=?1 WHERE draft_id=?2 AND status='confirmed'",
+            rusqlite::params![serde_json::to_string(&d).unwrap(), d.draft_id],
+        ).unwrap();
         let (status, body) = call(
             &srv,
             "POST",

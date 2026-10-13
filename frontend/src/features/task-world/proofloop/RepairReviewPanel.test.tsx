@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import RepairReviewPanel from "./RepairReviewPanel";
+import { formatIdentifier } from "../../../utils/identifiers";
 import type { RepairProposal } from "../../../api/proofloop";
 
 describe("RepairReviewPanel", () => {
@@ -42,7 +43,8 @@ describe("RepairReviewPanel", () => {
     expect(html).toContain("受控局部修复审查");
     expect(html).toContain("第 1 轮修复");
     expect(html).toContain("node_b");
-    expect(html).toContain("node_b → node_c");
+    expect(html).toContain(formatIdentifier("node", "node_b"));
+    expect(html).toContain(formatIdentifier("node", "node_c"));
     expect(html).toContain("修改固定参数");
     expect(html).toContain("单节点重跑");
     expect(html).toContain("确认并应用局部修复");

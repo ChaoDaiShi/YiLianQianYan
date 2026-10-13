@@ -15,8 +15,11 @@ import {
   type AcceptanceReport,
   type EvidenceRef,
   type EvidenceSnapshot,
+  type GoalContract,
 } from "../../../api/proofloop";
 import { Badge, Button, Input } from "../../../components/ui";
+import Identifier from "../../../components/Identifier";
+import { formatIdentifierText, type IdentifierReference } from "../../../utils/identifiers";
 import {
   formatCriterionStatus,
   formatGoalOverallStatus,
@@ -26,6 +29,7 @@ export interface AcceptancePanelProps {
   goalId: string;
   report: AcceptanceReport | null;
   evidenceSnapshot?: EvidenceSnapshot | null;
+  contract?: GoalContract;
   onRefreshEvaluation?: () => void;
   onRequestRepair?: (report: AcceptanceReport) => void;
   onOpenArtifact?: (artifactId: string) => void;
@@ -37,6 +41,7 @@ export default function AcceptancePanel({
   goalId,
   report,
   evidenceSnapshot,
+  contract,
   onRefreshEvaluation,
   onRequestRepair,
   onOpenArtifact,
@@ -94,6 +99,18 @@ export default function AcceptancePanel({
   const findEvidence = (evidenceId: string): EvidenceRef | undefined => {
     return evidenceSnapshot?.evidence.find((e) => e.evidence_id === evidenceId);
   };
+  const references: IdentifierReference[] = [
+    { kind: "goal", value: goalId },
+    { kind: "report", value: report.report_id },
+    { kind: "graph", value: report.graph_id },
+    ...(evidenceSnapshot?.evidence.flatMap((item): IdentifierReference[] => [
+      { kind: "evidence", value: item.evidence_id },
+      { kind: "execution", value: item.origin.execution_id },
+      ...(item.artifact_id ? [{ kind: "artifact" as const, value: item.artifact_id }] : []),
+      ...(/^[0-9a-f]{64}$/i.test(item.digest) ? [{ kind: "digest" as const, value: item.digest }] : []),
+    ]) || []),
+  ];
+  const readable = (text: string) => formatIdentifierText(text, references);
 
   return (
     <div className={`acceptance-panel flex flex-col gap-4 rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] p-4 ${className}`}>
@@ -125,14 +142,46 @@ export default function AcceptancePanel({
         </div>
       </div>
 
-      <div className="text-xs text-[var(--text-faint)]">
-        目标 ID: {goalId} · 报告 ID: {report.report_id} · 目标版本: v{report.goal_version} · 图版本: r{report.graph_revision}
+      <div className="flex flex-wrap gap-x-3 gap-y-2 text-xs text-[var(--text-faint)]">
+        <span>目标 <Identifier kind="goal" value={goalId} /></span>
+        <span>报告 <Identifier kind="report" value={report.report_id} /></span>
+        <span>目标版本 v{report.goal_version} · 图版本 r{report.graph_revision}</span>
       </div>
 
-      {/* Criteria checks list */}
+      <section className="flex flex-col gap-2">
+        <h3 className="text-xs font-semibold text-[var(--text)]">
+          交付成果检查（共 {report.deliverable_results.length} 项）
+        </h3>
+        {report.deliverable_results.length === 0 ? (
+          <p className="rounded-[var(--radius-md)] border border-[var(--warning-border)] bg-[var(--warning-soft)] p-3 text-xs text-[var(--warning-fg)]">
+            此报告没有交付物基础检查结果，需要重新验收。
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {report.deliverable_results.map((item) => {
+              const statusMeta = formatCriterionStatus(item.status);
+              return (
+                <div
+                  key={item.deliverable_id}
+                  className="flex flex-col gap-1.5 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] p-3 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-[var(--text)]">{contract?.deliverables.find(deliverable => deliverable.id === item.deliverable_id)?.title || "交付物"}</span>
+                    <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
+                  </div>
+                  <Identifier kind="deliverable" value={item.deliverable_id} className="text-[11px] text-[var(--text-faint)]" />
+                  <p className="break-words text-[var(--text-secondary)]">{readable(item.reason)}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Quality and human review checks */}
       <div className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold text-[var(--text)]">
-          准则条件核对详情（共 {report.results.length} 项）
+          质量与人工复核（共 {report.results.length} 项）
         </h3>
         <div className="flex flex-col gap-2">
           {report.results.map((item) => {
@@ -150,12 +199,13 @@ export default function AcceptancePanel({
                     {item.status === "fail" && <XCircle className="h-4 w-4 text-[var(--danger)]" />}
                     {item.status === "human_pending" && <UserCheck className="h-4 w-4 text-[var(--warning-fg)]" />}
                     {item.status === "not_checked" && <HelpCircle className="h-4 w-4 text-[var(--text-faint)]" />}
-                    <span className="font-medium text-[var(--text)]">准则 {item.criterion_id}</span>
+                    <span className="font-medium text-[var(--text)]">{contract?.criteria.find(criterion => criterion.id === item.criterion_id)?.description || "验收条件"}</span>
                   </div>
                   <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
                 </div>
 
-                <p className="text-[var(--text-secondary)]">{item.reason || "暂无具体检查说明"}</p>
+                <Identifier kind="criterion" value={item.criterion_id} className="text-[11px] text-[var(--text-faint)]" />
+                <p className="break-words text-[var(--text-secondary)]">{readable(item.reason || "暂无具体检查说明")}</p>
 
                 {/* Evidence links */}
                 {item.evidence_ids.length > 0 && (
@@ -165,8 +215,10 @@ export default function AcceptancePanel({
                       const ev = findEvidence(eid);
                       return (
                         <div key={eid} className="flex flex-wrap items-center justify-between gap-1 text-[var(--text-secondary)]">
-                          <span>
-                            证据 [{eid.slice(0, 8)}] · 摘要: {ev?.digest ? ev.digest.slice(0, 16) + "…" : "待计算"}
+                          <span className="inline-flex flex-wrap items-center gap-1.5">
+                            <Identifier kind="evidence" value={eid} />
+                            {ev?.artifact_id && <Identifier kind="artifact" value={ev.artifact_id} />}
+                            {ev?.digest && /^[0-9a-f]{64}$/i.test(ev.digest) ? <Identifier kind="digest" value={ev.digest} /> : <span>摘要待计算</span>}
                           </span>
                           {ev?.artifact_id && onOpenArtifact && (
                             <button
@@ -267,10 +319,10 @@ export default function AcceptancePanel({
           <ul className="mt-2 list-disc pl-4 text-[var(--text-secondary)]">
             {evidenceSnapshot.sources.map((src) => (
               <li key={src.source_id}>
-                <span className="font-mono">{src.uri}</span>
+                <span className="break-all font-mono">{src.uri}</span>
                 {src.cited_by_deliverable_ids.length > 0 && (
                   <span className="ml-1 text-[var(--text-faint)]">
-                    （引用交付物: {src.cited_by_deliverable_ids.join(", ")}）
+                    （引用交付物: {src.cited_by_deliverable_ids.map(id => <Identifier key={id} kind="deliverable" value={id} className="ml-1" />)}）
                   </span>
                 )}
               </li>

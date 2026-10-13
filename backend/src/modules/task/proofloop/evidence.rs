@@ -9,11 +9,10 @@ use super::contracts::{
     DeliverableArtifactMapping, EvidenceRef, EvidenceSnapshot, EvidenceSource, ExecutionRef,
     GoalContract, ProofError,
 };
-use crate::db::{ArtifactQuery, Database};
+use crate::db::Database;
 use crate::modules::task::artifact::ArtifactService;
 use crate::modules::task::execution::{NodeExecution, NodeExecutionId, NodeExecutionStatus};
 use crate::modules::task::TaskGraphId;
-use crate::workspace::WorkspaceId;
 
 pub fn collect_evidence(
     db: &Database,
@@ -164,17 +163,6 @@ pub fn collect_evidence(
     let mut deliverable_mappings: Vec<DeliverableArtifactMapping> = Vec::new();
     let mut evidence_content: HashMap<String, Vec<u8>> = HashMap::new();
 
-    let ws_id = WorkspaceId::new(&contract.workspace_id)
-        .map_err(|e| ProofError::new("invalid_workspace_id", e.to_string()))?;
-
-    let artifacts = db
-        .list_artifacts(&ArtifactQuery {
-            workspace_id: Some(ws_id),
-            limit: Some(100),
-            ..Default::default()
-        })
-        .map_err(|e| ProofError::new("db_error", e.to_string()))?;
-
     for del in &contract.deliverables {
         let expected_node = draft
             .as_ref()
@@ -185,25 +173,56 @@ pub fn collect_evidence(
                     .find(|item| item.deliverable_id == del.id)
             })
             .map(|item| item.node_id.as_str());
-        let matched = artifacts.iter().find(|art| {
-            let matches_exec = loaded_executions
-                .iter()
-                .any(|e| verified_execution(e) && e.id.as_str() == art.task_execution_id.as_str()
-                    && expected_node == Some(e.node_id.as_str()));
-            let matches_source = db.artifact_provenance(art.id.as_str()).ok().flatten().is_some_and(|provenance| {
-                matches!(provenance.source, crate::modules::task::artifact::ArtifactSource::Node { graph_id: ref source_graph, node_id: ref source_node, execution_id: ref source_execution, workspace_id: ref source_workspace }
-                    if source_graph == graph_id && Some(source_node.as_str()) == expected_node && source_execution == art.task_execution_id.as_str() && source_workspace == &contract.workspace_id)
-            });
-            matches_exec && matches_source && (art.name == del.title || art.id.as_str() == del.id)
+        let selected_execution = loaded_executions.iter().find(|execution| {
+            verified_execution(execution) && expected_node == Some(execution.node_id.as_str())
         });
+        let Some(selected_execution) = selected_execution else {
+            continue;
+        };
+        let artifact_ids = db
+            .find_proofloop_artifact_ids(
+                &contract.workspace_id,
+                graph_id,
+                selected_execution.node_id.as_str(),
+                selected_execution.id.as_str(),
+                &del.id,
+                &del.title,
+            )
+            .map_err(|error| ProofError::new("db_error", error.to_string()))?;
+        let Some(artifact_id) = artifact_ids.first() else {
+            continue;
+        };
+        let artifact_id = crate::modules::task::model::ArtifactId::new(artifact_id)
+            .map_err(|error| ProofError::new("invalid_artifact_id", error.to_string()))?;
+        let artifact = db
+            .get_artifact(&artifact_id)
+            .map_err(|error| ProofError::new("db_error", error.to_string()))?
+            .ok_or_else(|| {
+                ProofError::new("artifact_read_failed", "精确定位的交付物产物记录已不存在")
+            })?;
+        let provenance = db
+            .artifact_provenance(artifact.id.as_str())
+            .map_err(|error| ProofError::new("db_error", error.to_string()))?
+            .ok_or_else(|| ProofError::new("artifact_origin_mismatch", "交付物产物缺少来源记录"))?;
+        let provenance_matches = matches!(
+            &provenance.source,
+            crate::modules::task::artifact::ArtifactSource::Node {
+                graph_id: source_graph,
+                node_id: source_node,
+                execution_id: source_execution,
+                workspace_id: source_workspace,
+            } if source_graph.as_str() == graph_id
+                && Some(source_node.as_str()) == expected_node
+                && source_execution.as_str() == selected_execution.id.as_str()
+                && source_workspace == &contract.workspace_id
+        );
+        if !provenance_matches {
+            continue;
+        }
 
-        if let Some(art) = matched {
+        let art = artifact;
+        {
             let art_id_str = art.id.as_str().to_string();
-            deliverable_mappings.push(DeliverableArtifactMapping {
-                deliverable_id: del.id.clone(),
-                artifact_id: art_id_str.clone(),
-            });
-
             let (_, bytes) = match artifact_service.read_bytes(&art.id, allowed_root) {
                 Ok(res) => res,
                 Err(e) => {
@@ -215,6 +234,16 @@ pub fn collect_evidence(
             };
 
             let digest = format!("{:x}", Sha256::digest(&bytes));
+            if digest != provenance.sha256 {
+                return Err(ProofError::new(
+                    "artifact_read_failed",
+                    format!("交付物 '{}' 的文件摘要与来源记录不一致", del.id),
+                ));
+            }
+            deliverable_mappings.push(DeliverableArtifactMapping {
+                deliverable_id: del.id.clone(),
+                artifact_id: art_id_str.clone(),
+            });
             let text = String::from_utf8_lossy(&bytes);
             for source in &mut sources {
                 if text.contains(&source.uri) {

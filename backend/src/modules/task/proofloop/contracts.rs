@@ -48,6 +48,24 @@ pub struct Budget {
     pub max_total_tokens: u64,
     pub max_wall_time_ms: u64,
     pub max_repair_rounds: u32,
+    #[serde(default)]
+    pub time_basis: BudgetTimeBasis,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetTimeBasis {
+    #[default]
+    ActiveWork,
+    WallClock,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalTimeUsage {
+    pub planning_elapsed_ms: Option<u64>,
+    pub execution_active_ms: u64,
+    pub human_wait_ms: Option<u64>,
+    pub accounting_state: String,
 }
 
 impl Default for Budget {
@@ -57,6 +75,7 @@ impl Default for Budget {
             max_total_tokens: 24_000,
             max_wall_time_ms: 600_000,
             max_repair_rounds: 2,
+            time_basis: BudgetTimeBasis::ActiveWork,
         }
     }
 }
@@ -242,6 +261,8 @@ pub struct PlanningUsage {
     pub model_calls: u32,
     pub total_tokens: Option<u64>,
     pub started_at_ms: i64,
+    #[serde(default)]
+    pub elapsed_ms: Option<u64>,
 }
 
 impl Default for PlanningUsage {
@@ -250,6 +271,7 @@ impl Default for PlanningUsage {
             model_calls: 1,
             total_tokens: None,
             started_at_ms: 0,
+            elapsed_ms: None,
         }
     }
 }
@@ -350,6 +372,15 @@ pub struct CriterionResult {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliverableResult {
+    pub deliverable_id: String,
+    pub status: CriterionStatus,
+    pub code: String,
+    pub evidence_ids: Vec<String>,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalStatus {
@@ -368,6 +399,8 @@ pub struct AcceptanceReport {
     pub snapshot_id: String,
     pub status: GoalStatus,
     pub results: Vec<CriterionResult>,
+    #[serde(default)]
+    pub deliverable_results: Vec<DeliverableResult>,
     pub human_reviews: Vec<HumanReview>,
     pub checked_at_ms: i64,
 }

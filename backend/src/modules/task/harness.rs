@@ -11,8 +11,8 @@ use thiserror::Error;
 
 use super::context::{NodeContextBuildError, NodeContextBuilder};
 use super::execution::{
-    ExecutionRetryPolicy, NodeExecution, NodeExecutionError, NodeExecutionId, NodeExecutionStatus,
-    ValidationResult, ValidationStatus, MAX_RETRY_ATTEMPTS,
+    external_result_is_uncertain, ExecutionRetryPolicy, NodeExecution, NodeExecutionError,
+    NodeExecutionId, NodeExecutionStatus, ValidationResult, ValidationStatus, MAX_RETRY_ATTEMPTS,
 };
 use super::executor::{ExecutorResolutionError, ExecutorResolver, ResolvedExecutionPlan};
 use super::scheduler::{
@@ -21,11 +21,7 @@ use super::scheduler::{
 use super::validation::{DeterministicValidator, ValidationPolicy, ValidationRequest};
 use super::{TaskGraph, TaskGraphId, TaskNodeId};
 
-const RETRYABLE_FAILURE_CODES: &[&str] = &[
-    "validation_rejected",
-    "provider_error",
-    "execution_interrupted",
-];
+const RETRYABLE_FAILURE_CODES: &[&str] = &["validation_rejected", "provider_error"];
 
 #[derive(Debug, Error)]
 pub enum TaskHarnessError {
@@ -45,6 +41,10 @@ pub enum TaskHarnessError {
     MissingOutput(NodeExecutionId),
     #[error("node execution retry is not allowed: {0}")]
     RetryNotAllowed(NodeExecutionId),
+    #[error("external result is unknown for node execution: {0}")]
+    ExternalResultUnknown(NodeExecutionId),
+    #[error("repair source is no longer the latest failed attempt: {0}")]
+    RepairSourceStale(NodeExecutionId),
     #[error("node execution retry policy is invalid: {0}")]
     RetryPolicy(String),
     #[error("node execution failed: {0}")]
@@ -235,6 +235,7 @@ impl TaskHarness {
         node_id: &TaskNodeId,
         now: i64,
     ) -> Result<NodeExecutionId, TaskHarnessError> {
+        self.ensure_branch_outcomes_known(std::slice::from_ref(node_id))?;
         let states = self.latest_states();
         if !self.scheduler.can_start_node(&states, node_id) {
             return Err(TaskHarnessError::NodeNotReady(node_id.clone()));
@@ -434,6 +435,7 @@ impl TaskHarness {
         node_id: &TaskNodeId,
         now: i64,
     ) -> Result<NodeExecutionId, TaskHarnessError> {
+        self.ensure_branch_outcomes_known(std::slice::from_ref(node_id))?;
         let latest = self
             .latest_execution(node_id)
             .ok_or_else(|| TaskHarnessError::RetryNotAllowed(NodeExecutionId::generate()))?;
@@ -480,6 +482,7 @@ impl TaskHarness {
         let affected = self
             .scheduler
             .affected_branch(std::slice::from_ref(node_id));
+        self.ensure_branch_outcomes_known(&affected)?;
         // Reject the whole branch before invalidating any earlier result.
         let mut preserved_pending = Vec::new();
         for affected_node in &affected {
@@ -557,14 +560,9 @@ impl TaskHarness {
                         // A local execution cancelled by Task pause is eligible
                         // for a fresh attempt after resume; the cancelled row is
                         // still retained as history.
-                        status: if (execution.status == NodeExecutionStatus::Cancelled
-                            && execution.failure_code() == Some("paused"))
-                            || (execution.status == NodeExecutionStatus::Failed
-                                && execution.failure_code() == Some("execution_interrupted"))
+                        status: if execution.status == NodeExecutionStatus::Cancelled
+                            && execution.failure_code() == Some("paused")
                         {
-                            // A pause-cancelled or restart-interrupted
-                            // attempt remains history, but its node is
-                            // eligible for a fresh scheduler reservation.
                             NodeExecutionStatus::Pending
                         } else {
                             execution.status
@@ -574,6 +572,48 @@ impl TaskHarness {
                 ))
             })
             .collect()
+    }
+
+    fn ensure_branch_outcomes_known(
+        &self,
+        node_ids: &[TaskNodeId],
+    ) -> Result<(), TaskHarnessError> {
+        for node_id in node_ids {
+            if let Some(execution) = self.attempts.get(node_id).and_then(|attempts| {
+                attempts
+                    .iter()
+                    .find(|execution| external_result_is_uncertain(execution.failure_code()))
+            }) {
+                return Err(TaskHarnessError::ExternalResultUnknown(
+                    execution.id.clone(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_repair_sources_current_failure(
+        &self,
+        source_execution_ids: &[NodeExecutionId],
+    ) -> Result<(), TaskHarnessError> {
+        for execution_id in source_execution_ids {
+            let execution = self
+                .execution(execution_id)
+                .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
+            if external_result_is_uncertain(execution.failure_code()) {
+                return Err(TaskHarnessError::ExternalResultUnknown(
+                    execution_id.clone(),
+                ));
+            }
+            if execution.status != NodeExecutionStatus::Failed
+                || self
+                    .latest_execution(&execution.node_id)
+                    .map_or(true, |latest| &latest.id != execution_id)
+            {
+                return Err(TaskHarnessError::RepairSourceStale(execution_id.clone()));
+            }
+        }
+        Ok(())
     }
 
     fn dependency_outputs(&self, node_id: &TaskNodeId) -> Vec<(String, Value)> {
@@ -775,6 +815,51 @@ mod tests {
         assert_eq!(harness.recover_after_restart(61), 1);
         assert_eq!(
             harness.execution(&active).unwrap().failure_code(),
+            Some("execution_interrupted")
+        );
+    }
+
+    #[test]
+    fn interrupted_attempt_cannot_be_retried_or_started_from_pending_projection() {
+        let mut harness = harness();
+        let execution_id = harness.start_node(&id("source"), 70).unwrap();
+        harness.attempts.get_mut(&id("source")).unwrap()[0].retry_policy =
+            super::super::execution::ExecutionRetryPolicy::new(
+                2,
+                0,
+                vec!["execution_interrupted".to_string()],
+            )
+            .unwrap();
+        harness.recover_after_restart(71);
+
+        assert!(!harness.schedule().ready.contains(&id("source")));
+        assert!(harness.start_node(&id("source"), 72).is_err());
+        assert!(harness.retry_node(&id("source"), 73).is_err());
+        assert_eq!(harness.attempt_history(&id("source")).len(), 1);
+        assert_eq!(
+            harness.execution(&execution_id).unwrap().failure_code(),
+            Some("execution_interrupted")
+        );
+    }
+
+    #[test]
+    fn rerun_rejects_unknown_outcome_before_staling_any_affected_node() {
+        let mut harness = harness();
+        let source_id = complete(&mut harness, &id("source"), json!({"ok": true}), 80);
+        let dependent_id = harness.start_node(&id("dependent"), 90).unwrap();
+        harness.recover_after_restart(91);
+
+        assert!(harness.rerun_from_node(&id("source"), 92).is_err());
+        assert_eq!(
+            harness.execution(&source_id).unwrap().status,
+            NodeExecutionStatus::Succeeded
+        );
+        assert_eq!(
+            harness.execution(&dependent_id).unwrap().status,
+            NodeExecutionStatus::Failed
+        );
+        assert_eq!(
+            harness.execution(&dependent_id).unwrap().failure_code(),
             Some("execution_interrupted")
         );
     }

@@ -12,6 +12,8 @@ import {
   type RepairProposal,
 } from "../../../api/proofloop";
 import { Badge, Button } from "../../../components/ui";
+import Identifier from "../../../components/Identifier";
+import { formatIdentifierText, type IdentifierReference } from "../../../utils/identifiers";
 import { formatRepairOperation } from "./proofloopModel";
 
 export interface RepairReviewPanelProps {
@@ -33,6 +35,12 @@ export default function RepairReviewPanel({
   const [applyError, setApplyError] = useState<string | null>(null);
 
   const isStaleRevision = currentGraphRevision !== proposal.expected_graph_revision;
+  const references: IdentifierReference[] = [
+    { kind: "repair", value: proposal.repair_id },
+    { kind: "report", value: proposal.source_report_id },
+    ...proposal.failure_execution_ids.map(value => ({ kind: "execution" as const, value })),
+    ...proposal.affected_node_ids.map(value => ({ kind: "node" as const, value })),
+  ];
 
   const handleApply = useCallback(async () => {
     if (isStaleRevision || applying) return;
@@ -80,9 +88,11 @@ export default function RepairReviewPanel({
       {/* Rationale and failure context */}
       <div className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] p-3 text-xs">
         <span className="font-medium text-[var(--text)]">修复理由与修改依据：</span>
-        <p className="mt-1 text-[var(--text-secondary)]">{proposal.rationale}</p>
-        <div className="mt-2 text-[11px] text-[var(--text-faint)]">
-          源验收报告: {proposal.source_report_id} · 关联失败执行: {proposal.failure_execution_ids.join(", ") || "无"}
+        <p className="mt-1 break-words text-[var(--text-secondary)]">{formatIdentifierText(proposal.rationale, references)}</p>
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-2 text-[11px] text-[var(--text-faint)]">
+          <span>提案 <Identifier kind="repair" value={proposal.repair_id} /></span>
+          <span>源报告 <Identifier kind="report" value={proposal.source_report_id} /></span>
+          <span>关联失败执行：{proposal.failure_execution_ids.length ? proposal.failure_execution_ids.map(id => <Identifier key={id} kind="execution" value={id} className="ml-1" />) : "无"}</span>
         </div>
       </div>
 
@@ -107,11 +117,11 @@ export default function RepairReviewPanel({
         </div>
         <div className="text-[var(--text-secondary)]">
           <span>失败根节点：</span>
-          <span className="font-semibold text-[var(--text)]">[{proposal.rerun_root_node_id}]</span>
+          <Identifier kind="node" value={proposal.rerun_root_node_id} />
         </div>
         <div className="text-[var(--text-secondary)]">
           <span>重跑影响节点（共 {proposal.affected_node_ids.length} 个）：</span>
-          <span className="font-mono text-[var(--text)]">{proposal.affected_node_ids.join(" → ")}</span>
+          <span className="inline-flex flex-wrap gap-2 text-[var(--text)]">{proposal.affected_node_ids.map(id => <Identifier key={id} kind="node" value={id} />)}</span>
         </div>
         <p className="mt-1 text-[11px] text-[var(--text-faint)]">
           保护机制：仅重跑受影响下游分支；无关成功分支与节点保持不变，旧 execution attempt 完整保留。
@@ -134,9 +144,9 @@ export default function RepairReviewPanel({
                 <div>
                   <div className="flex items-center gap-2">
                     <Badge tone="default">{formatted.kindLabel}</Badge>
-                    <span className="font-medium text-[var(--text)]">节点 [{formatted.nodeId}]</span>
+                    <Identifier kind="node" value={formatted.nodeId} />
                   </div>
-                  <p className="mt-1 text-[var(--text-secondary)]">{formatted.summary}</p>
+                  <p className="mt-1 break-words text-[var(--text-secondary)]">{formatIdentifierText(formatted.summary, references)}</p>
                 </div>
               </div>
             );

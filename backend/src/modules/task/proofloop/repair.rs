@@ -11,7 +11,9 @@ use super::contracts::{
     CapabilitySnapshot, CriterionResult, GoalContract, ProofError, RepairOperation, RepairProposal,
 };
 use crate::modules::task::{
-    execution::{NodeExecution, NodeExecutionStatus},
+    execution::{
+        external_result_is_uncertain, NodeExecution, NodeExecutionId, NodeExecutionStatus,
+    },
     input_binding::validate_graph_bindings,
     task_graph::{GraphRevision, TaskGraph, TaskNodeId},
 };
@@ -20,6 +22,7 @@ use crate::modules::task::{
 pub struct ValidatedRepairPatch {
     pub repair_id: String,
     pub rerun_root_node_id: String,
+    pub failure_execution_ids: Vec<NodeExecutionId>,
     pub affected_node_ids: Vec<String>,
     pub updated_graph: TaskGraph,
     pub diff_summary: Vec<String>,
@@ -35,6 +38,14 @@ pub fn classify_failure(
     graph_revision: u64,
     source_report_id: String,
 ) -> Result<RepairProposal, ProofError> {
+    if external_result_is_uncertain(failed_execution.failure_code()) {
+        return Err(ProofError::new(
+            "external_mutation_uncertain",
+            "上次调用的外部结果尚未核实，当前不能再次执行该节点",
+        )
+        .with_node(failed_execution.node_id.as_str()));
+    }
+
     let next_round = current_round + 1;
     if next_round > contract.budget.max_repair_rounds {
         return Err(ProofError::new(
@@ -98,7 +109,7 @@ pub fn classify_failure(
                     "尚无输入输出兼容的替代能力证据，请先选择有效能力；不会任意替换工具",
                 ));
             }
-            "provider_unavailable" | "input_binding_source_missing" | "execution_interrupted" => {
+            "provider_unavailable" | "input_binding_source_missing" => {
                 rationale = format!("节点 '{}' 执行异常 ({})，提议受控重跑该节点", node_id, code);
                 operations.push(RepairOperation::RerunNode {
                     node_id: node_id.clone(),
@@ -148,6 +159,12 @@ pub fn validate_repair(
     snapshot: &CapabilitySnapshot,
     contract: &GoalContract,
 ) -> Result<ValidatedRepairPatch, ProofError> {
+    if proposal.failure_execution_ids.is_empty() {
+        return Err(ProofError::new(
+            "invalid_failure_evidence",
+            "修复提案缺少来源执行记录",
+        ));
+    }
     if proposal.schema_version != 1 {
         return Err(ProofError::new(
             "unsupported_schema_version",
@@ -390,6 +407,14 @@ pub fn validate_repair(
     Ok(ValidatedRepairPatch {
         repair_id: proposal.repair_id.clone(),
         rerun_root_node_id: proposal.rerun_root_node_id.clone(),
+        failure_execution_ids: proposal
+            .failure_execution_ids
+            .iter()
+            .map(|id| {
+                NodeExecutionId::new(id)
+                    .map_err(|error| ProofError::new("invalid_execution_id", error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
         affected_node_ids,
         updated_graph,
         diff_summary,
@@ -446,4 +471,77 @@ pub fn compute_downstream_branch(graph: &TaskGraph, root_node_id: &str) -> Vec<S
     }
 
     affected
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::task::{
+        execution::{NodeContext, NodeExecutionId},
+        TaskGraphId,
+    };
+
+    #[test]
+    fn interrupted_execution_cannot_propose_repair() {
+        let context = NodeContext::new(
+            "goal",
+            "instruction",
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        let mut execution = NodeExecution::new(
+            NodeExecutionId::new("interrupted-execution").unwrap(),
+            TaskGraphId::new("repair-tests").unwrap(),
+            TaskNodeId::new("write").unwrap(),
+            1,
+            None,
+            context,
+            1,
+        )
+        .unwrap();
+        execution.transition(NodeExecutionStatus::Ready, 2).unwrap();
+        execution
+            .transition(NodeExecutionStatus::Dispatching, 3)
+            .unwrap();
+        execution
+            .transition(NodeExecutionStatus::Running, 4)
+            .unwrap();
+        execution.recover_after_restart(5);
+
+        let contract = GoalContract {
+            schema_version: 1,
+            goal_id: "goal".to_string(),
+            version: 1,
+            workspace_id: "workspace".to_string(),
+            user_goal: "goal".to_string(),
+            deliverables: vec![],
+            criteria: vec![],
+            constraints: vec![],
+            allowed_capability_ids: vec![],
+            budget: Default::default(),
+        };
+        let snapshot = CapabilitySnapshot {
+            snapshot_id: "snapshot".to_string(),
+            captured_at_ms: 5,
+            capabilities: vec![],
+        };
+
+        let error = classify_failure(
+            &execution,
+            None,
+            &snapshot,
+            &contract,
+            0,
+            1,
+            "report".into(),
+        )
+        .expect_err("unknown external result must not become a rerun proposal");
+        assert_eq!(error.code, "external_mutation_uncertain");
+        assert_eq!(error.node_id.as_deref(), Some("write"));
+    }
 }

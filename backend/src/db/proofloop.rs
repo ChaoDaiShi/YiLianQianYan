@@ -2,7 +2,11 @@
 //!
 //! Migration 1014 in the v1 Task World namespace (1000-1999).
 
+mod artifact_lookup;
+mod drafts;
 mod evaluations;
+mod timing;
+pub(crate) use timing::ProofLoopTimeRecord;
 
 use rusqlite::{params, OptionalExtension};
 use thiserror::Error;
@@ -12,8 +16,8 @@ use super::{
     Database,
 };
 use crate::modules::task::proofloop::contracts::{
-    AcceptanceReport, DraftStatus, EvidenceSnapshot, GoalContract, ProofDraft, ProofDraftSummary,
-    RepairProposal,
+    AcceptanceReport, DraftStatus, EvidenceSnapshot, GoalContract, GoalTimeUsage, ProofDraft,
+    ProofDraftSummary, RepairProposal,
 };
 
 const PROOFLOOP_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS proofloop_goal_versions (
@@ -84,6 +88,16 @@ pub(crate) const PROOFLOOP_EVAL_SCHEMA_MIGRATION: ProductMigrationSpec = Product
 );
 
 #[derive(Debug, Error)]
+pub enum DraftWriteConflict {
+    #[error("proof draft no longer exists")]
+    NotFound,
+    #[error("proof draft has already been confirmed")]
+    AlreadyConfirmed,
+    #[error("stale proof draft revision: expected {expected}, actual {actual}")]
+    StaleRevision { expected: u32, actual: u32 },
+}
+
+#[derive(Debug, Error)]
 pub enum ProofLoopDbError {
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
@@ -94,6 +108,8 @@ pub enum ProofLoopDbError {
     },
     #[error("integrity error: {0}")]
     Integrity(String),
+    #[error("proof draft write conflict: {0}")]
+    DraftConflict(#[from] DraftWriteConflict),
 }
 
 fn status_to_str(status: DraftStatus) -> &'static str {
@@ -180,6 +196,8 @@ impl Database {
         &self,
         proposal: &mut RepairProposal,
         contract: &GoalContract,
+        usage: &GoalTimeUsage,
+        active_started: Option<std::time::Instant>,
         now: i64,
     ) -> Result<(), ProofLoopDbError> {
         self.initialize_proofloop_eval_schema()?;
@@ -200,11 +218,30 @@ impl Database {
             params![proposal.goal_id, proposal.goal_version],
             |row| row.get(0),
         )?;
-        if now.saturating_sub(confirmed_at) as u64 >= contract.budget.max_wall_time_ms {
-            return Err(ProofLoopDbError::Integrity(
-                "proofloop_budget_exhausted".into(),
-            ));
+        let draft_json: String = tx.query_row(
+            "SELECT payload_json FROM proofloop_drafts WHERE goal_id=?1 AND goal_version=?2 AND status='confirmed' ORDER BY updated_at DESC LIMIT 1",
+            params![proposal.goal_id, proposal.goal_version], |row| row.get(0),
+        )?;
+        let draft: ProofDraft =
+            serde_json::from_str(&draft_json).map_err(|error| ProofLoopDbError::Json {
+                field: "payload_json",
+                message: error.to_string(),
+            })?;
+        let now = now.max(chrono::Utc::now().timestamp_millis());
+        let mut current_usage = usage.clone();
+        if let Some(started) = active_started {
+            current_usage.execution_active_ms = current_usage
+                .execution_active_ms
+                .saturating_add(started.elapsed().as_millis().min(u64::MAX as u128) as u64);
         }
+        crate::modules::task::proofloop::budget::remaining_budget(
+            contract,
+            &draft.planning_usage,
+            &current_usage,
+            confirmed_at,
+            now,
+        )
+        .map_err(|error| ProofLoopDbError::Integrity(error.code))?;
         proposal.round = used + 1;
         let payload = serde_json::to_string(proposal)
             .map_err(|error| ProofLoopDbError::Integrity(error.to_string()))?;
@@ -307,125 +344,5 @@ impl Database {
             }
             None => Ok(None),
         }
-    }
-
-    pub fn save_proof_draft(
-        &self,
-        draft: &ProofDraft,
-        updated_at: i64,
-    ) -> Result<(), ProofLoopDbError> {
-        self.initialize_proofloop_schema()?;
-        let payload_json = serde_json::to_string(draft).map_err(|e| ProofLoopDbError::Json {
-            field: "payload_json",
-            message: e.to_string(),
-        })?;
-
-        let status_str = status_to_str(draft.status);
-        let confirmed_rev = draft.confirmed_graph_revision.map(|r| r as i64);
-
-        let conn = self.conn();
-        conn.execute(
-            "INSERT INTO proofloop_drafts
-                (draft_id, revision, goal_id, goal_version, graph_id, workspace_id, user_goal, payload_json, status, confirmed_graph_revision, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-             ON CONFLICT(draft_id) DO UPDATE SET
-                revision=excluded.revision,
-                goal_id=excluded.goal_id,
-                goal_version=excluded.goal_version,
-                graph_id=excluded.graph_id,
-                workspace_id=excluded.workspace_id,
-                user_goal=excluded.user_goal,
-                payload_json=excluded.payload_json,
-                status=excluded.status,
-                confirmed_graph_revision=excluded.confirmed_graph_revision,
-                updated_at=excluded.updated_at",
-            params![
-                draft.draft_id,
-                draft.revision,
-                draft.contract.goal_id,
-                draft.contract.version,
-                draft.graph_id,
-                draft.contract.workspace_id,
-                draft.contract.user_goal,
-                payload_json,
-                status_str,
-                confirmed_rev,
-                updated_at,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn load_proof_draft(&self, draft_id: &str) -> Result<Option<ProofDraft>, ProofLoopDbError> {
-        self.initialize_proofloop_schema()?;
-        let conn = self.conn();
-        let row: Option<String> = conn
-            .query_row(
-                "SELECT payload_json FROM proofloop_drafts WHERE draft_id=?1",
-                params![draft_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        match row {
-            Some(json_str) => {
-                let draft =
-                    serde_json::from_str(&json_str).map_err(|e| ProofLoopDbError::Json {
-                        field: "payload_json",
-                        message: e.to_string(),
-                    })?;
-                Ok(Some(draft))
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub fn list_proof_drafts(
-        &self,
-        workspace_id: Option<&str>,
-    ) -> Result<Vec<ProofDraftSummary>, ProofLoopDbError> {
-        self.initialize_proofloop_schema()?;
-        let conn = self.conn();
-
-        let mut statement = match workspace_id {
-            Some(_) => conn.prepare(
-                "SELECT draft_id, revision, graph_id, goal_id, user_goal, status
-                 FROM proofloop_drafts WHERE workspace_id=?1 ORDER BY updated_at DESC",
-            )?,
-            None => conn.prepare(
-                "SELECT draft_id, revision, graph_id, goal_id, user_goal, status
-                 FROM proofloop_drafts ORDER BY updated_at DESC",
-            )?,
-        };
-
-        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<ProofDraftSummary> {
-            let draft_id: String = row.get(0)?;
-            let revision: u32 = row.get(1)?;
-            let graph_id: String = row.get(2)?;
-            let goal_id: String = row.get(3)?;
-            let user_goal: String = row.get(4)?;
-            let status_str: String = row.get(5)?;
-            let status = status_from_str(&status_str).unwrap_or(DraftStatus::Proposed);
-
-            Ok(ProofDraftSummary {
-                draft_id,
-                revision,
-                graph_id,
-                goal_id,
-                user_goal,
-                status,
-            })
-        };
-
-        let rows = match workspace_id {
-            Some(ws) => statement
-                .query_map([ws], map_row)?
-                .collect::<Result<Vec<_>, _>>()?,
-            None => statement
-                .query_map([], map_row)?
-                .collect::<Result<Vec<_>, _>>()?,
-        };
-
-        Ok(rows)
     }
 }

@@ -41,7 +41,7 @@ pub struct ListDraftsQuery {
 
 fn proof_error_response(error: ProofError) -> Response {
     let status = match error.code.as_str() {
-        "proofloop_stale_revision" => StatusCode::CONFLICT,
+        "proofloop_stale_revision" | "draft_already_confirmed" => StatusCode::CONFLICT,
         "draft_not_found" => StatusCode::NOT_FOUND,
         "aborted" => StatusCode::BAD_REQUEST,
         _ => StatusCode::UNPROCESSABLE_ENTITY,
@@ -164,9 +164,23 @@ pub async fn graph_goal_handler(
     Path(graph_id): Path<String>,
 ) -> Response {
     match server.db.confirmed_proof_draft_for_graph(&graph_id) {
-        Ok(Some(draft)) => (StatusCode::OK, Json(json!({"goal_id":draft.contract.goal_id,"goal_version":draft.contract.version,"graph_id":draft.graph_id,"contract":draft.contract}))).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND,Json(json!({"code":"goal_not_found","message":"此任务图尚未关联证行目标"}))).into_response(),
-        Err(error) => proof_error_response(ProofError::new("db_error",error.to_string())),
+        Ok(Some(draft)) => {
+            let usage = server.proofloop_budget.usage(&draft.contract);
+            let remaining = server.proofloop_budget.check(&draft.contract, now());
+            let budget_error = usage
+                .as_ref()
+                .err()
+                .or_else(|| remaining.as_ref().err())
+                .cloned();
+            (StatusCode::OK, Json(json!({"goal_id":draft.contract.goal_id,"goal_version":draft.contract.version,"graph_id":draft.graph_id,"contract":draft.contract,
+                "time_usage":usage.ok(),"remaining_ms":remaining.ok().map(|duration|duration.as_millis() as u64),"budget_error":budget_error}))).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code":"goal_not_found","message":"此任务图尚未关联证行目标"})),
+        )
+            .into_response(),
+        Err(error) => proof_error_response(ProofError::new("db_error", error.to_string())),
     }
 }
 

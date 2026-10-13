@@ -164,9 +164,15 @@ pub async fn resolve(
         arguments: consumed.arguments,
         subject: SecuritySubject::from_subject_id(consumed.subject_id),
     };
-    let remaining =
-        super::super::proofloop::budget::graph_execution_budget(&server, &execution.graph_id)
-            .map_err(|error| format!("{}: {}", error.code, error.message))?;
+    let budget_lease = match super::super::proofloop::budget::begin_goal_execution(
+        &server,
+        &execution.graph_id,
+        &execution.id,
+    ) {
+        Ok(lease) => lease,
+        Err(error) => return fail(&server, &execution, &error.code, &error.message),
+    };
+    let remaining = budget_lease.as_ref().map(|lease| lease.remaining());
     let deadline = async {
         match remaining {
             Some(duration) => tokio::time::sleep(duration).await,
@@ -178,6 +184,11 @@ pub async fn resolve(
         _=deadline=>{cancel.cancel();return fail(&server,&execution,"proofloop_budget_exhausted_result_unknown","目标耗时预算已耗尽，远程结果需核实");},
         outcome=gateway.execute_approved(&request,consumed.risk_level)=>outcome,
     };
+    if let Some(lease) = budget_lease {
+        if lease.finish().is_err() {
+            tracing::error!("ProofLoop approved activity accounting could not be saved; subsequent calls will stop");
+        }
+    }
     if let Some((_, current)) = server.task_world.find_execution(&execution.id) {
         if current.status == NodeExecutionStatus::Cancelled {
             return Ok(current);

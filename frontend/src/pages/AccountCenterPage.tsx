@@ -12,14 +12,14 @@ import {
   requestAccountDeletion,
   requestCloudExport,
   registerCloud,
-  resolveSyncConflict,
+  resolveConflictChoice,
   revokeCloudSession,
   syncCloudNow,
   updateSyncChoice,
   type CloudIdentityResponse,
   type CloudDataSummary,
+  type CloudConflictRecord,
   type LifecycleJob,
-  type SyncConflict,
   type CloudSession,
   type LogoutReport,
 } from "../api/cloud";
@@ -30,6 +30,11 @@ import { AccountProfilePanel } from "../features/cloud/AccountProfilePanel";
 import { ConflictResolutionPanel } from "../features/cloud/ConflictResolutionPanel";
 import { SyncPrivacyPanel } from "../features/cloud/SyncPrivacyPanel";
 import { type ConflictItem, type ResolutionChoice } from "../features/cloud/conflictModel";
+import {
+  clearConflictChoiceRequest,
+  getConflictChoiceRequest,
+  retainConflictRequestsForScope,
+} from "../features/cloud/conflictRequest";
 
 type Section = "account" | "sync" | "privacy";
 
@@ -52,7 +57,9 @@ export default function AccountCenterPage() {
   const [form, setForm] = useState({ cloud_base_url: "http://127.0.0.1:8787/api/v1", email: "", password: "", display_name: "" });
   const [dataSummary, setDataSummary] = useState<CloudDataSummary | null>(null);
   const [lifecycleJob, setLifecycleJob] = useState<LifecycleJob | null>(null);
-  const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
+  const [conflictRecords, setConflictRecords] = useState<CloudConflictRecord[]>([]);
+  const [conflictsLoading, setConflictsLoading] = useState(true);
+  const [conflictsLoadError, setConflictsLoadError] = useState("");
   const [sessions,setSessions]=useState<CloudSession[]>([]);
   const [lastLogoutReport, setLastLogoutReport] = useState<LogoutReport | null>(null);
 
@@ -62,15 +69,36 @@ export default function AccountCenterPage() {
     setLoading(false);
   }, []);
 
+  const refreshConflictRecords = useCallback(async (): Promise<boolean> => {
+    setConflictsLoading(true);
+    const result = await listSyncConflicts();
+    if (result.ok) {
+      setConflictRecords(result.data.records);
+      setConflictsLoadError("");
+      setConflictsLoading(false);
+      return true;
+    }
+    setConflictsLoadError(result.error);
+    setConflictsLoading(false);
+    return false;
+  }, []);
+
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (section !== "sync") return;
+    void refreshConflictRecords();
+  }, [section, state?.sync.conflict_count, refreshConflictRecords]);
+  useEffect(() => {
+    if (loading) return;
+    const identity = state?.identity;
+    retainConflictRequestsForScope(identity?.local_identity_id && identity.account_id
+      ? { local_identity_id: identity.local_identity_id, account_id: identity.account_id }
+      : null);
+  }, [loading, state?.identity.local_identity_id, state?.identity.account_id]);
   useEffect(() => {
     if (section !== "privacy" || !state || state.identity.status === "guest") return;
     void getPrivacySummary().then((result) => { if (result.ok) setDataSummary(result.data.summary); });
   }, [section, state?.identity.status]);
-  useEffect(() => {
-    if (section !== "sync") return;
-    void listSyncConflicts().then((result) => { if (result.ok) setConflicts(result.data.conflicts); });
-  }, [section, state?.sync.conflict_count]);
   useEffect(()=>{if(section!=="account"||state?.identity.status==="guest")return;void listCloudSessions().then(result=>{if(result.ok)setSessions(result.data.sessions)})},[section,state?.identity.status]);
 
   const authenticate = async () => {
@@ -96,6 +124,7 @@ export default function AccountCenterPage() {
     setBusy(true); setError("");
     const result = await logoutCloud();
     if (result.ok) {
+      retainConflictRequestsForScope(null);
       setLastLogoutReport(result.data.report);
       try {
         const { invoke } = await import("@tauri-apps/api/core");
@@ -112,6 +141,7 @@ export default function AccountCenterPage() {
     const result = await syncCloudNow();
     if (!result.ok) setError(result.error);
     await refresh();
+    await refreshConflictRecords();
     setBusy(false);
   };
 
@@ -124,39 +154,44 @@ export default function AccountCenterPage() {
 
   const revokeSession=async(id:string)=>{setBusy(true);setError("");const result=await revokeCloudSession(id);if(result.ok)setSessions(result.data.sessions);else setError(result.error);setBusy(false)};
 
-  const conflictItems: ConflictItem[] = conflicts.map((c) => ({
-    id: c.id,
-    entity_type: c.entity_type,
-    entity_id: c.entity_id,
-    local_revision: c.local_revision,
-    remote_revision: c.remote_revision,
-    local_operation: (c as any).local_operation || "upsert",
-    remote_operation: c.remote_operation,
-    local_payload: c.local_payload,
-    remote_payload: c.remote_payload,
-    conflict_version: 1,
-    local_generation: 1,
-    status: "open",
-    created_at: c.created_at,
-  }));
+  const conflictItems: ConflictItem[] = conflictRecords;
 
   const handleResolveConflictItem = async (
     conflict: ConflictItem,
     choice: ResolutionChoice
   ): Promise<{ ok: boolean; message?: string }> => {
+    const identity = state?.identity;
+    if (!identity?.local_identity_id || !identity.account_id) {
+      return { ok: false, message: "当前账号作用域不可用，请刷新后重试" };
+    }
+    const scope = {
+      local_identity_id: identity.local_identity_id,
+      account_id: identity.account_id,
+    };
+    const payload = getConflictChoiceRequest(scope, conflict, choice);
     setBusy(true);
     setError("");
-    const resolution = choice === "use_remote" ? "remote" : "local";
-    const result = await resolveSyncConflict(conflict.id, resolution);
+    const result = await resolveConflictChoice(conflict.id, payload);
     setBusy(false);
     if (result.ok) {
-      setConflicts(result.data.conflicts);
+      clearConflictChoiceRequest(scope, conflict, choice);
+      setConflictRecords(result.data.records);
+      setConflictsLoadError("");
       await refresh();
       return { ok: true };
-    } else {
-      setError(result.error);
-      return { ok: false, message: result.error };
     }
+    if (result.status === 409) {
+      clearConflictChoiceRequest(scope, conflict, choice);
+      const refreshed = await refreshConflictRecords();
+      await refresh();
+      const message = refreshed
+        ? "冲突内容或账号作用域已变化，请核对最新记录后重新选择"
+        : "操作被拒绝，冲突记录刷新失败；已保留上次读取的内容，请重试刷新";
+      setError(message);
+      return { ok: false, message };
+    }
+    setError(result.error);
+    return { ok: false, message: result.error };
   };
 
   const requestExport = async () => {
@@ -236,16 +271,15 @@ export default function AccountCenterPage() {
             <div className="cloud-metric-grid"><article><span>待同步</span><strong>{state.sync.pending_count}</strong></article><article><span>冲突</span><strong>{state.sync.conflict_count}</strong></article><article><span>失败</span><strong>{state.sync.error_count}</strong></article><article><span>游标</span><strong>{state.sync.cursor || "—"}</strong></article></div>
             <div className="cloud-card"><div className="cloud-card-title"><div><h3>{syncMeta?.label}</h3><p>{syncMeta?.detail}</p></div><Badge tone={syncMeta?.tone || "default"}>{identity?.status === "guest" ? "登录后可用" : "增量同步"}</Badge></div>{state.sync.last_error_code ? <p className="cloud-inline-error" role="status">最近错误：{state.sync.last_error_code}。本地变更仍保留，可稍后重试。</p> : null}<p className="cloud-muted">删除使用 tombstone；旧设备的陈旧数据不能复活已经删除的云端实体。</p></div>
             {identity?.status !== "guest" ? <div className="cloud-card"><h3>同步策略</h3><p>{state.sync_existing_choice === "sync" ? "已允许同步选择的数据类型。" : state.sync_existing_choice === "local_only" ? "当前保持仅本地，不会上传工作数据。" : "尚未选择。"}</p><div className="cloud-card-actions"><Button variant={state.sync_existing_choice === "sync" ? "primary" : "secondary"} disabled={busy} onClick={() => void chooseSync("sync")}>启用同步</Button><Button variant={state.sync_existing_choice === "local_only" ? "primary" : "secondary"} disabled={busy} onClick={() => void chooseSync("local_only")}>保持仅本地</Button></div></div> : null}
-            {conflicts.length ? (
-              <div className="cloud-card">
-                <ConflictResolutionPanel
-                  conflicts={conflictItems}
-                  onResolve={handleResolveConflictItem}
-                  onRefresh={() => void refresh()}
-                  isLoading={busy}
-                />
-              </div>
-            ) : null}
+            <div className="cloud-card">
+              <ConflictResolutionPanel
+                conflicts={conflictItems}
+                onResolve={handleResolveConflictItem}
+                onRefresh={() => void refreshConflictRecords()}
+                isLoading={busy || conflictsLoading}
+                loadError={conflictsLoadError}
+              />
+            </div>
           </section> : null}
           {state && section === "privacy" ? <section className="cloud-section-stack" aria-labelledby="privacy-section-title">
             <div className="cloud-section-heading"><div><span>PRIVACY</span><h2 id="privacy-section-title">数据与隐私</h2><p>同步内容、退出登录和永久注销使用不同语义。</p></div></div>

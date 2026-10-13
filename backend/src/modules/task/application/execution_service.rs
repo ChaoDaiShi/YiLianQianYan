@@ -146,7 +146,7 @@ pub async fn dispatch_execution(
     graph_id: TaskGraphId,
     execution_id: NodeExecutionId,
 ) -> Result<NodeExecution, TaskWorldRuntimeError> {
-    let remaining_budget =
+    let _checked_budget =
         match super::super::proofloop::budget::graph_execution_budget(&server, &graph_id) {
             Ok(remaining) => remaining,
             Err(error) => {
@@ -187,6 +187,23 @@ pub async fn dispatch_execution(
                 cancel,
             },
         )));
+    let budget_lease = match super::super::proofloop::budget::begin_goal_execution(
+        &server,
+        &graph_id,
+        &execution_id,
+    ) {
+        Ok(lease) => lease,
+        Err(error) => {
+            return server.task_world.fail_execution(
+                &graph_id,
+                &execution_id,
+                &error.code,
+                &error.message,
+                now(),
+            )
+        }
+    };
+    let remaining_budget = budget_lease.as_ref().map(|lease| lease.remaining());
     let result = if let Some(remaining) = remaining_budget {
         match tokio::time::timeout(remaining, registry.dispatch(&plan, &execution)).await {
             Ok(result) => result,
@@ -204,6 +221,13 @@ pub async fn dispatch_execution(
     } else {
         registry.dispatch(&plan, &execution).await
     };
+    if let Some(lease) = budget_lease {
+        if lease.finish().is_err() {
+            tracing::error!(
+                "ProofLoop activity accounting could not be saved; subsequent calls will stop"
+            );
+        }
+    }
     // A cooperative cancellation may settle after an in-flight atomic call.
     // Preserve the authoritative cancelled row and discard its late output.
     if let Some((_, current)) = server.task_world.find_execution(&execution_id) {

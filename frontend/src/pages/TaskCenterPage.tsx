@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import type { ConversationSummary } from "../types";
 import TaskDetailPanel from "../components/tasks/TaskDetailPanel";
+import Identifier from "../components/Identifier";
 import {
   Badge,
   Button,
@@ -326,7 +327,7 @@ export default function TaskCenterPage() {
             <div className="task-graph-card-grid grid gap-2 p-2">
               {taskGraphs.map((graph) => (
                 <button key={graph.id} type="button" onClick={() => navigate(`/task-world/${encodeURIComponent(graph.id)}`)} className="rounded-[var(--radius-md)] border border-[var(--border-soft)] px-3 py-2.5 text-left hover:bg-[var(--surface-hover)]">
-                  <span className="block truncate text-sm font-medium text-[var(--text)]">{graph.id}</span>
+                  <span className="block truncate text-sm font-medium text-[var(--text)]"><Identifier kind="graph" value={graph.id} copyable={false} /></span>
                   <span className="mt-1 block text-xs text-[var(--text-faint)]">r{graph.revision} · {graph.node_count} 节点 · {graph.edge_count} 条边</span>
                 </button>
               ))}

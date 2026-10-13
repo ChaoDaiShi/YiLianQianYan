@@ -1,4 +1,5 @@
 import type { TaskNodeProjection } from "../taskGraphProjection";
+import Identifier from "../../../components/Identifier";
 
 interface StateSectionProps {
   node: TaskNodeProjection;
@@ -30,8 +31,8 @@ export default function StateSection({ node }: StateSectionProps) {
           <p className="text-meta text-[var(--text-faint)]">资源引用</p>
           <ul className="mt-1 space-y-1 text-xs text-[var(--text-secondary)]">
             {node.resources.map((resource) => (
-              <li key={resource.id} className="truncate">
-                {resource.name || resource.id}
+              <li key={resource.id} className="flex flex-wrap items-center gap-1">
+                {resource.name || "资源"} <Identifier kind="resource" value={resource.id} />
               </li>
             ))}
           </ul>

@@ -1,5 +1,7 @@
 import type { TaskCheckpointSummary, TaskRevisionSummary } from "../../../api/taskWorld";
 import { Button } from "../../../components/ui";
+import Identifier from "../../../components/Identifier";
+import { formatIdentifier } from "../../../utils/identifiers";
 
 interface VersionSectionProps {
   revisions: TaskRevisionSummary[];
@@ -63,8 +65,8 @@ export default function VersionSection({
           >
             <option value="">选择检查点恢复</option>
             {checkpoints.map((checkpoint) => (
-              <option key={checkpoint.checkpoint_id} value={checkpoint.checkpoint_id}>
-                r{checkpoint.graph_revision} · {checkpoint.checkpoint_id.slice(0, 8)}
+              <option key={checkpoint.checkpoint_id} value={checkpoint.checkpoint_id} title={checkpoint.checkpoint_id}>
+                r{checkpoint.graph_revision} · {formatIdentifier("checkpoint", checkpoint.checkpoint_id)}
               </option>
             ))}
           </select>
@@ -79,6 +81,7 @@ export default function VersionSection({
           </Button>
         </div>
       )}
+      {restoringCheckpoint && <div className="mt-2 text-xs"><Identifier kind="checkpoint" value={restoringCheckpoint} /></div>}
     </section>
   );
 }

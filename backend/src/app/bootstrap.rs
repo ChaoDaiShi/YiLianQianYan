@@ -118,6 +118,10 @@ impl AppServer {
         let event_hub = EventHub::new(256);
         let task_world =
             TaskWorldRuntime::new(&db, event_hub.clone()).map_err(|error| error.to_string())?;
+        let proofloop_budget = Arc::new(
+            crate::modules::task::proofloop::budget::GoalBudgetMeter::new(db.clone())
+                .map_err(|error| error.message)?,
+        );
         let resource_root = db_path
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
@@ -184,6 +188,7 @@ impl AppServer {
             voice_runtime,
             voice_dispatch_hook: Arc::new(RwLock::new(None)),
             task_world,
+            proofloop_budget,
             scoped_db: {
                 let lease = db.get_cloud_profile_lease().unwrap_or_else(|_| {
                     crate::modules::cloud::contracts::ScopeLease {
