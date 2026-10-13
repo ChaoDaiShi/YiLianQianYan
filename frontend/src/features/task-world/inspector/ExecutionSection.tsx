@@ -1,4 +1,5 @@
 import { Button } from "../../../components/ui";
+import Identifier from "../../../components/Identifier";
 import {
   executionStatusLabel,
   getExecutorAvailability,
@@ -55,6 +56,10 @@ export default function ExecutionSection({
       </div>
       {latestExecution ? (
         <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div className="col-span-2 rounded-[var(--radius-sm)] bg-[var(--surface-muted)] p-2">
+            <dt className="text-[var(--text-faint)]">执行编号</dt>
+            <dd className="mt-1"><Identifier kind="execution" value={latestExecution.execution_id} /></dd>
+          </div>
           <div className="rounded-[var(--radius-sm)] bg-[var(--surface-muted)] p-2">
             <dt className="text-[var(--text-faint)]">执行器</dt>
             <dd className="mt-1 break-all text-[var(--text-secondary)]">
@@ -133,6 +138,7 @@ export default function ExecutionSection({
             >
               <span className="text-[var(--text-secondary)]">
                 #{execution.attempt} · {executionStatusLabel(execution.status)}
+                <Identifier kind="execution" value={execution.execution_id} className="ml-1" />
               </span>
               <span className="truncate text-[var(--text-faint)]">
                 {execution.failure_code || execution.result_summary || execution.executor_ref || "—"}

@@ -15,6 +15,7 @@ import type {
   TaskRevisionSummary,
 } from "../../../api/taskWorld";
 import { Badge, Button, EmptyState, Panel } from "../../../components/ui";
+import Identifier from "../../../components/Identifier";
 import {
   executionStatusLabel,
   getExecutorAvailability,
@@ -176,6 +177,7 @@ export default function TaskInspector({
             选中节点
           </p>
           <h2 className="mt-1 truncate text-base font-semibold text-[var(--text)]">{node.title}</h2>
+          <Identifier kind="node" value={node.id} className="mt-1 text-xs text-[var(--text-faint)]" />
         </div>
         <Badge tone={execution_status === "failed" || node.status === "failed" ? "danger" : node.isRunning ? "info" : "default"}>
           {execution_status ? executionStatusLabel(execution_status) : node.status}

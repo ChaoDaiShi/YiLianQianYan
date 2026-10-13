@@ -44,7 +44,7 @@ export async function canvasStudio({page,backendPort,frontendPort,controlToken,e
     assert.equal(geometry.camera,'translate(20px, 0px) scale(1)');
     assert.ok(geometry.panels.every(p=>p.hidden),'panels start collapsed');
     assert.ok(geometry.nodes.every(n=>n.width===240&&n.height===128),'fixed node geometry');
-    assert.equal(await button('发布 · 未接入').isDisabled(),true);
+    assert.equal(await button('发布 · 未接入').count(),0);
     const controls=await page.locator('.studio-toolbar button').evaluateAll(els=>els.map(el=>{
       const r=el.getBoundingClientRect(),top=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
       return {name:el.getAttribute('aria-label')||el.textContent,reachable:el.contains(top)&&r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight};
@@ -65,7 +65,7 @@ export async function canvasStudio({page,backendPort,frontendPort,controlToken,e
     assert.equal(await title.inputValue(),`草稿 ${width}`,'panel switch preserves draft');
     const extension=page.getByTestId('studio-extension-slots');
     await extension.locator('summary').click();
-    assert.equal(await button('发布动作 · 未接入').isDisabled(),true);
+    assert.equal(await button('发布动作 · 未接入').count(),0);
     await extension.locator('summary').click();
     await title.scrollIntoViewIfNeeded();
     await page.screenshot({path:join(evidenceDir,`${stage}-inspector-${width}.png`)});

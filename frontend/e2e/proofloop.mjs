@@ -16,7 +16,7 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     { name: 'build_report', description: 'CONTROLLED FIXTURE report', inputSchema: { ...schema, properties: { ...schema.properties, title: { type: 'string' } }, required: ['sources', 'title'] }, outputSchema: schema },
   ];
   const mcp = createServer(async (req, res) => {
-    let body = ''; for await (const chunk of req) body += chunk;
+    const body = await readFixtureBody(req); if (body === null) return;
     const rpc = JSON.parse(body || '{}'); let result = {};
     if (rpc.method === 'server/discover') result = { supportedVersions: ['2026-07-28', '2025-11-25'], serverInfo: { name: 'PROOFLOOP CONTROLLED MCP', version: '1' }, capabilities: available ? { tools: true } : {} };
     if (rpc.method === 'tools/list') result = { tools };
@@ -30,7 +30,7 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
   await new Promise((resolve) => mcp.listen(0, '127.0.0.1', resolve));
   const fixture = { caps: [] };
   const model = createServer(async (req, res) => {
-    let body = ''; for await (const chunk of req) body += chunk;
+    const body = await readFixtureBody(req); if (body === null) return;
     const request = JSON.parse(body || '{}'); modelCalls.push({ at: Date.now(), messages: request.messages?.length });
     const capability = (name) => fixture.caps.find((item) => item.name === name)?.id;
     const response = {
@@ -89,6 +89,11 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     assert.equal(draft.compilation.status, 'ready');
     await page.getByRole('button', { name: '确认并保存到画布', exact: true }).click(); await page.waitForURL(/\/task-world\/[^/]+$/);
     const graphId = decodeURIComponent(page.url().split('/task-world/')[1]); const path = `/api/task-world/graphs/${graphId}`;
+    if (process.env.YILIAN_E2E_IDENTIFIERS === '1') {
+      assert.equal(await page.getByRole('button', { name: /^发布/ }).count(), 0);
+      await verifyIdentifierPresentation(page, 'graph', graphId);
+      steps.push('publish_removed_and_graph_code_verified');
+    }
     assert.notEqual(graphId, draft.contract.goal_id);
     const binding = await api('GET', `/api/task-world/proofloop/graphs/${graphId}/goal`); assert.equal(binding.goal_id, draft.contract.goal_id);
     await page.reload({ waitUntil: 'domcontentloaded' }); await page.locator('.react-flow__node[data-id="collect"]').waitFor();
@@ -108,6 +113,9 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
         if (disable) { available = false; await api('POST', `/api/plugins/mcp/${server.id}/test`); }
         await card.getByRole('button', { name: '允许此次工具操作', exact: true }).click();
         await until(async () => (await api('GET', '/api/approvals/pending')).approvals, (items) => !items.some((item) => item.approval_id === pending.approval_id), 'approval consumed');
+        // Consumption precedes the actual call; keep its SSE page alive until the call settles.
+        await until(async () => (await detail()).nodes.find(item => item.id === pending.task_node_id)?.latest_execution,
+          item => item?.execution_id === pending.node_execution_id && ['succeeded', 'failed', 'cancelled'].includes(item.status), 'approved execution settled');
       } catch (error) {
         await screen.screenshot({path:join(evidenceDir,'approval-failure.png'),fullPage:true});
         await writeFile(join(evidenceDir,'approval-failure.txt'),`${screen.url()}\n${await screen.locator('body').innerText()}`);
@@ -133,12 +141,19 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     await page.getByRole('button', { name: '进行人工审核判断', exact: true }).click();
     await page.getByPlaceholder('填写审核依据或说明（可选）').fill('已读取隔离成果，来源及摘要核对一致');
     await page.getByRole('button', { name: '提交审核结论', exact: true }).click(); await page.getByText('目标已达成', { exact: true }).waitFor();
-    await capture('03-real-artifact-acceptance');
     const reports = (await api('GET', `/api/task-world/proofloop/goals/${binding.goal_id}/evaluations`)).reports;
     assert.equal(reports[0].status, 'pass');
     const evidence = await api('GET', `/api/task-world/proofloop/evaluations/${reports[0].report_id}`);
     const artifact = evidence.snapshot.deliverables[0].artifact_id;
     const preview = await api('GET', `/api/artifacts/${artifact}/preview`); assert.ok(JSON.stringify(preview).includes(uri));
+    if (process.env.YILIAN_E2E_IDENTIFIERS === '1') {
+      await verifyIdentifierPresentation(page, 'artifact', artifact);
+      const downloaded = page.waitForEvent('download');
+      await page.getByRole('button', { name: '打开产物', exact: false }).first().click();
+      assert.equal((await downloaded).suggestedFilename(), `ART-${artifact.slice(0, 8).toUpperCase()}.md`);
+      steps.push('artifact_code_full_copy_and_download_verified');
+    }
+    await capture('03-real-artifact-acceptance');
     await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByRole('button', { name: '证行验收', exact: true }).click(); await page.getByText('目标已达成', { exact: true }).waitFor();
     await page.getByRole('button', { name: '刷新', exact: true }).click(); await page.getByText('目标已达成', { exact: true }).waitFor();
     const result = { status: 'passed', stage: 'proofloop_controlled_product_flow', llm: 'LOCAL OPENAI-COMPATIBLE FIXTURE', mcp: 'LOCAL MCP FIXTURE', external_business_benchmark: 'NOT_TESTED', steps, model_requests: modelCalls.length, remote_calls: calls, requests, graph_id: graphId, goal_id: binding.goal_id, graph_revision: reports[0].graph_revision, report: reports[0], geometry, expected_browser_422_errors: 1 };
@@ -146,5 +161,45 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
   } finally {
     if (profile) await api('DELETE', `/api/llm/models/${profile.id}`, undefined, 204).catch(() => {});
     await Promise.all([new Promise((resolve) => mcp.close(resolve)), new Promise((resolve) => model.close(resolve))]);
+  }
+}
+
+// Isolate only the clipboard boundary, so browser checks never replace the user's clipboard.
+async function verifyIdentifierPresentation(page, kind, original) {
+  const type = kind === 'graph' ? { prefix: 'TG', label: '任务图编号' } : { prefix: 'ART', label: '产物编号' };
+  const code = `${type.prefix}-${original.slice(0, 8).toUpperCase()}`;
+  const field = page.locator(`[data-identifier-kind="${kind}"][data-full-id="${original}"]`).first();
+  assert.equal(await field.locator('code').first().innerText(), code);
+  await field.getByRole('button', { name: `查看完整${type.label} ${code}`, exact: true }).click();
+  assert.equal(await field.locator('[data-identifier-detail]').innerText(), original);
+  await field.getByRole('button', { name: `收起完整${type.label} ${code}`, exact: true }).click();
+  await page.evaluate(() => {
+    window.__identifierClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value) => { window.__identifierCopiedValue = value; },
+    } });
+  });
+  try {
+    await field.getByRole('button', { name: `复制完整${type.label} ${code}`, exact: true }).click();
+    await field.getByRole('button', { name: `已复制完整${type.label} ${code}`, exact: true }).waitFor();
+    assert.equal(await page.evaluate(value => window.__identifierCopiedValue === value, original), true);
+  } finally {
+    await page.evaluate(() => {
+      if (window.__identifierClipboardDescriptor) Object.defineProperty(navigator, 'clipboard', window.__identifierClipboardDescriptor);
+      else delete navigator.clipboard;
+      delete window.__identifierClipboardDescriptor;
+      delete window.__identifierCopiedValue;
+    });
+  }
+}
+
+async function readFixtureBody(request) {
+  let body = '';
+  try {
+    for await (const chunk of request) body += chunk;
+    return body;
+  } catch (error) {
+    if (request.aborted && error.code === 'ECONNRESET') return null;
+    throw error;
   }
 }

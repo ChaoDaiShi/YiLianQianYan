@@ -21,6 +21,14 @@ export interface Budget {
   max_total_tokens: number;
   max_wall_time_ms: number;
   max_repair_rounds: number;
+  time_basis?: "active_work" | "wall_clock";
+}
+
+export interface GoalTimeUsage {
+  planning_elapsed_ms: number | null;
+  execution_active_ms: number;
+  human_wait_ms: number | null;
+  accounting_state: "complete" | "legacy_unknown" | "interrupted_unknown";
 }
 
 export type CriterionCheck =
@@ -140,6 +148,7 @@ export interface ProofDraft {
     | "ready_for_confirmation"
     | "confirmed";
   confirmed_graph_revision: number | null;
+  planning_usage?: { model_calls: number; total_tokens: number | null; started_at_ms: number; elapsed_ms?: number | null };
 }
 
 export interface ExecutionRef {
@@ -198,6 +207,14 @@ export interface CriterionResult {
   reason: string;
 }
 
+export interface DeliverableResult {
+  deliverable_id: string;
+  status: "pass" | "fail";
+  code: "verified" | "artifact_missing" | "artifact_empty" | "artifact_origin_mismatch" | "artifact_digest_mismatch";
+  evidence_ids: string[];
+  reason: string;
+}
+
 export interface AcceptanceReport {
   report_id: string;
   goal_id: string;
@@ -207,6 +224,7 @@ export interface AcceptanceReport {
   snapshot_id: string;
   status: "pass" | "fail" | "incomplete";
   results: CriterionResult[];
+  deliverable_results: DeliverableResult[];
   human_reviews: HumanReview[];
   checked_at_ms: number;
 }
@@ -520,6 +538,6 @@ export async function applyRepair(
   );
 }
 
-export interface GraphGoalBinding { goal_id: string; goal_version: number; graph_id: string; contract: GoalContract }
+export interface GraphGoalBinding { goal_id: string; goal_version: number; graph_id: string; contract: GoalContract; time_usage?: GoalTimeUsage | null; remaining_ms?: number | null; budget_error?: ProofError | null }
 export const getGraphGoal = (graphId: string, signal?: AbortSignal) => requestProofLoop<GraphGoalBinding>("GET", `/api/task-world/proofloop/graphs/${encodeURIComponent(graphId)}/goal`, undefined, signal);
 export const getEvaluationDetail = (reportId: string, signal?: AbortSignal) => requestProofLoop<{ report: AcceptanceReport; snapshot: EvidenceSnapshot }>("GET", `/api/task-world/proofloop/evaluations/${encodeURIComponent(reportId)}`, undefined, signal);

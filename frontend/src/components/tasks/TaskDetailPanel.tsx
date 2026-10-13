@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import Identifier from "../Identifier";
 import {
   CheckCircle2,
   Clock3,
@@ -149,6 +150,7 @@ export default function TaskDetailPanel({
                 {getTaskStatusLabel(task.status)}
               </Badge>
             </div>
+            <Identifier kind="task" value={task.id} className="mt-1 text-xs text-[var(--text-faint)]" />
             {task.description && (
               <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text-secondary)]">
                 {task.description}
@@ -231,9 +233,8 @@ export default function TaskDetailPanel({
               技术关联
             </summary>
             <dl className="mt-2 grid gap-2 rounded-lg bg-[var(--surface-muted)] p-3 font-mono">
-              {task.workflow_graph_id && <InfoItem label="Workflow ID" value={task.workflow_graph_id} mono />}
-              {task.agent_team_id && <InfoItem label="Agent Team ID" value={task.agent_team_id} mono />}
-              <InfoItem label="Task ID" value={task.id} mono />
+              {task.workflow_graph_id && <InfoItem label="工作流编号" value={<Identifier kind="workflow" value={task.workflow_graph_id} />} />}
+              {task.agent_team_id && <InfoItem label="智能体团队编号" value={<Identifier kind="team" value={task.agent_team_id} />} />}
             </dl>
           </details>
         )}
@@ -341,7 +342,7 @@ function InfoItem({
   mono = false,
 }: {
   label: string;
-  value?: string | null;
+  value?: React.ReactNode;
   mono?: boolean;
 }) {
   if (!value) return null;

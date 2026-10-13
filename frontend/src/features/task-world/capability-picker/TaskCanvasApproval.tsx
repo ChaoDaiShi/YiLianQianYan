@@ -5,6 +5,7 @@ import {getCapability} from '../../../api/capabilities';
 import {getTaskGraph} from '../../../api/taskWorld';
 import type {PendingApproval} from '../../../types/approval';
 import ApprovalCard from '../../../components/approval/ApprovalCard';
+import Identifier from '../../../components/Identifier';
 export default function TaskCanvasApproval({approval,onResolved}:{approval:PendingApproval;onResolved:()=>Promise<void>}){
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[label,setLabel]=useState(approval.task_node_id||''),[capability,setCapability]=useState('MCP 工具');
  const inFlight=useRef(false);
@@ -22,7 +23,7 @@ export default function TaskCanvasApproval({approval,onResolved}:{approval:Pendi
  };
  return <section className="mb-4" data-testid="task-canvas-approval" data-approval-id={approval.approval_id}>
   <p className="mb-2 text-sm">来源：任务画布 · {label}</p><p className="mb-2 text-xs">执行能力：{capability}</p>
-  <Link className="mb-2 block break-all text-xs underline" to={`/task-world/${encodeURIComponent(approval.task_graph_id!)}`}>查看任务图 {approval.task_graph_id}</Link>
+  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs"><Link className="underline" to={`/task-world/${encodeURIComponent(approval.task_graph_id!)}`}>查看任务图</Link><Identifier kind="graph" value={approval.task_graph_id!}/>{approval.node_execution_id&&<Identifier kind="execution" value={approval.node_execution_id}/>}</div>
   <ApprovalCard approval={approval} resolving={busy} onApprove={()=>void decide(true)} onReject={()=>void decide(false)}/>
   {error&&<p role="alert" className="mt-2 text-xs text-[var(--danger-fg)]">{error}</p>}
  </section>;

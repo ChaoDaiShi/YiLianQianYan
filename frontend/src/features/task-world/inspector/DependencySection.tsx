@@ -1,5 +1,6 @@
 import type { TaskEdge } from "../../../api/taskWorld";
 import { Button } from "../../../components/ui";
+import Identifier from "../../../components/Identifier";
 import type { TaskNodeProjection } from "../taskGraphProjection";
 
 interface DependencySectionProps {
@@ -62,7 +63,7 @@ export default function DependencySection({
               key={`${edge.from}->${edge.to}`}
               className="flex items-center justify-between gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-muted)] px-2 py-1.5 text-xs"
             >
-              <span className="truncate text-[var(--text-secondary)]">{edge.from}</span>
+              <span className="text-[var(--text-secondary)]"><Identifier kind="node" value={edge.from} /></span>
               <button
                 type="button"
                 className="shrink-0 text-[var(--text-faint)] hover:text-[var(--danger)]"

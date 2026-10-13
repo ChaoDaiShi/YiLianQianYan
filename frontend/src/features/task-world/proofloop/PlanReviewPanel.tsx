@@ -8,12 +8,15 @@ import {
 } from "lucide-react";
 import {
   confirmProofDraft,
+  getProofDraft,
   updateProofDraft,
   type ConfirmProofDraftResponse,
   type PendingInput,
   type ProofDraft,
 } from "../../../api/proofloop";
 import { Badge, Button, Input } from "../../../components/ui";
+import Identifier from "../../../components/Identifier";
+import { formatIdentifier } from "../../../utils/identifiers";
 import {
   formatDiagnosticMessage,
   formatDraftStatus,
@@ -109,6 +112,35 @@ export default function PlanReviewPanel({
     }
   };
 
+  const handleBudgetChange = async (timeBasis: "active_work" | "wall_clock", milliseconds: number) => {
+    if (!Number.isFinite(milliseconds) || milliseconds <= 0) return;
+    setUpdating(true);
+    setUpdateError(null);
+    try {
+      const result = await updateProofDraft(draft.draft_id, {
+        expected_revision: draft.revision,
+        contract: { ...draft.contract, budget: { ...draft.contract.budget, time_basis: timeBasis, max_wall_time_ms: milliseconds } },
+        candidate: draft.candidate,
+        binding_confirmations: draft.binding_confirmations,
+      });
+      if (result.ok) onUpdateDraft?.(result.data);
+      else setUpdateError(result.error.message || "保存时间预算失败，请加载最新草稿后重试。");
+    } catch (error: unknown) {
+      setUpdateError(error instanceof Error ? error.message : "保存时间预算失败。");
+    } finally { setUpdating(false); }
+  };
+
+  const loadLatestDraft = async () => {
+    setUpdating(true);
+    try {
+      const result = await getProofDraft(draft.draft_id);
+      if (result.ok) { onUpdateDraft?.(result.data); setConfirmError(null); setUpdateError(null); }
+      else setUpdateError(result.error.message);
+    } catch (error: unknown) {
+      setUpdateError(error instanceof Error ? error.message : "读取最新草稿失败。");
+    } finally { setUpdating(false); }
+  };
+
   return (
     <div className={`plan-review-panel flex flex-col gap-4 rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] p-4 ${className}`}>
       {/* Header and status badge */}
@@ -163,7 +195,19 @@ export default function PlanReviewPanel({
           <span>预算：模型调用 ≤ {draft.contract.budget.max_model_calls} 次</span>
           <span>总 Token ≤ {draft.contract.budget.max_total_tokens}</span>
           <span>修复轮次 ≤ {draft.contract.budget.max_repair_rounds} 轮</span>
+          <span>{draft.contract.budget.time_basis === "wall_clock" ? "总时限" : "活动预算"}：{draft.contract.budget.max_wall_time_ms / 60_000} 分钟</span>
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+          <label>时间口径 <select aria-label="时间预算口径" disabled={updating || confirming || draft.status === "confirmed"} value={draft.contract.budget.time_basis || "active_work"}
+            onChange={(event) => void handleBudgetChange(event.target.value as "active_work" | "wall_clock", draft.contract.budget.max_wall_time_ms)}>
+            <option value="active_work">活动时间，审阅与审批等待不计入</option>
+            <option value="wall_clock">总经过时间，包含人工等待</option>
+          </select></label>
+          <label>上限（分钟） <Input aria-label="时间预算上限分钟" type="number" min="1" step="1" className="w-24" defaultValue={draft.contract.budget.max_wall_time_ms / 60_000}
+            key={`${draft.draft_id}:${draft.revision}:budget`} disabled={updating || confirming || draft.status === "confirmed"}
+            onBlur={(event) => { const milliseconds = Number(event.target.value) * 60_000; if (milliseconds !== draft.contract.budget.max_wall_time_ms) void handleBudgetChange(draft.contract.budget.time_basis || "active_work", milliseconds); }} /></label>
+        </div>
+        <p className="mt-2 text-[11px] text-[var(--text-faint)]">{draft.contract.budget.time_basis === "wall_clock" ? "从规划开始计时，审阅、审批和暂停均占用总时限。" : "只累计规划和实际执行的活动时间，审阅计划、补充参数与等待审批不会消耗活动预算。"}</p>
       </div>
 
       {/* Diagnostics if any */}
@@ -201,7 +245,7 @@ export default function PlanReviewPanel({
                 <div key={idx} className="flex flex-col gap-1 rounded border border-[var(--border-soft)] bg-[var(--surface)] p-2">
                   <div className="flex items-center justify-between">
                     <span className="font-medium text-[var(--text)]">
-                      节点 [{pending.node_id}] → 参数 [{formatFieldPath(pending.target_path)}]
+                      节点 <Identifier kind="node" value={pending.node_id} /> → 参数 [{formatFieldPath(pending.target_path)}]
                     </span>
                     <span className="text-[11px] text-[var(--warning-fg)]">
                       {formatPendingInputReason(pending.reason)}
@@ -252,7 +296,7 @@ export default function PlanReviewPanel({
               <div key={node.id} className="flex flex-col gap-1 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface)] p-3 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-[var(--text)]">
-                    {i + 1}. {node.title} <span className="font-normal text-[var(--text-faint)]">({node.id})</span>
+                    {i + 1}. {node.title} <Identifier kind="node" value={node.id} className="font-normal text-[var(--text-faint)]" />
                   </span>
                   <Badge tone="default">能力: {node.capability_id}</Badge>
                 </div>
@@ -264,7 +308,7 @@ export default function PlanReviewPanel({
                     <span className="font-medium text-[var(--text-secondary)]">输入绑定：</span>
                     {node.bindings.map((b, bi) => (
                       <span key={bi} className="ml-2 inline-flex items-center gap-1">
-                        [{formatFieldPath(b.target_path)}] ← {b.source.node_id}.[{formatFieldPath(b.source.path)}]
+                        [{formatFieldPath(b.target_path)}] ← <span title={b.source.node_id}>{formatIdentifier("node", b.source.node_id)}</span>.[{formatFieldPath(b.source.path)}]
                       </span>
                     ))}
                   </div>
@@ -282,6 +326,8 @@ export default function PlanReviewPanel({
       )}
 
       {/* Confirmation footer */}
+      {(confirmError || updateError) && <Button size="sm" variant="secondary" disabled={updating} onClick={() => void loadLatestDraft()}>加载最新草稿（保留输入）</Button>}
+      {draft.status === "confirmed" && draft.confirmed_graph_revision !== null && <Button size="sm" onClick={() => onConfirmed({ graph_id: draft.graph_id, graph_revision: draft.confirmed_graph_revision!, goal_id: draft.contract.goal_id, goal_version: draft.contract.version })}>打开已确认任务图</Button>}
       <div className="flex flex-col gap-2 border-t border-[var(--border-soft)] pt-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-[var(--text-faint)]">
           保存后计划将载入 Task World 画布，后续执行仍需经过正常审批，不会自动越权运行。

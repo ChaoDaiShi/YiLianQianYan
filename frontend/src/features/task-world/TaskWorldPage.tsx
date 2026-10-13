@@ -48,6 +48,7 @@ import {
   type RepairProposal,
 } from "../../api/proofloop";
 import { downloadArtifact } from "../../api/evidence";
+import { formatIdentifier } from "../../utils/identifiers";
 
 type StudioPanel = "trail" | "inspector" | "tools" | "proofloop" | null;
 
@@ -340,6 +341,13 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
               {proofError}
             </div>
           )}
+          {proofGoal && <div className="mb-3 rounded-[var(--radius-md)] border border-[var(--border-soft)] p-2 text-xs">
+            <span>{proofGoal.contract.budget.time_basis === "wall_clock" ? "总时限（含人工等待）" : "活动预算（人工等待不计入）"}：
+              {proofGoal.remaining_ms != null ? `剩余 ${Math.ceil(proofGoal.remaining_ms / 1000)} 秒` : "当前剩余时间不可用"}</span>
+            {proofGoal.time_usage && <p className="mt-1 text-[var(--text-faint)]">规划 {proofGoal.time_usage.planning_elapsed_ms == null ? "未知" : `${Math.ceil(proofGoal.time_usage.planning_elapsed_ms / 1000)} 秒`} · 执行活动 {Math.ceil(proofGoal.time_usage.execution_active_ms / 1000)} 秒
+              {proofGoal.time_usage.accounting_state === "legacy_unknown" ? " · 旧规划用量未完整计量" : ""}</p>}
+            {proofGoal.budget_error && <p className="mt-1 text-[var(--danger-fg)]">{proofGoal.budget_error.message}</p>}
+          </div>}
           {activeRepairProposal ? (
             <RepairReviewPanel
               proposal={activeRepairProposal}
@@ -357,9 +365,10 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
               goalId={proofGoal?.goal_id || graphId}
               report={proofReport}
               evidenceSnapshot={proofSnapshot}
+              contract={proofGoal?.contract}
               onRefreshEvaluation={() => void loadProofEvaluation(true)}
               onReportUpdated={(report) => { setProofReport(report); }}
-              onOpenArtifact={(id) => { void downloadArtifact(id).then((blob) => { const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `${id}.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }).catch((error: unknown) => setProofError(error instanceof Error ? error.message : String(error))); }}
+              onOpenArtifact={(id) => { void downloadArtifact(id).then((blob) => { const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `${formatIdentifier("artifact", id)}.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }).catch((error: unknown) => setProofError(error instanceof Error ? error.message : String(error))); }}
               onRequestRepair={(rep) => void handleRequestRepair(rep)}
             />
           )}

@@ -17,7 +17,7 @@
 .studio-save[data-save-state="saving"] .studio-save-dot { background: var(--warning); }
 .studio-save[data-save-state="failed"] { color: var(--danger-fg); }
 .studio-save[data-save-state="failed"] .studio-save-dot { background: var(--danger); }
-.studio-publish { padding-inline: 10px; border: 1px solid var(--studio-line); color: var(--text-secondary); cursor: not-allowed; }
+
 .canvas-studio .studio-workspace { position: relative; display: block; flex: 1; min-height: 0; padding: 0; overflow: hidden; background: color-mix(in srgb, var(--surface-solid) 96%, var(--accent-purple)); }
 .canvas-studio .task-world-canvas { height: 100%; min-height: 0; --task-world-grid: color-mix(in srgb, var(--text-faint) 38%, transparent); }
 .canvas-studio .studio-flow-tools { margin: 18px; }
@@ -75,7 +75,7 @@
   .studio-header { gap: 8px; padding-inline: 12px; flex-wrap: wrap; }
   .studio-identity { flex-basis: 180px; }
   .studio-save { margin-left: auto; }
-  .studio-publish { margin-left: auto; }
+
 }
 @media (max-width: 720px) {
   .canvas-studio .studio-flow-tools { margin: 8px; max-width: calc(100% - 16px); }
@@ -84,3 +84,5 @@
   .canvas-studio .studio-panel { top: 8px; right: 64px; bottom: 120px; max-width: calc(100% - 72px); }
   .studio-notices { left: 8px; right: 64px; }
 }
+
+.studio-header .identifier-code button { min-width: 20px; min-height: 20px; padding: 2px; gap: 0; }

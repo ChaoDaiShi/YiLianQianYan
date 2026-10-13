@@ -26,6 +26,15 @@ describe("AcceptancePanel", () => {
         reason: "报告包含所有必需一级大纲",
       },
     ],
+    deliverable_results: [
+      {
+        deliverable_id: "deliv_1",
+        status: "pass",
+        code: "verified",
+        evidence_ids: ["ev_1"],
+        reason: "交付物 'deliv_1' 的实际文件、来源和摘要已核验",
+      },
+    ],
     human_reviews: [],
     checked_at_ms: 1234567,
   };
@@ -83,6 +92,8 @@ describe("AcceptancePanel", () => {
 
     expect(html).toContain("目标成果验收报告");
     expect(html).toContain("目标已达成");
+    expect(html).toContain("交付成果检查");
+    expect(html).toContain("质量与人工复核");
     expect(html).toContain("crit_artifact");
     expect(html).toContain("已生成有效产物报告并匹配 SHA-256");
     expect(html).toContain("打开产物");
@@ -99,6 +110,15 @@ describe("AcceptancePanel", () => {
           status: "fail",
           evidence_ids: [],
           reason: "交付物文件缺失",
+        },
+      ],
+      deliverable_results: [
+        {
+          deliverable_id: "deliv_1",
+          status: "fail",
+          code: "artifact_missing",
+          evidence_ids: [],
+          reason: "交付物 'deliv_1' 的实际文件不存在",
         },
       ],
     };
@@ -140,5 +160,14 @@ describe("AcceptancePanel", () => {
 
     expect(html).toContain("待人工审核");
     expect(html).toContain("进行人工审核判断");
+  });
+
+  it("marks reports without deliverable checks for reevaluation", () => {
+    const legacyReport: AcceptanceReport = { ...sampleReport, deliverable_results: [] };
+    const html = renderToStaticMarkup(
+      <AcceptancePanel goalId="goal_1" report={legacyReport} />,
+    );
+
+    expect(html).toContain("此报告没有交付物基础检查结果，需要重新验收。");
   });
 });
