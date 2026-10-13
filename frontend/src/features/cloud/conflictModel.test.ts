@@ -19,10 +19,16 @@ describe('conflictModel', () => {
     remote_operation: 'upsert',
     local_payload: { id: 'conv-100', title: 'Local Title' },
     remote_payload: { id: 'conv-100', title: 'Remote Title' },
+    remote_change_id: null,
+    remote_sequence: null,
     conflict_version: 1,
     local_generation: 2,
     status: 'open',
+    resolution_request_id: null,
+    queued_change_id: null,
+    copied_entity_id: null,
     created_at: 1000,
+    resolved_at: null,
   };
 
   it('detects restore blocked when remote deleted and local is upsert', () => {
@@ -88,7 +94,8 @@ describe('conflictModel', () => {
     };
     const resolvingStatus = getConflictDisplayStatus(resolvingConflict);
     expect(resolvingStatus.status).toBe('resolving');
-    expect(resolvingStatus.label).toBe('正在提交选择');
+    expect(resolvingStatus.label).toBe('选择已提交');
+    expect(resolvingStatus.detail).toBe('正在等待同步确认');
 
     const resolvedConflict: ConflictItem = {
       ...baseConflict,
@@ -96,7 +103,17 @@ describe('conflictModel', () => {
     };
     const resolvedStatus = getConflictDisplayStatus(resolvedConflict);
     expect(resolvedStatus.status).toBe('resolved');
-    expect(resolvedStatus.label).toBe('已解决');
+    expect(resolvedStatus.label).toBe('本地冲突已处理');
+    expect(resolvedStatus.detail).not.toContain('已同步');
+
+    const copiedStatus = getConflictDisplayStatus({
+      ...baseConflict,
+      status: 'resolved',
+      copied_entity_id: 'new-copy-id',
+      queued_change_id: 'queued-copy-change',
+    });
+    expect(copiedStatus.label).toBe('本地副本已创建');
+    expect(copiedStatus.detail).toContain('new-copy-id');
 
     const missingRemoteConflict: ConflictItem = {
       ...baseConflict,

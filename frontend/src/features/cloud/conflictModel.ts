@@ -1,27 +1,7 @@
-export type ResolutionChoice = 'keep_local' | 'use_remote' | 'keep_local_as_copy';
+import type { CloudConflictRecord, ConflictChoice } from '../../api/cloud';
 
-export interface ConflictItem {
-  id: string;
-  entity_type: string;
-  entity_id: string;
-  local_revision: number;
-  remote_revision: number;
-  local_operation: 'upsert' | 'delete';
-  remote_operation: 'upsert' | 'delete';
-  local_payload: unknown | null;
-  remote_payload: unknown | null;
-  remote_change_id?: string;
-  remote_sequence?: string;
-  conflict_version: number;
-  local_generation: number;
-  status: 'open' | 'resolving' | 'resolved';
-  resolution_request_id?: string;
-  queued_change_id?: string;
-  copied_entity_id?: string;
-  created_at: number;
-  resolved_at?: number;
-  error_message?: string;
-}
+export type ResolutionChoice = ConflictChoice;
+export type ConflictItem = CloudConflictRecord;
 
 export type ConflictDisplayStatus =
   | 'pending'
@@ -80,18 +60,26 @@ export function getConflictDisplayStatus(conflict: ConflictItem): ConflictStatus
   if (conflict.status === 'resolving') {
     return {
       status: 'resolving',
-      label: '正在提交选择',
+      label: '选择已提交',
       tone: 'info',
-      detail: '本地决策已入队，等待云端确认同步',
+      detail: '正在等待同步确认',
     };
   }
 
   if (conflict.status === 'resolved') {
+    if (conflict.copied_entity_id) {
+      return {
+        status: 'resolved',
+        label: '本地副本已创建',
+        tone: 'success',
+        detail: `副本 ${conflict.copied_entity_id} 已创建；上传状态请在同步中心查看并等待实际确认`,
+      };
+    }
     return {
       status: 'resolved',
-      label: '已解决',
+      label: '本地冲突已处理',
       tone: 'success',
-      detail: '双方冲突已解决并已同步',
+      detail: '此冲突记录已处理；这不代表所有设备间的数据都已一致',
     };
   }
 

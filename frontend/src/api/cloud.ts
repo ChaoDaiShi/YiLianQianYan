@@ -138,6 +138,52 @@ export interface SyncConflict {
   created_at: number;
 }
 
+export type CloudConflictStatus = "open" | "resolving" | "resolved";
+export type CloudConflictOperation = "upsert" | "delete";
+export type ConflictChoice = "keep_local" | "use_remote" | "keep_local_as_copy";
+
+export interface CloudConflictRecord {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  local_revision: number;
+  remote_revision: number;
+  local_operation: CloudConflictOperation;
+  remote_operation: CloudConflictOperation;
+  local_payload: unknown | null;
+  remote_payload: unknown | null;
+  remote_change_id: string | null;
+  remote_sequence: string | null;
+  conflict_version: number;
+  local_generation: number;
+  status: CloudConflictStatus;
+  resolution_request_id: string | null;
+  queued_change_id: string | null;
+  copied_entity_id: string | null;
+  created_at: number;
+  resolved_at: number | null;
+}
+
+export interface ResolveConflictChoicePayload {
+  choice: ConflictChoice;
+  expected_conflict_version: number;
+  expected_remote_revision: number;
+  request_id: string;
+}
+
+export interface ConflictResolutionResult {
+  conflict_id: string;
+  state: CloudConflictStatus;
+  queued_change_id: string | null;
+  copied_entity_id: string | null;
+}
+
+export interface ConflictResolutionResponse {
+  result: ConflictResolutionResult;
+  conflicts: SyncConflict[];
+  records: CloudConflictRecord[];
+}
+
 export interface CloudSession {
   id:string;
   device_id:string;
@@ -242,12 +288,19 @@ export function updateCloudSyncPolicy(policy: CloudSyncPolicy): Promise<ApiResul
   return requestResult("PUT", "/api/cloud/sync/policy", policy);
 }
 
-export function listSyncConflicts(): Promise<ApiResult<{ conflicts: SyncConflict[] }>> {
+export function listSyncConflicts(): Promise<ApiResult<{ conflicts: SyncConflict[]; records: CloudConflictRecord[] }>> {
   return requestResult("GET", "/api/cloud/sync/conflicts");
 }
 
 export function resolveSyncConflict(id: string, resolution: "local" | "remote"): Promise<ApiResult<{ conflicts: SyncConflict[] }>> {
   return requestResult("POST", `/api/cloud/sync/conflicts/${id}/resolve`, { resolution });
+}
+
+export function resolveConflictChoice(
+  id: string,
+  payload: ResolveConflictChoicePayload,
+): Promise<ApiResult<ConflictResolutionResponse>> {
+  return requestResult("POST", `/api/cloud/sync/conflicts/${id}/resolve`, payload);
 }
 
 export function listCloudSessions():Promise<ApiResult<{sessions:CloudSession[]}>>{return requestResult("GET","/api/cloud/sessions")}

@@ -122,12 +122,33 @@ pub async fn resolve_sync_conflict_handler(
     Json(payload): Json<ResolveConflictPayload>,
 ) -> ApiResult {
     if let Some(choice) = payload.choice {
+        if payload.resolution.is_some() {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_conflict_request",
+                "三态冲突请求不能同时包含旧 resolution 字段",
+            ));
+        }
+        let (Some(expected_conflict_version), Some(expected_remote_revision), Some(request_id)) = (
+            payload.expected_conflict_version,
+            payload.expected_remote_revision,
+            payload.request_id,
+        ) else {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_conflict_request",
+                "三态冲突请求必须包含冲突版本、云端版本和 request_id",
+            ));
+        };
+        if request_id.trim().is_empty() {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_conflict_request",
+                "request_id 不能为空",
+            ));
+        }
+
         let lease = server.scoped_db.lease().clone();
-        let expected_conflict_version = payload.expected_conflict_version.unwrap_or(1);
-        let expected_remote_revision = payload.expected_remote_revision.unwrap_or(1);
-        let request_id = payload
-            .request_id
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let request = crate::modules::cloud::contracts::ResolveConflictRequest {
             conflict_id: id.clone(),
             expected_conflict_version,
@@ -145,7 +166,14 @@ pub async fn resolve_sync_conflict_handler(
             &request,
             &identity.device_id,
         )
-        .map_err(|e| sync_error(CloudSyncError::Sync(e)))?;
+        .map_err(|error| match error {
+            crate::modules::cloud::contracts::SyncError::ConflictChanged(_) => api_error(
+                StatusCode::CONFLICT,
+                "CONFLICT_CHANGED",
+                "冲突内容或账号作用域已变化，请刷新后重新选择",
+            ),
+            error => sync_error(CloudSyncError::Sync(error)),
+        })?;
         return Ok(Json(serde_json::json!({
             "result": result,
             "conflicts": server.db.list_sync_conflicts().map_err(internal_error)?,
@@ -153,6 +181,16 @@ pub async fn resolve_sync_conflict_handler(
         })));
     }
 
+    if payload.expected_conflict_version.is_some()
+        || payload.expected_remote_revision.is_some()
+        || payload.request_id.is_some()
+    {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_conflict_request",
+            "三态冲突参数必须与 choice 一起提交",
+        ));
+    }
     let resolution = payload.resolution.as_deref().unwrap_or("local");
     if !matches!(resolution, "local" | "remote") {
         return Err(api_error(

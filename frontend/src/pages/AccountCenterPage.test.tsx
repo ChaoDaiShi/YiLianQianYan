@@ -20,6 +20,13 @@ describe("AccountCenterPage and AccountProfilePanel contracts (P2)", () => {
     expect(accountCenterSource).toContain("取消切换");
   });
 
+  it("uses conflict records and preserves the selected three-way choice", () => {
+    expect(accountCenterSource).toContain("setConflictRecords(result.data.records)");
+    expect(accountCenterSource).toContain("resolveConflictChoice(conflict.id, payload)");
+    expect(accountCenterSource).not.toContain("conflict_version: 1");
+    expect(accountCenterSource).not.toContain("local_generation: 1");
+  });
+
   it("keeps the real logout report and renders profile status for guests", () => {
     expect(accountCenterSource).toContain("setLastLogoutReport(result.data.report)");
     expect(accountCenterSource).toContain("lastLogoutReport={lastLogoutReport}");

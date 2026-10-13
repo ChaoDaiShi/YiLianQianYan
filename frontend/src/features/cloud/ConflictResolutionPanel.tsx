@@ -16,6 +16,7 @@ export interface ConflictResolutionPanelProps {
   ) => Promise<{ ok: boolean; message?: string }>;
   onRefresh?: () => void;
   isLoading?: boolean;
+  loadError?: string;
 }
 
 export const ConflictResolutionPanel: React.FC<ConflictResolutionPanelProps> = ({
@@ -23,6 +24,7 @@ export const ConflictResolutionPanel: React.FC<ConflictResolutionPanelProps> = (
   onResolve,
   onRefresh,
   isLoading = false,
+  loadError,
 }) => {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<{ [id: string]: string }>({});
@@ -52,10 +54,10 @@ export const ConflictResolutionPanel: React.FC<ConflictResolutionPanelProps> = (
           [conflict.id]: res.message || '解决冲突失败',
         }));
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       setErrorMsg((prev) => ({
         ...prev,
-        [conflict.id]: e?.message || '网络或处理异常',
+        [conflict.id]: e instanceof Error ? e.message : '网络或处理异常',
       }));
     } finally {
       setResolvingId(null);
@@ -65,11 +67,26 @@ export const ConflictResolutionPanel: React.FC<ConflictResolutionPanelProps> = (
   if (conflicts.length === 0) {
     return (
       <div className="p-6 text-center bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
-        <div className="text-zinc-400 dark:text-zinc-500 text-3xl mb-2">✓</div>
-        <h3 className="text-base font-medium text-zinc-900 dark:text-zinc-100">无冲突项目</h3>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-          当前所有云端与本地数据版本完全一致，无需手动干预。
-        </p>
+        {loadError ? (
+          <>
+            <h3 className="text-base font-medium text-red-700 dark:text-red-400">冲突记录读取失败</h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">{loadError}</p>
+            {onRefresh && <button type="button" onClick={onRefresh} disabled={isLoading} className="mt-3 px-3 py-1.5 text-xs rounded-md bg-zinc-100 dark:bg-zinc-800">重新载入冲突</button>}
+          </>
+        ) : isLoading ? (
+          <>
+            <h3 className="text-base font-medium text-zinc-900 dark:text-zinc-100">正在读取冲突记录</h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">读取完成后会显示本机当前记录状态。</p>
+          </>
+        ) : (
+          <>
+            <div className="text-zinc-400 dark:text-zinc-500 text-3xl mb-2">✓</div>
+            <h3 className="text-base font-medium text-zinc-900 dark:text-zinc-100">当前没有待处理的同步冲突</h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+              这里只表示本机没有待处理的冲突记录。
+            </p>
+          </>
+        )}
       </div>
     );
   }
@@ -95,13 +112,14 @@ export const ConflictResolutionPanel: React.FC<ConflictResolutionPanelProps> = (
           </button>
         )}
       </div>
+      {loadError && <p role="alert" className="text-xs text-red-700 dark:text-red-400">冲突记录刷新失败，仍保留上次读取的记录：{loadError}</p>}
 
       <div className="space-y-4">
         {conflicts.map((conflict) => {
           const presentation = getConflictDisplayStatus(conflict);
           const choices = getAvailableChoices(conflict);
           const isCurrentResolving = resolvingId === conflict.id || conflict.status === 'resolving';
-          const localError = errorMsg[conflict.id] || conflict.error_message;
+          const localError = errorMsg[conflict.id];
 
           return (
             <div
@@ -140,6 +158,9 @@ export const ConflictResolutionPanel: React.FC<ConflictResolutionPanelProps> = (
                   </span>
                 </div>
               </div>
+              {(conflict.status !== 'open' || conflict.copied_entity_id) && (
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">{presentation.detail}</p>
+              )}
 
               {/* Error banner if present */}
               {localError && (
@@ -211,7 +232,7 @@ export const ConflictResolutionPanel: React.FC<ConflictResolutionPanelProps> = (
                       <div key={opt.choice} className="relative group">
                         <button
                           onClick={() => handleChoiceClick(conflict, opt.choice)}
-                          disabled={!opt.enabled || isCurrentResolving}
+                          disabled={!opt.enabled || isCurrentResolving || isLoading}
                           className={`px-3.5 py-2 text-xs font-medium rounded-lg transition-colors ${
                             opt.enabled && !isCurrentResolving
                               ? opt.choice === 'keep_local_as_copy'
