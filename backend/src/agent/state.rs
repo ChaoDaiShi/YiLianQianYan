@@ -5,7 +5,7 @@
 use crate::integrations::llm::types::ChatMessage;
 
 /// Running state for a single agent conversation session
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentState {
     /// The system prompt that defines agent behavior
     pub system_prompt: String,
@@ -15,6 +15,9 @@ pub struct AgentState {
     pub input: String,
     /// The final output (for streaming accumulation)
     pub output: String,
+    /// The validated ProofLoop goal bound to this conversation, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_ref: Option<crate::agent::delegation::GoalRef>,
 }
 
 impl AgentState {
@@ -34,6 +37,7 @@ impl AgentState {
             messages,
             input: String::new(),
             output: String::new(),
+            goal_ref: None,
         }
     }
 
@@ -112,6 +116,7 @@ impl AgentState {
         self.messages.clear();
         self.input.clear();
         self.output.clear();
+        self.goal_ref = None;
 
         // Re-add system prompt
         self.messages.push(ChatMessage {
@@ -133,5 +138,23 @@ impl AgentState {
                 self.messages.insert(0, sys);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentState;
+
+    #[test]
+    fn older_saved_agent_state_defaults_goal_ref_to_none() {
+        let saved = serde_json::json!({
+            "system_prompt": "system",
+            "messages": [{"role": "system", "content": "system"}],
+            "input": "",
+            "output": ""
+        });
+
+        let state: AgentState = serde_json::from_value(saved).unwrap();
+        assert!(state.goal_ref.is_none());
     }
 }
