@@ -52,6 +52,7 @@ fn draft(
     p: &CandidatePlan,
 ) -> ProofDraft {
     ProofDraft {
+        planning_review: None,
         draft_id: id.into(),
         revision: 1,
         graph_id: graph.to_string(),

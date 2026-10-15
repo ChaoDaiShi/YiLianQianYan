@@ -13,6 +13,8 @@ pub type FieldPath = Vec<String>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofError {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning_usage: Option<PlanningUsage>,
     pub code: String,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -24,11 +26,17 @@ pub struct ProofError {
 impl ProofError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
+            planning_usage: None,
             code: code.into(),
             message: message.into(),
             node_id: None,
             target_path: None,
         }
+    }
+
+    pub fn with_planning_usage(mut self, usage: PlanningUsage) -> Self {
+        self.planning_usage = Some(usage);
+        self
     }
 
     pub fn with_node(mut self, node_id: impl Into<String>) -> Self {
@@ -282,7 +290,7 @@ pub enum DraftStatus {
     Confirmed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanningUsage {
     pub model_calls: u32,
     pub total_tokens: Option<u64>,
@@ -304,6 +312,8 @@ impl Default for PlanningUsage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProofDraft {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning_review: Option<super::enhancement_contracts::PlanningReview>,
     pub draft_id: String,
     pub revision: u32,
     pub graph_id: String,
@@ -476,6 +486,10 @@ pub struct RepairProposal {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateProofDraftRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirements: Option<super::enhancement_contracts::GoalRequirements>,
+    #[serde(default)]
+    pub planning: super::enhancement_contracts::PlanningOptions,
     pub workspace_id: String,
     pub user_goal: String,
     #[serde(default)]
@@ -545,3 +559,10 @@ pub struct ApplyRepairResponse {
     pub graph_revision: u64,
     pub affected_node_ids: Vec<String>,
 }
+
+impl std::fmt::Display for ProofError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.code, self.message)
+    }
+}
+impl std::error::Error for ProofError {}

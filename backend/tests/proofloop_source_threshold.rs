@@ -124,6 +124,8 @@ async fn planning_never_silently_drops_an_explicitly_selected_capability() {
     let error = service
         .create_draft(
             CreateProofDraftRequest {
+                requirements: None,
+                planning: Default::default(),
                 workspace_id: contract.workspace_id,
                 user_goal: contract.user_goal,
                 allowed_capability_ids: Some(vec![omitted_id]),

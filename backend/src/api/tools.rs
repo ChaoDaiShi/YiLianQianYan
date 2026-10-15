@@ -9,5 +9,5 @@ use crate::app::state::AppServer;
 use crate::tools::trait_def::ToolInfo;
 
 pub async fn list_handler(State(server): State<Arc<AppServer>>) -> Json<Vec<ToolInfo>> {
-    Json(server.tool_registry.list_tools())
+    Json(server.build_agent_tool_registry().await.list_tools())
 }

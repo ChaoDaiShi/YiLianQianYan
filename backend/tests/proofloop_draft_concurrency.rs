@@ -31,6 +31,7 @@ fn draft(
     let compilation = compile_candidate(contract, candidate, snapshot, &graph_id, &[]);
     assert_eq!(compilation.status, CompileStatus::Ready);
     ProofDraft {
+        planning_review: None,
         draft_id: draft_id.into(),
         revision: 1,
         graph_id: graph_id.to_string(),

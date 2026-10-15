@@ -100,14 +100,15 @@ pub async fn propose_repair_handler(
 
     let registry = server.build_capability_registry().await;
     let descriptors = registry.list();
-    let cap_snapshot = build_capability_snapshot(&descriptors, None, now_ms);
+    let cap_snapshot =
+        build_capability_snapshot(&descriptors, Some(&contract.allowed_capability_ids), now_ms);
 
     let failed_criterion = report
         .results
         .iter()
         .find(|r| r.status == crate::modules::task::proofloop::contracts::CriterionStatus::Fail);
 
-    let mut proposal = match classify_failure(
+    let rule_proposal = classify_failure(
         &failed_exec,
         failed_criterion,
         &cap_snapshot,
@@ -115,10 +116,197 @@ pub async fn propose_repair_handler(
         rounds_used,
         report.graph_revision,
         report.report_id.clone(),
-    ) {
-        Ok(p) => p,
-        Err(err) => return proof_error_response(err),
-    };
+    );
+    if let Err(error) = &rule_proposal {
+        if matches!(
+            error.code.as_str(),
+            "repair_aborted" | "external_mutation_uncertain" | "proofloop_budget_exhausted"
+        ) {
+            return proof_error_response(error.clone());
+        }
+    }
+    let mut proposal;
+    let ai_repair_enabled = server.config.read().ai_repair_enabled;
+    if ai_repair_enabled {
+        use crate::modules::task::proofloop::ai_repair::{FailureContext, ObservedValue};
+        let graph = match server.task_world.get_graph(&graph_id) {
+            Some(v) => v,
+            None => {
+                return proof_error_response(ProofError::new("graph_not_found", "任务图不存在"))
+            }
+        };
+        let draft = match server
+            .db
+            .confirmed_proof_draft_for_goal(&contract.goal_id, contract.version)
+        {
+            Ok(Some(v)) => v,
+            _ => {
+                return proof_error_response(ProofError::new(
+                    "draft_not_found",
+                    "已确认目标草稿不存在",
+                ))
+            }
+        };
+        let direct_sources: std::collections::HashSet<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.to == failed_exec.node_id)
+            .map(|edge| edge.from.to_string())
+            .collect();
+        let mut observed = Vec::new();
+        for evidence in &source_snapshot.evidence {
+            if !direct_sources.contains(&evidence.origin.node_id) {
+                continue;
+            }
+            let id = match crate::modules::task::NodeExecutionId::new(&evidence.origin.execution_id)
+            {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let execution = match server.db.load_node_execution(&id) {
+                Ok(Some(v)) if v.status == crate::modules::task::NodeExecutionStatus::Succeeded => {
+                    v
+                }
+                _ => continue,
+            };
+            if let Some(output) = execution.output {
+                collect_observed_values(&output, &mut Vec::new(), evidence, &mut observed);
+            }
+        }
+        // Constants frozen in the current graph are allowed observed inputs; they are not invented replacement values.
+        if let Some(node) = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == failed_exec.node_id)
+        {
+            if let Some(values) = node.input.get("capability_input") {
+                collect_frozen_inputs(
+                    values,
+                    &mut Vec::new(),
+                    &draft.draft_id,
+                    report.graph_revision,
+                    failed_exec.id.as_str(),
+                    node.id.as_str(),
+                    &mut observed,
+                );
+            }
+        }
+        let context = FailureContext {
+            contract: contract.clone(),
+            snapshot: cap_snapshot.clone(),
+            graph_revision: report.graph_revision,
+            report_id: report.report_id.clone(),
+            failed_execution_ids: vec![failed_exec.id.to_string()],
+            failed_node_id: failed_exec.node_id.to_string(),
+            failure_code: failed_exec.failure_code.clone().unwrap_or_default(),
+            error_message: failed_exec.error.clone().unwrap_or_default(),
+            observed_values: observed,
+            current_round: rounds_used,
+        };
+        if let Err(error) =
+            crate::modules::task::proofloop::ai_repair::validate_failure_context(&context)
+        {
+            return proof_error_response(error);
+        }
+        let activity = match server.proofloop_budget.begin_model_activity(&draft) {
+            Ok(v) => v,
+            Err(e) => return proof_error_response(e),
+        };
+        let activity_deadline = tokio::time::Instant::now() + activity.remaining();
+        let combined = match server
+            .db
+            .combined_goal_model_usage(&contract, &draft.planning_usage)
+        {
+            Ok(v) => v,
+            Err(e) => return proof_error_response(e),
+        };
+        let Some(used_tokens) = combined.total_tokens else {
+            return proof_error_response(ProofError::new(
+                "proofloop_usage_unavailable",
+                "目标的历史模型用量未知，不能调用修复模型",
+            ));
+        };
+        let remaining_tokens = contract.budget.max_total_tokens.saturating_sub(used_tokens);
+        if remaining_tokens == 0 {
+            return proof_error_response(ProofError::new(
+                "proofloop_budget_exhausted",
+                "目标的剩余 token 预算已耗尽",
+            ));
+        }
+        let mut config = server.effective_model_config();
+        config.invoke_timeout_ms = config
+            .invoke_timeout_ms
+            .min(contract.budget.max_wall_time_ms);
+        let client = LlmClient::new(&config, Arc::clone(&server.secret_resolver));
+        let messages =
+            match crate::modules::task::proofloop::ai_repair::build_ai_repair_messages(&context) {
+                Ok(value) => value,
+                Err(error) => return proof_error_response(error),
+            };
+        let max_output_tokens =
+            match client.output_tokens_for_total_budget(&messages, &[], remaining_tokens) {
+                Some(value) => value,
+                None => {
+                    return proof_error_response(ProofError::new(
+                        "proofloop_budget_exhausted",
+                        "修复输入已占满目标剩余 token 预算，未调用模型",
+                    ))
+                }
+            };
+        if activity_deadline <= tokio::time::Instant::now() {
+            return proof_error_response(ProofError::new(
+                "proofloop_budget_exhausted",
+                "修复活动时间预算已耗尽，未调用模型",
+            ));
+        }
+        let invocation = match server.db.reserve_goal_model_call(
+            &contract,
+            &draft.planning_usage,
+            "ai-repair",
+            now_ms,
+        ) {
+            Ok(v) => v,
+            Err(e) => return proof_error_response(e),
+        };
+        let result =
+            crate::modules::task::proofloop::ai_repair::propose_ai_repair_with_usage_and_limits(
+                &context,
+                &client,
+                &CancellationToken::new(),
+                max_output_tokens,
+                remaining_tokens,
+                activity_deadline,
+            )
+            .await;
+        let usage = match &result {
+            Ok((_, usage)) => Some(usage),
+            Err(error) => error.planning_usage.as_ref(),
+        };
+        if let Err(error) = server.db.finish_goal_model_call(&invocation, usage) {
+            return proof_error_response(error);
+        }
+        if let Err(error) = activity.finish() {
+            return proof_error_response(error);
+        }
+        proposal = match result {
+            Ok((proposal, _)) => proposal,
+            Err(error) => return proof_error_response(error),
+        };
+        if let Err(error) = validate_repair(
+            &proposal,
+            &graph,
+            report.graph_revision,
+            &cap_snapshot,
+            &contract,
+        ) {
+            return proof_error_response(error);
+        }
+    } else {
+        proposal = match rule_proposal {
+            Ok(value) => value,
+            Err(error) => return proof_error_response(error),
+        };
+    }
 
     if let Err(err) = server
         .proofloop_budget
@@ -449,4 +637,71 @@ fn candidate_from_graph(
             .map(|plan| plan.deliverable_nodes.clone())
             .unwrap_or_default(),
     })
+}
+
+fn collect_observed_values(
+    value: &serde_json::Value,
+    path: &mut Vec<String>,
+    evidence: &crate::modules::task::proofloop::EvidenceRef,
+    out: &mut Vec<crate::modules::task::proofloop::ai_repair::ObservedValue>,
+) {
+    out.push(crate::modules::task::proofloop::ai_repair::ObservedValue {
+        evidence_id: evidence.evidence_id.clone(),
+        execution_id: evidence.origin.execution_id.clone(),
+        node_id: Some(evidence.origin.node_id.clone()),
+        path: path.clone(),
+        value: value.clone(),
+    });
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                path.push(key.clone());
+                collect_observed_values(child, path, evidence, out);
+                path.pop();
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                path.push(index.to_string());
+                collect_observed_values(child, path, evidence, out);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_frozen_inputs(
+    value: &serde_json::Value,
+    path: &mut Vec<String>,
+    draft_id: &str,
+    revision: u64,
+    execution_id: &str,
+    node_id: &str,
+    out: &mut Vec<crate::modules::task::proofloop::ai_repair::ObservedValue>,
+) {
+    out.push(crate::modules::task::proofloop::ai_repair::ObservedValue {
+        evidence_id: format!("confirmed-draft:{draft_id}:graph:{revision}"),
+        execution_id: execution_id.into(),
+        node_id: Some(node_id.into()),
+        path: path.clone(),
+        value: value.clone(),
+    });
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                path.push(key.clone());
+                collect_frozen_inputs(child, path, draft_id, revision, execution_id, node_id, out);
+                path.pop();
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                path.push(index.to_string());
+                collect_frozen_inputs(child, path, draft_id, revision, execution_id, node_id, out);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
 }

@@ -83,6 +83,30 @@ impl LlmClient {
         }
     }
 
+    /// Return the maximum completion tokens that fit inside a caller's total
+    /// token budget. The UTF-8 byte count is a conservative estimate for the
+    /// visible prompt; provider-specific hidden framing/tokenizer costs remain
+    /// uncertain and are still checked against the provider's actual usage.
+    pub fn output_tokens_for_total_budget(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        total_token_budget: u64,
+    ) -> Option<u32> {
+        let input_upper_bound = conservative_input_token_upper_bound(messages, tools)?;
+        let remaining = total_token_budget.checked_sub(input_upper_bound)?;
+        let output_limit = remaining.min(u64::from(self.config.max_tokens));
+        (output_limit > 0).then_some(output_limit.min(u64::from(u32::MAX)) as u32)
+    }
+
+    pub fn max_output_tokens(&self) -> u32 {
+        self.config.max_tokens
+    }
+
+    pub fn invoke_timeout(&self) -> Duration {
+        Duration::from_millis(self.config.invoke_timeout_ms)
+    }
+
     /// Build the full API endpoint URL
     fn api_url(&self) -> String {
         format!(
@@ -119,6 +143,18 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> Result<ChatCompletionResponse, LlmError> {
+        self.invoke_with_max_tokens(messages, tools, self.config.max_tokens)
+            .await
+    }
+
+    /// Invoke using an explicit output cap while retaining this client's
+    /// configured limiter, resolver, timeout, and usage recorder.
+    pub async fn invoke_with_max_tokens(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        max_tokens: u32,
+    ) -> Result<ChatCompletionResponse, LlmError> {
         let _guard = self.limiter.lock().await;
 
         let request = ChatCompletionRequest {
@@ -131,7 +167,7 @@ impl LlmClient {
             },
             tool_choice: None,
             temperature: Some(self.config.temperature),
-            max_tokens: Some(self.config.max_tokens),
+            max_tokens: Some(max_tokens),
             stream: false,
             stream_options: None,
         };
@@ -274,6 +310,16 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> Result<tokio::sync::mpsc::Receiver<Result<StreamChunk, LlmError>>, LlmError> {
+        self.invoke_stream_with_max_tokens(messages, tools, self.config.max_tokens)
+            .await
+    }
+
+    pub async fn invoke_stream_with_max_tokens(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        max_tokens: u32,
+    ) -> Result<tokio::sync::mpsc::Receiver<Result<StreamChunk, LlmError>>, LlmError> {
         let _guard = self.limiter.lock().await;
 
         let request = ChatCompletionRequest {
@@ -286,7 +332,7 @@ impl LlmClient {
             },
             tool_choice: None,
             temperature: Some(self.config.temperature),
-            max_tokens: Some(self.config.max_tokens),
+            max_tokens: Some(max_tokens),
             stream: true,
             stream_options: Some(StreamOptions {
                 include_usage: true,
@@ -396,12 +442,28 @@ impl LlmClient {
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
+        on_token: F,
+    ) -> Result<StreamAccumulator, LlmError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        self.stream_with_callbacks_max_tokens(messages, tools, self.config.max_tokens, on_token)
+            .await
+    }
+
+    pub async fn stream_with_callbacks_max_tokens<F>(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        max_tokens: u32,
         mut on_token: F,
     ) -> Result<StreamAccumulator, LlmError>
     where
         F: FnMut(&str) + Send,
     {
-        let mut rx = self.invoke_stream(messages, tools).await?;
+        let mut rx = self
+            .invoke_stream_with_max_tokens(messages, tools, max_tokens)
+            .await?;
         let mut accumulator = StreamAccumulator::new();
 
         while let Some(chunk_result) = rx.recv().await {
@@ -433,6 +495,21 @@ impl LlmClient {
         }
         Ok(accumulator)
     }
+}
+
+/// Upper-bounds visible input by its UTF-8 bytes plus a small per-message/tool
+/// framing allowance. This intentionally avoids a tokenizer dependency; real
+/// provider usage remains authoritative after the request.
+pub fn conservative_input_token_upper_bound(
+    messages: &[ChatMessage],
+    tools: &[serde_json::Value],
+) -> Option<u64> {
+    let message_bytes = serde_json::to_vec(messages).ok()?.len() as u64;
+    let tools_bytes = serde_json::to_vec(tools).ok()?.len() as u64;
+    message_bytes
+        .checked_add(tools_bytes)?
+        .checked_add(((messages.len() + tools.len()) as u64).checked_mul(64)?)
+        .checked_add(32)
 }
 
 #[cfg(test)]
@@ -476,6 +553,23 @@ mod tests {
             .unwrap();
         let result = rt.block_on(client.embed("test input"));
         assert!(matches!(result, Err(LlmError::EmbeddingNotConfigured)));
+    }
+
+    #[test]
+    fn total_token_budget_reserves_utf8_prompt_before_output() {
+        let client = LlmClient::new(&config_for_mock("http://127.0.0.1:1"), test_resolver());
+        let messages = [ChatMessage::user("你好")];
+        let input_upper_bound = conservative_input_token_upper_bound(&messages, &[]).unwrap();
+
+        assert!(input_upper_bound >= "你好".len() as u64);
+        assert_eq!(
+            client.output_tokens_for_total_budget(&messages, &[], input_upper_bound + 100,),
+            Some(100),
+        );
+        assert_eq!(
+            client.output_tokens_for_total_budget(&messages, &[], input_upper_bound),
+            None,
+        );
     }
 
     // ── Integration tests (mock HTTP server) ──

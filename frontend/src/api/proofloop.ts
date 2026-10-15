@@ -3,6 +3,17 @@ import type { InputBinding } from "../features/task-world/input-binding/model";
 import { API_BASE } from "./transport";
 import { controlSessionHeaders } from "./controlSession";
 import type { ApiResult } from "./taskWorld";
+import type { PlanningOptions, PlanningReview, SelectCandidateRequest } from "./proofloopEnhancements";
+export type {
+  PlanOption,
+  PlanScore,
+  PlanningOptions,
+  PlanningReview,
+  PlanningStrategy,
+  RouteScore,
+  SelectCandidateRequest,
+  SkillRecommendation,
+} from "./proofloopEnhancements";
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 export type JsonObject = { [k: string]: Json };
@@ -149,6 +160,7 @@ export interface ProofDraft {
     | "confirmed";
   confirmed_graph_revision: number | null;
   planning_usage?: { model_calls: number; total_tokens: number | null; started_at_ms: number; elapsed_ms?: number | null };
+  planning_review?: PlanningReview | null;
 }
 
 export interface ExecutionRef {
@@ -190,6 +202,19 @@ export interface EvidenceSnapshot {
   evidence: EvidenceRef[];
   deliverables: DeliverableArtifactMapping[];
   sources: EvidenceSource[];
+}
+
+export interface CurrentDeliverableEvidence {
+  deliverable_id: string;
+  artifact_id: string | null;
+  status: "current" | "stale";
+  reason: string;
+}
+
+export interface EvaluationDetail {
+  report: AcceptanceReport;
+  snapshot: EvidenceSnapshot;
+  current_evidence?: CurrentDeliverableEvidence[];
 }
 
 export interface HumanReview {
@@ -258,9 +283,11 @@ export interface RepairProposal {
 
 // Request & Response shapes
 export interface CreateProofDraftRequest {
+  requirements?: Pick<GoalContract,"deliverables"|"criteria"|"constraints"> & { budget?: Budget };
   workspace_id: string;
   user_goal: string;
   allowed_capability_ids?: string[];
+  planning?: PlanningOptions;
 }
 
 export interface UpdateProofDraftRequest {
@@ -461,6 +488,19 @@ export async function updateProofDraft(
   );
 }
 
+export async function selectProofCandidate(
+  draftId: string,
+  request: SelectCandidateRequest,
+  signal?: AbortSignal,
+): Promise<ApiResult<ProofDraft>> {
+  return requestProofLoop<ProofDraft>(
+    "POST",
+    `/api/task-world/proofloop/drafts/${encodeURIComponent(draftId)}/select-candidate`,
+    request,
+    signal,
+  );
+}
+
 export async function confirmProofDraft(
   draftId: string,
   request: ConfirmProofDraftRequest,
@@ -540,4 +580,4 @@ export async function applyRepair(
 
 export interface GraphGoalBinding { goal_id: string; goal_version: number; graph_id: string; contract: GoalContract; time_usage?: GoalTimeUsage | null; remaining_ms?: number | null; budget_error?: ProofError | null }
 export const getGraphGoal = (graphId: string, signal?: AbortSignal) => requestProofLoop<GraphGoalBinding>("GET", `/api/task-world/proofloop/graphs/${encodeURIComponent(graphId)}/goal`, undefined, signal);
-export const getEvaluationDetail = (reportId: string, signal?: AbortSignal) => requestProofLoop<{ report: AcceptanceReport; snapshot: EvidenceSnapshot }>("GET", `/api/task-world/proofloop/evaluations/${encodeURIComponent(reportId)}`, undefined, signal);
+export const getEvaluationDetail = (reportId: string, signal?: AbortSignal) => requestProofLoop<EvaluationDetail>("GET", `/api/task-world/proofloop/evaluations/${encodeURIComponent(reportId)}`, undefined, signal);

@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
+    pub ai_repair_enabled: bool,
+    #[serde(default)]
+    pub external_agents: Vec<crate::integrations::acp::AcpLaunchConfig>,
+    #[serde(default)]
     pub agent: AgentConfig,
     #[serde(default)]
     pub model: ModelConfig,
@@ -28,6 +32,8 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            ai_repair_enabled: false,
+            external_agents: Vec::new(),
             agent: AgentConfig::default(),
             model: ModelConfig::default(),
             voice: VoiceConfig::default(),

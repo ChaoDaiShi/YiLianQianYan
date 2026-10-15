@@ -13,7 +13,14 @@ use super::contracts::{
     CapabilitySnapshot, CompileStatus, ConfirmProofDraftResponse, CreateProofDraftRequest,
     DraftStatus, ProofDraft, ProofDraftSummary, ProofError, UpdateProofDraftRequest,
 };
-use super::planner::propose_candidate_with_usage;
+use super::enhancement_contracts::{
+    PlanOption, PlanningReview, PlanningStrategy, RouteScore, SelectCandidateRequest,
+    SkillRecommendation,
+};
+use super::{
+    candidate_planner::propose_candidates_with_usage,
+    plan_selection::{score_candidate, select_recommended},
+};
 
 fn draft_write_error(error: ProofLoopDbError) -> ProofError {
     match error {
@@ -71,6 +78,39 @@ impl DraftService {
         cancel: &CancellationToken,
         now: i64,
     ) -> Result<ProofDraft, ProofError> {
+        self.create_draft_with_context(
+            request,
+            snapshot,
+            llm_client,
+            cancel,
+            now,
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_draft_with_context(
+        &self,
+        request: CreateProofDraftRequest,
+        snapshot: CapabilitySnapshot,
+        llm_client: Option<&LlmClient>,
+        cancel: &CancellationToken,
+        now: i64,
+        routes: Vec<RouteScore>,
+        recommendations: Vec<SkillRecommendation>,
+    ) -> Result<ProofDraft, ProofError> {
+        request.planning.validate()?;
+        let planning_goal = super::enhancement_contracts::planning_goal_text(
+            &request.user_goal,
+            request.requirements.as_ref(),
+        )?;
+        let requested_budget = request
+            .requirements
+            .as_ref()
+            .and_then(|requirements| requirements.budget)
+            .unwrap_or_default();
         if request
             .allowed_capability_ids
             .as_ref()
@@ -88,18 +128,96 @@ impl DraftService {
                 "所选工具未完整纳入能力快照，可能不可用或超出规划长度、数量上限。请检查工具配置或减少所选能力范围后重试",
             ));
         }
-        let (contract, candidate, planning_usage) = propose_candidate_with_usage(
-            &request.workspace_id,
-            &request.user_goal,
-            &snapshot,
-            llm_client,
-            cancel,
-        )
-        .await?;
-
-        let draft_id = format!("draft-{}", uuid::Uuid::new_v4());
         let graph_id = TaskGraphId::generate();
-
+        let (contract, candidate, planning_usage, planning_review) = if request.planning.strategy
+            == PlanningStrategy::Existing
+        {
+            let (mut contract, candidate, usage) =
+                super::planner::propose_candidate_with_usage_and_budget(
+                    &request.workspace_id,
+                    &planning_goal,
+                    &snapshot,
+                    llm_client,
+                    cancel,
+                    requested_budget,
+                )
+                .await?;
+            contract.user_goal = request.user_goal.clone();
+            if let Some(requirements) = &request.requirements {
+                requirements.apply(&mut contract);
+            }
+            (contract, candidate, usage, None)
+        } else {
+            let client = llm_client
+                .ok_or_else(|| ProofError::new("proofloop_model_not_configured", "大模型未配置"))?;
+            let mut bundle = propose_candidates_with_usage(
+                &request.workspace_id,
+                &planning_goal,
+                &snapshot,
+                &recommendations,
+                &request.planning,
+                client,
+                cancel,
+                requested_budget,
+            )
+            .await?;
+            bundle.contract.user_goal = request.user_goal.clone();
+            if let Some(requirements) = &request.requirements {
+                requirements.apply(&mut bundle.contract);
+            }
+            let mut options = Vec::new();
+            for (index, candidate) in bundle.candidates.into_iter().enumerate() {
+                let compilation =
+                    compile_candidate(&bundle.contract, &candidate, &snapshot, &graph_id, &[]);
+                let score = score_candidate(&bundle.contract, &candidate, &compilation, &snapshot);
+                options.push(PlanOption {
+                    candidate_id: format!("candidate-{index:02}"),
+                    candidate,
+                    compilation,
+                    score,
+                });
+            }
+            let recommended = select_recommended(&options);
+            let selected = recommended
+                .as_ref()
+                .and_then(|id| options.iter().find(|o| &o.candidate_id == id))
+                .or_else(|| options.first())
+                .ok_or_else(|| {
+                    ProofError::new("proofloop_candidate_count_mismatch", "没有候选方案")
+                })?
+                .candidate
+                .clone();
+            let review = PlanningReview {
+                contract_version: bundle.contract.version,
+                strategy: request.planning.strategy,
+                snapshot_id: snapshot.snapshot_id.clone(),
+                routes,
+                options,
+                recommended_candidate_id: recommended,
+                selected_candidate_id: None,
+                recommendations,
+                scoring_version: "plan-score-v1".into(),
+            };
+            (bundle.contract, selected, bundle.usage, Some(review))
+        };
+        if planning_usage.total_tokens.is_none() {
+            return Err(ProofError::new(
+                "proofloop_usage_unavailable",
+                "新目标的规划 token 用量未知，不能保存或确认目标",
+            )
+            .with_planning_usage(planning_usage));
+        }
+        if planning_usage.model_calls > contract.budget.max_model_calls
+            || planning_usage
+                .total_tokens
+                .is_some_and(|tokens| tokens > contract.budget.max_total_tokens)
+        {
+            return Err(
+                ProofError::new("proofloop_budget_exhausted", "规划消耗超过明确目标预算")
+                    .with_planning_usage(planning_usage),
+            );
+        }
+        let draft_id = format!("draft-{}", uuid::Uuid::new_v4());
         let compilation = compile_candidate(&contract, &candidate, &snapshot, &graph_id, &[]);
 
         let status = match compilation.status {
@@ -109,6 +227,7 @@ impl DraftService {
         };
 
         let draft = ProofDraft {
+            planning_review,
             draft_id,
             revision: 1,
             graph_id: graph_id.to_string(),
@@ -142,6 +261,81 @@ impl DraftService {
         self.db
             .list_proof_drafts(workspace_id)
             .map_err(|e| ProofError::new("draft_list_failed", e.to_string()))
+    }
+
+    pub fn select_candidate(
+        &self,
+        draft_id: &str,
+        request: SelectCandidateRequest,
+        snapshot: CapabilitySnapshot,
+        now: i64,
+    ) -> Result<ProofDraft, ProofError> {
+        let mut draft = self
+            .get_draft(draft_id)?
+            .ok_or_else(|| ProofError::new("draft_not_found", "任务草稿不存在"))?;
+        if draft.revision != request.expected_revision {
+            return Err(ProofError::new(
+                "proofloop_stale_revision",
+                "草稿版本已变化，请加载最新方案",
+            ));
+        }
+        if draft.status == DraftStatus::Confirmed {
+            return Err(ProofError::new(
+                "draft_already_confirmed",
+                "已确认草稿不可切换候选",
+            ));
+        }
+        let mut review = draft.planning_review.take().ok_or_else(|| {
+            ProofError::new("proofloop_candidate_not_found", "该草稿没有多个候选方案")
+        })?;
+        let graph_id = TaskGraphId::new(&draft.graph_id)
+            .map_err(|e| ProofError::new("invalid_graph_id", e.to_string()))?;
+        for option in &mut review.options {
+            option.compilation = compile_candidate(
+                &draft.contract,
+                &option.candidate,
+                &snapshot,
+                &graph_id,
+                &[],
+            );
+            option.score = score_candidate(
+                &draft.contract,
+                &option.candidate,
+                &option.compilation,
+                &snapshot,
+            );
+        }
+        let option = review
+            .options
+            .iter()
+            .find(|o| o.candidate_id == request.candidate_id)
+            .ok_or_else(|| {
+                ProofError::new("proofloop_candidate_not_found", "候选方案不属于该草稿")
+            })?;
+        if option.compilation.status == CompileStatus::Invalid {
+            return Err(ProofError::new(
+                "proofloop_candidate_not_executable",
+                "该候选方案未通过编译，请修正诊断",
+            ));
+        }
+        draft.candidate = Some(option.candidate.clone());
+        draft.compilation = option.compilation.clone();
+        draft.status = if draft.compilation.status == CompileStatus::Ready {
+            DraftStatus::ReadyForConfirmation
+        } else {
+            DraftStatus::NeedsInput
+        };
+        review.snapshot_id = snapshot.snapshot_id.clone();
+        review.recommended_candidate_id = select_recommended(&review.options);
+        review.selected_candidate_id = Some(request.candidate_id);
+        draft.planning_review = Some(review);
+        draft.snapshot = snapshot;
+        draft.binding_confirmations.clear();
+        draft.revision = next_draft_revision(draft.revision)?;
+        self.db
+            .update_proof_draft_if_current(request.expected_revision, &draft, now)
+            .map_err(draft_write_error)?;
+        Ok(draft)
     }
 
     /// Update draft contract / candidate / confirmations, recompile deterministically, and persist.
@@ -206,6 +400,7 @@ impl DraftService {
         };
 
         let updated_draft = ProofDraft {
+            planning_review: None,
             draft_id: existing.draft_id,
             revision: next_draft_revision(existing.revision)?,
             graph_id: existing.graph_id,
@@ -260,6 +455,17 @@ impl DraftService {
                     goal_version: draft.contract.version,
                 });
             }
+        }
+
+        if draft
+            .planning_review
+            .as_ref()
+            .is_some_and(|review| review.selected_candidate_id.is_none())
+        {
+            return Err(ProofError::new(
+                "proofloop_candidate_selection_required",
+                "请先选择一个候选方案，再确认保存",
+            ));
         }
 
         let candidate = draft

@@ -2,7 +2,7 @@ import type { CapabilityDescriptor } from "../../api/capabilities";
 import CapabilityPicker from "./capability-picker/CapabilityPicker";
 import { useCanvasCapabilities } from "./capability-picker/useCanvasCapabilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileCheck, ListTree, RefreshCw, Settings2, SlidersHorizontal, X } from "lucide-react";
+import { Eye, FileCheck, ListTree, RefreshCw, Settings2, SlidersHorizontal, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   addTaskEdge,
@@ -46,10 +46,13 @@ import {
   type GraphGoalBinding,
   type EvidenceSnapshot,
   type AcceptanceReport,
+  type CurrentDeliverableEvidence,
   type RepairProposal,
 } from "../../api/proofloop";
-import { downloadArtifact } from "../../api/evidence";
+import { downloadArtifact, listArtifactResults, type ArtifactRecord } from "../../api/evidence";
 import { formatIdentifier } from "../../utils/identifiers";
+import GoalOverview from "./goal-view/GoalOverview";
+import "../../styles/proofloopGoalView.css";
 
 type StudioPanel = "trail" | "inspector" | "tools" | "proofloop" | null;
 
@@ -71,6 +74,9 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const capabilities = useCanvasCapabilities();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<StudioPanel>(null);
+  const [viewMode, setViewMode] = useState<"goal" | "expert">(() =>
+    typeof window !== "undefined" && window.localStorage.getItem(`task-world-view:${graphId}`) === "goal" ? "goal" : "expert",
+  );
   const panelTrigger = useRef<HTMLElement | null>(null);
   const changePanel = useCallback((panel: StudioPanel) => {
     if (panel) panelTrigger.current = document.activeElement as HTMLElement;
@@ -98,14 +104,29 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const [saveError, setSaveError] = useState<ApiError | null>(null);
   const [modelUnavailable, setModelUnavailable] = useState(false);
   const [proofReport, setProofReport] = useState<AcceptanceReport | null>(null);
+  const [proofCurrentEvidence, setProofCurrentEvidence] = useState<CurrentDeliverableEvidence[] | null>(null);
   const [proofGoal, setProofGoal] = useState<GraphGoalBinding | null>(null);
   const [proofSnapshot, setProofSnapshot] = useState<EvidenceSnapshot | null>(null);
+  const [goalArtifacts, setGoalArtifacts] = useState<ArtifactRecord[]>([]);
+  const [goalArtifactError, setGoalArtifactError] = useState<string | null>(null);
   const proofRequest = useRef<AbortController | null>(null);
   const [proofLoading, setProofLoading] = useState(false);
   const [proofError, setProofError] = useState<string | null>(null);
   const [activeRepairProposal, setActiveRepairProposal] = useState<RepairProposal | null>(null);
   const proofReportMeta = proofReport ? formatAcceptanceReportDisplayStatus(proofReport, proofGoal?.contract) : null;
-  const proofReportTone: ContextRailStatusTone | undefined = proofReportMeta?.tone;
+  const currentEvidenceStale = Boolean(proofReport && proofGoal?.contract.deliverables.some((deliverable) => {
+    const artifactId = proofSnapshot?.deliverables.find((mapping) => mapping.deliverable_id === deliverable.id)?.artifact_id;
+    return !artifactId || !proofCurrentEvidence?.some((item) =>
+      item.deliverable_id === deliverable.id && item.artifact_id === artifactId && item.status === "current",
+    );
+  }));
+  const proofReportTone: ContextRailStatusTone | undefined = proofReportMeta
+    ? (proofReportMeta.needsReevaluation || currentEvidenceStale ? "warning" : proofReportMeta.tone)
+    : undefined;
+
+  useEffect(() => {
+    window.localStorage.setItem(`task-world-view:${graphId}`, viewMode);
+  }, [graphId, viewMode]);
 
   useEffect(() => {
     updateContext({
@@ -177,6 +198,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
 
   const loadProofEvaluation = useCallback(async (force = false) => {
     if (!graphId) return;
+    setProofCurrentEvidence(null);
     proofRequest.current?.abort();
     const controller = new AbortController();
     proofRequest.current = controller;
@@ -185,7 +207,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
     try {
       const binding = await getGraphGoal(graphId, controller.signal);
       if (controller.signal.aborted) return;
-      if (!binding.ok) { setProofGoal(null); setProofReport(null); throw new Error(binding.error.message); }
+      if (!binding.ok) { setProofGoal(null); setProofReport(null); setProofSnapshot(null); setProofCurrentEvidence(null); throw new Error(binding.error.message); }
       setProofGoal(binding.data);
       const res = await listGoalEvaluations(binding.data.goal_id, controller.signal);
       if (!res.ok) throw new Error(res.error.message);
@@ -195,10 +217,15 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
         const evidence = await getEvaluationDetail(report.report_id, controller.signal);
         if (!evidence.ok) throw new Error(evidence.error.message);
         if (execIds.some((id) => !evidence.data.snapshot.executions.some((execution) => execution.execution_id === id))) report = undefined;
-        else if (!controller.signal.aborted) setProofSnapshot(evidence.data.snapshot);
+        else if (!controller.signal.aborted) {
+          setProofSnapshot(evidence.data.snapshot);
+          setProofCurrentEvidence(evidence.data.current_evidence ?? []);
+        }
       }
       if (!report || force) {
         setProofReport(null);
+        setProofSnapshot(null);
+        setProofCurrentEvidence(null);
         if (detail?.nodes.some((node) => isActiveExecution(node.latest_execution?.status))) return;
         if (execIds.length === 0 || !detail) return;
         const result = await evaluateGoal(binding.data.goal_id, { goal_version: binding.data.goal_version, graph_revision: detail.revision, execution_ids: execIds }, controller.signal);
@@ -206,7 +233,10 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
         report = result.data;
         const evidence = await getEvaluationDetail(report.report_id, controller.signal);
         if (!evidence.ok) throw new Error(evidence.error.message);
-        if (!controller.signal.aborted) setProofSnapshot(evidence.data.snapshot);
+        if (!controller.signal.aborted) {
+          setProofSnapshot(evidence.data.snapshot);
+          setProofCurrentEvidence(evidence.data.current_evidence ?? []);
+        }
       }
       if (!controller.signal.aborted) setProofReport(report ? normalizeAcceptanceReport(report) : null);
     } catch (e: unknown) {
@@ -217,11 +247,38 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   }, [graphId, detail]);
 
   useEffect(() => {
-    if (activePanel === "proofloop") {
+    if (activePanel === "proofloop" || viewMode === "goal") {
       void loadProofEvaluation();
     }
     return () => proofRequest.current?.abort();
-  }, [activePanel, loadProofEvaluation]);
+  }, [activePanel, viewMode, loadProofEvaluation]);
+
+  useEffect(() => {
+    let active = true;
+    if (!proofSnapshot) {
+      setGoalArtifacts([]);
+      setGoalArtifactError(null);
+      return () => { active = false; };
+    }
+    const executions = [...new Map(proofSnapshot.executions.map((execution) => [execution.execution_id, execution])).values()];
+    if (!executions.length) {
+      setGoalArtifacts([]);
+      setGoalArtifactError(null);
+      return () => { active = false; };
+    }
+    void Promise.all(executions.map((execution) =>
+      listArtifactResults({ kind: "node", graph_id: execution.graph_id, node_id: execution.node_id, execution_id: execution.execution_id }),
+    )).then((records) => {
+      if (!active) return;
+      setGoalArtifacts(records.flat());
+      setGoalArtifactError(null);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setGoalArtifacts([]);
+      setGoalArtifactError(error instanceof Error ? error.message : "读取成果记录失败。");
+    });
+    return () => { active = false; };
+  }, [proofSnapshot]);
 
   if (!graphId) return <ErrorState title="任务图地址无效" description="缺少 graph id。" />;
   if (error && !detail) return <ErrorState title="任务图暂时无法加载" description={error.message} action={<Button onClick={() => void reload()}>重试</Button>} />;
@@ -236,6 +293,16 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   };
   const canRun = !!selectedNode && !saving && !graphLocked && getExecutorAvailability(selectedNode.executor_ref, selectedNode.capability).kind === "configured";
   const runSelected = () => { if (canRun && selectedNode) void mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision)); };
+
+  const downloadGoalArtifact = async (artifact: ArtifactRecord) => {
+    const blob = await downloadArtifact(artifact.id);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = artifact.name;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   const handleRequestRepair = async (report: AcceptanceReport) => {
     const failedExecIds = detail?.nodes
@@ -258,6 +325,10 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
     <div className="canvas-studio page-canvas">
       <CapabilityPicker open={pickerOpen} onClose={()=>setPickerOpen(false)} items={capabilities.items} onSelect={tool=>void addCapability(tool)} onRefresh={()=>void capabilities.refresh(true)} loading={capabilities.loading} error={capabilities.error}/>
       <StudioHeader graphId={projection.graphId} revision={view?.view_revision ?? null} pending={canvasSavePending} error={canvasSaveError?.message ?? null} onRetry={retrySave} onBack={()=>navigate("/tasks")}/>
+      <div className="studio-view-switch" role="group" aria-label="任务工作台视图">
+        <Button type="button" size="sm" variant={viewMode === "goal" ? "secondary" : "ghost"} aria-pressed={viewMode === "goal"} onClick={() => setViewMode("goal")}><Eye size={14}/>目标视图</Button>
+        <Button type="button" size="sm" variant={viewMode === "expert" ? "secondary" : "ghost"} aria-pressed={viewMode === "expert"} onClick={() => setViewMode("expert")}><Settings2 size={14}/>专家视图</Button>
+      </div>
       <div className="studio-workspace task-world-layout">
       {(eventWarning || (saveError && activePanel !== "inspector")) && <div className="studio-notices">
         {eventWarning && <p className="studio-event-warning" role="status">实时事件暂不可用：{eventWarning}</p>}
@@ -359,6 +430,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
                 setActiveRepairProposal(null);
                 setProofReport(null);
                 setProofSnapshot(null);
+                setProofCurrentEvidence(null);
                 void reload();
               }}
               onCancel={() => setActiveRepairProposal(null)}
@@ -377,27 +449,49 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
           )}
         </div>
       </aside>
-          {view ? <TaskWorldCanvas
-            projection={projection}
-            view={view}
-            focusedNodeId={focusedNodeId}
-            onFocusNode={setFocusedNodeId}
-            onLayoutSave={updateLayouts}
-            onViewportChange={updateViewport}
-            onSelectionChange={updateSelection}
-            onConnect={(connection) => { if (connection.source && connection.target) void mutate(() => addTaskEdge(graphId, projection.revision, connection.source!, connection.target!)); }}
-            onDeleteNodes={(nodes) => { const node = nodes[0]; if (node) void mutate(() => deleteTaskNode(graphId, node.id, projection.revision)); }}
-            onDeleteEdges={(edges) => { const edge = edges[0]; if (edge) void mutate(() => deleteTaskEdge(graphId, edge.source, edge.target, projection.revision)); }}
-            semanticLocked={graphLocked}
-            trailOpen={activePanel==="trail"}
-            onCloseTrail={()=>changePanel(null)}
-            onAddNode={addNode}
-            onAddCapability={()=>{setPickerOpen(true);void capabilities.refresh(true);}}
-            canAddNode={!saving && !graphLocked}
-            onRunSelected={runSelected}
-            canRunSelected={canRun}
-            runLabel={canRun ? `运行：${selectedNode?.title}` : "选择已配置执行器的节点；执行期间不可重复运行"}
-          /> : <EmptyState title="画布视图不可用" description="真实图已加载，但视觉状态尚未就绪。" className="py-20" />}
+          <div className="studio-expert-view" hidden={viewMode !== "expert"}>
+            {view ? <TaskWorldCanvas
+              projection={projection}
+              view={view}
+              focusedNodeId={focusedNodeId}
+              onFocusNode={setFocusedNodeId}
+              onLayoutSave={updateLayouts}
+              onViewportChange={updateViewport}
+              onSelectionChange={updateSelection}
+              onConnect={(connection) => { if (connection.source && connection.target) void mutate(() => addTaskEdge(graphId, projection.revision, connection.source!, connection.target!)); }}
+              onDeleteNodes={(nodes) => { const node = nodes[0]; if (node) void mutate(() => deleteTaskNode(graphId, node.id, projection.revision)); }}
+              onDeleteEdges={(edges) => { const edge = edges[0]; if (edge) void mutate(() => deleteTaskEdge(graphId, edge.source, edge.target, projection.revision)); }}
+              semanticLocked={graphLocked}
+              trailOpen={activePanel==="trail"}
+              onCloseTrail={()=>changePanel(null)}
+              onAddNode={addNode}
+              onAddCapability={()=>{setPickerOpen(true);void capabilities.refresh(true);}}
+              canAddNode={!saving && !graphLocked}
+              onRunSelected={runSelected}
+              canRunSelected={canRun}
+              runLabel={canRun ? `运行：${selectedNode?.title}` : "选择已配置执行器的节点；执行期间不可重复运行"}
+            /> : <EmptyState title="画布视图不可用" description="真实图已加载，但视觉状态尚未就绪。" className="py-20" />}
+          </div>
+          <div className="studio-goal-view" hidden={viewMode !== "goal"}>
+            {detail && <GoalOverview
+              graphId={graphId}
+              contract={proofGoal?.contract ?? null}
+              detail={detail}
+              report={proofReport}
+              snapshot={proofSnapshot}
+              currentEvidence={proofCurrentEvidence}
+              artifacts={goalArtifacts}
+              artifactError={goalArtifactError}
+              proofError={proofError}
+              proofLoading={proofLoading}
+              onDownloadArtifact={downloadGoalArtifact}
+              onViewExecution={(nodeId) => {
+                setFocusedNodeId(nodeId);
+                setViewMode("expert");
+                changePanel("inspector");
+              }}
+            />}
+          </div>
         <section id="studio-inspector" className="studio-panel studio-inspector" aria-label="节点属性面板" hidden={activePanel!=="inspector"}>
         <div className="studio-panel-heading"><h2>节点属性</h2><button type="button" aria-label="关闭节点属性" onClick={()=>changePanel(null)}><X size={16}/></button></div>
         <TaskInspector

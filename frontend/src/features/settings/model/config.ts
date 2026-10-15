@@ -1,12 +1,13 @@
 import { Monitor, Moon, Sun } from "lucide-react";
-import type { AppConfig } from "../../../types";
+import type { ProofLoopSettingsConfig } from "./types";
 
 /**
  * The baseline config the page renders before the backend answers, and the
  * shape every partial response is merged onto. An unconfigured field must have
  * a defined value here or the form would render `undefined`.
  */
-export const defaultConfig: AppConfig = {
+export const defaultConfig: ProofLoopSettingsConfig = {
+  ai_repair_enabled: false,
   agent: { name: "忆涟千言", system_prompt: "你是一个桌面AI助手...", workspace_root: "" },
   model: {
     provider: "openai",

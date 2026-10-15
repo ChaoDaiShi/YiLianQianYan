@@ -117,6 +117,9 @@ pub async fn evaluate_goal_handler(
         return acceptance_report_save_error(err);
     }
 
+    if let Err(error) = record_skill_feedback(&server, &draft.draft_id, &report) {
+        return proof_error_response(error);
+    }
     (StatusCode::OK, Json(report)).into_response()
 }
 
@@ -204,5 +207,43 @@ pub async fn submit_human_review_handler(
         return acceptance_report_save_error(err);
     }
 
+    let draft = match server
+        .db
+        .confirmed_proof_draft_for_goal(&updated_report.goal_id, updated_report.goal_version)
+    {
+        Ok(Some(value)) => value,
+        _ => return proof_error_response(ProofError::new("draft_not_found", "目标草稿不存在")),
+    };
+    if let Err(error) = record_skill_feedback(&server, &draft.draft_id, &updated_report) {
+        return proof_error_response(error);
+    }
     (StatusCode::OK, Json(updated_report)).into_response()
+}
+
+fn record_skill_feedback(
+    server: &AppServer,
+    draft_id: &str,
+    report: &crate::modules::task::proofloop::AcceptanceReport,
+) -> Result<(), ProofError> {
+    let Some(store) = server.managed_skill_store() else {
+        return Ok(());
+    };
+    let graph_id = crate::modules::task::TaskGraphId::new(&report.graph_id)
+        .map_err(|e| ProofError::new("invalid_graph_id", e.to_string()))?;
+    let revision = server
+        .task_world
+        .get_graph(&graph_id)
+        .ok_or_else(|| ProofError::new("graph_not_found", "任务图不存在"))?
+        .revision
+        .value();
+    crate::modules::memory_skill::MemorySkillService::new(server.db.clone_connection(), store)
+        .record_skill_report_feedback(
+            draft_id,
+            &report.goal_id,
+            report.goal_version,
+            revision,
+            report,
+        )
+        .map(|_| ())
+        .map_err(|e| ProofError::new("proofloop_skill_feedback_unavailable", e))
 }

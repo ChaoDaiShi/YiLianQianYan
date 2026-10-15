@@ -6,4 +6,5 @@
 
 pub mod jsonrpc;
 pub mod model;
+pub mod task_extension;
 pub mod version;
