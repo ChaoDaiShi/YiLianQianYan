@@ -222,6 +222,63 @@ async function verifyExecutionSnapshots(row, root, codes) {
   }
 }
 
+async function verifyTokenBudget(row, task, root, codes) {
+  const limit = task.budget?.max_total_tokens;
+  if (limit === undefined) return;
+  if (!Number.isFinite(limit) || limit < 0) {
+    fail(codes, 'invalid_token_budget_limit');
+    return;
+  }
+  if (!row.model_usage_file || isAbsolute(row.model_usage_file)) {
+    fail(codes, 'token_budget_evidence_unavailable');
+    return;
+  }
+
+  let usage;
+  try {
+    const path = resolve(root, row.model_usage_file);
+    if (!isWithin(root, path)) throw new Error('model usage path outside evidence directory');
+    usage = JSON.parse(await readFile(path, 'utf8'));
+  } catch {
+    fail(codes, 'token_budget_evidence_unavailable');
+    return;
+  }
+
+  const apiTokens = usage.total_tokens;
+  if (!Number.isFinite(apiTokens) || apiTokens < 0) {
+    fail(codes, 'token_budget_usage_unproven');
+    return;
+  }
+
+  const accounting = usage.accounting;
+  let attributedTokens = null;
+  if (accounting?.token_usage_source === 'model_usage_api_cross_checked_against_run_response') {
+    attributedTokens = apiTokens;
+  } else if (accounting?.token_usage_source === 'planning_response_no_usage_ledger_entry') {
+    const planningTokens = accounting.planning_response_usage?.total_tokens;
+    const repairs = accounting.ai_repair_response_usages;
+    if (apiTokens !== 0 || !Number.isFinite(planningTokens) || planningTokens < 0 ||
+        !Array.isArray(repairs) || repairs.some(item => !Number.isFinite(item.total_tokens) || item.total_tokens < 0)) {
+      fail(codes, 'token_budget_usage_unproven');
+    } else {
+      attributedTokens = planningTokens + repairs.reduce((sum, item) => sum + item.total_tokens, 0);
+    }
+  } else {
+    fail(codes, 'token_budget_usage_unproven');
+  }
+
+  if (apiTokens > limit || (Number.isFinite(attributedTokens) && attributedTokens > limit)) {
+    fail(codes, 'total_token_budget_exceeded');
+  }
+  if (!Number.isFinite(attributedTokens) ||
+      !Number.isFinite(accounting?.attributed_total_tokens) ||
+      accounting.attributed_total_tokens !== attributedTokens ||
+      row.total_tokens !== attributedTokens ||
+      row.direct_total_tokens !== attributedTokens) {
+    fail(codes, 'model_usage_evidence_mismatch');
+  }
+}
+
 export async function verifyRun(row, task, root) {
   const codes = [];
   if (!row.started || row.evidence_class !== 'REAL_MODEL') fail(codes, 'not_real_model_run');
@@ -281,7 +338,7 @@ export async function verifyRun(row, task, root) {
   if (row.illegal_execution_count !== 0) fail(codes, 'execution_authorization_not_proven');
   if (row.budget_violation_codes?.length) codes.push(...row.budget_violation_codes);
   if (Number.isFinite(row.model_calls) && row.model_calls > (task.budget?.max_model_calls ?? Infinity)) fail(codes, 'model_call_budget_exceeded');
-  if (Number.isFinite(row.total_tokens) && row.total_tokens > (task.budget?.max_total_tokens ?? Infinity)) fail(codes, 'total_token_budget_exceeded');
+  await verifyTokenBudget(row, task, root, codes);
   if (Number.isFinite(row.repair_rounds) && row.repair_rounds > (task.budget?.max_repair_rounds ?? Infinity)) fail(codes, 'repair_round_budget_exceeded');
   if (Number.isFinite(row.active_ms) && row.active_ms > (task.budget?.max_wall_time_ms ?? Infinity)) fail(codes, 'active_time_budget_exceeded');
 

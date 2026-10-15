@@ -66,12 +66,21 @@ async function apiRequest(instance, method, path, body, {accepted, sse = false, 
   return {status: response.status, payload, headers: response.headers};
 }
 
-function safePayload(value) {
+const SAFE_TOKEN_COUNTER = /^(?:total|prompt|completion|input|output|cached|reasoning|max_total)_tokens$/i;
+const SENSITIVE_FIELD = /(?:^|_)(?:api_?key(?:_ref|_env|_value)?|private_?key|client_?secret|secret(?:_ref|_value)?|password|authorization(?:_header)?|control_session|bearer|(?:access|refresh|id|auth|session|control_session)?_?token(?:_value)?)$/i;
+
+function shouldRedactField(key, value) {
+  const normalized = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().replace(/[-\s]/g, '_');
+  if (SAFE_TOKEN_COUNTER.test(normalized) && (typeof value === 'number' || value === null)) return false;
+  return SENSITIVE_FIELD.test(normalized);
+}
+
+export function safePayload(value) {
   if (typeof value === 'string') return value.slice(0, 4000).replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED_SECRET]');
   if (Array.isArray(value)) return value.map(safePayload);
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-    key, /key|token|secret|password|authorization|control_session/i.test(key) ? '[REDACTED_SECRET]' : safePayload(item),
+    key, shouldRedactField(key, item) ? '[REDACTED_SECRET]' : safePayload(item),
   ]));
 }
 
@@ -755,9 +764,13 @@ async function evaluateWithRepairs(instance, runRow, outputDirectory, runDirecto
       else runRow.model_calls = null;
       if (Number.isFinite(tokens) && Number.isFinite(runRow.direct_total_tokens)) runRow.direct_total_tokens += tokens;
       else runRow.direct_total_tokens = null;
+      runRow.ai_repair_usage_evidence ??= [];
+      runRow.ai_repair_usage_evidence.push({model_calls: calls, total_tokens: tokens});
     } else if (instance.groupSpec.ai_repair) {
       runRow.model_calls = null;
       runRow.unattributed_ai_repair_calls = true;
+      runRow.ai_repair_usage_evidence ??= [];
+      runRow.ai_repair_usage_evidence.push({model_calls: null, total_tokens: null});
     }
     await onEvent('repair_proposed', {round: round + 1, repair_id: proposal.repair_id, ai_repair_enabled: instance.groupSpec.ai_repair, failure_execution_ids: failed, rationale: proposal.rationale ?? null});
     const applied = await apiRequest(instance, 'POST', `/api/task-world/proofloop/repairs/${encodeURIComponent(proposal.repair_id)}/apply`, {expected_graph_revision: proposal.expected_graph_revision});
@@ -908,6 +921,7 @@ async function runTask(entry, task, runtime, context) {
     execution_snapshots_file: relative(outputDirectory, executionSnapshotsFile).split(sep).join('/'),
     candidate_ids: [],
     repair_rounds: 0,
+    ai_repair_usage_evidence: [],
     max_repair_rounds: preflightData.manifest.max_repair_rounds,
     model_usage_unknown: true,
     started_at_ms: null,
@@ -1112,8 +1126,18 @@ async function runTask(entry, task, runtime, context) {
           };
         } else row.model_cost_estimate = null;
         const usageFile = join(runDirectory, 'model-usage.json');
-        await writeFile(usageFile, JSON.stringify(usage, null, 2));
-        row.evidence_files.push(relative(outputDirectory, usageFile).split(sep).join('/'));
+        const usageEvidence = {
+          ...usage,
+          accounting: {
+            token_usage_source: row.token_usage_source ?? null,
+            attributed_total_tokens: row.direct_total_tokens ?? null,
+            planning_response_usage: row.planning_usage ?? null,
+            ai_repair_response_usages: row.ai_repair_usage_evidence,
+          },
+        };
+        row.model_usage_file = relative(outputDirectory, usageFile).split(sep).join('/');
+        await writeFile(usageFile, JSON.stringify(usageEvidence, null, 2));
+        row.evidence_files.push(row.model_usage_file);
       } catch (error) {
         row.raw_usage = null;
         row.total_tokens = null;
