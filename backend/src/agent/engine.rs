@@ -386,6 +386,27 @@ pub async fn run_react_loop_with_channel(
     tx: &Sender<AgentEvent>,
     log_buffer: &LogBuffer,
 ) -> Result<RunOutcome, String> {
+    let inherited=super::delegation::current_scope();
+    let scope=super::delegation::ExecutionScope {
+        cancel:cancel_token.clone(),
+        budget:inherited.as_ref().and_then(|v|v.budget.clone()).or_else(||Some(crate::modules::task::resource_budget::SharedExecutionBudget::new(6,24_000))),
+        handoff_id:inherited.and_then(|v|v.handoff_id),
+    };
+    super::delegation::EXECUTION_SCOPE.scope(scope,run_react_loop_inner(state,client,tool_registry,approval_store,security_gateway,_config,conversation_id,cancel_token,tx,log_buffer)).await
+}
+
+async fn run_react_loop_inner(
+    state: &mut AgentState,
+    client: &LlmClient,
+    tool_registry: &ToolRegistry,
+    approval_store: &ApprovalStore,
+    security_gateway: &SecurityExecutionGateway,
+    _config: &AppConfig,
+    conversation_id: &str,
+    cancel_token: &CancellationToken,
+    tx: &Sender<AgentEvent>,
+    log_buffer: &LogBuffer,
+) -> Result<RunOutcome, String> {
     let tools_openai = tool_registry.to_openai_tools();
     let mut iteration = 0;
     let mut last_tool_name = String::new();
@@ -404,7 +425,9 @@ pub async fn run_react_loop_with_channel(
 
         // ── THINK: Call LLM with streaming ──
         let stream_response_tokens = should_stream_response_tokens(state);
-        let result = client
+        let execution_scope=super::delegation::current_scope();
+        if let Some(scope)=&execution_scope { if let (Some(budget),Some(handoff))=(&scope.budget,&scope.handoff_id) {budget.begin_call(Some(handoff))?;} }
+        let invocation = client
             .stream_with_callbacks(&state.messages, &tools_openai, |token| {
                 if !stream_response_tokens {
                     return;
@@ -427,8 +450,19 @@ pub async fn run_react_loop_with_channel(
                     verification_reason: None,
                     should_replan: None,
                 });
-            })
-            .await;
+            });
+        let result=tokio::select! {
+            biased;
+            _=cancel_token.cancelled()=>{
+                if let Some(scope)=&execution_scope {if let (Some(budget),Some(id))=(&scope.budget,&scope.handoff_id){let _=budget.settle_tokens(Some(id),None);}}
+                return Err("已取消".into());
+            },
+            response=invocation=>response,
+        };
+        if let Some(scope)=&execution_scope {if let Some(budget)=&scope.budget {
+            let tokens=result.as_ref().ok().and_then(|v|v.usage.as_ref()).map(|v|u64::from(v.total_tokens));
+            if let Some(id)=&scope.handoff_id {budget.settle_tokens(Some(id),tokens)?;} else {budget.observe_parent_usage(tokens)?;}
+        }}
 
         let accumulator = match result {
             Ok(acc) => acc,
@@ -469,7 +503,7 @@ pub async fn run_react_loop_with_channel(
                     let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
 
-                    match dispatch_tool_call(
+                    let dispatch = dispatch_tool_call(
                         state,
                         security_gateway,
                         approval_store,
@@ -478,9 +512,13 @@ pub async fn run_react_loop_with_channel(
                         &args,
                         tx,
                         log_buffer,
-                    )
-                    .await?
-                    {
+                    );
+                    let dispatch_outcome=tokio::select! {
+                        biased;
+                        _=cancel_token.cancelled()=>return Err("已取消".into()),
+                        result=dispatch=>result?,
+                    };
+                    match dispatch_outcome {
                         ToolDispatchOutcome::Continue => {}
                         ToolDispatchOutcome::Replan => {
                             for later in tool_calls.iter().skip(i + 1) {

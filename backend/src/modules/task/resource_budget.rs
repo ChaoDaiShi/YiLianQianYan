@@ -1,11 +1,11 @@
 //! Shared reservations for parent/child model calls; unknown usage remains unknown.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub struct BudgetReservation { pub handoff_id:String, pub calls:u32, pub tokens:u64 }
 #[derive(Debug, Default)]
-struct Usage { calls:u32, tokens:u64, unknown:bool, reservations:HashMap<String,(u32,u64)> }
+struct Usage { calls:u32, tokens:u64, unknown:bool, reservations:HashMap<String,(u32,u64)>, active_calls:HashSet<String> }
 #[derive(Debug)]
 pub struct SharedExecutionBudget { max_calls:u32, max_tokens:u64, usage:Mutex<Usage> }
 impl SharedExecutionBudget {
@@ -31,10 +31,12 @@ impl SharedExecutionBudget {
             let reserved:u64=usage.reservations.values().map(|v|u64::from(v.0)).sum();
             if u64::from(usage.calls)+reserved>=u64::from(self.max_calls) { return Err("proofloop_budget_exhausted".into()); }
         }
+        if let Some(id)=handoff {usage.active_calls.insert(id.to_owned());}
         usage.calls+=1;Ok(())
     }
     pub fn settle_tokens(&self,handoff:Option<&str>,tokens:Option<u64>)->Result<(),String> {
         let mut usage=self.usage.lock().map_err(|_|"资源预算不可用")?;
+        if let Some(id)=handoff {usage.active_calls.remove(id);}
         let Some(tokens)=tokens else {usage.unknown=true;return Err("proofloop_usage_unavailable".into());};
         if let Some(id)=handoff {
             let remaining=usage.reservations.get_mut(id).ok_or("任务预算未预留")?;
@@ -43,12 +45,24 @@ impl SharedExecutionBudget {
         usage.tokens=usage.tokens.checked_add(tokens).ok_or("预算计数超出范围")?;
         if usage.tokens>self.max_tokens {return Err("proofloop_budget_exhausted".into());}Ok(())
     }
+    pub fn available(&self)->Result<(u32,u64),String> {
+        let usage=self.usage.lock().map_err(|_|"资源预算不可用")?;
+        if usage.unknown {return Err("proofloop_usage_unavailable".into());}
+        let calls:u32=usage.reservations.values().map(|v|v.0).sum();
+        let tokens:u64=usage.reservations.values().map(|v|v.1).sum();
+        Ok((self.max_calls.saturating_sub(usage.calls).saturating_sub(calls),self.max_tokens.saturating_sub(usage.tokens).saturating_sub(tokens)))
+    }
+    pub fn observe_parent_usage(&self,tokens:Option<u64>)->Result<(),String> {
+        let mut usage=self.usage.lock().map_err(|_|"资源预算不可用")?;
+        usage.calls=usage.calls.saturating_add(1);
+        match tokens {Some(value)=>usage.tokens=usage.tokens.saturating_add(value),None=>usage.unknown=true};Ok(())
+    }
     pub fn usage(&self)->Result<(u32,Option<u64>),String> {
         let u=self.usage.lock().map_err(|_|"资源预算不可用")?;Ok((u.calls,if u.unknown{None}else{Some(u.tokens)}))
     }
 }
 pub struct BudgetLease { budget:Arc<SharedExecutionBudget>, pub handoff_id:String }
-impl Drop for BudgetLease {fn drop(&mut self){if let Ok(mut usage)=self.budget.usage.lock(){usage.reservations.remove(&self.handoff_id);}}}
+impl Drop for BudgetLease {fn drop(&mut self){if let Ok(mut usage)=self.budget.usage.lock(){usage.reservations.remove(&self.handoff_id);if usage.active_calls.remove(&self.handoff_id){usage.unknown=true;}}}}
 
 #[cfg(test)]
 mod tests {

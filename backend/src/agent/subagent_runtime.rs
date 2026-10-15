@@ -52,6 +52,7 @@ pub(crate) struct LocalSubagentExecutor {
     audit_recorder: AuditRecorder,
     log_buffer: LogBuffer,
     resolver: Arc<SecretResolver>,
+    slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl LocalSubagentExecutor {
@@ -72,6 +73,7 @@ impl LocalSubagentExecutor {
             audit_recorder,
             log_buffer,
             resolver,
+            slots: Arc::new(tokio::sync::Semaphore::new(2)),
         }
     }
 }
@@ -83,6 +85,19 @@ impl SubagentExecutor for LocalSubagentExecutor {
             return ToolResult::error(reason);
         }
 
+        let inherited=crate::agent::delegation::current_scope();
+        let cancel_token=inherited.as_ref().map(|scope|scope.cancel.child_token()).unwrap_or_default();
+        let budget=inherited.and_then(|scope|scope.budget).unwrap_or_else(||crate::modules::task::resource_budget::SharedExecutionBudget::new(6,24_000));
+        let (calls,tokens)=match budget.available(){Ok(v)=>v,Err(error)=>return ToolResult::error(error)};
+        let reserved_calls=calls.saturating_sub(1).min(3);
+        let reserved_tokens=tokens.saturating_sub(1_000).min(12_000);
+        if reserved_calls==0 || reserved_tokens==0 {return ToolResult::error("proofloop_budget_exhausted");}
+        let before_usage=budget.usage().ok();
+        let handoff_id=format!("handoff-{}",uuid::Uuid::new_v4());
+        let reservation=match budget.reserve(crate::modules::task::resource_budget::BudgetReservation{handoff_id:handoff_id.clone(),calls:reserved_calls,tokens:reserved_tokens}) {
+            Ok(value)=>value,Err(error)=>return ToolResult::error(error),
+        };
+        let _permit=tokio::select!{_=cancel_token.cancelled()=>return ToolResult::error("子任务已取消"),result=self.slots.acquire()=>match result{Ok(p)=>p,Err(_)=>return ToolResult::error("子任务执行槽已关闭")}};
         let child_config = build_child_config(&self.config, spec.model.as_deref());
         let child_registry =
             build_child_tool_registry(&self.source_tool_registry, &spec.allowed_tools);
@@ -108,9 +123,9 @@ impl SubagentExecutor for LocalSubagentExecutor {
         // parent approval chain.
         let child_approval_store = ApprovalStore::new();
         let (tx, _rx) = tokio::sync::mpsc::channel(256);
-        let cancel_token = CancellationToken::new();
-
-        let result = engine::run_react_loop_with_channel(
+        let scope=crate::agent::delegation::ExecutionScope{cancel:cancel_token.clone(),budget:Some(Arc::clone(&budget)),handoff_id:Some(handoff_id.clone())};
+        let started=std::time::Instant::now();
+        let execution=engine::run_react_loop_with_channel(
             &mut state,
             &client,
             &child_registry,
@@ -121,11 +136,15 @@ impl SubagentExecutor for LocalSubagentExecutor {
             &cancel_token,
             &tx,
             &self.log_buffer,
-        )
-        .await;
+        );
+        let result=crate::agent::delegation::EXECUTION_SCOPE.scope(scope,async {
+            tokio::select!{_=cancel_token.cancelled()=>Err("子任务已取消".into()), result=tokio::time::timeout(std::time::Duration::from_millis(600_000),execution)=>result.unwrap_or_else(|_|Err("子任务执行超时".into()))}
+        }).await;
+        drop(reservation);
+        let usage=budget.usage().ok();
 
         match result {
-            Ok(engine::RunOutcome::Done { output }) => bounded_subagent_success(&output),
+            Ok(engine::RunOutcome::Done { output }) => bounded_subagent_success(&output).with_structured(Some(serde_json::json!({"handoff_id":handoff_id,"status":"completed_unverified","model_calls":usage.as_ref().zip(before_usage.as_ref()).map(|(after,before)|after.0.saturating_sub(before.0)),"total_tokens":usage.as_ref().zip(before_usage.as_ref()).and_then(|(after,before)|after.1.zip(before.1).map(|(a,b)|a.saturating_sub(b))),"elapsed_ms":started.elapsed().as_millis() as u64}))),
             Ok(engine::RunOutcome::Paused { .. }) => ToolResult::error(
                 "Subagent requested a nested approval; nested approvals are not supported",
             ),
