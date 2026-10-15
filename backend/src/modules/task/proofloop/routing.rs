@@ -277,6 +277,66 @@ fn tokenize(text: &str) -> BTreeSet<String> {
     terms
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::capability::{
+        CapabilityDescriptor, CapabilityId, CapabilityKind, CapabilityMetadata,
+        CapabilityProviderKind, CapabilityRisk, CapabilityRuntimeStatus,
+    };
+
+    fn descriptor(id: &str, name: &str, input_schema: serde_json::Value) -> CapabilityDescriptor {
+        CapabilityDescriptor {
+            id: CapabilityId::new(id).unwrap(),
+            kind: CapabilityKind::McpTool,
+            provider: CapabilityProviderKind::Mcp,
+            name: name.into(),
+            description: "生成分析报告".into(),
+            input_schema: Some(input_schema),
+            output_schema: None,
+            risk: CapabilityRisk::Low,
+            permissions: Vec::new(),
+            status: CapabilityRuntimeStatus::Ready,
+            enabled: true,
+            metadata: CapabilityMetadata {
+                runtime_ready: true,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn structured_pdf_requirement_changes_capability_ranking() {
+        let descriptors = [
+            descriptor(
+                "mcp.report",
+                "整理分析报告",
+                serde_json::json!({"type":"object","properties":{"report":{"type":"string"}}}),
+            ),
+            descriptor(
+                "mcp.pdf",
+                "生成文件",
+                serde_json::json!({"type":"object","properties":{"format":{"type":"string","enum":["application/pdf"]}}}),
+            ),
+        ];
+        let natural_goal = "整理一份分析报告";
+        let planning_goal = "整理一份分析报告\napplication/pdf";
+        let natural = rank_capabilities(natural_goal, &descriptors, None, &HashMap::new());
+        let structured = rank_capabilities(planning_goal, &descriptors, None, &HashMap::new());
+        let natural_pdf = natural
+            .iter()
+            .find(|route| route.capability_id == "mcp.pdf")
+            .unwrap();
+        let structured_pdf = structured
+            .iter()
+            .find(|route| route.capability_id == "mcp.pdf")
+            .unwrap();
+
+        assert!(structured_pdf.type_bp > natural_pdf.type_bp);
+        assert_eq!(structured.first().unwrap().capability_id, "mcp.pdf");
+    }
+}
+
 fn is_han(character: char) -> bool {
     matches!(
         character as u32,

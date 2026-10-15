@@ -128,9 +128,7 @@ pub async fn propose_repair_handler(
     let mut proposal;
     let ai_repair_enabled = server.config.read().ai_repair_enabled;
     if ai_repair_enabled {
-        use crate::modules::task::proofloop::ai_repair::{
-            propose_ai_repair_with_usage, FailureContext, ObservedValue,
-        };
+        use crate::modules::task::proofloop::ai_repair::{FailureContext, ObservedValue};
         let graph = match server.task_world.get_graph(&graph_id) {
             Some(v) => v,
             None => {
@@ -214,6 +212,7 @@ pub async fn propose_repair_handler(
             Ok(v) => v,
             Err(e) => return proof_error_response(e),
         };
+        let activity_deadline = tokio::time::Instant::now() + activity.remaining();
         let combined = match server
             .db
             .combined_goal_model_usage(&contract, &draft.planning_usage)
@@ -221,6 +220,45 @@ pub async fn propose_repair_handler(
             Ok(v) => v,
             Err(e) => return proof_error_response(e),
         };
+        let Some(used_tokens) = combined.total_tokens else {
+            return proof_error_response(ProofError::new(
+                "proofloop_usage_unavailable",
+                "目标的历史模型用量未知，不能调用修复模型",
+            ));
+        };
+        let remaining_tokens = contract.budget.max_total_tokens.saturating_sub(used_tokens);
+        if remaining_tokens == 0 {
+            return proof_error_response(ProofError::new(
+                "proofloop_budget_exhausted",
+                "目标的剩余 token 预算已耗尽",
+            ));
+        }
+        let mut config = server.effective_model_config();
+        config.invoke_timeout_ms = config
+            .invoke_timeout_ms
+            .min(contract.budget.max_wall_time_ms);
+        let client = LlmClient::new(&config, Arc::clone(&server.secret_resolver));
+        let messages =
+            match crate::modules::task::proofloop::ai_repair::build_ai_repair_messages(&context) {
+                Ok(value) => value,
+                Err(error) => return proof_error_response(error),
+            };
+        let max_output_tokens =
+            match client.output_tokens_for_total_budget(&messages, &[], remaining_tokens) {
+                Some(value) => value,
+                None => {
+                    return proof_error_response(ProofError::new(
+                        "proofloop_budget_exhausted",
+                        "修复输入已占满目标剩余 token 预算，未调用模型",
+                    ))
+                }
+            };
+        if activity_deadline <= tokio::time::Instant::now() {
+            return proof_error_response(ProofError::new(
+                "proofloop_budget_exhausted",
+                "修复活动时间预算已耗尽，未调用模型",
+            ));
+        }
         let invocation = match server.db.reserve_goal_model_call(
             &contract,
             &draft.planning_usage,
@@ -230,18 +268,16 @@ pub async fn propose_repair_handler(
             Ok(v) => v,
             Err(e) => return proof_error_response(e),
         };
-        let mut config = server.effective_model_config();
-        let remaining = contract.budget.max_total_tokens.saturating_sub(
-            combined
-                .total_tokens
-                .unwrap_or(contract.budget.max_total_tokens),
-        );
-        config.max_tokens = config
-            .max_tokens
-            .min(remaining.min(u64::from(u32::MAX)) as u32);
-        let client = LlmClient::new(&config, Arc::clone(&server.secret_resolver));
         let result =
-            propose_ai_repair_with_usage(&context, &client, &CancellationToken::new()).await;
+            crate::modules::task::proofloop::ai_repair::propose_ai_repair_with_usage_and_limits(
+                &context,
+                &client,
+                &CancellationToken::new(),
+                max_output_tokens,
+                remaining_tokens,
+                activity_deadline,
+            )
+            .await;
         let usage = match &result {
             Ok((_, usage)) => Some(usage),
             Err(error) => error.planning_usage.as_ref(),

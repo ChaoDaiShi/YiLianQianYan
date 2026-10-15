@@ -78,6 +78,26 @@ fn active_budget_excludes_review_and_approval_gaps_and_counts_overlap_once() {
 }
 
 #[test]
+fn new_complete_goal_with_unknown_token_usage_has_no_remaining_budget() {
+    let (_, _, draft) = setup();
+    let mut planning = draft.planning_usage.clone();
+    planning.total_tokens = None;
+    let usage = GoalTimeUsage {
+        planning_elapsed_ms: Some(1),
+        execution_active_ms: 0,
+        human_wait_ms: None,
+        accounting_state: "complete".into(),
+    };
+
+    let error = remaining_budget(&draft.contract, &planning, &usage, now() - 1, now()).unwrap_err();
+    assert_eq!(error.code, "proofloop_usage_unavailable");
+
+    let mut legacy = usage.clone();
+    legacy.accounting_state = "legacy_unknown".into();
+    assert!(remaining_budget(&draft.contract, &planning, &legacy, now() - 1, now(),).is_ok());
+}
+
+#[test]
 fn repair_transaction_uses_activity_budget_after_long_wait() {
     let (db, meter, draft) = setup();
     let mut proposal = RepairProposal {

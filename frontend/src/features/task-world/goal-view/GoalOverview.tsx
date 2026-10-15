@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { AcceptanceReport, EvidenceSnapshot, GoalContract } from "../../../api/proofloop";
+import type { AcceptanceReport, CurrentDeliverableEvidence, EvidenceSnapshot, GoalContract } from "../../../api/proofloop";
 import type { ArtifactRecord } from "../../../api/evidence";
 import type { TaskGraphDetail, TaskNodeExecutionSummary } from "../../../api/taskWorld";
 import { executionStatusLabel } from "../taskGraphProjection";
@@ -27,6 +27,7 @@ interface GoalOverviewProps {
   detail: TaskGraphDetail;
   report: AcceptanceReport | null;
   snapshot: EvidenceSnapshot | null;
+  currentEvidence: CurrentDeliverableEvidence[] | null;
   artifacts: ArtifactRecord[];
   artifactError: string | null;
   proofError: string | null;
@@ -50,7 +51,7 @@ function nodeExecutions(detail: TaskGraphDetail): Array<{ nodeId: string; nodeTi
 }
 
 export default function GoalOverview(props: GoalOverviewProps) {
-  const state = buildGoalViewState(props.graphId, props.contract, props.detail, props.report, props.snapshot);
+  const state = buildGoalViewState(props.graphId, props.contract, props.detail, props.report, props.snapshot, null, props.currentEvidence);
   const executions = useMemo(() => nodeExecutions(props.detail), [props.detail]);
 
   return (

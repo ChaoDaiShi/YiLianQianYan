@@ -98,6 +98,7 @@ pub async fn propose_candidates_with_usage(
     options: &PlanningOptions,
     client: &LlmClient,
     cancel: &CancellationToken,
+    budget: Budget,
 ) -> Result<RankedPlanningBundle, ProofError> {
     options.validate()?;
     if matches!(
@@ -130,11 +131,22 @@ pub async fn propose_candidates_with_usage(
         ));
     }
 
+    let max_output_tokens = client
+        .output_tokens_for_total_budget(&messages, &[], budget.max_total_tokens)
+        .ok_or_else(|| {
+            ProofError::new(
+                "proofloop_budget_exhausted",
+                "完整规划输入已占满目标 token 预算，未调用模型",
+            )
+        })?;
+
     let started_at_ms = chrono::Utc::now().timestamp_millis();
     let started = Instant::now();
     let invoke = tokio::time::timeout(
-        Duration::from_millis(Budget::default().max_wall_time_ms),
-        client.invoke(&messages, &[]),
+        client
+            .invoke_timeout()
+            .min(Duration::from_millis(budget.max_wall_time_ms)),
+        client.invoke_with_max_tokens(&messages, &[], max_output_tokens),
     );
     let response = tokio::select! {
         biased;
@@ -178,6 +190,20 @@ pub async fn propose_candidates_with_usage(
         started_at_ms,
         elapsed_ms: Some(elapsed_ms(&started)),
     };
+    let Some(total_tokens) = usage.total_tokens else {
+        return Err(ProofError::new(
+            "proofloop_usage_unavailable",
+            "模型未返回真实 token 用量，不能确认新的预算目标",
+        )
+        .with_planning_usage(usage));
+    };
+    if total_tokens > budget.max_total_tokens {
+        return Err(ProofError::new(
+            "proofloop_budget_exhausted",
+            "模型消耗超过目标总 token 预算",
+        )
+        .with_planning_usage(usage));
+    }
     if cancel.is_cancelled() {
         return Err(ProofError::new("aborted", "规划请求已被取消").with_planning_usage(usage));
     }
@@ -199,17 +225,7 @@ pub async fn propose_candidates_with_usage(
     let (mut contract, candidates) =
         parse_bundle(&parsed, workspace_id, user_goal, snapshot, options)
             .map_err(|error| error.with_planning_usage(usage.clone()))?;
-    contract.budget = Budget::default();
-    if usage
-        .total_tokens
-        .is_some_and(|tokens| tokens > contract.budget.max_total_tokens)
-    {
-        return Err(ProofError::new(
-            "proofloop_budget_exhausted",
-            "模型消耗超过目标总 token 预算",
-        )
-        .with_planning_usage(usage));
-    }
+    contract.budget = budget;
 
     Ok(RankedPlanningBundle {
         contract,

@@ -46,6 +46,7 @@ import {
   type GraphGoalBinding,
   type EvidenceSnapshot,
   type AcceptanceReport,
+  type CurrentDeliverableEvidence,
   type RepairProposal,
 } from "../../api/proofloop";
 import { downloadArtifact, listArtifactResults, type ArtifactRecord } from "../../api/evidence";
@@ -103,6 +104,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const [saveError, setSaveError] = useState<ApiError | null>(null);
   const [modelUnavailable, setModelUnavailable] = useState(false);
   const [proofReport, setProofReport] = useState<AcceptanceReport | null>(null);
+  const [proofCurrentEvidence, setProofCurrentEvidence] = useState<CurrentDeliverableEvidence[] | null>(null);
   const [proofGoal, setProofGoal] = useState<GraphGoalBinding | null>(null);
   const [proofSnapshot, setProofSnapshot] = useState<EvidenceSnapshot | null>(null);
   const [goalArtifacts, setGoalArtifacts] = useState<ArtifactRecord[]>([]);
@@ -112,7 +114,15 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const [proofError, setProofError] = useState<string | null>(null);
   const [activeRepairProposal, setActiveRepairProposal] = useState<RepairProposal | null>(null);
   const proofReportMeta = proofReport ? formatAcceptanceReportDisplayStatus(proofReport, proofGoal?.contract) : null;
-  const proofReportTone: ContextRailStatusTone | undefined = proofReportMeta?.tone;
+  const currentEvidenceStale = Boolean(proofReport && proofGoal?.contract.deliverables.some((deliverable) => {
+    const artifactId = proofSnapshot?.deliverables.find((mapping) => mapping.deliverable_id === deliverable.id)?.artifact_id;
+    return !artifactId || !proofCurrentEvidence?.some((item) =>
+      item.deliverable_id === deliverable.id && item.artifact_id === artifactId && item.status === "current",
+    );
+  }));
+  const proofReportTone: ContextRailStatusTone | undefined = proofReportMeta
+    ? (proofReportMeta.needsReevaluation || currentEvidenceStale ? "warning" : proofReportMeta.tone)
+    : undefined;
 
   useEffect(() => {
     window.localStorage.setItem(`task-world-view:${graphId}`, viewMode);
@@ -188,6 +198,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
 
   const loadProofEvaluation = useCallback(async (force = false) => {
     if (!graphId) return;
+    setProofCurrentEvidence(null);
     proofRequest.current?.abort();
     const controller = new AbortController();
     proofRequest.current = controller;
@@ -196,7 +207,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
     try {
       const binding = await getGraphGoal(graphId, controller.signal);
       if (controller.signal.aborted) return;
-      if (!binding.ok) { setProofGoal(null); setProofReport(null); setProofSnapshot(null); throw new Error(binding.error.message); }
+      if (!binding.ok) { setProofGoal(null); setProofReport(null); setProofSnapshot(null); setProofCurrentEvidence(null); throw new Error(binding.error.message); }
       setProofGoal(binding.data);
       const res = await listGoalEvaluations(binding.data.goal_id, controller.signal);
       if (!res.ok) throw new Error(res.error.message);
@@ -206,11 +217,15 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
         const evidence = await getEvaluationDetail(report.report_id, controller.signal);
         if (!evidence.ok) throw new Error(evidence.error.message);
         if (execIds.some((id) => !evidence.data.snapshot.executions.some((execution) => execution.execution_id === id))) report = undefined;
-        else if (!controller.signal.aborted) setProofSnapshot(evidence.data.snapshot);
+        else if (!controller.signal.aborted) {
+          setProofSnapshot(evidence.data.snapshot);
+          setProofCurrentEvidence(evidence.data.current_evidence ?? []);
+        }
       }
       if (!report || force) {
         setProofReport(null);
         setProofSnapshot(null);
+        setProofCurrentEvidence(null);
         if (detail?.nodes.some((node) => isActiveExecution(node.latest_execution?.status))) return;
         if (execIds.length === 0 || !detail) return;
         const result = await evaluateGoal(binding.data.goal_id, { goal_version: binding.data.goal_version, graph_revision: detail.revision, execution_ids: execIds }, controller.signal);
@@ -218,7 +233,10 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
         report = result.data;
         const evidence = await getEvaluationDetail(report.report_id, controller.signal);
         if (!evidence.ok) throw new Error(evidence.error.message);
-        if (!controller.signal.aborted) setProofSnapshot(evidence.data.snapshot);
+        if (!controller.signal.aborted) {
+          setProofSnapshot(evidence.data.snapshot);
+          setProofCurrentEvidence(evidence.data.current_evidence ?? []);
+        }
       }
       if (!controller.signal.aborted) setProofReport(report ? normalizeAcceptanceReport(report) : null);
     } catch (e: unknown) {
@@ -412,6 +430,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
                 setActiveRepairProposal(null);
                 setProofReport(null);
                 setProofSnapshot(null);
+                setProofCurrentEvidence(null);
                 void reload();
               }}
               onCancel={() => setActiveRepairProposal(null)}
@@ -460,6 +479,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
               detail={detail}
               report={proofReport}
               snapshot={proofSnapshot}
+              currentEvidence={proofCurrentEvidence}
               artifacts={goalArtifacts}
               artifactError={goalArtifactError}
               proofError={proofError}

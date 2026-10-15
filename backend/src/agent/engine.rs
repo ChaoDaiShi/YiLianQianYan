@@ -100,10 +100,91 @@ fn should_stream_response_tokens(state: &AgentState) -> bool {
     matches!(evaluate_completion(&state.messages), CompletionCheck::Ready)
 }
 
+fn finish_with_local_result(
+    state: &mut AgentState,
+    conversation_id: &str,
+    tx: &Sender<AgentEvent>,
+    output: String,
+) -> RunOutcome {
+    state.add_assistant_message(Some(output.clone()), None);
+    state.output = output.clone();
+    let _ = tx.try_send(AgentEvent {
+        event_type: "done".into(),
+        conversation_id: conversation_id.to_string(),
+        token: None,
+        tool_call_id: None,
+        tool_name: None,
+        args: None,
+        result: None,
+        status: None,
+        error: None,
+        message_id: Some(uuid::Uuid::new_v4().to_string()),
+        risk_level: None,
+        reason: None,
+        approval_id: None,
+        verification_success: None,
+        verification_reason: None,
+        should_replan: None,
+    });
+    RunOutcome::Done { output }
+}
+
 enum ToolDispatchOutcome {
     Continue,
     Replan,
     Paused { approval_id: String },
+    Stopped { output: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExternalToolAccounting {
+    NotExternal,
+    Known,
+    BillingUnknown,
+    ResultUnknown,
+}
+
+/// Account external ACP tool results without treating context-window usage as
+/// billed tokens. Approval resumption can call this same helper after dispatch.
+pub(crate) fn record_external_tool_accounting(
+    scope: Option<&crate::agent::delegation::ExecutionScope>,
+    tool_name: &str,
+    structured: Option<&serde_json::Value>,
+) -> Result<ExternalToolAccounting, String> {
+    if !tool_name.starts_with("subagent_acp_") || !tool_name.ends_with("_run") {
+        return Ok(ExternalToolAccounting::NotExternal);
+    }
+
+    let result_unknown = structured
+        .and_then(|value| value.get("state"))
+        .and_then(serde_json::Value::as_str)
+        == Some("result_unknown");
+    let billing_known = structured
+        .and_then(|value| value.get("model_calls"))
+        .and_then(serde_json::Value::as_u64)
+        .is_some()
+        && structured
+            .and_then(|value| value.get("total_tokens"))
+            .and_then(serde_json::Value::as_u64)
+            .is_some();
+    let disposition = if result_unknown {
+        ExternalToolAccounting::ResultUnknown
+    } else if billing_known {
+        ExternalToolAccounting::Known
+    } else {
+        ExternalToolAccounting::BillingUnknown
+    };
+
+    let strict = scope.is_some_and(|scope| scope.goal_id.is_some() || scope.handoff_id.is_some());
+    if strict && disposition != ExternalToolAccounting::Known {
+        let scope = scope.ok_or_else(|| "proofloop_usage_unavailable".to_string())?;
+        let budget = scope
+            .budget
+            .as_ref()
+            .ok_or_else(|| "proofloop_usage_unavailable".to_string())?;
+        budget.mark_usage_unavailable(scope.handoff_id.as_deref())?;
+    }
+    Ok(disposition)
 }
 
 async fn dispatch_tool_call(
@@ -188,6 +269,82 @@ async fn dispatch_tool_call(
                 should_replan: None,
             });
 
+            let scope = super::delegation::current_scope();
+            let strict_goal_scope = scope
+                .as_ref()
+                .is_some_and(|scope| scope.goal_id.is_some() || scope.handoff_id.is_some());
+            let external_accounting = match record_external_tool_accounting(
+                scope.as_ref(),
+                &tool_call.function.name,
+                tool_result.structured.as_ref(),
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    state.add_tool_result(
+                        tool_call.id.clone(),
+                        tool_call.function.name.clone(),
+                        format!(
+                            "{}\n\n{}",
+                            tool_result.content,
+                            "ACP 计费 token 用量不可核实，目标预算已停止后续自动执行。"
+                        ),
+                    );
+                    return Err(error);
+                }
+            };
+            let result_unknown = external_accounting == ExternalToolAccounting::ResultUnknown;
+            let strict_billing_unknown =
+                strict_goal_scope && external_accounting == ExternalToolAccounting::BillingUnknown;
+            if result_unknown || strict_billing_unknown {
+                let output = if result_unknown {
+                    format!(
+                        "{}\n\n外部 ACP 执行结果未知。为避免重复提交，已停止自动重试；请先核实外部会话结果。",
+                        tool_result.content
+                    )
+                } else {
+                    format!(
+                        "{}\n\n外部 ACP 没有提供可计费 token 用量。目标预算现为不可用，已停止后续自动模型和工具调用。",
+                        tool_result.content
+                    )
+                };
+                state.add_tool_result(
+                    tool_call.id.clone(),
+                    tool_call.function.name.clone(),
+                    output.clone(),
+                );
+                let reason = if result_unknown {
+                    "ACP结果未知，自动重试已停止".to_string()
+                } else {
+                    format!(
+                        "{}；ACP计费用量未知，目标预算不可用，自动后续调用已停止",
+                        verification.reason
+                    )
+                };
+                let _ = tx.try_send(AgentEvent {
+                    event_type: "verification".into(),
+                    conversation_id: conversation_id.to_string(),
+                    token: None,
+                    tool_call_id: Some(tool_call.id.clone()),
+                    tool_name: Some(tool_call.function.name.clone()),
+                    args: None,
+                    result: None,
+                    status: None,
+                    error: None,
+                    message_id: None,
+                    risk_level: None,
+                    reason: None,
+                    approval_id: None,
+                    verification_success: Some(if result_unknown {
+                        false
+                    } else {
+                        verification.success
+                    }),
+                    verification_reason: Some(reason),
+                    should_replan: Some(false),
+                });
+                return Ok(ToolDispatchOutcome::Stopped { output });
+            }
+
             let _ = tx.try_send(AgentEvent {
                 event_type: "verification".into(),
                 conversation_id: conversation_id.to_string(),
@@ -234,7 +391,16 @@ async fn dispatch_tool_call(
             state.add_tool_result(
                 tool_call.id.clone(),
                 tool_call.function.name.clone(),
-                summarize_tool_result(&tool_result.content),
+                summarize_tool_result(&if external_accounting
+                    == ExternalToolAccounting::BillingUnknown
+                {
+                    format!(
+                        "{}\n\nACP v1 未提供累计计费 token 用量，外部模型成本未知。",
+                        tool_result.content
+                    )
+                } else {
+                    tool_result.content.clone()
+                }),
             );
             Ok(ToolDispatchOutcome::Continue)
         }
@@ -464,6 +630,27 @@ async fn run_react_loop_inner(
         let strict_budget = execution_scope
             .as_ref()
             .is_some_and(|scope| scope.handoff_id.is_some() || scope.goal_id.is_some());
+        let strict_output_limit = if strict_budget {
+            execution_scope
+                .as_ref()
+                .and_then(|scope| scope.budget.as_ref().map(|budget| (scope, budget)))
+                .map(|(scope, budget)| {
+                    let input_upper_bound =
+                        crate::integrations::llm::client::conservative_input_token_upper_bound(
+                            &state.messages,
+                            &tools_openai,
+                        )
+                        .ok_or_else(|| "proofloop_usage_unavailable".to_string())?;
+                    budget.output_token_limit(
+                        scope.handoff_id.as_deref(),
+                        input_upper_bound,
+                        client.max_output_tokens(),
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
         if let Some(scope) = &execution_scope {
             if strict_budget {
                 if let Some(budget) = &scope.budget {
@@ -471,7 +658,7 @@ async fn run_react_loop_inner(
                 }
             }
         }
-        let invocation = client.stream_with_callbacks(&state.messages, &tools_openai, |token| {
+        let on_token = |token: &str| {
             if !stream_response_tokens {
                 return;
             }
@@ -493,7 +680,17 @@ async fn run_react_loop_inner(
                 verification_reason: None,
                 should_replan: None,
             });
-        });
+        };
+        let invocation = if let Some(max_tokens) = strict_output_limit {
+            client.stream_with_callbacks_max_tokens(
+                &state.messages,
+                &tools_openai,
+                max_tokens,
+                on_token,
+            )
+        } else {
+            client.stream_with_callbacks(&state.messages, &tools_openai, on_token)
+        };
         let result = if let Some(deadline) =
             execution_scope.as_ref().and_then(|scope| scope.deadline)
         {
@@ -630,6 +827,24 @@ async fn run_react_loop_inner(
                             }
                             return Ok(RunOutcome::Paused { approval_id });
                         }
+                        ToolDispatchOutcome::Stopped { output } => {
+                            for later in tool_calls.iter().skip(i + 1) {
+                                state.add_tool_result(
+                                    later.id.clone(),
+                                    later.function.name.clone(),
+                                    format!(
+                                        "工具 {} 因外部 ACP 结果或计费用量不确定而被跳过，未执行。",
+                                        later.function.name
+                                    ),
+                                );
+                            }
+                            return Ok(finish_with_local_result(
+                                state,
+                                conversation_id,
+                                tx,
+                                output,
+                            ));
+                        }
                     }
                 }
                 continue;
@@ -680,8 +895,9 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::{
-        dispatch_tool_call, gate_final_response, should_stream_response_tokens, AgentEvent,
-        FinalResponseGate, ToolDispatchOutcome, MAX_COMPLETION_REPLANS,
+        dispatch_tool_call, gate_final_response, record_external_tool_accounting,
+        should_stream_response_tokens, AgentEvent, ExternalToolAccounting, FinalResponseGate,
+        ToolDispatchOutcome, MAX_COMPLETION_REPLANS,
     };
     use crate::agent::state::AgentState;
     use crate::agent::verifier::{VerificationResult, Verifier};
@@ -783,6 +999,55 @@ mod tests {
             events.push(event);
         }
         events
+    }
+
+    #[test]
+    fn strict_acp_accounting_unknown_blocks_goal_budget_without_fabricated_usage() {
+        let budget = crate::modules::task::resource_budget::SharedExecutionBudget::new(6, 24_000);
+        let scope = crate::agent::delegation::ExecutionScope {
+            cancel: tokio_util::sync::CancellationToken::new(),
+            budget: Some(Arc::clone(&budget)),
+            handoff_id: None,
+            goal_id: Some("goal-1".into()),
+            goal_version: Some(1),
+            evidence_ids: Vec::new(),
+            deadline: None,
+        };
+        let completed = json!({
+            "provider_id": "external",
+            "state": "completed",
+            "model_calls": null,
+            "total_tokens": null,
+        });
+        assert_eq!(
+            record_external_tool_accounting(
+                Some(&scope),
+                "subagent_acp_external_run",
+                Some(&completed),
+            )
+            .unwrap(),
+            ExternalToolAccounting::BillingUnknown,
+        );
+        assert_eq!(
+            budget.available().unwrap_err(),
+            "proofloop_usage_unavailable"
+        );
+
+        let unknown_result =
+            json!({"state":"result_unknown","model_calls":null,"total_tokens":null});
+        assert_eq!(
+            record_external_tool_accounting(
+                Some(&scope),
+                "subagent_acp_external_run",
+                Some(&unknown_result),
+            )
+            .unwrap(),
+            ExternalToolAccounting::ResultUnknown,
+        );
+        assert_eq!(
+            record_external_tool_accounting(None, "write_file", Some(&completed)).unwrap(),
+            ExternalToolAccounting::NotExternal,
+        );
     }
 
     fn desktop_text_state() -> AgentState {

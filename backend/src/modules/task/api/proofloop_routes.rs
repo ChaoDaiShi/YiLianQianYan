@@ -70,14 +70,183 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+fn prompt_input_upper_bound(
+    strategy: crate::modules::task::proofloop::enhancement_contracts::PlanningStrategy,
+    goal: &str,
+    snapshot: &crate::modules::task::proofloop::CapabilitySnapshot,
+    recommendations: &[crate::modules::task::proofloop::enhancement_contracts::SkillRecommendation],
+    options: &crate::modules::task::proofloop::enhancement_contracts::PlanningOptions,
+) -> Result<u64, ProofError> {
+    let messages = match strategy {
+        crate::modules::task::proofloop::enhancement_contracts::PlanningStrategy::Existing => {
+            crate::modules::task::proofloop::planner::build_planning_messages(goal, snapshot)
+        }
+        crate::modules::task::proofloop::enhancement_contracts::PlanningStrategy::Ranked
+        | crate::modules::task::proofloop::enhancement_contracts::PlanningStrategy::Experience => {
+            crate::modules::task::proofloop::candidate_planner::build_candidate_messages(
+                goal,
+                snapshot,
+                recommendations,
+                options,
+            )
+        }
+    };
+    crate::integrations::llm::client::conservative_input_token_upper_bound(&messages, &[])
+        .ok_or_else(|| {
+            ProofError::new(
+                "proofloop_usage_unavailable",
+                "无法保守估算规划输入用量，未调用模型",
+            )
+        })
+}
+
+fn prompt_fits_budget(input_tokens: u64, total_budget: u64, output_reserve: u32) -> bool {
+    input_tokens
+        .checked_add(u64::from(output_reserve))
+        .is_some_and(|needed| needed <= total_budget)
+}
+
+fn fit_ranked_snapshot_to_budget(
+    descriptors: &[crate::modules::capability::CapabilityDescriptor],
+    routes: &[crate::modules::task::proofloop::enhancement_contracts::RouteScore],
+    explicit_ids: Option<&[String]>,
+    now_ms: i64,
+    goal: &str,
+    recommendations: &[crate::modules::task::proofloop::enhancement_contracts::SkillRecommendation],
+    options: &crate::modules::task::proofloop::enhancement_contracts::PlanningOptions,
+    total_budget: u64,
+    output_reserve: u32,
+) -> Result<crate::modules::task::proofloop::CapabilitySnapshot, ProofError> {
+    use crate::modules::task::proofloop::{
+        candidate_planner::candidate_planning_context_chars, planner::MAX_PLANNING_PROMPT_CHARS,
+        routing::build_ranked_snapshot,
+    };
+    let max_snapshot_chars = MAX_PLANNING_PROMPT_CHARS.saturating_sub(
+        candidate_planning_context_chars(goal, recommendations, options),
+    );
+    if explicit_ids.is_some() {
+        let snapshot = build_ranked_snapshot(
+            descriptors,
+            routes,
+            explicit_ids,
+            now_ms,
+            max_snapshot_chars,
+        )?;
+        let input =
+            prompt_input_upper_bound(options.strategy, goal, &snapshot, recommendations, options)?;
+        if !prompt_fits_budget(input, total_budget, output_reserve) {
+            return Err(ProofError::new(
+                "proofloop_capability_selection_incomplete",
+                "显式选择的能力无法同时满足规划输入和输出 token 预算",
+            ));
+        }
+        return Ok(snapshot);
+    }
+
+    let (mut low, mut high) = (0usize, max_snapshot_chars);
+    let mut best = None;
+    while low <= high {
+        let middle = low + (high - low) / 2;
+        let snapshot = build_ranked_snapshot(descriptors, routes, None, now_ms, middle)?;
+        let input =
+            prompt_input_upper_bound(options.strategy, goal, &snapshot, recommendations, options)?;
+        if !snapshot.capabilities.is_empty()
+            && prompt_fits_budget(input, total_budget, output_reserve)
+        {
+            best = Some(snapshot);
+            low = middle.saturating_add(1);
+        } else if middle == 0 {
+            break;
+        } else {
+            high = middle - 1;
+        }
+    }
+    best.ok_or_else(|| {
+        ProofError::new(
+            "proofloop_budget_exhausted",
+            "规划目标和至少一项能力无法在保留输出额度后装入 token 预算",
+        )
+    })
+}
+
+fn fit_existing_snapshot_to_budget(
+    descriptors: &[crate::modules::capability::CapabilityDescriptor],
+    explicit_ids: Option<&[String]>,
+    now_ms: i64,
+    goal: &str,
+    options: &crate::modules::task::proofloop::enhancement_contracts::PlanningOptions,
+    total_budget: u64,
+    output_reserve: u32,
+) -> Result<crate::modules::task::proofloop::CapabilitySnapshot, ProofError> {
+    use crate::modules::task::proofloop::{
+        capabilities::{build_capability_snapshot_with_char_limit, MAX_SNAPSHOT_CONTEXT_CHARS},
+        planner::MAX_PLANNING_PROMPT_CHARS,
+    };
+    if explicit_ids.is_some() {
+        let snapshot = build_capability_snapshot_with_char_limit(
+            descriptors,
+            explicit_ids,
+            now_ms,
+            MAX_SNAPSHOT_CONTEXT_CHARS,
+        );
+        if explicit_ids.is_some_and(|ids| {
+            ids.iter().any(|id| {
+                !snapshot
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability.capability_id == *id)
+            })
+        }) {
+            return Err(ProofError::new(
+                "proofloop_capability_selection_incomplete",
+                "显式选择的能力不能完整装入规划输入",
+            ));
+        }
+        let input = prompt_input_upper_bound(options.strategy, goal, &snapshot, &[], options)?;
+        if !prompt_fits_budget(input, total_budget, output_reserve) {
+            return Err(ProofError::new(
+                "proofloop_capability_selection_incomplete",
+                "显式选择的能力无法同时满足规划输入和输出 token 预算",
+            ));
+        }
+        return Ok(snapshot);
+    }
+
+    let (mut low, mut high) = (0usize, MAX_SNAPSHOT_CONTEXT_CHARS);
+    let mut best = None;
+    while low <= high {
+        let middle = low + (high - low) / 2;
+        let snapshot = build_capability_snapshot_with_char_limit(descriptors, None, now_ms, middle);
+        let chars = crate::modules::task::proofloop::planner::planning_prompt_char_count(
+            &crate::modules::task::proofloop::planner::build_planning_messages(goal, &snapshot),
+        );
+        let input = prompt_input_upper_bound(options.strategy, goal, &snapshot, &[], options)?;
+        if !snapshot.capabilities.is_empty()
+            && chars <= MAX_PLANNING_PROMPT_CHARS
+            && prompt_fits_budget(input, total_budget, output_reserve)
+        {
+            best = Some(snapshot);
+            low = middle.saturating_add(1);
+        } else if middle == 0 {
+            break;
+        } else {
+            high = middle - 1;
+        }
+    }
+    best.ok_or_else(|| {
+        ProofError::new(
+            "proofloop_budget_exhausted",
+            "规划目标和至少一项能力无法在保留输出额度后装入 token 预算",
+        )
+    })
+}
+
 pub async fn create_draft_handler(
     State(server): State<Arc<AppServer>>,
     Json(request): Json<CreateProofDraftRequest>,
 ) -> Response {
     use crate::modules::task::proofloop::{
-        candidate_planner::candidate_planning_context_chars,
-        enhancement_contracts::PlanningStrategy,
-        routing::{build_ranked_snapshot, rank_capabilities},
+        enhancement_contracts::PlanningStrategy, routing::rank_capabilities,
     };
     if let Err(error) = request.planning.validate() {
         return proof_error_response(error);
@@ -113,46 +282,57 @@ pub async fn create_draft_handler(
     };
     let registry = server.build_capability_registry().await;
     let descriptors = registry.list();
+    let budget = request
+        .requirements
+        .as_ref()
+        .and_then(|requirements| requirements.budget)
+        .unwrap_or_default();
+    let mut model_config = server.effective_model_config();
+    let output_reserve = model_config.max_tokens.min(
+        (budget.max_total_tokens / 2)
+            .max(1)
+            .min(u64::from(u32::MAX)) as u32,
+    );
+    model_config.invoke_timeout_ms = model_config.invoke_timeout_ms.min(budget.max_wall_time_ms);
     let routes = if request.planning.strategy == PlanningStrategy::Existing {
         Vec::new()
     } else {
         rank_capabilities(
-            &request.user_goal,
+            &planning_goal,
             &descriptors,
             request.allowed_capability_ids.as_deref(),
             &std::collections::HashMap::new(),
         )
     };
     let snapshot = if request.planning.strategy == PlanningStrategy::Existing {
-        build_capability_snapshot(
+        match fit_existing_snapshot_to_budget(
             &descriptors,
             request.allowed_capability_ids.as_deref(),
             now(),
-        )
+            &planning_goal,
+            &request.planning,
+            budget.max_total_tokens,
+            output_reserve,
+        ) {
+            Ok(value) => value,
+            Err(error) => return proof_error_response(error),
+        }
     } else {
-        let overhead =
-            candidate_planning_context_chars(&planning_goal, &recommendations, &request.planning);
-        let remaining = crate::modules::task::proofloop::planner::MAX_PLANNING_PROMPT_CHARS
-            .saturating_sub(overhead);
-        match build_ranked_snapshot(
+        match fit_ranked_snapshot_to_budget(
             &descriptors,
             &routes,
             request.allowed_capability_ids.as_deref(),
             now(),
-            remaining,
+            &planning_goal,
+            &recommendations,
+            &request.planning,
+            budget.max_total_tokens,
+            output_reserve,
         ) {
             Ok(value) => value,
             Err(error) => return proof_error_response(error),
         }
     };
-    let mut model_config = server.effective_model_config();
-    let budget = request
-        .requirements
-        .as_ref()
-        .and_then(|requirements| requirements.budget)
-        .unwrap_or_default();
-    model_config.max_tokens = model_config.max_tokens.min(budget.max_total_tokens as u32);
-    model_config.invoke_timeout_ms = model_config.invoke_timeout_ms.min(budget.max_wall_time_ms);
     let usage = Arc::new(crate::integrations::llm::usage::DatabaseUsageRecorder::new(
         server.db.clone_connection(),
         model_config.name.clone(),
@@ -344,11 +524,40 @@ pub async fn evaluation_detail_handler(
     Path(report_id): Path<String>,
 ) -> Response {
     match server.db.get_acceptance_report(&report_id) {
-        Ok(Some((report, snapshot))) => (
-            StatusCode::OK,
-            Json(json!({"report":report,"snapshot":snapshot})),
-        )
-            .into_response(),
+        Ok(Some((report, snapshot))) => {
+            let contract = match server
+                .db
+                .load_goal_version(&report.goal_id, report.goal_version)
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    return proof_error_response(ProofError::new("db_error", error.to_string()))
+                }
+            };
+            let artifacts =
+                crate::modules::task::artifact::ArtifactService::new(server.db.clone_connection());
+            let current_evidence = contract
+                .as_ref()
+                .map(|contract| {
+                    current_deliverable_evidence(
+                        &server.db,
+                        &artifacts,
+                        contract,
+                        &snapshot,
+                        &server.workspace_root,
+                    )
+                })
+                .unwrap_or_default();
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "report": report,
+                    "snapshot": snapshot,
+                    "current_evidence": current_evidence,
+                })),
+            )
+                .into_response()
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"code":"report_not_found","message":"验收报告不存在"})),
@@ -356,6 +565,97 @@ pub async fn evaluation_detail_handler(
             .into_response(),
         Err(error) => proof_error_response(ProofError::new("db_error", error.to_string())),
     }
+}
+
+#[derive(serde::Serialize)]
+struct CurrentDeliverableEvidence {
+    deliverable_id: String,
+    artifact_id: Option<String>,
+    status: &'static str,
+    reason: &'static str,
+}
+
+fn current_deliverable_evidence(
+    db: &crate::db::Database,
+    artifacts: &crate::modules::task::artifact::ArtifactService,
+    contract: &crate::modules::task::proofloop::GoalContract,
+    snapshot: &crate::modules::task::proofloop::EvidenceSnapshot,
+    allowed_root: &str,
+) -> Vec<CurrentDeliverableEvidence> {
+    contract
+        .deliverables
+        .iter()
+        .map(|deliverable| {
+            let mapping = snapshot
+                .deliverables
+                .iter()
+                .find(|mapping| mapping.deliverable_id == deliverable.id);
+            let Some(mapping) = mapping else {
+                return CurrentDeliverableEvidence {
+                    deliverable_id: deliverable.id.clone(),
+                    artifact_id: None,
+                    status: "stale",
+                    reason: "此交付物没有当前验收文件映射。",
+                };
+            };
+            let artifact_id = mapping.artifact_id.clone();
+            let parsed_id = match crate::modules::task::model::ArtifactId::new(&artifact_id) {
+                Ok(id) => id,
+                Err(_) => {
+                    return CurrentDeliverableEvidence {
+                        deliverable_id: deliverable.id.clone(),
+                        artifact_id: Some(artifact_id),
+                        status: "stale",
+                        reason: "当前交付物标识无效。",
+                    }
+                }
+            };
+            let read = artifacts.read_bytes(&parsed_id, allowed_root);
+            let provenance = db.artifact_provenance(&artifact_id);
+            let (Ok((artifact, _bytes)), Ok(Some(provenance))) = (read, provenance) else {
+                return CurrentDeliverableEvidence {
+                    deliverable_id: deliverable.id.clone(),
+                    artifact_id: Some(artifact_id),
+                    status: "stale",
+                    reason: "实际交付物文件缺失、被改写或来源记录不可用。",
+                };
+            };
+            let captured = snapshot
+                .evidence
+                .iter()
+                .find(|evidence| evidence.artifact_id.as_deref() == Some(artifact_id.as_str()));
+            let source_matches = matches!(
+                &provenance.source,
+                crate::modules::task::artifact::ArtifactSource::Node {
+                    graph_id,
+                    node_id,
+                    execution_id,
+                    workspace_id,
+                } if graph_id == &snapshot.graph_id
+                    && workspace_id == &contract.workspace_id
+                    && artifact.workspace_id.as_str() == contract.workspace_id
+                    && artifact.task_execution_id.as_str() == execution_id.as_str()
+                    && snapshot.executions.iter().any(|execution| {
+                        execution.graph_id.as_str() == snapshot.graph_id
+                            && execution.node_id.as_str() == node_id.as_str()
+                            && execution.execution_id.as_str() == execution_id.as_str()
+                    })
+            );
+            let digest_matches =
+                captured.is_some_and(|evidence| evidence.digest == provenance.sha256);
+            let current = source_matches && digest_matches;
+            CurrentDeliverableEvidence {
+                deliverable_id: deliverable.id.clone(),
+                artifact_id: Some(artifact_id),
+                status: if current { "current" } else { "stale" },
+                reason: if current {
+                    "实际文件字节、验收摘要与执行来源仍匹配。"
+                } else {
+                    "交付物字节或执行来源已变化，请重新验收。"
+                },
+            }
+        })
+        .collect()
 }
 
 pub fn proofloop_router() -> axum::Router<Arc<AppServer>> {

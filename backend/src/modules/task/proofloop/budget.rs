@@ -75,6 +75,9 @@ pub(crate) fn remaining_budget(
     if usage.accounting_state == "interrupted_unknown" {
         return Err(unknown());
     }
+    if usage.accounting_state != "legacy_unknown" && planning.total_tokens.is_none() {
+        return Err(unknown());
+    }
     // Legacy planning is explicitly reported unknown; its first future activity
     // is bounded without claiming that the old planning cost was measured.
     let elapsed = match contract.budget.time_basis {
