@@ -231,17 +231,15 @@ fn trim_recommendation_context(
 ) -> Vec<SkillRecommendation> {
     let mut remaining = MAX_CONTEXT_CHARS;
     let mut result = Vec::new();
-    for mut recommendation in recommendations
-        .drain(..)
-        .take(limit.min(MAX_RECOMMENDATIONS))
-    {
+    let count = recommendations.len().min(limit).min(MAX_RECOMMENDATIONS);
+    for (index, mut recommendation) in recommendations.drain(..).take(count).enumerate() {
         if remaining == 0 {
             break;
         }
         let context: String = recommendation
             .context_text
             .chars()
-            .take(remaining)
+            .take(remaining / (count - index))
             .collect();
         let used = context.chars().count();
         if used == 0 {

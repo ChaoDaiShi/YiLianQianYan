@@ -1069,6 +1069,7 @@ pub async fn stop_handler(
 
 #[cfg(test)]
 mod tests {
+    use super::{resolve_conversation_goal_ref, ChatRequest};
     use std::{path::PathBuf, sync::Arc};
 
     use axum::{

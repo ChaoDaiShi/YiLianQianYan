@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // Controlled fixtures exercise the actual product LLM transport, MCP runtime,
@@ -49,6 +49,7 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
       },
     };
     if (process.env.YILIAN_E2E_V12 === '1') {
+      response.candidate.schema_version=1;
       const alternative=structuredClone(response.candidate);
       alternative.nodes[0].literal_input.query='controlled alternate retrieval';
       response.candidates=[response.candidate,alternative];
@@ -193,6 +194,20 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
       assert.equal(await page.getByRole('button', { name: '证行验收', exact: true }).getAttribute('data-status'), 'success');
       await capture('05-legacy-report-fresh-evaluation');
       steps.push('legacy_report_requires_reevaluation_and_refresh_restores_verified_result');
+    }
+    if (process.env.YILIAN_E2E_V12 === '1') {
+      await page.getByRole('button', { name: '目标视图', exact: true }).click();
+      await page.getByTestId('goal-overview').getByRole('region', { name: '目标进度' }).getByText('已通过验收', { exact: true }).waitFor();
+      const downloadEvent = page.waitForEvent('download');
+      await page.getByRole('button', { name: '下载真实文件', exact: true }).click();
+      const download = await downloadEvent;
+      const downloadedFile = join(evidenceDir, 'v12-goal-downloaded-artifact.md');
+      await download.saveAs(downloadedFile);
+      assert.ok((await readFile(downloadedFile, 'utf8')).includes(uri));
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByTestId('goal-overview').getByRole('region', { name: '目标进度' }).getByText('已通过验收', { exact: true }).waitFor();
+      await capture('06-v12-goal-view-after-reload');
+      steps.push('v12_goal_view_download_and_reload_verified');
     }
     const result = { status: 'passed', stage: 'proofloop_controlled_product_flow', llm: 'LOCAL OPENAI-COMPATIBLE FIXTURE', mcp: 'LOCAL MCP FIXTURE', external_business_benchmark: 'NOT_TESTED', steps, model_requests: modelCalls.length, remote_calls: calls, requests, graph_id: graphId, goal_id: binding.goal_id, graph_revision: reports[0].graph_revision, report: reports[0], geometry, expected_browser_422_errors: 1 };
     await writeFile(join(evidenceDir, 'proofloop-e2e-result.json'), JSON.stringify(result, null, 2)); return result;
