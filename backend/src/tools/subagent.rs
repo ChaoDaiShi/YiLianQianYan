@@ -42,7 +42,12 @@ const MAX_SUBAGENT_TASK_CHARS: usize = 8000;
 /// step (6D). The execution result is always a bounded [`ToolResult`].
 #[async_trait]
 pub(crate) trait SubagentExecutor: Send + Sync {
-    async fn execute_subagent(&self, spec: &SubagentExecutionSpec, task: &str) -> ToolResult;
+    async fn execute_subagent(
+        &self,
+        spec: &SubagentExecutionSpec,
+        task: &str,
+        handoff: Option<&crate::agent::delegation::DelegationRequest>,
+    ) -> ToolResult;
 }
 
 /// Trusted, cloned subagent execution parameters. Everything here comes from
@@ -309,7 +314,22 @@ impl Tool for SubagentToolAdapter {
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "Task to delegate to this subagent"
+                    "description": "Task to delegate. State its input, expected files, and acceptance conditions."
+                },
+                "handoff": {
+                    "type": "object",
+                    "description": "Optional bounded delegation context. Roles label the task and do not grant tools.",
+                    "properties": {
+                        "goal_id": {"type": "string"},
+                        "goal_version": {"type": "integer", "minimum": 1},
+                        "role": {"type": "string", "enum": ["research", "implement", "verify"]},
+                        "allowed_tools": {"type": "array", "items": {"type": "string"}, "maxItems": 32},
+                        "input_evidence_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 32},
+                        "required_artifact_names": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                        "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 600000}
+                    },
+                    "required": ["role", "allowed_tools"],
+                    "additionalProperties": false
                 }
             },
             "required": ["task"],
@@ -386,7 +406,26 @@ impl Tool for SubagentToolAdapter {
             model: self.model.clone(),
             workdir: self.workdir.clone(),
         };
-        executor.execute_subagent(&spec, task).await
+        let handoff = match args.get("handoff") {
+            None => None,
+            Some(value) => {
+                let request = match serde_json::from_value::<
+                    crate::agent::delegation::DelegationRequest,
+                >(value.clone())
+                {
+                    Ok(request) => request,
+                    Err(_) => return ToolResult::error("Structured handoff is invalid"),
+                };
+                if let Err(reason) = request.validate() {
+                    return ToolResult::error(reason);
+                }
+                Some(request)
+            }
+        };
+
+        executor
+            .execute_subagent(&spec, task, handoff.as_ref())
+            .await
     }
 }
 
@@ -424,6 +463,25 @@ mod tests {
         assert_eq!(params["required"], serde_json::json!(["task"]));
         assert_eq!(params["additionalProperties"], serde_json::json!(false));
         assert_eq!(params["properties"]["task"]["type"], "string");
+    }
+
+    #[test]
+    fn parameters_accept_optional_structured_handoff() {
+        let adapter = SubagentToolAdapter::new(&definition("researcher", "", "body")).unwrap();
+        let params = adapter.parameters();
+        assert_eq!(params["properties"]["handoff"]["type"], "object");
+        assert_eq!(
+            params["properties"]["handoff"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            params["properties"]["handoff"]["required"],
+            serde_json::json!(["role", "allowed_tools"])
+        );
+        assert_eq!(
+            params["properties"]["handoff"]["properties"]["role"]["enum"],
+            serde_json::json!(["research", "implement", "verify"])
+        );
     }
 
     #[test]
@@ -613,17 +671,24 @@ mod tests {
         seen_model: std::sync::Mutex<Option<Option<String>>>,
         seen_task: std::sync::Mutex<Option<String>>,
         seen_instructions: std::sync::Mutex<Option<String>>,
+        seen_handoff: std::sync::Mutex<Option<crate::agent::delegation::DelegationRequest>>,
     }
 
     #[async_trait]
     impl SubagentExecutor for FakeSubagentExecutor {
-        async fn execute_subagent(&self, spec: &SubagentExecutionSpec, task: &str) -> ToolResult {
+        async fn execute_subagent(
+            &self,
+            spec: &SubagentExecutionSpec,
+            task: &str,
+            handoff: Option<&crate::agent::delegation::DelegationRequest>,
+        ) -> ToolResult {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             *self.seen_name.lock().unwrap() = Some(spec.name.clone());
             *self.seen_allowed_tools.lock().unwrap() = Some(spec.allowed_tools.clone());
             *self.seen_model.lock().unwrap() = Some(spec.model.clone());
             *self.seen_task.lock().unwrap() = Some(task.to_string());
             *self.seen_instructions.lock().unwrap() = Some(spec.instructions.clone());
+            *self.seen_handoff.lock().unwrap() = handoff.cloned();
             ToolResult::success("child result")
         }
     }
@@ -640,6 +705,7 @@ mod tests {
             seen_model: std::sync::Mutex::new(None),
             seen_task: std::sync::Mutex::new(None),
             seen_instructions: std::sync::Mutex::new(None),
+            seen_handoff: std::sync::Mutex::new(None),
         });
         (executor, calls)
     }
@@ -679,6 +745,57 @@ mod tests {
             *executor.seen_instructions.lock().unwrap(),
             Some("research body".to_string())
         );
+        assert!(executor.seen_handoff.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn executable_adapter_passes_valid_structured_handoff() {
+        let (executor, calls) = fake_executor();
+        let adapter = SubagentToolAdapter::new_executable(
+            &definition("researcher", "", "research body"),
+            executor.clone(),
+        )
+        .unwrap();
+
+        let result = adapter
+            .execute(serde_json::json!({
+                "task": "Find the report and verify it",
+                "handoff": {
+                    "role": "verify",
+                    "allowed_tools": ["grep"],
+                    "input_evidence_ids": ["ev_exec-1"],
+                    "required_artifact_names": ["review.md"]
+                }
+            }))
+            .await;
+
+        assert!(result.ok);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let seen = executor.seen_handoff.lock().unwrap().clone().unwrap();
+        assert_eq!(seen.role, crate::agent::delegation::DelegationRole::Verify);
+        assert_eq!(seen.allowed_tools, vec!["grep"]);
+        assert_eq!(seen.input_evidence_ids, vec!["ev_exec-1"]);
+        assert_eq!(seen.required_artifact_names, vec!["review.md"]);
+    }
+
+    #[tokio::test]
+    async fn executable_adapter_rejects_unknown_structured_handoff_fields() {
+        let (executor, calls) = fake_executor();
+        let adapter = SubagentToolAdapter::new_executable(
+            &definition("researcher", "", "research body"),
+            executor,
+        )
+        .unwrap();
+
+        let result = adapter
+            .execute(serde_json::json!({
+                "task": "inspect",
+                "handoff": {"role": "research", "allowed_tools": ["grep"], "workdir": "D:/"}
+            }))
+            .await;
+
+        assert!(!result.ok);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
