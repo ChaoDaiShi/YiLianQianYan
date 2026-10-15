@@ -19,6 +19,7 @@ type GoalKey = (String, u32);
 struct Activity {
     started: Instant,
     count: u32,
+    unpersisted_finishes: u32,
 }
 
 pub struct GoalBudgetMeter {
@@ -183,7 +184,7 @@ impl GoalBudgetMeter {
         let mut usage = record.usage;
         if let Some(active) = running.get(&(draft.contract.goal_id.clone(), draft.contract.version))
         {
-            if record.active_count != active.count {
+            if active.unpersisted_finishes > 0 || record.active_count != active.count {
                 return Err(unknown());
             }
             usage.execution_active_ms = usage
@@ -283,6 +284,7 @@ impl GoalBudgetMeter {
             .or_insert(Activity {
                 started: Instant::now(),
                 count,
+                unpersisted_finishes: 0,
             });
         Ok(BudgetLease {
             meter: Arc::clone(self),
@@ -293,27 +295,54 @@ impl GoalBudgetMeter {
 
     fn finish(&self, key: GoalKey) -> Result<(), ProofError> {
         let mut running = self.running.lock();
-        let Some(activity) = running.get_mut(&key) else {
+        let Some(activity) = running.get(&key) else {
             return Err(unknown());
         };
-        activity.count -= 1;
-        let count = activity.count;
-        let elapsed = activity.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        let mut record = self
-            .db
-            .load_proofloop_time(&key.0, key.1)
-            .map_err(db_error)?
-            .ok_or_else(unknown)?;
+        let persisted_count = activity.count;
+        let unpersisted_finishes = activity.unpersisted_finishes;
+        let started = activity.started;
+        let mut record = match self.db.load_proofloop_time(&key.0, key.1) {
+            Ok(Some(record)) => record,
+            Ok(None) => {
+                if let Some(activity) = running.get_mut(&key) {
+                    activity.unpersisted_finishes += 1;
+                }
+                return Err(unknown());
+            }
+            Err(error) => {
+                if let Some(activity) = running.get_mut(&key) {
+                    activity.unpersisted_finishes += 1;
+                }
+                return Err(db_error(error));
+            }
+        };
+        if record.active_count != persisted_count {
+            if let Some(activity) = running.get_mut(&key) {
+                activity.unpersisted_finishes += 1;
+            }
+            return Err(unknown());
+        }
+        let count = persisted_count - unpersisted_finishes - 1;
         record.active_count = count;
         if count == 0 {
+            let elapsed = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
             record.usage.execution_active_ms =
                 record.usage.execution_active_ms.saturating_add(elapsed);
             record.active_started_at_ms = None;
-            running.remove(&key);
         }
-        self.db
-            .save_proofloop_time(&key.0, key.1, &record, now())
-            .map_err(db_error)
+        if let Err(error) = self.db.save_proofloop_time(&key.0, key.1, &record, now()) {
+            if let Some(activity) = running.get_mut(&key) {
+                activity.unpersisted_finishes += 1;
+            }
+            return Err(db_error(error));
+        }
+        if count == 0 {
+            running.remove(&key);
+        } else if let Some(activity) = running.get_mut(&key) {
+            activity.count = count;
+            activity.unpersisted_finishes = 0;
+        }
+        Ok(())
     }
 }
 

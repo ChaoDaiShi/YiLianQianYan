@@ -133,6 +133,32 @@ pub struct GoalContract {
     pub budget: Budget,
 }
 
+impl GoalContract {
+    pub fn validate_source_requirements(&self) -> Result<(), ProofError> {
+        for (index, criterion) in self.criteria.iter().enumerate() {
+            if matches!(
+                criterion.check,
+                CriterionCheck::SourceTraceability { min_sources: 0, .. }
+            ) {
+                return Err(ProofError::new(
+                    "proofloop_invalid_source_threshold",
+                    format!(
+                        "来源追溯条件 '{}' 的最低来源数量必须至少为 1，请修正目标契约",
+                        criterion.id
+                    ),
+                )
+                .with_target_path(vec![
+                    "criteria".into(),
+                    index.to_string(),
+                    "check".into(),
+                    "min_sources".into(),
+                ]));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityKindSpec {

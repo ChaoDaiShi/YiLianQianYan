@@ -4,7 +4,9 @@ import type {
   Json,
   Criterion,
   CriterionResult,
+  DeliverableResult,
   FieldPath,
+  GoalContract,
   PendingInput,
   ProofDraft,
   ProofError,
@@ -211,6 +213,37 @@ export function formatGoalOverallStatus(status: AcceptanceReport["status"]): {
         description: "验收报告状态不明确。",
       };
   }
+}
+
+type HistoricalAcceptanceReport = Omit<AcceptanceReport, "deliverable_results"> & {
+  deliverable_results?: DeliverableResult[] | null;
+};
+
+export function normalizeAcceptanceReport(report: AcceptanceReport | HistoricalAcceptanceReport): AcceptanceReport {
+  if (Array.isArray(report.deliverable_results)) return report as AcceptanceReport;
+  return { ...report, deliverable_results: [] };
+}
+
+export function formatAcceptanceReportDisplayStatus(
+  report: AcceptanceReport,
+  contract?: GoalContract,
+): ReturnType<typeof formatGoalOverallStatus> & { needsReevaluation: boolean } {
+  const deliverableResults = report.deliverable_results ?? [];
+  const requiredDeliverables = contract?.deliverables;
+  const needsReevaluation = requiredDeliverables
+    ? requiredDeliverables.some((deliverable) => !deliverableResults.some((result) => result.deliverable_id === deliverable.id))
+    : deliverableResults.length === 0;
+
+  if (needsReevaluation) {
+    return {
+      tone: "warning",
+      label: "需重新验收",
+      description: "此报告缺少契约声明的交付物检查结果。刷新后可重新验收，历史报告结论仍予保留。",
+      needsReevaluation: true,
+    };
+  }
+
+  return { ...formatGoalOverallStatus(report.status), needsReevaluation: false };
 }
 
 export function formatCriterionCheckDescription(criterion: Criterion): string {

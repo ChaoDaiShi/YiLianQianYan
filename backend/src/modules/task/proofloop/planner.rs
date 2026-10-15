@@ -15,6 +15,83 @@ use crate::integrations::llm::{client::LlmClient, types::ChatMessage};
 
 pub const MAX_PLANNING_PROMPT_CHARS: usize = 32_000;
 
+const SYSTEM_PROMPT: &str = "你是一个严谨的桌面任务规划器。你的职责是将用户的自然语言目标分解为由真实工具能力构成的任务图 (DAG)。\n\
+请根据提供的工具清单生成任务候选方案。\n\
+必须严格遵守以下规则：\n\
+1. 只能使用给定的 capability_id，严禁虚构或推测不存在的工具。\n\
+2. 节点总数不得超过 20 个。\n\
+3. 必须输出严格合法的 JSON 对象，不包含多余文本或注释。\n\
+4. JSON 结构必须包含：\n\
+   - deliverables: [ { \"id\": string, \"title\": string, \"mime_type\": string } ]\n\
+   - criteria: [ { \"id\": string, \"description\": string, \"required\": bool, \"check\": { \"kind\": \"artifact_exists\", \"deliverable_id\": string } } ]\n\
+   - candidate: {\n\
+       \"schema_version\": 1,\n\
+       \"nodes\": [ { \"id\": string, \"title\": string, \"instruction\": string, \"capability_id\": string, \"literal_input\": {}, \"bindings\": [] } ],\n\
+       \"edges\": [ { \"from\": string, \"to\": string } ],\n\
+       \"deliverable_nodes\": [ { \"deliverable_id\": string, \"node_id\": string } ]\n\
+     }\n\
+5. 如果使用 bindings，源节点必须在 edges 中声明直接依赖，且 source path 必须以 [\"structured\", ...] 开头。\n\
+6. 严禁生成系统级提权、外部任意命令或未经授权的操作。";
+
+pub(super) fn build_planning_messages(
+    user_goal: &str,
+    snapshot: &CapabilitySnapshot,
+) -> [ChatMessage; 2] {
+    let mut caps_summary = String::new();
+    for cap in &snapshot.capabilities {
+        caps_summary.push_str(&format!(
+            "- capability_id: {}\n  name: {}\n  description: {}\n  input_schema: {}\n  output_schema: {}\n\n",
+            cap.capability_id,
+            cap.name,
+            cap.description,
+            serde_json::to_string(&cap.input_schema).unwrap_or_else(|_| "null".to_string()),
+            serde_json::to_string(&cap.output_schema).unwrap_or_else(|_| "null".to_string())
+        ));
+    }
+
+    let user_prompt = format!(
+        "用户目标：{}\n\n可用能力快照：\n{}\n\n请直接返回规划 JSON：",
+        user_goal, caps_summary
+    );
+
+    [
+        ChatMessage {
+            role: "system".into(),
+            content: Some(SYSTEM_PROMPT.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+        ChatMessage {
+            role: "user".into(),
+            content: Some(user_prompt),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+    ]
+}
+
+pub(super) fn planning_prompt_char_count(messages: &[ChatMessage]) -> usize {
+    messages
+        .iter()
+        .filter_map(|message| message.content.as_deref())
+        .map(|content| content.chars().count())
+        .sum()
+}
+
+pub(super) fn validate_planning_prompt_size(messages: &[ChatMessage]) -> Result<(), ProofError> {
+    if planning_prompt_char_count(messages) > MAX_PLANNING_PROMPT_CHARS {
+        return Err(ProofError::new(
+            "proofloop_planning_input_too_large",
+            format!(
+                "完整规划输入超过 {MAX_PLANNING_PROMPT_CHARS} 字符上限，请缩减目标描述或选择更少的工具能力范围"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn propose_candidate(
     workspace_id: &str,
     user_goal: &str,
@@ -54,58 +131,8 @@ pub async fn propose_candidate_with_usage(
         ));
     }
 
-    let system_prompt = "你是一个严谨的桌面任务规划器。你的职责是将用户的自然语言目标分解为由真实工具能力构成的任务图 (DAG)。\n\
-请根据提供的工具清单生成任务候选方案。\n\
-必须严格遵守以下规则：\n\
-1. 只能使用给定的 capability_id，严禁虚构或推测不存在的工具。\n\
-2. 节点总数不得超过 20 个。\n\
-3. 必须输出严格合法的 JSON 对象，不包含多余文本或注释。\n\
-4. JSON 结构必须包含：\n\
-   - deliverables: [ { \"id\": string, \"title\": string, \"mime_type\": string } ]\n\
-   - criteria: [ { \"id\": string, \"description\": string, \"required\": bool, \"check\": { \"kind\": \"artifact_exists\", \"deliverable_id\": string } } ]\n\
-   - candidate: {\n\
-       \"schema_version\": 1,\n\
-       \"nodes\": [ { \"id\": string, \"title\": string, \"instruction\": string, \"capability_id\": string, \"literal_input\": {}, \"bindings\": [] } ],\n\
-       \"edges\": [ { \"from\": string, \"to\": string } ],\n\
-       \"deliverable_nodes\": [ { \"deliverable_id\": string, \"node_id\": string } ]\n\
-     }\n\
-5. 如果使用 bindings，源节点必须在 edges 中声明直接依赖，且 source path 必须以 [\"structured\", ...] 开头。\n\
-6. 严禁生成系统级提权、外部任意命令或未经授权的操作。";
-
-    // Build capabilities description
-    let mut caps_summary = String::new();
-    for cap in &snapshot.capabilities {
-        caps_summary.push_str(&format!(
-            "- capability_id: {}\n  name: {}\n  description: {}\n  input_schema: {}\n  output_schema: {}\n\n",
-            cap.capability_id,
-            cap.name,
-            cap.description,
-            serde_json::to_string(&cap.input_schema).unwrap_or_else(|_| "null".to_string()),
-            serde_json::to_string(&cap.output_schema).unwrap_or_else(|_| "null".to_string())
-        ));
-    }
-
-    let user_prompt = format!(
-        "用户目标：{}\n\n可用能力快照：\n{}\n\n请直接返回规划 JSON：",
-        user_goal, caps_summary
-    );
-
-    let messages = vec![
-        ChatMessage {
-            role: "system".into(),
-            content: Some(system_prompt.into()),
-            tool_calls: None,
-            tool_call_id: None,
-            name: None,
-        },
-        ChatMessage {
-            role: "user".into(),
-            content: Some(user_prompt),
-            tool_calls: None,
-            tool_call_id: None,
-            name: None,
-        },
-    ];
+    let messages = build_planning_messages(user_goal, snapshot);
+    validate_planning_prompt_size(&messages)?;
 
     let response = tokio::select! {
         biased;

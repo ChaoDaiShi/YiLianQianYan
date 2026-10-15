@@ -12,6 +12,8 @@ writeFileSync(file, text);
 const sha256 = createHash('sha256').update(text).digest('hex');
 const spec = { task_id: 'review', deliverables: [{ id: 'report' }], criteria: [{ id: 'exists', required: true, check: { kind: 'artifact_exists', deliverable_id: 'report' } }, { id: 'digest', required: true, check: { kind: 'artifact_digest_matches', deliverable_id: 'report' } }, { id: 'sections', required: true, check: { kind: 'required_sections', deliverable_id: 'report', headings: ['Background'] } }] };
 const run = { task_id: 'review', started: true, status: 'COMPLETED', goal_pass: true, artifacts: [{ deliverable_id: 'report', path: file, sha256 }], illegal_executions: 0 };
+const zeroSourceSpec = { ...spec, criteria: [{ id: 'sources', required: true, check: { kind: 'source_traceability', deliverable_id: 'report', min_sources: 0 } }] };
+assert.equal(verifyRunEvidence(run, zeroSourceSpec).pass, false, 'zero sources with a zero threshold must not pass traceability');
 const declaredTwoDeliverables = {
   ...spec,
   deliverables: [...spec.deliverables, { id: 'appendix' }],

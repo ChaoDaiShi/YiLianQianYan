@@ -18,6 +18,7 @@ pub fn evaluate_goal(
     existing_reviews: &[HumanReview],
     now_ms: i64,
 ) -> Result<AcceptanceReport, ProofError> {
+    contract.validate_source_requirements()?;
     if snapshot.goal_id != contract.goal_id {
         return Err(ProofError::new(
             "proofloop_evidence_stale",

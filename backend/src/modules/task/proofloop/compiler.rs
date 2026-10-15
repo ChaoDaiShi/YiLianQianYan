@@ -41,6 +41,10 @@ pub fn compile_candidate(
     let mut diagnostics: Vec<ProofError> = Vec::new();
     let mut pending_inputs: Vec<PendingInput> = Vec::new();
 
+    if let Err(error) = goal.validate_source_requirements() {
+        diagnostics.push(error);
+    }
+
     if goal.schema_version != 1 || candidate.schema_version != 1 {
         diagnostics.push(ProofError::new(
             "unsupported_schema_version",

@@ -22,7 +22,7 @@ import Identifier from "../../../components/Identifier";
 import { formatIdentifierText, type IdentifierReference } from "../../../utils/identifiers";
 import {
   formatCriterionStatus,
-  formatGoalOverallStatus,
+  formatAcceptanceReportDisplayStatus,
 } from "./proofloopModel";
 
 export interface AcceptancePanelProps {
@@ -54,7 +54,8 @@ export default function AcceptancePanel({
   const [activeReviewCriterionId, setActiveReviewCriterionId] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
-  const overallMeta = report ? formatGoalOverallStatus(report.status) : null;
+  const deliverableResults = report?.deliverable_results ?? [];
+  const overallMeta = report ? formatAcceptanceReportDisplayStatus(report, contract) : null;
 
   const handleSubmitReview = async (criterionId: string) => {
     if (!report) return;
@@ -150,15 +151,19 @@ export default function AcceptancePanel({
 
       <section className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold text-[var(--text)]">
-          交付成果检查（共 {report.deliverable_results.length} 项）
+          交付成果检查（共 {deliverableResults.length} 项）
         </h3>
-        {report.deliverable_results.length === 0 ? (
+        {overallMeta?.needsReevaluation ? (
           <p className="rounded-[var(--radius-md)] border border-[var(--warning-border)] bg-[var(--warning-soft)] p-3 text-xs text-[var(--warning-fg)]">
-            此报告没有交付物基础检查结果，需要重新验收。
+            此报告缺少契约声明的交付物检查结果，需要重新验收。
+          </p>
+        ) : deliverableResults.length === 0 ? (
+          <p className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] p-3 text-xs text-[var(--text-faint)]">
+            当前契约未声明交付物。
           </p>
         ) : (
           <div className="flex flex-col gap-2">
-            {report.deliverable_results.map((item) => {
+            {deliverableResults.map((item) => {
               const statusMeta = formatCriterionStatus(item.status);
               return (
                 <div

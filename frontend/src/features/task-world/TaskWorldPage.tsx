@@ -36,6 +36,7 @@ import { useTaskGraphReview } from "./hooks/useTaskReview";
 import { getExecutorAvailability, isActiveExecution, projectTaskGraph } from "./taskGraphProjection";
 import AcceptancePanel from "./proofloop/AcceptancePanel";
 import RepairReviewPanel from "./proofloop/RepairReviewPanel";
+import { formatAcceptanceReportDisplayStatus, normalizeAcceptanceReport } from "./proofloop/proofloopModel";
 import {
   evaluateGoal,
   listGoalEvaluations,
@@ -103,6 +104,8 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   const [proofLoading, setProofLoading] = useState(false);
   const [proofError, setProofError] = useState<string | null>(null);
   const [activeRepairProposal, setActiveRepairProposal] = useState<RepairProposal | null>(null);
+  const proofReportMeta = proofReport ? formatAcceptanceReportDisplayStatus(proofReport, proofGoal?.contract) : null;
+  const proofReportTone: ContextRailStatusTone | undefined = proofReportMeta?.tone;
 
   useEffect(() => {
     updateContext({
@@ -205,7 +208,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
         if (!evidence.ok) throw new Error(evidence.error.message);
         if (!controller.signal.aborted) setProofSnapshot(evidence.data.snapshot);
       }
-      if (!controller.signal.aborted) setProofReport(report || null);
+      if (!controller.signal.aborted) setProofReport(report ? normalizeAcceptanceReport(report) : null);
     } catch (e: unknown) {
       if (!controller.signal.aborted) setProofError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -296,7 +299,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
             icon: FileCheck,
             controls: "studio-proofloop",
             expanded: activePanel === "proofloop",
-            statusTone: (proofReport?.status === "pass" ? "success" : proofReport?.status === "fail" ? "danger" : undefined) as ContextRailStatusTone | undefined,
+            statusTone: proofReportTone,
             onSelect: () => changePanel(activePanel === "proofloop" ? null : "proofloop"),
           },
         ]}
@@ -367,7 +370,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
               evidenceSnapshot={proofSnapshot}
               contract={proofGoal?.contract}
               onRefreshEvaluation={() => void loadProofEvaluation(true)}
-              onReportUpdated={(report) => { setProofReport(report); }}
+              onReportUpdated={(report) => { setProofReport(normalizeAcceptanceReport(report)); }}
               onOpenArtifact={(id) => { void downloadArtifact(id).then((blob) => { const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `${formatIdentifier("artifact", id)}.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }).catch((error: unknown) => setProofError(error instanceof Error ? error.message : String(error))); }}
               onRequestRepair={(rep) => void handleRequestRepair(rep)}
             />

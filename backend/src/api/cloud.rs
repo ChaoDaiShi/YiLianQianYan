@@ -100,11 +100,18 @@ pub async fn sync_choice_handler(
             "同步选择无效",
         ));
     }
+    let _lock = server.cloud_operation_lock.try_lock().map_err(|_| {
+        api_error(
+            StatusCode::CONFLICT,
+            "cloud_operation_in_progress",
+            "当前正在同步，请完成后重试",
+        )
+    })?;
     server
         .db
         .set_sync_existing_choice(&payload.choice)
         .map_err(internal_error)?;
-    sync_status_handler(State(server)).await
+    sync_status_handler(State(Arc::clone(&server))).await
 }
 
 pub async fn sync_conflicts_handler(State(server): State<Arc<AppServer>>) -> ApiResult {
