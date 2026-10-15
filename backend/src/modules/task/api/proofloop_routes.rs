@@ -143,30 +143,20 @@ fn fit_ranked_snapshot_to_budget(
         return Ok(snapshot);
     }
 
-    let (mut low, mut high) = (0usize, max_snapshot_chars);
-    let mut best = None;
-    while low <= high {
-        let middle = low + (high - low) / 2;
-        let snapshot = build_ranked_snapshot(descriptors, routes, None, now_ms, middle)?;
+    let mut snapshot =
+        build_ranked_snapshot(descriptors, routes, None, now_ms, max_snapshot_chars)?;
+    while !snapshot.capabilities.is_empty() {
         let input =
             prompt_input_upper_bound(options.strategy, goal, &snapshot, recommendations, options)?;
-        if !snapshot.capabilities.is_empty()
-            && prompt_fits_budget(input, total_budget, output_reserve)
-        {
-            best = Some(snapshot);
-            low = middle.saturating_add(1);
-        } else if middle == 0 {
-            break;
-        } else {
-            high = middle - 1;
+        if prompt_fits_budget(input, total_budget, output_reserve) {
+            return Ok(snapshot);
         }
+        snapshot.capabilities.pop();
     }
-    best.ok_or_else(|| {
-        ProofError::new(
-            "proofloop_budget_exhausted",
-            "规划目标和至少一项能力无法在保留输出额度后装入 token 预算",
-        )
-    })
+    Err(ProofError::new(
+        "proofloop_budget_exhausted",
+        "规划目标和至少一项能力无法在保留输出额度后装入 token 预算",
+    ))
 }
 
 fn fit_existing_snapshot_to_budget(
@@ -212,33 +202,28 @@ fn fit_existing_snapshot_to_budget(
         return Ok(snapshot);
     }
 
-    let (mut low, mut high) = (0usize, MAX_SNAPSHOT_CONTEXT_CHARS);
-    let mut best = None;
-    while low <= high {
-        let middle = low + (high - low) / 2;
-        let snapshot = build_capability_snapshot_with_char_limit(descriptors, None, now_ms, middle);
+    let mut snapshot = build_capability_snapshot_with_char_limit(
+        descriptors,
+        None,
+        now_ms,
+        MAX_SNAPSHOT_CONTEXT_CHARS,
+    );
+    while !snapshot.capabilities.is_empty() {
         let chars = crate::modules::task::proofloop::planner::planning_prompt_char_count(
             &crate::modules::task::proofloop::planner::build_planning_messages(goal, &snapshot),
         );
         let input = prompt_input_upper_bound(options.strategy, goal, &snapshot, &[], options)?;
-        if !snapshot.capabilities.is_empty()
-            && chars <= MAX_PLANNING_PROMPT_CHARS
+        if chars <= MAX_PLANNING_PROMPT_CHARS
             && prompt_fits_budget(input, total_budget, output_reserve)
         {
-            best = Some(snapshot);
-            low = middle.saturating_add(1);
-        } else if middle == 0 {
-            break;
-        } else {
-            high = middle - 1;
+            return Ok(snapshot);
         }
+        snapshot.capabilities.pop();
     }
-    best.ok_or_else(|| {
-        ProofError::new(
-            "proofloop_budget_exhausted",
-            "规划目标和至少一项能力无法在保留输出额度后装入 token 预算",
-        )
-    })
+    Err(ProofError::new(
+        "proofloop_budget_exhausted",
+        "规划目标和至少一项能力无法在保留输出额度后装入 token 预算",
+    ))
 }
 
 pub async fn create_draft_handler(

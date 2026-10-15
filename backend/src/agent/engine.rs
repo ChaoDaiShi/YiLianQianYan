@@ -681,16 +681,12 @@ async fn run_react_loop_inner(
                 should_replan: None,
             });
         };
-        let invocation = if let Some(max_tokens) = strict_output_limit {
-            client.stream_with_callbacks_max_tokens(
-                &state.messages,
-                &tools_openai,
-                max_tokens,
-                on_token,
-            )
-        } else {
-            client.stream_with_callbacks(&state.messages, &tools_openai, on_token)
-        };
+        let invocation = client.stream_with_callbacks_max_tokens(
+            &state.messages,
+            &tools_openai,
+            strict_output_limit.unwrap_or_else(|| client.max_output_tokens()),
+            on_token,
+        );
         let result = if let Some(deadline) =
             execution_scope.as_ref().and_then(|scope| scope.deadline)
         {
