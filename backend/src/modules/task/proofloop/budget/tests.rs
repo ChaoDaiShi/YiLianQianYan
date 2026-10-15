@@ -118,6 +118,136 @@ fn active_restart_does_not_reset_usage_or_charge_downtime() {
 }
 
 #[test]
+fn failed_parallel_finish_can_be_explicitly_retried_without_resetting_usage() {
+    let (db, meter, draft) = setup();
+    let key = (draft.contract.goal_id.clone(), draft.contract.version);
+    let first = meter.begin(&draft, &NodeExecutionId::generate()).unwrap();
+    let second = meter.begin(&draft, &NodeExecutionId::generate()).unwrap();
+    let started = meter.running.lock().get(&key).unwrap().started;
+    let persisted_started = db
+        .load_proofloop_time(&key.0, key.1)
+        .unwrap()
+        .unwrap()
+        .active_started_at_ms;
+    db.conn()
+        .execute_batch(
+            "CREATE TRIGGER fail_parallel_budget_finish
+             BEFORE UPDATE ON proofloop_time_usage
+             WHEN NEW.active_count = 1 AND NEW.accounting_state != 'interrupted_unknown'
+             BEGIN SELECT RAISE(ABORT, 'injected budget save failure'); END;",
+        )
+        .unwrap();
+
+    assert_eq!(first.finish().unwrap_err().code, "db_error");
+    {
+        let running = meter.running.lock();
+        let activity = running.get(&key).unwrap();
+        assert_eq!(activity.count, 2);
+        assert_eq!(activity.unpersisted_finishes, 1);
+        assert_eq!(activity.started, started);
+    }
+    let persisted = db.load_proofloop_time(&key.0, key.1).unwrap().unwrap();
+    assert_eq!(persisted.active_count, 2);
+    assert_eq!(persisted.active_started_at_ms, persisted_started);
+    assert_eq!(
+        meter.usage(&draft.contract).unwrap_err().code,
+        "proofloop_usage_unavailable"
+    );
+    db.conn()
+        .execute_batch("DROP TRIGGER fail_parallel_budget_finish;")
+        .unwrap();
+    second.finish().unwrap();
+    assert!(!meter.running.lock().contains_key(&key));
+    let persisted = db.load_proofloop_time(&key.0, key.1).unwrap().unwrap();
+    assert_eq!(persisted.active_count, 0);
+    assert_eq!(persisted.usage.accounting_state, "complete");
+    assert!(meter.usage(&draft.contract).is_ok());
+
+    let restarted = GoalBudgetMeter::new(db.clone()).unwrap();
+    assert_eq!(
+        restarted
+            .usage(&draft.contract)
+            .unwrap()
+            .execution_active_ms,
+        persisted.usage.execution_active_ms
+    );
+}
+
+#[test]
+fn failed_last_lease_drop_keeps_activity_unknown_after_restart() {
+    let (db, meter, draft) = setup();
+    let key = (draft.contract.goal_id.clone(), draft.contract.version);
+    let lease = meter.begin(&draft, &NodeExecutionId::generate()).unwrap();
+    let started = meter.running.lock().get(&key).unwrap().started;
+    let persisted_started = db
+        .load_proofloop_time(&key.0, key.1)
+        .unwrap()
+        .unwrap()
+        .active_started_at_ms;
+    db.conn()
+        .execute_batch(
+            "CREATE TRIGGER fail_last_budget_finish
+             BEFORE UPDATE ON proofloop_time_usage
+             WHEN NEW.active_count = 0 AND NEW.accounting_state != 'interrupted_unknown'
+             BEGIN SELECT RAISE(ABORT, 'injected budget save failure'); END;",
+        )
+        .unwrap();
+
+    drop(lease);
+    {
+        let running = meter.running.lock();
+        let activity = running.get(&key).unwrap();
+        assert_eq!(activity.count, 1);
+        assert_eq!(activity.unpersisted_finishes, 1);
+        assert_eq!(activity.started, started);
+    }
+    let persisted = db.load_proofloop_time(&key.0, key.1).unwrap().unwrap();
+    assert_eq!(persisted.active_count, 1);
+    assert_eq!(persisted.active_started_at_ms, persisted_started);
+    assert_eq!(persisted.usage.execution_active_ms, 0);
+    assert_eq!(
+        meter.usage(&draft.contract).unwrap_err().code,
+        "proofloop_usage_unavailable"
+    );
+
+    let restarted = GoalBudgetMeter::new(db.clone()).unwrap();
+    let recovered = db.load_proofloop_time(&key.0, key.1).unwrap().unwrap();
+    assert_eq!(recovered.active_count, 0);
+    assert_eq!(recovered.usage.accounting_state, "interrupted_unknown");
+    assert_eq!(
+        restarted.usage(&draft.contract).unwrap().accounting_state,
+        "interrupted_unknown"
+    );
+    assert_eq!(
+        restarted.check(&draft.contract, now()).unwrap_err().code,
+        "proofloop_usage_unavailable"
+    );
+}
+
+#[test]
+fn completed_last_lease_restarts_with_known_usage() {
+    let (db, meter, draft) = setup();
+    let key = (draft.contract.goal_id.clone(), draft.contract.version);
+    meter
+        .begin(&draft, &NodeExecutionId::generate())
+        .unwrap()
+        .finish()
+        .unwrap();
+    let persisted = db.load_proofloop_time(&key.0, key.1).unwrap().unwrap();
+    assert_eq!(persisted.active_count, 0);
+    assert_eq!(persisted.usage.accounting_state, "complete");
+
+    let restarted = GoalBudgetMeter::new(db).unwrap();
+    assert_eq!(
+        restarted
+            .usage(&draft.contract)
+            .unwrap()
+            .execution_active_ms,
+        persisted.usage.execution_active_ms
+    );
+}
+
+#[test]
 fn explicit_wall_clock_still_includes_waits() {
     let (_, meter, mut draft) = setup();
     draft.contract.budget.time_basis = BudgetTimeBasis::WallClock;

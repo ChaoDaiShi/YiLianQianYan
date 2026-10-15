@@ -82,7 +82,7 @@ export function verifyRunEvidence(run, taskSpec) {
           const declared = evidence.output?.structured?.sources || [];
           if (declared.some((item) => (item.uri || item.url) === source.uri)) sources.add(source.uri);
         }
-        pass = Boolean(artifact && sources.size >= check.min_sources);
+        pass = Boolean(artifact && Number.isInteger(check.min_sources) && check.min_sources >= 1 && sources.size >= check.min_sources);
       } else if (check.kind === 'human_review') {
         pass = Boolean(artifact && run.human_reviews?.some((review) => review.criterion_id === criterion.id && review.decision === 'pass' && review.reason?.trim() && review.reviewer_subject && review.reviewed_at_ms > 0));
       }

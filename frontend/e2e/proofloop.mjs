@@ -156,6 +156,27 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     await capture('03-real-artifact-acceptance');
     await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByRole('button', { name: '证行验收', exact: true }).click(); await page.getByText('目标已达成', { exact: true }).waitFor();
     await page.getByRole('button', { name: '刷新', exact: true }).click(); await page.getByText('目标已达成', { exact: true }).waitFor();
+    if (process.env.YILIAN_E2E_LEGACY_REPORTS === '1') {
+      // Model the deserialized legacy API shape, without rewriting the stored report.
+      const reportsRoute = `**/api/task-world/proofloop/goals/${binding.goal_id}/evaluations`;
+      await page.route(reportsRoute, async route => {
+        const response = await route.fetch();
+        const payload = await response.json();
+        await route.fulfill({ response, json: { ...payload, reports: payload.reports.map(report => ({ ...report, deliverable_results: [] })) } });
+      });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: '证行验收', exact: true }).click();
+      await page.getByText('需重新验收', { exact: true }).waitFor();
+      assert.equal(await page.getByText('目标已达成', { exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: '证行验收', exact: true }).getAttribute('data-status'), 'warning');
+      await capture('04-legacy-report-requires-reevaluation');
+      await page.unroute(reportsRoute);
+      await page.getByRole('button', { name: '刷新', exact: true }).click();
+      await page.getByText('目标已达成', { exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: '证行验收', exact: true }).getAttribute('data-status'), 'success');
+      await capture('05-legacy-report-fresh-evaluation');
+      steps.push('legacy_report_requires_reevaluation_and_refresh_restores_verified_result');
+    }
     const result = { status: 'passed', stage: 'proofloop_controlled_product_flow', llm: 'LOCAL OPENAI-COMPATIBLE FIXTURE', mcp: 'LOCAL MCP FIXTURE', external_business_benchmark: 'NOT_TESTED', steps, model_requests: modelCalls.length, remote_calls: calls, requests, graph_id: graphId, goal_id: binding.goal_id, graph_revision: reports[0].graph_revision, report: reports[0], geometry, expected_browser_422_errors: 1 };
     await writeFile(join(evidenceDir, 'proofloop-e2e-result.json'), JSON.stringify(result, null, 2)); return result;
   } finally {

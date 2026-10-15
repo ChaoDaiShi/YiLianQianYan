@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import AcceptancePanel from "./AcceptancePanel";
-import type { AcceptanceReport, EvidenceSnapshot } from "../../../api/proofloop";
+import type { AcceptanceReport, EvidenceSnapshot, GoalContract } from "../../../api/proofloop";
+import { normalizeAcceptanceReport } from "./proofloopModel";
 
 describe("AcceptancePanel", () => {
   const sampleReport: AcceptanceReport = {
@@ -37,6 +38,19 @@ describe("AcceptancePanel", () => {
     ],
     human_reviews: [],
     checked_at_ms: 1234567,
+  };
+
+  const sampleContract: GoalContract = {
+    schema_version: 1,
+    goal_id: "goal_1",
+    version: 1,
+    workspace_id: "workspace_1",
+    user_goal: "生成并核验报告",
+    deliverables: [{ id: "deliv_1", title: "验收报告", mime_type: "application/pdf" }],
+    criteria: [],
+    constraints: [],
+    allowed_capability_ids: [],
+    budget: { max_model_calls: 1, max_total_tokens: 100, max_wall_time_ms: 1000, max_repair_rounds: 0 },
   };
 
   const sampleSnapshot: EvidenceSnapshot = {
@@ -85,6 +99,7 @@ describe("AcceptancePanel", () => {
       <AcceptancePanel
         goalId="goal_1"
         report={sampleReport}
+        contract={sampleContract}
         evidenceSnapshot={sampleSnapshot}
         onOpenArtifact={vi.fn()}
       />,
@@ -162,12 +177,49 @@ describe("AcceptancePanel", () => {
     expect(html).toContain("进行人工审核判断");
   });
 
-  it("marks reports without deliverable checks for reevaluation", () => {
-    const legacyReport: AcceptanceReport = { ...sampleReport, deliverable_results: [] };
+  it.each([
+    ["missing", { ...sampleReport, deliverable_results: undefined } as unknown as AcceptanceReport],
+    ["empty", { ...sampleReport, deliverable_results: [] }],
+  ])("shows reevaluation for a passing legacy report with %s deliverable results", (_fieldState, legacyReport) => {
     const html = renderToStaticMarkup(
-      <AcceptancePanel goalId="goal_1" report={legacyReport} />,
+      <AcceptancePanel goalId="goal_1" report={legacyReport} contract={sampleContract} />,
     );
 
-    expect(html).toContain("此报告没有交付物基础检查结果，需要重新验收。");
+    expect(html).toContain("此报告缺少契约声明的交付物检查结果，需要重新验收。");
+    expect(html).toContain("需重新验收");
+    expect(html).not.toContain("目标已达成");
+    expect(legacyReport.status).toBe("pass");
+  });
+
+  it("normalizes a missing legacy result field without changing its historical outcome", () => {
+    const legacyReport = { ...sampleReport, deliverable_results: undefined } as unknown as AcceptanceReport;
+    const normalized = normalizeAcceptanceReport(legacyReport);
+
+    expect(normalized.deliverable_results).toEqual([]);
+    expect(normalized.status).toBe("pass");
+    expect(normalized.report_id).toBe(sampleReport.report_id);
+    expect(normalized.results).toEqual(sampleReport.results);
+  });
+
+  it("keeps a passing report green when every declared deliverable has a check", () => {
+    const html = renderToStaticMarkup(
+      <AcceptancePanel goalId="goal_1" report={sampleReport} contract={sampleContract} />,
+    );
+
+    expect(html).toContain("目标已达成");
+    expect(html).not.toContain("需重新验收");
+  });
+
+  it("does not require deliverable checks when the contract declares none", () => {
+    const html = renderToStaticMarkup(
+      <AcceptancePanel
+        goalId="goal_1"
+        report={{ ...sampleReport, deliverable_results: [] }}
+        contract={{ ...sampleContract, deliverables: [] }}
+      />,
+    );
+
+    expect(html).toContain("目标已达成");
+    expect(html).toContain("当前契约未声明交付物。");
   });
 });

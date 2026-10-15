@@ -71,6 +71,23 @@ impl DraftService {
         cancel: &CancellationToken,
         now: i64,
     ) -> Result<ProofDraft, ProofError> {
+        if request
+            .allowed_capability_ids
+            .as_ref()
+            .is_some_and(|selected| {
+                selected.iter().any(|id| {
+                    !snapshot
+                        .capabilities
+                        .iter()
+                        .any(|cap| cap.capability_id == *id)
+                })
+            })
+        {
+            return Err(ProofError::new(
+                "proofloop_capability_selection_incomplete",
+                "所选工具未完整纳入能力快照，可能不可用或超出规划长度、数量上限。请检查工具配置或减少所选能力范围后重试",
+            ));
+        }
         let (contract, candidate, planning_usage) = propose_candidate_with_usage(
             &request.workspace_id,
             &request.user_goal,

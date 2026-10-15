@@ -26,7 +26,7 @@ pub fn build_capability_snapshot(
     sorted_descriptors.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
 
     let mut capabilities = Vec::new();
-    let mut total_chars = 0;
+    let mut total_chars = 2; // The serialized capability array's opening and closing brackets.
 
     for desc in &sorted_descriptors {
         let cap_id = desc.id.as_str().to_string();
@@ -67,24 +67,6 @@ pub fn build_capability_snapshot(
             "unknown".to_string()
         };
 
-        let spec_chars = desc.name.len()
-            + desc.description.len()
-            + desc
-                .input_schema
-                .as_ref()
-                .map(|s| s.to_string().len())
-                .unwrap_or(0)
-            + desc
-                .output_schema
-                .as_ref()
-                .map(|s| s.to_string().len())
-                .unwrap_or(0);
-
-        if total_chars + spec_chars > MAX_SNAPSHOT_CONTEXT_CHARS && !capabilities.is_empty() {
-            break;
-        }
-        total_chars += spec_chars;
-
         let spec = CapabilitySpec {
             capability_id: cap_id.clone(),
             executor_ref: format!("capability://{cap_id}"),
@@ -100,6 +82,16 @@ pub fn build_capability_snapshot(
             unavailable_reason,
         };
 
+        let spec_chars = serde_json::to_string(&spec)
+            .expect("CapabilitySpec serialization is infallible")
+            .chars()
+            .count();
+        let separator_chars = if capabilities.is_empty() { 0 } else { 1 };
+        let projected_chars = total_chars + separator_chars + spec_chars;
+        if projected_chars > MAX_SNAPSHOT_CONTEXT_CHARS {
+            break;
+        }
+        total_chars = projected_chars;
         capabilities.push(spec);
         if capabilities.len() >= MAX_SNAPSHOT_CAPABILITIES {
             break;
