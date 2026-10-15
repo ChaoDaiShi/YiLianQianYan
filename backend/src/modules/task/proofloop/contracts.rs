@@ -304,6 +304,8 @@ impl Default for PlanningUsage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProofDraft {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning_review: Option<super::enhancement_contracts::PlanningReview>,
     pub draft_id: String,
     pub revision: u32,
     pub graph_id: String,
@@ -476,6 +478,8 @@ pub struct RepairProposal {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateProofDraftRequest {
+    #[serde(default)]
+    pub planning: super::enhancement_contracts::PlanningOptions,
     pub workspace_id: String,
     pub user_goal: String,
     #[serde(default)]

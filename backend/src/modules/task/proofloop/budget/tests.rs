@@ -18,6 +18,7 @@ fn setup() -> (Database, Arc<GoalBudgetMeter>, ProofDraft) {
     let candidate: CandidatePlan = serde_json::from_value(fixture["candidate"].clone()).unwrap();
     let graph = TaskGraphId::generate();
     let draft = ProofDraft {
+        planning_review: None,
         draft_id: "budget-draft".into(),
         revision: 1,
         graph_id: graph.to_string(),

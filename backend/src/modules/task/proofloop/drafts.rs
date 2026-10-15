@@ -206,6 +206,7 @@ impl DraftService {
         };
 
         let updated_draft = ProofDraft {
+            planning_review: None,
             draft_id: existing.draft_id,
             revision: next_draft_revision(existing.revision)?,
             graph_id: existing.graph_id,

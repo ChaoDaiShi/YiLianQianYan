@@ -317,6 +317,7 @@ fn test_draft_service_update_and_confirm_workflow() {
     );
 
     let draft = ProofDraft {
+        planning_review: None,
         draft_id: draft_id.clone(),
         revision: 1,
         graph_id: graph_id.to_string(),
