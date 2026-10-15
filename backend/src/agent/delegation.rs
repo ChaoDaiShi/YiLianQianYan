@@ -3,6 +3,13 @@ use crate::modules::task::resource_budget::SharedExecutionBudget;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalRef {
+    pub goal_id: String,
+    pub goal_version: u32,
+}
+
 #[derive(Clone)]
 pub struct ExecutionScope {
     pub cancel: CancellationToken,

@@ -21,6 +21,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
+use super::chat::{
+    chat_error_message, load_conversation_goal_ref, resolve_goal_chat_run, GoalChatRun,
+};
 use crate::agent::engine::{self, AgentEvent, RunOutcome};
 use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
@@ -810,6 +813,14 @@ fn resume_stream(
         let config = server.config.read().clone();
         let log_buffer = server.log_buffer.clone();
         let system_prompt = server.build_system_prompt();
+        let goal_cancel = CancellationToken::new();
+        let goal_run = match load_conversation_goal_ref(&db, &approval.conversation_id) {
+            Ok(Some(goal_ref)) => {
+                resolve_goal_chat_run(&server, &db, &goal_ref, goal_cancel.clone()).map(Some)
+            }
+            Ok(None) => Ok(None),
+            Err(error) => Err(error),
+        };
 
         // 1. Notify the frontend the decision was applied.
         let status = if approve { "approved" } else { "rejected" };
@@ -833,6 +844,58 @@ fn resume_stream(
                 should_replan: None,
             })
             .await;
+
+        let goal_run = match goal_run {
+            Ok(goal_run) => goal_run,
+            Err(error) => {
+                let reason = chat_error_message(error);
+                let tool_result = if approve {
+                    format!("Approved tool was not executed: {reason}")
+                } else {
+                    format!(
+                        "用户拒绝了工具 {} 的执行请求。原始操作未执行。Agent 未恢复：{reason}",
+                        approval.tool_name
+                    )
+                };
+                add_tool_message(
+                    &db,
+                    &approval,
+                    tool_result,
+                    chrono::Utc::now().timestamp_millis(),
+                );
+                let _ = db.set_conversation_run_status(
+                    &approval.conversation_id,
+                    crate::db::ConversationRunStatus::Failed,
+                    Some(&reason),
+                );
+                log_buffer.push(
+                    "error",
+                    "agent",
+                    &format!("审批后 ProofLoop 目标上下文无法验证: {reason}"),
+                );
+                let _ = tx
+                    .send(AgentEvent {
+                        event_type: "error".into(),
+                        conversation_id: approval.conversation_id.clone(),
+                        token: None,
+                        tool_call_id: None,
+                        tool_name: None,
+                        args: None,
+                        result: None,
+                        status: None,
+                        error: Some(reason),
+                        message_id: None,
+                        risk_level: None,
+                        reason: None,
+                        approval_id: Some(approval.approval_id.clone()),
+                        verification_success: None,
+                        verification_reason: None,
+                        should_replan: None,
+                    })
+                    .await;
+                return;
+            }
+        };
 
         // 2. Approve: execute the ORIGINAL tool call, exactly once.
         if approve {
@@ -863,8 +926,16 @@ fn resume_stream(
                 &format!("▶ {}（审批后执行）", approval.tool_name),
             );
 
-            let gateway_outcome =
-                execute_approved_tool(&server, &config, &approval, &tool_registry).await;
+            let approved_execution =
+                execute_approved_tool(&server, &config, &approval, &tool_registry);
+            let gateway_outcome = match goal_run.as_ref() {
+                Some(run) => {
+                    crate::agent::delegation::EXECUTION_SCOPE
+                        .scope(run.scope.clone(), approved_execution)
+                        .await
+                }
+                None => approved_execution.await,
+            };
             match gateway_outcome {
                 Ok(SecurityExecutionOutcome::Executed {
                     tool_result,
@@ -1045,6 +1116,7 @@ fn resume_stream(
             &system_prompt,
             &approval,
             &tx,
+            goal_run,
         )
         .await;
     });
@@ -1084,6 +1156,7 @@ async fn resume_agent(
     system_prompt: &str,
     approval: &PendingApproval,
     tx: &Sender<AgentEvent>,
+    goal_run: Option<GoalChatRun>,
 ) {
     let _ = db.set_conversation_run_status(
         &approval.conversation_id,
@@ -1112,9 +1185,16 @@ async fn resume_agent(
             .collect();
         agent_state.load_history(msgs);
     }
+    if let Some(run) = goal_run.as_ref() {
+        agent_state.goal_ref = Some(run.goal_ref.clone());
+        agent_state.add_user_message(run.goal_summary.clone());
+    }
     let prev_count = agent_state.messages.len();
 
-    let cancel_token = CancellationToken::new();
+    let cancel_token = goal_run
+        .as_ref()
+        .map(|run| run.scope.cancel.clone())
+        .unwrap_or_else(CancellationToken::new);
     server
         .active_tasks
         .lock()
@@ -1131,7 +1211,7 @@ async fn resume_agent(
     .with_db(Arc::new(server.db.clone_connection()))
     .with_grant_enforcement();
 
-    let result = engine::run_react_loop_with_channel(
+    let execution = engine::run_react_loop_with_channel(
         &mut agent_state,
         &llm_client,
         tool_registry,
@@ -1142,8 +1222,21 @@ async fn resume_agent(
         &cancel_token,
         tx,
         log_buffer,
-    )
-    .await;
+    );
+    let goal_scope = goal_run.as_ref().map(|run| run.scope.clone());
+    let mut result = match goal_scope {
+        Some(scope) => {
+            crate::agent::delegation::EXECUTION_SCOPE
+                .scope(scope, execution)
+                .await
+        }
+        None => execution.await,
+    };
+    if let Some(run) = goal_run {
+        if let Err(error) = run.finish() {
+            result = Err(error);
+        }
+    }
 
     // Persist any new messages produced during the resumed run.
     let now = chrono::Utc::now().timestamp_millis();
