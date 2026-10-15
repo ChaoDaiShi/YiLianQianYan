@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "proofloop-v12-2026-10-16",
+  "source_task_file": "backend/tests/fixtures/proofloop/benchmark-tasks.json",
+  "task_sha256": "27afd61b82f959e038b44c9da4803b61d67b07572c8753ce86ec8e0f76fb4ac6",
+  "task_count": 30,
+  "runs_per_group": 3,
+  "groups": {
+    "V12-B0": {
+      "strategy": "existing",
+      "candidate_count": 1,
+      "experience": false,
+      "ai_repair": false
+    },
+    "V12-B1": {
+      "strategy": "ranked",
+      "candidate_count": 2,
+      "experience": false,
+      "ai_repair": false
+    },
+    "V12-B2": {
+      "strategy": "experience",
+      "candidate_count": 2,
+      "experience": true,
+      "ai_repair": true
+    }
+  },
+  "weights_version": {
+    "route": "route-v1",
+    "plan": "plan-score-v1"
+  },
+  "max_model_calls": 6,
+  "max_total_tokens": 24000,
+  "max_active_ms": 600000,
+  "max_repair_rounds": 2,
+  "human_test_participants": 0,
+  "seed": 20261016,
+  "requires_real_model": true,
+  "required_environment": [
+    "YILIAN_V12_API_BASE",
+    "YILIAN_CONTROL_SESSION",
+    "YILIAN_V12_TASK_BINDINGS",
+    "YILIAN_V12_ISOLATED_PROFILE"
+  ],
+  "model_experiment_status": "NOT TESTED"
+}
