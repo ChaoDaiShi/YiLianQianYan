@@ -195,6 +195,19 @@ impl SharedExecutionBudget {
         Ok(())
     }
 
+    /// Mark shared model billing unavailable after an external provider did
+    /// work without reporting cumulative billed tokens. This does not invent a
+    /// call count or token value.
+    pub fn mark_usage_unavailable(&self, handoff: Option<&str>) -> Result<(), String> {
+        let mut usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
+        usage.unknown = true;
+        if let Some(id) = handoff {
+            let reservation = usage.reservations.get_mut(id).ok_or("任务预算未预留")?;
+            reservation.unknown = true;
+        }
+        Ok(())
+    }
+
     pub fn available(&self) -> Result<(u32, u64), String> {
         let usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
         if usage.unknown {
@@ -218,6 +231,46 @@ impl SharedExecutionBudget {
                 .saturating_sub(u128::from(usage.tokens) + reserved_tokens)
                 .min(u128::from(u64::MAX)) as u64,
         ))
+    }
+
+    /// Cap a strict call's output after its conservative prompt-input estimate.
+    /// Child calls can spend only their own reservation; parent calls leave all
+    /// child reservations unavailable. Provider usage is still settled after
+    /// completion and remains authoritative.
+    pub fn output_token_limit(
+        &self,
+        handoff: Option<&str>,
+        input_upper_bound: u64,
+        configured_output_limit: u32,
+    ) -> Result<u32, String> {
+        let usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
+        if usage.unknown {
+            return Err("proofloop_usage_unavailable".into());
+        }
+        let remaining = if let Some(id) = handoff {
+            let reservation = usage.reservations.get(id).ok_or("任务预算未预留")?;
+            if reservation.unknown || usage.active_calls.contains(id) {
+                return Err("proofloop_usage_unavailable".into());
+            }
+            reservation.remaining_tokens
+        } else {
+            let reserved: u128 = usage
+                .reservations
+                .values()
+                .map(|reservation| u128::from(reservation.remaining_tokens))
+                .sum();
+            u128::from(self.max_tokens)
+                .saturating_sub(u128::from(usage.tokens) + reserved)
+                .min(u128::from(u64::MAX)) as u64
+        };
+        let output_limit = remaining
+            .checked_sub(input_upper_bound)
+            .ok_or("proofloop_budget_exhausted")?
+            .min(u64::from(configured_output_limit));
+        if output_limit == 0 {
+            return Err("proofloop_budget_exhausted".into());
+        }
+        Ok(output_limit.min(u64::from(u32::MAX)) as u32)
     }
 
     pub fn usage(&self) -> Result<(u32, Option<u64>), String> {
@@ -381,5 +434,28 @@ mod tests {
 
         assert_eq!(budget.handoff_usage("first").unwrap(), (1, Some(100)));
         assert_eq!(budget.handoff_usage("second").unwrap(), (1, Some(200)));
+    }
+
+    #[test]
+    fn strict_call_caps_output_after_prompt_inside_its_reservation() {
+        let budget = SharedExecutionBudget::new(6, 1_000);
+        let _lease = budget
+            .reserve(BudgetReservation {
+                handoff_id: "child".into(),
+                calls: 2,
+                tokens: 400,
+            })
+            .unwrap();
+
+        assert_eq!(
+            budget
+                .output_token_limit(Some("child"), 250, 1_000)
+                .unwrap(),
+            150
+        );
+        assert!(budget
+            .output_token_limit(Some("child"), 400, 1_000)
+            .is_err());
+        assert_eq!(budget.output_token_limit(None, 500, 1_000).unwrap(), 100);
     }
 }

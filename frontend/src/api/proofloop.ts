@@ -204,6 +204,19 @@ export interface EvidenceSnapshot {
   sources: EvidenceSource[];
 }
 
+export interface CurrentDeliverableEvidence {
+  deliverable_id: string;
+  artifact_id: string | null;
+  status: "current" | "stale";
+  reason: string;
+}
+
+export interface EvaluationDetail {
+  report: AcceptanceReport;
+  snapshot: EvidenceSnapshot;
+  current_evidence?: CurrentDeliverableEvidence[];
+}
+
 export interface HumanReview {
   criterion_id: string;
   decision: "pass" | "fail";
@@ -567,4 +580,4 @@ export async function applyRepair(
 
 export interface GraphGoalBinding { goal_id: string; goal_version: number; graph_id: string; contract: GoalContract; time_usage?: GoalTimeUsage | null; remaining_ms?: number | null; budget_error?: ProofError | null }
 export const getGraphGoal = (graphId: string, signal?: AbortSignal) => requestProofLoop<GraphGoalBinding>("GET", `/api/task-world/proofloop/graphs/${encodeURIComponent(graphId)}/goal`, undefined, signal);
-export const getEvaluationDetail = (reportId: string, signal?: AbortSignal) => requestProofLoop<{ report: AcceptanceReport; snapshot: EvidenceSnapshot }>("GET", `/api/task-world/proofloop/evaluations/${encodeURIComponent(reportId)}`, undefined, signal);
+export const getEvaluationDetail = (reportId: string, signal?: AbortSignal) => requestProofLoop<EvaluationDetail>("GET", `/api/task-world/proofloop/evaluations/${encodeURIComponent(reportId)}`, undefined, signal);

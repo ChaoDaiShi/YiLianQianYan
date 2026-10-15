@@ -17,7 +17,6 @@ use super::enhancement_contracts::{
     PlanOption, PlanningReview, PlanningStrategy, RouteScore, SelectCandidateRequest,
     SkillRecommendation,
 };
-use super::planner::propose_candidate_with_usage;
 use super::{
     candidate_planner::propose_candidates_with_usage,
     plan_selection::{score_candidate, select_recommended},
@@ -107,6 +106,11 @@ impl DraftService {
             &request.user_goal,
             request.requirements.as_ref(),
         )?;
+        let requested_budget = request
+            .requirements
+            .as_ref()
+            .and_then(|requirements| requirements.budget)
+            .unwrap_or_default();
         if request
             .allowed_capability_ids
             .as_ref()
@@ -128,14 +132,16 @@ impl DraftService {
         let (contract, candidate, planning_usage, planning_review) = if request.planning.strategy
             == PlanningStrategy::Existing
         {
-            let (mut contract, candidate, usage) = propose_candidate_with_usage(
-                &request.workspace_id,
-                &planning_goal,
-                &snapshot,
-                llm_client,
-                cancel,
-            )
-            .await?;
+            let (mut contract, candidate, usage) =
+                super::planner::propose_candidate_with_usage_and_budget(
+                    &request.workspace_id,
+                    &planning_goal,
+                    &snapshot,
+                    llm_client,
+                    cancel,
+                    requested_budget,
+                )
+                .await?;
             contract.user_goal = request.user_goal.clone();
             if let Some(requirements) = &request.requirements {
                 requirements.apply(&mut contract);
@@ -152,6 +158,7 @@ impl DraftService {
                 &request.planning,
                 client,
                 cancel,
+                requested_budget,
             )
             .await?;
             bundle.contract.user_goal = request.user_goal.clone();
@@ -193,6 +200,13 @@ impl DraftService {
             };
             (bundle.contract, selected, bundle.usage, Some(review))
         };
+        if planning_usage.total_tokens.is_none() {
+            return Err(ProofError::new(
+                "proofloop_usage_unavailable",
+                "新目标的规划 token 用量未知，不能保存或确认目标",
+            )
+            .with_planning_usage(planning_usage));
+        }
         if planning_usage.model_calls > contract.budget.max_model_calls
             || planning_usage
                 .total_tokens

@@ -22,6 +22,20 @@ pub fn build_capability_snapshot(
     allowed_ids: Option<&[String]>,
     now_ms: i64,
 ) -> CapabilitySnapshot {
+    build_capability_snapshot_with_char_limit(
+        descriptors,
+        allowed_ids,
+        now_ms,
+        MAX_SNAPSHOT_CONTEXT_CHARS,
+    )
+}
+
+pub fn build_capability_snapshot_with_char_limit(
+    descriptors: &[CapabilityDescriptor],
+    allowed_ids: Option<&[String]>,
+    now_ms: i64,
+    max_chars: usize,
+) -> CapabilitySnapshot {
     let mut sorted_descriptors = descriptors.to_vec();
     sorted_descriptors.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
 
@@ -46,7 +60,7 @@ pub fn build_capability_snapshot(
             .count();
         let separator_chars = if capabilities.is_empty() { 0 } else { 1 };
         let projected_chars = total_chars + separator_chars + spec_chars;
-        if projected_chars > MAX_SNAPSHOT_CONTEXT_CHARS {
+        if projected_chars > max_chars {
             break;
         }
         total_chars = projected_chars;

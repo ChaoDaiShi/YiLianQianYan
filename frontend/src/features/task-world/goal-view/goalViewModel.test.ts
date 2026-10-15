@@ -38,9 +38,21 @@ const passingReport = (graphRevision: number): AcceptanceReport => ({
   human_reviews: [], checked_at_ms: 3,
 });
 
+const evidenceSnapshot = {
+  snapshot_id: "snapshot-1",
+  goal_id: "goal-1",
+  goal_version: 2,
+  graph_id: "graph-1",
+  graph_revision: 3,
+  executions: [],
+  evidence: [],
+  deliverables: [{ deliverable_id: "report", artifact_id: "artifact-1" }],
+  sources: [],
+};
+
 describe("buildGoalViewState", () => {
   it("does not show completed when all graph work succeeded but no acceptance report exists", () => {
-    const state = buildGoalViewState("graph-1", contract, graph, [], null, null);
+    const state = buildGoalViewState("graph-1", contract, graph, null, null, null);
 
     expect(state.phase).toBe("verifying");
     expect(state.completedNodes).toBe(1);
@@ -48,9 +60,32 @@ describe("buildGoalViewState", () => {
   });
 
   it("marks a previous passing report stale after the graph revision changes", () => {
-    const state = buildGoalViewState("graph-1", contract, graph, [], passingReport(2), null);
+    const state = buildGoalViewState("graph-1", contract, graph, passingReport(2), evidenceSnapshot, null, [
+      { deliverable_id: "report", artifact_id: "artifact-1", status: "current", reason: "产物字节与来源记录匹配。" },
+    ]);
 
     expect(state.phase).toBe("needs_revalidation");
     expect(state.deliverables[0].state).toBe("stale");
+  });
+
+  it("does not complete a legacy pass report without current deliverable results", () => {
+    const legacyReport = { ...passingReport(3), deliverable_results: [] };
+    const state = buildGoalViewState("graph-1", contract, graph, legacyReport, evidenceSnapshot, null, [
+      { deliverable_id: "report", artifact_id: "artifact-1", status: "current", reason: "产物字节与来源记录匹配。" },
+    ]);
+
+    expect(state.phase).toBe("needs_revalidation");
+    expect(state.deliverables[0].state).toBe("stale");
+  });
+
+  it("marks the report stale when the mapped artifact is no longer current", () => {
+    const report = passingReport(3);
+    const state = buildGoalViewState("graph-1", contract, graph, report, evidenceSnapshot, null, [
+      { deliverable_id: "report", artifact_id: "artifact-1", status: "stale", reason: "产物文件已删除。" },
+    ]);
+
+    expect(state.phase).toBe("needs_revalidation");
+    expect(state.deliverables[0].state).toBe("stale");
+    expect(report.status).toBe("pass");
   });
 });

@@ -1,10 +1,12 @@
 import type {
   AcceptanceReport,
+  CurrentDeliverableEvidence,
   EvidenceSnapshot,
   GoalContract,
   ProofDraft,
 } from "../../../api/proofloop";
 import type { TaskGraphDetail, TaskNodeExecutionSummary } from "../../../api/taskWorld";
+import { formatAcceptanceReportDisplayStatus } from "../proofloop/proofloopModel";
 
 export type GoalViewPhase =
   | "planning"
@@ -47,13 +49,28 @@ function isReportCurrent(
   contract: GoalContract | null,
   detail: TaskGraphDetail | null,
   report: AcceptanceReport | null,
+  snapshot: EvidenceSnapshot | null,
+  currentEvidence: CurrentDeliverableEvidence[] | null,
 ): boolean {
-  return Boolean(
+  const versionMatches = Boolean(
     contract && detail && report
     && report.graph_id === graphId
     && report.goal_version === contract.version
     && report.graph_revision === detail.revision,
   );
+  if (!versionMatches || !contract || !report) return false;
+  if (formatAcceptanceReportDisplayStatus(report, contract).needsReevaluation) return false;
+
+  const mappings = new Map((snapshot?.deliverables ?? []).map((mapping) => [mapping.deliverable_id, mapping.artifact_id]));
+  return contract.deliverables.every((deliverable) => {
+    const artifactId = mappings.get(deliverable.id);
+    const current = currentEvidence?.find((item) => item.deliverable_id === deliverable.id);
+    return Boolean(
+      artifactId
+      && current?.status === "current"
+      && current.artifact_id === artifactId,
+    );
+  });
 }
 
 function phaseFor(
@@ -62,6 +79,8 @@ function phaseFor(
   draft: ProofDraft | null,
   detail: TaskGraphDetail | null,
   report: AcceptanceReport | null,
+  snapshot: EvidenceSnapshot | null,
+  currentEvidence: CurrentDeliverableEvidence[] | null,
 ): GoalViewPhase {
   const executions = latestExecutions(detail);
   const active = executions.some((execution) => ACTIVE_EXECUTION.has(execution.status));
@@ -72,7 +91,7 @@ function phaseFor(
   );
   if (cancelled) return "cancelled";
 
-  const reportCurrent = isReportCurrent(graphId, contract, detail, report);
+  const reportCurrent = isReportCurrent(graphId, contract, detail, report, snapshot, currentEvidence);
   if (report && !reportCurrent) return "needs_revalidation";
   if (report?.results.some((result) => result.status === "stale")) return "needs_revalidation";
 
@@ -138,9 +157,10 @@ export function buildGoalViewState(
   report: AcceptanceReport | null,
   snapshot: EvidenceSnapshot | null,
   draft: ProofDraft | null = null,
+  currentEvidence: CurrentDeliverableEvidence[] | null = null,
 ): GoalViewState {
-  const reportCurrent = isReportCurrent(graphId, contract, detail, report);
-  const phase = phaseFor(graphId, contract, draft, detail, report);
+  const reportCurrent = isReportCurrent(graphId, contract, detail, report, snapshot, currentEvidence);
+  const phase = phaseFor(graphId, contract, draft, detail, report, snapshot, currentEvidence);
   const deliverableResults = new Map((report?.deliverable_results ?? []).map((result) => [result.deliverable_id, result]));
   const artifactIds = new Map((snapshot?.deliverables ?? []).map((mapping) => [mapping.deliverable_id, mapping.artifact_id]));
   const deliverables = contract?.deliverables.map((deliverable) => {
@@ -153,7 +173,7 @@ export function buildGoalViewState(
       title: deliverable.title,
       artifactId: artifactIds.get(deliverable.id) ?? null,
       state,
-      reason: report && reportCurrent ? result?.reason || "尚无此交付物的验收结果。" : report ? "任务图或目标版本已更新，请重新验收。" : "尚未进行目标验收。",
+      reason: report && reportCurrent ? result?.reason || "尚无此交付物的验收结果。" : report ? "目标、交付物或实际文件状态已变化，请重新验收。" : "尚未进行目标验收。",
     };
   }) ?? [];
 

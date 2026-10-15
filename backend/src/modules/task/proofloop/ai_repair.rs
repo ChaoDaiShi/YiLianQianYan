@@ -218,6 +218,37 @@ pub async fn propose_ai_repair_with_usage(
     client: &LlmClient,
     cancel: &CancellationToken,
 ) -> Result<(RepairProposal, PlanningUsage), ProofError> {
+    let messages = build_ai_repair_messages(context)?;
+    let total_token_budget = context.contract.budget.max_total_tokens;
+    let max_output_tokens = client
+        .output_tokens_for_total_budget(&messages, &[], total_token_budget)
+        .ok_or_else(|| {
+            ProofError::new(
+                "proofloop_budget_exhausted",
+                "修复输入已占满目标 token 预算，未调用模型",
+            )
+        })?;
+    let activity_deadline = tokio::time::Instant::now()
+        + Duration::from_millis(context.contract.budget.max_wall_time_ms);
+    propose_ai_repair_with_usage_and_limits(
+        context,
+        client,
+        cancel,
+        max_output_tokens,
+        total_token_budget,
+        activity_deadline,
+    )
+    .await
+}
+
+pub async fn propose_ai_repair_with_usage_and_limits(
+    context: &FailureContext,
+    client: &LlmClient,
+    cancel: &CancellationToken,
+    max_output_tokens: u32,
+    total_token_budget: u64,
+    activity_deadline: tokio::time::Instant,
+) -> Result<(RepairProposal, PlanningUsage), ProofError> {
     validate_failure_context(context)?;
     if cancel.is_cancelled() {
         return Err(
@@ -231,8 +262,41 @@ pub async fn propose_ai_repair_with_usage(
     }
 
     let messages = build_ai_repair_messages(context)?;
+    let input_upper_bound =
+        crate::integrations::llm::client::conservative_input_token_upper_bound(&messages, &[])
+            .ok_or_else(|| {
+                ProofError::new(
+                    "proofloop_usage_unavailable",
+                    "无法保守估算修复输入用量，未调用模型",
+                )
+            })?;
+    if max_output_tokens == 0
+        || input_upper_bound
+            .checked_add(u64::from(max_output_tokens))
+            .is_none_or(|needed| needed > total_token_budget)
+    {
+        return Err(ProofError::new(
+            "proofloop_budget_exhausted",
+            "修复输入和输出预留超过目标剩余 token 预算，未调用模型",
+        ));
+    }
     let started_at_ms = chrono::Utc::now().timestamp_millis();
     let started = Instant::now();
+    let activity_remaining =
+        activity_deadline.saturating_duration_since(tokio::time::Instant::now());
+    let request_timeout = effective_request_timeout(activity_remaining, client.invoke_timeout());
+    if request_timeout.is_zero() {
+        return Err(ProofError::new(
+            "proofloop_budget_exhausted",
+            "修复活动时间预算已耗尽，未调用模型",
+        )
+        .with_planning_usage(PlanningUsage {
+            model_calls: 0,
+            total_tokens: Some(0),
+            started_at_ms,
+            elapsed_ms: Some(elapsed_ms(&started)),
+        }));
+    }
     let response = tokio::select! {
         biased;
         _ = cancel.cancelled() => {
@@ -244,8 +308,8 @@ pub async fn propose_ai_repair_with_usage(
             ));
         }
         response = tokio::time::timeout(
-            Duration::from_millis(context.contract.budget.max_wall_time_ms),
-            client.invoke(&messages, &[]),
+            request_timeout,
+            client.invoke_with_max_tokens(&messages, &[], max_output_tokens),
         ) => {
             match response {
                 Ok(Ok(response)) => response,
@@ -277,6 +341,20 @@ pub async fn propose_ai_repair_with_usage(
         started_at_ms,
         elapsed_ms: Some(elapsed_ms(&started)),
     };
+    let Some(total_tokens) = usage.total_tokens else {
+        return Err(ProofError::new(
+            "proofloop_usage_unavailable",
+            "模型未返回真实 token 用量，不能保存修复提案",
+        )
+        .with_planning_usage(usage));
+    };
+    if total_tokens > total_token_budget {
+        return Err(ProofError::new(
+            "proofloop_budget_exhausted",
+            "修复模型实际用量超过目标剩余 token 预算",
+        )
+        .with_planning_usage(usage));
+    }
     if cancel.is_cancelled() {
         return Err(
             ProofError::new("aborted", "修复请求已被取消").with_planning_usage(usage.clone())
@@ -293,6 +371,10 @@ pub async fn propose_ai_repair_with_usage(
     let proposal = parse_ai_repair_reply(content, context)
         .map_err(|error| error.with_planning_usage(usage.clone()))?;
     Ok((proposal, usage))
+}
+
+fn effective_request_timeout(remaining_activity: Duration, client_timeout: Duration) -> Duration {
+    remaining_activity.min(client_timeout)
 }
 
 fn usage_error(
@@ -495,11 +577,27 @@ fn strip_json_fence(content: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_ai_repair_reply, validate_failure_context, FailureContext, ObservedValue};
+    use super::{
+        effective_request_timeout, parse_ai_repair_reply, validate_failure_context, FailureContext,
+        ObservedValue,
+    };
     use crate::modules::task::proofloop::contracts::{
         Budget, CapabilitySnapshot, GoalContract, RepairOperation,
     };
     use serde_json::json;
+    use std::time::Duration;
+
+    #[test]
+    fn repair_timeout_uses_the_smaller_activity_and_client_limit() {
+        assert_eq!(
+            effective_request_timeout(Duration::from_secs(1), Duration::from_secs(10)),
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            effective_request_timeout(Duration::from_secs(10), Duration::from_secs(2)),
+            Duration::from_secs(2),
+        );
+    }
 
     fn context() -> FailureContext {
         FailureContext {
