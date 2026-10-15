@@ -4,6 +4,7 @@
 
 mod artifact_provenance;
 pub mod cloud;
+mod conversation_goal;
 mod conversations;
 mod llm_models;
 mod mcp;
@@ -29,6 +30,7 @@ mod workspace;
 mod llm_models_tests;
 
 pub use artifact_provenance::*;
+pub use conversation_goal::*;
 pub use conversations::*;
 pub use llm_models::*;
 pub use mcp::McpServer;

@@ -142,7 +142,7 @@ impl Database {
                  ORDER BY recorded_at_ms DESC,goal_id,goal_version,draft_id",
             )
             .map_err(|_| "Skill 使用历史不可用")?;
-        query
+        let history = query
             .query_map(params![skill_name, skill_version], |row| {
                 Ok(SkillUsageHistory {
                     goal_id: row.get(0)?,
@@ -155,7 +155,8 @@ impl Database {
             })
             .map_err(|_| "Skill 使用历史不可用")?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| "Skill 使用历史无效".into())
+            .map_err(|_| "Skill 使用历史无效".into());
+        history
     }
 }
 

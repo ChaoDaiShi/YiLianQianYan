@@ -95,9 +95,9 @@ impl DelegationRequest {
         }
         let mut names = std::collections::HashSet::new();
         for name in &self.required_artifact_names {
-            let name = name.trim();
-            if name.is_empty()
-                || name.as_str() != name.trim()
+            let name = name.as_str();
+            if name.trim().is_empty()
+                || name != name.trim()
                 || name.chars().count() > 200
                 || name.chars().any(char::is_control)
                 || !names.insert(name.trim())

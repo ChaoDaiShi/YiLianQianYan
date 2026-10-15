@@ -559,3 +559,10 @@ pub struct ApplyRepairResponse {
     pub graph_revision: u64,
     pub affected_node_ids: Vec<String>,
 }
+
+impl std::fmt::Display for ProofError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.code, self.message)
+    }
+}
+impl std::error::Error for ProofError {}

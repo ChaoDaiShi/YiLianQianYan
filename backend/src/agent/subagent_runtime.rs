@@ -355,7 +355,7 @@ struct ChildArtifactClaim {
 
 fn resolve_handoff_artifact_path(path: &str, workspace_root: &str) -> Result<String, String> {
     if path.trim().is_empty()
-        || path.as_str() != path.trim()
+        || path != path.trim()
         || path.len() > 4096
         || path.chars().any(char::is_control)
     {
