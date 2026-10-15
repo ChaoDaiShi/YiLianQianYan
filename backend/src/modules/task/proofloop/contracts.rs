@@ -486,6 +486,8 @@ pub struct RepairProposal {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateProofDraftRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirements: Option<super::enhancement_contracts::GoalRequirements>,
     #[serde(default)]
     pub planning: super::enhancement_contracts::PlanningOptions,
     pub workspace_id: String,

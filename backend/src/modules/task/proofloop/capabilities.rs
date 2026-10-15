@@ -36,7 +36,9 @@ pub fn build_capability_snapshot(
             }
         }
 
-        let Some(spec) = project_capability_descriptor(desc) else { continue; };
+        let Some(spec) = project_capability_descriptor(desc) else {
+            continue;
+        };
 
         let spec_chars = serde_json::to_string(&spec)
             .expect("CapabilitySpec serialization is infallible")
@@ -64,51 +66,51 @@ pub fn build_capability_snapshot(
 /// Shared descriptor projection used by both legacy and ranked snapshots.
 pub fn project_capability_descriptor(desc: &CapabilityDescriptor) -> Option<CapabilitySpec> {
     let cap_id = desc.id.as_str().to_string();
-        let kind = match desc.kind {
-            CapabilityKind::McpTool => CapabilityKindSpec::McpTool,
-            CapabilityKind::Workflow => CapabilityKindSpec::Workflow,
-            _ => return None,
-        };
+    let kind = match desc.kind {
+        CapabilityKind::McpTool => CapabilityKindSpec::McpTool,
+        CapabilityKind::Workflow => CapabilityKindSpec::Workflow,
+        _ => return None,
+    };
 
-        let is_ready = desc.enabled
-            && desc.status == CapabilityRuntimeStatus::Ready
-            && desc.metadata.runtime_ready;
+    let is_ready = desc.enabled
+        && desc.status == CapabilityRuntimeStatus::Ready
+        && desc.metadata.runtime_ready;
 
-        let readiness = if is_ready {
-            "ready".to_string()
-        } else {
-            "unavailable".to_string()
-        };
+    let readiness = if is_ready {
+        "ready".to_string()
+    } else {
+        "unavailable".to_string()
+    };
 
-        let unavailable_reason = if is_ready {
-            None
-        } else {
-            Some(format!(
-                "status: {:?}, enabled: {}, runtime_ready: {}",
-                desc.status, desc.enabled, desc.metadata.runtime_ready
-            ))
-        };
+    let unavailable_reason = if is_ready {
+        None
+    } else {
+        Some(format!(
+            "status: {:?}, enabled: {}, runtime_ready: {}",
+            desc.status, desc.enabled, desc.metadata.runtime_ready
+        ))
+    };
 
-        let output_provenance = if desc.output_schema.is_some() {
-            "declared".to_string()
-        } else {
-            "unknown".to_string()
-        };
+    let output_provenance = if desc.output_schema.is_some() {
+        "declared".to_string()
+    } else {
+        "unknown".to_string()
+    };
 
-        let spec = CapabilitySpec {
-            capability_id: cap_id.clone(),
-            executor_ref: format!("capability://{cap_id}"),
-            kind,
-            name: desc.name.clone(),
-            description: desc.description.clone(),
-            input_schema: desc.input_schema.clone(),
-            output_schema: desc.output_schema.clone(),
-            output_path_prefix: vec!["structured".to_string()],
-            output_provenance,
-            risk: format!("{:?}", desc.risk).to_lowercase(),
-            readiness,
-            unavailable_reason,
-        };
+    let spec = CapabilitySpec {
+        capability_id: cap_id.clone(),
+        executor_ref: format!("capability://{cap_id}"),
+        kind,
+        name: desc.name.clone(),
+        description: desc.description.clone(),
+        input_schema: desc.input_schema.clone(),
+        output_schema: desc.output_schema.clone(),
+        output_path_prefix: vec!["structured".to_string()],
+        output_provenance,
+        risk: format!("{:?}", desc.risk).to_lowercase(),
+        readiness,
+        unavailable_reason,
+    };
 
     Some(spec)
 }

@@ -195,9 +195,23 @@ pub fn evaluate_deliverables(
                 );
             }
 
-            if let Err(error) = super::deliverable_format::inspect_deliverable_format(&deliverable.mime_type, &deliverable.title, content) {
-                let status = if error.code == "proofloop_deliverable_format_unsupported" { CriterionStatus::NotChecked } else { CriterionStatus::Fail };
-                return deliverable_result(deliverable.id.clone(), &error.code, status, vec![evidence.evidence_id.clone()], error.message);
+            if let Err(error) = super::deliverable_format::inspect_deliverable_format(
+                &deliverable.mime_type,
+                &deliverable.title,
+                content,
+            ) {
+                let status = if error.code == "proofloop_deliverable_format_unsupported" {
+                    CriterionStatus::NotChecked
+                } else {
+                    CriterionStatus::Fail
+                };
+                return deliverable_result(
+                    deliverable.id.clone(),
+                    &error.code,
+                    status,
+                    vec![evidence.evidence_id.clone()],
+                    error.message,
+                );
             }
 
             deliverable_result(
@@ -400,17 +414,50 @@ fn evaluate_criterion(
                 }
             };
 
-            let Some(spec) = contract.deliverables.iter().find(|d| &d.id == deliverable_id) else {
+            let Some(spec) = contract
+                .deliverables
+                .iter()
+                .find(|d| &d.id == deliverable_id)
+            else {
                 return (CriterionStatus::Fail, Vec::new(), "交付物未声明".into());
             };
-            let inspected = match super::deliverable_format::inspect_deliverable_format(&spec.mime_type, &spec.title, content) {
+            let inspected = match super::deliverable_format::inspect_deliverable_format(
+                &spec.mime_type,
+                &spec.title,
+                content,
+            ) {
                 Ok(value) => value,
-                Err(error) => return (if error.code.ends_with("unsupported") { CriterionStatus::NotChecked } else { CriterionStatus::Fail }, Vec::new(), error.message),
+                Err(error) => {
+                    return (
+                        if error.code.ends_with("unsupported") {
+                            CriterionStatus::NotChecked
+                        } else {
+                            CriterionStatus::Fail
+                        },
+                        Vec::new(),
+                        error.message,
+                    )
+                }
             };
-            if !inspected.text_complete { return (CriterionStatus::NotChecked, Vec::new(), "正文尚未完整解析".into()); }
-            let Some(text) = inspected.extracted_text else { return (CriterionStatus::NotChecked, Vec::new(), "此格式没有可提取正文".into()); };
-            let parsed_headings = if spec.mime_type == "text/markdown" { parse_markdown_headings(&text) }
-                else { text.lines().map(|line| line.trim().to_owned()).collect() };
+            if !inspected.text_complete {
+                return (
+                    CriterionStatus::NotChecked,
+                    Vec::new(),
+                    "正文尚未完整解析".into(),
+                );
+            }
+            let Some(text) = inspected.extracted_text else {
+                return (
+                    CriterionStatus::NotChecked,
+                    Vec::new(),
+                    "此格式没有可提取正文".into(),
+                );
+            };
+            let parsed_headings = if spec.mime_type == "text/markdown" {
+                parse_markdown_headings(&text)
+            } else {
+                text.lines().map(|line| line.trim().to_owned()).collect()
+            };
             let mut missing = Vec::new();
 
             for req in headings {
