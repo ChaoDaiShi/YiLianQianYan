@@ -1,4 +1,4 @@
-use super::{DraftService, ProofError};
+use super::ProofError;
 
 impl super::DraftService {
     pub(super) fn verify_confirmations(
