@@ -307,17 +307,17 @@ pub async fn propose_repair_handler(
             .db
             .finish_goal_model_call(&invocation, measured_usage.as_ref())
         {
-            let error = measured_usage
-                .clone()
-                .map(|usage| error.with_planning_usage(usage))
-                .unwrap_or(error);
+            let error = match measured_usage.clone() {
+                Some(usage) => error.with_planning_usage(usage),
+                None => error,
+            };
             return proof_error_response(error);
         }
         if let Err(error) = activity.finish() {
-            let error = measured_usage
-                .clone()
-                .map(|usage| error.with_planning_usage(usage))
-                .unwrap_or(error);
+            let error = match measured_usage.clone() {
+                Some(usage) => error.with_planning_usage(usage),
+                None => error,
+            };
             return proof_error_response(error);
         }
         proposal = match result {
@@ -334,10 +334,10 @@ pub async fn propose_repair_handler(
             &cap_snapshot,
             &contract,
         ) {
-            let error = ai_repair_usage
-                .clone()
-                .map(|usage| error.with_planning_usage(usage))
-                .unwrap_or(error);
+            let error = match ai_repair_usage.clone() {
+                Some(usage) => error.with_planning_usage(usage),
+                None => error,
+            };
             return proof_error_response(error);
         }
     } else {
@@ -351,10 +351,10 @@ pub async fn propose_repair_handler(
         .proofloop_budget
         .save_repair(&mut proposal, &contract, now_ms)
     {
-        let err = ai_repair_usage
-            .clone()
-            .map(|usage| err.with_planning_usage(usage))
-            .unwrap_or(err);
+        let err = match ai_repair_usage.clone() {
+            Some(usage) => err.with_planning_usage(usage),
+            None => err,
+        };
         return proof_error_response(err);
     }
 
