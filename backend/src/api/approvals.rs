@@ -926,21 +926,135 @@ fn resume_stream(
                 &format!("▶ {}（审批后执行）", approval.tool_name),
             );
 
+            let scope = goal_run
+                .as_ref()
+                .map(|run| run.scope.clone())
+                .unwrap_or_else(|| crate::agent::delegation::ExecutionScope {
+                    cancel: CancellationToken::new(),
+                    budget: None,
+                    handoff_id: None,
+                    goal_id: None,
+                    goal_version: None,
+                    evidence_ids: Vec::new(),
+                    deadline: None,
+                });
+            server
+                .active_tasks
+                .lock()
+                .insert(approval.conversation_id.clone(), scope.cancel.clone());
             let approved_execution =
                 execute_approved_tool(&server, &config, &approval, &tool_registry);
-            let gateway_outcome = match goal_run.as_ref() {
-                Some(run) => {
-                    crate::agent::delegation::EXECUTION_SCOPE
-                        .scope(run.scope.clone(), approved_execution)
-                        .await
+            let gateway_outcome = crate::agent::delegation::EXECUTION_SCOPE.scope(scope.clone(), async {
+                tokio::select! {
+                    biased;
+                    _ = scope.cancel.cancelled() => None,
+                    _ = async { match scope.deadline { Some(deadline) => tokio::time::sleep_until(deadline).await, None => std::future::pending::<()>().await } } => { scope.cancel.cancel(); None },
+                    outcome = approved_execution => Some(outcome),
                 }
-                None => approved_execution.await,
+            }).await;
+            server.active_tasks.lock().remove(&approval.conversation_id);
+            let Some(gateway_outcome) = gateway_outcome else {
+                let reason = "审批后的工具执行已停止，执行结果需核实；不会自动重试。".to_string();
+                add_tool_message(
+                    &db,
+                    &approval,
+                    reason.clone(),
+                    chrono::Utc::now().timestamp_millis(),
+                );
+                if let Some(run) = goal_run {
+                    let _ = run.finish();
+                }
+                let _ = db.set_conversation_run_status(
+                    &approval.conversation_id,
+                    crate::db::ConversationRunStatus::Failed,
+                    Some(&reason),
+                );
+                let _ = tx
+                    .send(AgentEvent {
+                        event_type: "error".into(),
+                        conversation_id: approval.conversation_id.clone(),
+                        token: None,
+                        tool_call_id: Some(approval.tool_call_id.clone()),
+                        tool_name: Some(approval.tool_name.clone()),
+                        args: None,
+                        result: None,
+                        status: Some("stopped".into()),
+                        error: Some(reason),
+                        message_id: None,
+                        risk_level: None,
+                        reason: None,
+                        approval_id: Some(approval.approval_id.clone()),
+                        verification_success: Some(false),
+                        verification_reason: None,
+                        should_replan: Some(false),
+                    })
+                    .await;
+                return;
             };
             match gateway_outcome {
                 Ok(SecurityExecutionOutcome::Executed {
                     tool_result,
                     verification,
                 }) => {
+                    let accounting = engine::record_external_tool_accounting(
+                        Some(&scope),
+                        &approval.tool_name,
+                        tool_result.structured.as_ref(),
+                    );
+                    let stop_reason = match &accounting {
+                        Ok(engine::ExternalToolAccounting::ResultUnknown) => Some(
+                            "外部 ACP 执行结果未知，请先核实外部会话结果；已停止自动重试。"
+                                .to_string(),
+                        ),
+                        Ok(engine::ExternalToolAccounting::BillingUnknown)
+                            if scope.goal_id.is_some() || scope.handoff_id.is_some() =>
+                        {
+                            Some(
+                                "外部 ACP 计费用量未知，目标预算不可用；已停止后续自动调用。"
+                                    .to_string(),
+                            )
+                        }
+                        Err(error) => Some(error.clone()),
+                        _ => None,
+                    };
+                    if let Some(reason) = stop_reason {
+                        let content = format!("{}\n\n{reason}", tool_result.content);
+                        add_tool_message(
+                            &db,
+                            &approval,
+                            content.clone(),
+                            chrono::Utc::now().timestamp_millis(),
+                        );
+                        if let Some(run) = goal_run {
+                            let _ = run.finish();
+                        }
+                        let _ = db.set_conversation_run_status(
+                            &approval.conversation_id,
+                            crate::db::ConversationRunStatus::Failed,
+                            Some(&reason),
+                        );
+                        let _ = tx
+                            .send(AgentEvent {
+                                event_type: "tool_end".into(),
+                                conversation_id: approval.conversation_id.clone(),
+                                token: None,
+                                tool_call_id: Some(approval.tool_call_id.clone()),
+                                tool_name: Some(approval.tool_name.clone()),
+                                args: None,
+                                result: Some(content),
+                                status: Some("stopped".into()),
+                                error: Some(reason),
+                                message_id: None,
+                                risk_level: None,
+                                reason: None,
+                                approval_id: Some(approval.approval_id.clone()),
+                                verification_success: Some(false),
+                                verification_reason: None,
+                                should_replan: Some(false),
+                            })
+                            .await;
+                        return;
+                    }
                     let _ = tx
                         .send(AgentEvent {
                             event_type: "tool_end".into(),
@@ -986,6 +1100,14 @@ fn resume_stream(
                         .await;
 
                     let llm_result = engine::summarize_tool_result(&tool_result.content);
+                    let llm_result = if matches!(
+                        accounting,
+                        Ok(engine::ExternalToolAccounting::BillingUnknown)
+                    ) {
+                        format!("{llm_result}\nACP 计费 token 用量未知。")
+                    } else {
+                        llm_result
+                    };
                     let decision_msg = if verification.should_replan {
                         crate::agent::verifier::replan_message(
                             &approval.tool_name,
