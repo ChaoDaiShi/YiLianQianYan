@@ -96,6 +96,10 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     assert.equal(drafts.length, 1); const draft = await api('GET', `/api/task-world/proofloop/drafts/${drafts[0].draft_id}`);
     assert.equal(draft.compilation.status, 'ready');
     if (process.env.YILIAN_E2E_V12 === '1') {
+      const usageQuery=new URLSearchParams({model_id:profile.id,from:String(draft.planning_usage.started_at_ms),to:String(Date.now()+1)});
+      const usage=await api('GET',`/api/llm/usage?${usageQuery}`);
+      assert.equal(usage.total_tokens,draft.planning_usage.total_tokens,'planning usage must reference the active model profile UUID');
+      steps.push('v12_planning_usage_attributed_to_active_profile');
       assert.equal(draft.planning_review.options.length,2);
       assert.equal(draft.planning_review.selected_candidate_id,null);
       assert.equal(await page.getByRole('button',{name:'确认并保存到画布',exact:true}).isDisabled(),true);

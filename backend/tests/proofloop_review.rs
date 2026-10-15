@@ -562,7 +562,10 @@ async fn repair_checks_model_token_and_elapsed_budgets() {
             .unwrap()
             .unwrap();
         match kind {
-            "model" => c.budget.max_model_calls = 0,
+            "model" => {
+                c.budget.max_model_calls = 0;
+                d.planning_usage.model_calls = 1;
+            }
             "tokens" => {
                 c.budget.max_total_tokens = 10;
                 d.planning_usage.total_tokens = Some(11);
