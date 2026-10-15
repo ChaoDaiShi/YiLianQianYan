@@ -21,7 +21,7 @@ const graph: TaskGraphDetail = {
   graph: { id: "graph-1", schema_version: 1, revision: 3, node_count: 1, edge_count: 0 },
   revision: 3,
   nodes: [{
-    id: "node-1", kind: "work", title: "生成综述", input: {}, retry_policy: { max_attempts: 1 },
+    id: "node-1", kind: "work", title: "生成综述",
     status: "succeeded", state: { status: "succeeded", attempts: 1, result_summary: "已完成", error: null, started_at: 1, finished_at: 2, updated_at: 2 },
     executor_ref: "capability://writer", instruction_summary: "生成", acceptance_criteria: [], resources: [],
     validation: { status: "accepted", issues: [] }, result_summary: "已完成",

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { selectProofCandidate } from "./proofloop";
 
+vi.mock("./controlSession", () => ({
+  controlSessionHeaders: () => ({ "X-Yilian-Control-Session": "test-control-session" }),
+}));
+
 describe("selectProofCandidate", () => {
   afterEach(() => vi.unstubAllGlobals());
 
