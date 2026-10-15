@@ -27,6 +27,8 @@ describe("GoalComposer", () => {
     expect(html).toContain('aria-label="规划策略"');
     expect(html).toContain("原有规划");
     expect(html).toContain("已审核经验增强");
+    expect(html).toMatch(/<option(?=[^>]*value="existing")(?=[^>]*selected="")[^>]*>原有规划<\/option>/);
+    expect(html).toMatch(/<option(?=[^>]*value="1")(?=[^>]*selected="")[^>]*>1 个方案（原有规划）<\/option>/);
   });
 
   it("renders model unavailable warning banner when model is disabled", () => {
