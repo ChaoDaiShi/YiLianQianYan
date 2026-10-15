@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -39,8 +40,99 @@ pub struct AcpAgentTool {
     name: String,
     config: AcpLaunchConfig,
     permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
-    active: Mutex<std::collections::HashMap<String, CancellationToken>>,
+    active: Arc<Mutex<std::collections::HashMap<String, CancellationToken>>>,
     session_slot: Arc<Semaphore>,
+}
+
+struct AcpExecutionGuard {
+    cleanup: Option<AcpExecutionCleanup>,
+}
+
+struct AcpExecutionCleanup {
+    cancel: CancellationToken,
+    parent_watcher: Option<JoinHandle<()>>,
+    active: Arc<Mutex<std::collections::HashMap<String, CancellationToken>>>,
+    tool_call_id: String,
+    client: Option<AcpClient>,
+    session_id: Option<String>,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl AcpExecutionGuard {
+    fn new(
+        cancel: CancellationToken,
+        parent_watcher: Option<JoinHandle<()>>,
+        active: Arc<Mutex<std::collections::HashMap<String, CancellationToken>>>,
+        tool_call_id: String,
+    ) -> Self {
+        Self {
+            cleanup: Some(AcpExecutionCleanup {
+                cancel,
+                parent_watcher,
+                active,
+                tool_call_id,
+                client: None,
+                session_id: None,
+                permit: None,
+            }),
+        }
+    }
+
+    fn set_permit(&mut self, permit: OwnedSemaphorePermit) {
+        self.cleanup
+            .as_mut()
+            .expect("ACP cleanup is active during execution")
+            .permit = Some(permit);
+    }
+
+    fn set_client(&mut self, client: AcpClient) {
+        self.cleanup
+            .as_mut()
+            .expect("ACP cleanup is active during execution")
+            .client = Some(client);
+    }
+
+    fn set_session_id(&mut self, session_id: String) {
+        self.cleanup
+            .as_mut()
+            .expect("ACP cleanup is active during execution")
+            .session_id = Some(session_id);
+    }
+
+    fn start_cleanup(&mut self) -> Option<JoinHandle<()>> {
+        self.cleanup
+            .take()
+            .map(|cleanup| tokio::spawn(cleanup.run()))
+    }
+
+    async fn cleanup(&mut self) {
+        if let Some(cleanup_task) = self.start_cleanup() {
+            let _ = cleanup_task.await;
+        }
+    }
+}
+
+impl Drop for AcpExecutionGuard {
+    fn drop(&mut self) {
+        drop(self.start_cleanup());
+    }
+}
+
+impl AcpExecutionCleanup {
+    async fn run(self) {
+        self.cancel.cancel();
+        if let Some(parent_watcher) = self.parent_watcher {
+            parent_watcher.abort();
+        }
+        self.active.lock().await.remove(&self.tool_call_id);
+        if let Some(client) = self.client {
+            if let Some(session_id) = self.session_id {
+                let _ = client.cancel_session(&session_id).await;
+            }
+            client.shutdown().await;
+        }
+        drop(self.permit);
+    }
 }
 
 impl std::fmt::Debug for AcpAgentTool {
@@ -100,7 +192,7 @@ impl AcpAgentTool {
             name,
             config,
             permission_handler,
-            active: Mutex::new(std::collections::HashMap::new()),
+            active: Arc::new(Mutex::new(std::collections::HashMap::new())),
             session_slot,
         })
     }
@@ -137,13 +229,15 @@ impl AcpAgentTool {
                 cancel.cancel();
             })
         });
+        let mut cleanup = AcpExecutionGuard::new(
+            cancel.clone(),
+            parent_watcher,
+            Arc::clone(&self.active),
+            tool_call_id,
+        );
 
-        let result = self.run_agent(args, &cancel).await;
-
-        if let Some(watcher) = parent_watcher {
-            watcher.abort();
-        }
-        self.active.lock().await.remove(&tool_call_id);
+        let result = self.run_agent(args, &cancel, &mut cleanup).await;
+        cleanup.cleanup().await;
         match result {
             Ok(result) if result.state == ExternalSessionState::Completed => {
                 let content = if result.response_text.is_empty() {
@@ -179,6 +273,7 @@ impl AcpAgentTool {
         &self,
         args: Value,
         cancel: &CancellationToken,
+        cleanup: &mut AcpExecutionGuard,
     ) -> Result<ExternalTaskResult, AcpError> {
         let permit = Arc::clone(&self.session_slot)
             .try_acquire_owned()
@@ -186,6 +281,7 @@ impl AcpAgentTool {
                 code: -32010,
                 message: "external ACP session slot is occupied".to_string(),
             })?;
+        cleanup.set_permit(permit);
         let task = args
             .get("task")
             .and_then(Value::as_str)
@@ -197,8 +293,9 @@ impl AcpAgentTool {
             parse_expected_outputs(args.get("expected_outputs"), &self.config.cwd)?;
         let prompt = build_task_prompt(task, &expected_outputs, &self.config.cwd);
         let client = AcpClient::spawn(&self.config, self.permission_handler.clone()).await?;
+        cleanup.set_client(client.clone());
         let mut updates = client.subscribe_updates();
-        let outcome = self.run_session(&client, &prompt, cancel).await;
+        let outcome = self.run_session(&client, &prompt, cancel, cleanup).await;
         let result = match outcome {
             Ok((session, prompt_outcome)) => {
                 let mut response_text = String::new();
@@ -257,8 +354,6 @@ impl AcpAgentTool {
             }
             Err(error) => Err(error),
         };
-        client.shutdown().await;
-        drop(permit);
         result
     }
 
@@ -267,6 +362,7 @@ impl AcpAgentTool {
         client: &AcpClient,
         prompt: &str,
         cancel: &CancellationToken,
+        cleanup: &mut AcpExecutionGuard,
     ) -> Result<(AcpSession, AcpPromptOutcome), AcpError> {
         tokio::select! {
             biased;
@@ -278,6 +374,7 @@ impl AcpAgentTool {
             _ = cancel.cancelled() => return Err(AcpError::Cancelled),
             result = AcpSession::create(client.clone(), &self.config.cwd) => result?,
         };
+        cleanup.set_session_id(session.id().to_string());
         let outcome = session.prompt(prompt, cancel).await?;
         Ok((session, outcome))
     }

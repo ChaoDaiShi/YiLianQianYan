@@ -5,6 +5,8 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use yilian_backend::integrations::acp::{
@@ -103,6 +105,133 @@ async fn acp_tool_runs_stdio_session_permission_hook_and_verifies_expected_file(
     );
 
     tokio::fs::remove_dir_all(task_root).await.unwrap();
+}
+
+#[tokio::test]
+async fn dropping_acp_execution_stops_its_child_and_releases_the_session_slot() {
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let powershell = PathBuf::from(system_root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    assert!(
+        powershell.is_file(),
+        "Windows PowerShell is required for this protocol fixture test"
+    );
+
+    let task_root = std::env::temp_dir().join(format!("yilian-acp-cancel-{}", Uuid::new_v4()));
+    tokio::fs::create_dir_all(&task_root).await.unwrap();
+    let fixture = task_root.join("acp-hanging-fixture.ps1");
+    let pid_file = task_root.join("child.pid");
+    tokio::fs::write(&fixture, hanging_powershell_fixture(&pid_file))
+        .await
+        .unwrap();
+
+    let config = AcpLaunchConfig {
+        id: "cancel-fixture-agent".to_string(),
+        executable: powershell.clone(),
+        args: vec![
+            "-NoLogo".to_string(),
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            fixture.to_string_lossy().into_owned(),
+        ],
+        cwd: task_root.clone(),
+        env_allowlist: Vec::new(),
+        timeout_seconds: 20,
+    };
+    let session_slot = Arc::new(Semaphore::new(1));
+    let tool = Arc::new(
+        AcpAgentTool::new_with_session_slot(config, None, Arc::clone(&session_slot)).unwrap(),
+    );
+    let execution =
+        tokio::spawn(async move { tool.execute(json!({"task":"Wait indefinitely."})).await });
+
+    let fixture_started = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(pid) = tokio::fs::read_to_string(&pid_file).await {
+                if !pid.trim().is_empty() {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await;
+    if fixture_started.is_err() {
+        execution.abort();
+        let _ = execution.await;
+        panic!("ACP fixture did not enter session/prompt");
+    }
+    let child_pid = tokio::fs::read_to_string(&pid_file)
+        .await
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+
+    execution.abort();
+    assert!(execution.await.unwrap_err().is_cancelled());
+
+    let process_stopped = tokio::time::timeout(Duration::from_secs(12), async {
+        let wait_for_exit = format!(
+            "for ($i = 0; $i -lt 100; $i++) {{ if ($null -eq (Get-Process -Id {child_pid} -ErrorAction SilentlyContinue)) {{ exit 0 }}; Start-Sleep -Milliseconds 100 }}; exit 1"
+        );
+        tokio::process::Command::new(&powershell)
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &wait_for_exit,
+            ])
+            .status()
+            .await
+            .is_ok_and(|status| status.success())
+    })
+    .await
+    .unwrap_or(false);
+    let slot_released = tokio::time::timeout(Duration::from_secs(1), session_slot.acquire_owned())
+        .await
+        .is_ok_and(|permit| permit.is_ok());
+
+    assert!(
+        process_stopped,
+        "aborted ACP execution left its child process running"
+    );
+    assert!(
+        slot_released,
+        "aborted ACP execution retained its shared session slot"
+    );
+    tokio::fs::remove_dir_all(task_root).await.unwrap();
+}
+
+fn hanging_powershell_fixture(pid_file: &std::path::Path) -> String {
+    let pid_file = pid_file.to_string_lossy().replace('\'', "''");
+    format!(
+        r#"
+$sessionId = 'cancel-fixture-session'
+while (($line = [Console]::In.ReadLine()) -ne $null) {{
+    $request = $line | ConvertFrom-Json
+    $result = $null
+    switch ($request.method) {{
+        'initialize' {{ $result = @{{ protocolVersion = 1; agentCapabilities = @{{}}; agentInfo = @{{ name = 'ACP cancellation fixture'; version = '1' }} }} }}
+        'session/new' {{ $result = @{{ sessionId = $sessionId }} }}
+        'session/prompt' {{
+            [System.IO.File]::WriteAllText('{pid_file}', [string]$PID, [System.Text.UTF8Encoding]::new($false))
+            while ($true) {{ Start-Sleep -Milliseconds 100 }}
+        }}
+        'session/cancel' {{ $result = @{{}} }}
+        default {{ $result = @{{}} }}
+    }}
+    [Console]::Out.WriteLine((@{{ jsonrpc = '2.0'; id = $request.id; result = $result }} | ConvertTo-Json -Compress -Depth 20))
+}}
+"#
+    )
 }
 
 fn powershell_fixture() -> &'static str {
