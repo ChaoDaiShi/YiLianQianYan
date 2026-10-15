@@ -395,7 +395,14 @@ pub async fn run_react_loop_with_channel(
             .or_else(|| {
                 Some(crate::modules::task::resource_budget::SharedExecutionBudget::new(6, 24_000))
             }),
-        handoff_id: inherited.and_then(|v| v.handoff_id),
+        handoff_id: inherited.as_ref().and_then(|v| v.handoff_id.clone()),
+        goal_id: inherited.as_ref().and_then(|v| v.goal_id.clone()),
+        goal_version: inherited.as_ref().and_then(|v| v.goal_version),
+        evidence_ids: inherited
+            .as_ref()
+            .map(|v| v.evidence_ids.clone())
+            .unwrap_or_default(),
+        deadline: inherited.and_then(|v| v.deadline),
     };
     super::delegation::EXECUTION_SCOPE
         .scope(
@@ -438,6 +445,13 @@ async fn run_react_loop_inner(
         if cancel_token.is_cancelled() {
             return Err("已取消".to_string());
         }
+        if super::delegation::current_scope()
+            .and_then(|scope| scope.deadline)
+            .is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+        {
+            cancel_token.cancel();
+            return Err("执行超时".into());
+        }
 
         iteration += 1;
         if iteration > MAX_ITERATIONS {
@@ -447,9 +461,14 @@ async fn run_react_loop_inner(
         // ── THINK: Call LLM with streaming ──
         let stream_response_tokens = should_stream_response_tokens(state);
         let execution_scope = super::delegation::current_scope();
+        let strict_budget = execution_scope
+            .as_ref()
+            .is_some_and(|scope| scope.handoff_id.is_some() || scope.goal_id.is_some());
         if let Some(scope) = &execution_scope {
-            if let (Some(budget), Some(handoff)) = (&scope.budget, &scope.handoff_id) {
-                budget.begin_call(Some(handoff))?;
+            if strict_budget {
+                if let Some(budget) = &scope.budget {
+                    budget.begin_call(scope.handoff_id.as_deref())?;
+                }
             }
         }
         let invocation = client.stream_with_callbacks(&state.messages, &tools_openai, |token| {
@@ -475,13 +494,31 @@ async fn run_react_loop_inner(
                 should_replan: None,
             });
         });
-        let result = tokio::select! {
-            biased;
-            _=cancel_token.cancelled()=>{
-                if let Some(scope)=&execution_scope {if let (Some(budget),Some(id))=(&scope.budget,&scope.handoff_id){let _=budget.settle_tokens(Some(id),None);}}
-                return Err("已取消".into());
-            },
-            response=invocation=>response,
+        let result = if let Some(deadline) =
+            execution_scope.as_ref().and_then(|scope| scope.deadline)
+        {
+            tokio::select! {
+                biased;
+                _=cancel_token.cancelled()=>{
+                    if let Some(scope)=&execution_scope {if let Some(budget)=&scope.budget{if strict_budget{let _=budget.settle_tokens(scope.handoff_id.as_deref(),None);}else{let _=budget.observe_parent_usage(None);}}}
+                    return Err("已取消".into());
+                },
+                _=tokio::time::sleep_until(deadline)=>{
+                    if let Some(scope)=&execution_scope {if let Some(budget)=&scope.budget{if strict_budget{let _=budget.settle_tokens(scope.handoff_id.as_deref(),None);}else{let _=budget.observe_parent_usage(None);}}}
+                    cancel_token.cancel();
+                    return Err("执行超时".into());
+                },
+                response=invocation=>response,
+            }
+        } else {
+            tokio::select! {
+                biased;
+                _=cancel_token.cancelled()=>{
+                    if let Some(scope)=&execution_scope {if let Some(budget)=&scope.budget{if strict_budget{let _=budget.settle_tokens(scope.handoff_id.as_deref(),None);}else{let _=budget.observe_parent_usage(None);}}}
+                    return Err("已取消".into());
+                },
+                response=invocation=>response,
+            }
         };
         if let Some(scope) = &execution_scope {
             if let Some(budget) = &scope.budget {
@@ -490,8 +527,8 @@ async fn run_react_loop_inner(
                     .ok()
                     .and_then(|v| v.usage.as_ref())
                     .map(|v| u64::from(v.total_tokens));
-                if let Some(id) = &scope.handoff_id {
-                    budget.settle_tokens(Some(id), tokens)?;
+                if strict_budget {
+                    budget.settle_tokens(scope.handoff_id.as_deref(), tokens)?;
                 } else {
                     budget.observe_parent_usage(tokens)?;
                 }
@@ -547,10 +584,21 @@ async fn run_react_loop_inner(
                         tx,
                         log_buffer,
                     );
-                    let dispatch_outcome = tokio::select! {
-                        biased;
-                        _=cancel_token.cancelled()=>return Err("已取消".into()),
-                        result=dispatch=>result?,
+                    let dispatch_outcome = if let Some(deadline) =
+                        execution_scope.as_ref().and_then(|scope| scope.deadline)
+                    {
+                        tokio::select! {
+                            biased;
+                            _=cancel_token.cancelled()=>return Err("已取消".into()),
+                            _=tokio::time::sleep_until(deadline)=>{cancel_token.cancel();return Err("执行超时".into());},
+                            result=dispatch=>result?,
+                        }
+                    } else {
+                        tokio::select! {
+                            biased;
+                            _=cancel_token.cancelled()=>return Err("已取消".into()),
+                            result=dispatch=>result?,
+                        }
                     };
                     match dispatch_outcome {
                         ToolDispatchOutcome::Continue => {}

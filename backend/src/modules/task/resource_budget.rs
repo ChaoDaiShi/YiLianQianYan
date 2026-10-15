@@ -1,4 +1,6 @@
-//! Shared reservations for parent/child model calls; unknown usage remains unknown.
+//! Shared reservations for parent and child model calls. Unknown usage remains
+//! unknown, and reserved child capacity is unavailable to its parent.
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -8,20 +10,32 @@ pub struct BudgetReservation {
     pub calls: u32,
     pub tokens: u64,
 }
+
+#[derive(Debug, Default)]
+struct ReservationUsage {
+    remaining_calls: u32,
+    remaining_tokens: u64,
+    used_calls: u32,
+    used_tokens: u64,
+    unknown: bool,
+}
+
 #[derive(Debug, Default)]
 struct Usage {
     calls: u32,
     tokens: u64,
     unknown: bool,
-    reservations: HashMap<String, (u32, u64)>,
+    reservations: HashMap<String, ReservationUsage>,
     active_calls: HashSet<String>,
 }
+
 #[derive(Debug)]
 pub struct SharedExecutionBudget {
     max_calls: u32,
     max_tokens: u64,
     usage: Mutex<Usage>,
 }
+
 impl SharedExecutionBudget {
     pub fn new(max_calls: u32, max_tokens: u64) -> Arc<Self> {
         Arc::new(Self {
@@ -30,54 +44,85 @@ impl SharedExecutionBudget {
             usage: Mutex::new(Usage::default()),
         })
     }
+
     pub fn reserve(self: &Arc<Self>, request: BudgetReservation) -> Result<BudgetLease, String> {
         let mut usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
         if usage.unknown {
             return Err("proofloop_usage_unavailable".into());
         }
-        if usage.reservations.contains_key(&request.handoff_id) {
+        if request.handoff_id.trim().is_empty()
+            || usage.reservations.contains_key(&request.handoff_id)
+        {
             return Err("重复的任务交接标识".into());
         }
-        let reserved_calls: u64 = usage.reservations.values().map(|v| u64::from(v.0)).sum();
-        let reserved_tokens: u128 = usage.reservations.values().map(|v| u128::from(v.1)).sum();
-        if reserved_calls + u64::from(usage.calls) + u64::from(request.calls)
-            > u64::from(self.max_calls)
-            || reserved_tokens + u128::from(usage.tokens) + u128::from(request.tokens)
+
+        let reserved_calls: u128 = usage
+            .reservations
+            .values()
+            .map(|reservation| u128::from(reservation.remaining_calls))
+            .sum();
+        let reserved_tokens: u128 = usage
+            .reservations
+            .values()
+            .map(|reservation| u128::from(reservation.remaining_tokens))
+            .sum();
+        if u128::from(usage.calls) + reserved_calls + u128::from(request.calls)
+            > u128::from(self.max_calls)
+            || u128::from(usage.tokens) + reserved_tokens + u128::from(request.tokens)
                 > u128::from(self.max_tokens)
         {
             return Err("proofloop_budget_exhausted".into());
         }
-        usage
-            .reservations
-            .insert(request.handoff_id.clone(), (request.calls, request.tokens));
+
+        let handoff_id = request.handoff_id;
+        usage.reservations.insert(
+            handoff_id.clone(),
+            ReservationUsage {
+                remaining_calls: request.calls,
+                remaining_tokens: request.tokens,
+                ..ReservationUsage::default()
+            },
+        );
         Ok(BudgetLease {
             budget: Arc::clone(self),
-            handoff_id: request.handoff_id,
+            handoff_id,
         })
     }
+
+    /// Charge a model call before it starts. Parent calls cannot consume child
+    /// reservations, and child calls can consume only their own reservation.
     pub fn begin_call(&self, handoff: Option<&str>) -> Result<(), String> {
         let mut usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
         if usage.unknown {
             return Err("proofloop_usage_unavailable".into());
         }
         if let Some(id) = handoff {
-            let remaining = usage.reservations.get_mut(id).ok_or("任务预算未预留")?;
-            if remaining.0 == 0 {
+            let reservation = usage.reservations.get_mut(id).ok_or("任务预算未预留")?;
+            if reservation.remaining_calls == 0 {
                 return Err("proofloop_budget_exhausted".into());
             }
-            remaining.0 -= 1;
-        } else {
-            let reserved: u64 = usage.reservations.values().map(|v| u64::from(v.0)).sum();
-            if u64::from(usage.calls) + reserved >= u64::from(self.max_calls) {
-                return Err("proofloop_budget_exhausted".into());
-            }
-        }
-        if let Some(id) = handoff {
+            reservation.remaining_calls -= 1;
+            reservation.used_calls = reservation
+                .used_calls
+                .checked_add(1)
+                .ok_or("预算计数超出范围")?;
             usage.active_calls.insert(id.to_owned());
+        } else {
+            let reserved_calls: u128 = usage
+                .reservations
+                .values()
+                .map(|reservation| u128::from(reservation.remaining_calls))
+                .sum();
+            if u128::from(usage.calls) + reserved_calls >= u128::from(self.max_calls) {
+                return Err("proofloop_budget_exhausted".into());
+            }
         }
-        usage.calls += 1;
+        usage.calls = usage.calls.checked_add(1).ok_or("预算计数超出范围")?;
         Ok(())
     }
+
+    /// Settle the provider-reported token count for a call. A missing or
+    /// over-reservation value marks the shared budget unavailable.
     pub fn settle_tokens(&self, handoff: Option<&str>, tokens: Option<u64>) -> Result<(), String> {
         let mut usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
         if let Some(id) = handoff {
@@ -85,63 +130,137 @@ impl SharedExecutionBudget {
         }
         let Some(tokens) = tokens else {
             usage.unknown = true;
+            if let Some(id) = handoff {
+                if let Some(reservation) = usage.reservations.get_mut(id) {
+                    reservation.unknown = true;
+                }
+            }
             return Err("proofloop_usage_unavailable".into());
         };
+
         if let Some(id) = handoff {
-            let remaining = usage.reservations.get_mut(id).ok_or("任务预算未预留")?;
-            if tokens > remaining.1 {
+            let remaining = usage
+                .reservations
+                .get(id)
+                .ok_or("任务预算未预留")?
+                .remaining_tokens;
+            if tokens > remaining {
                 usage.unknown = true;
+                if let Some(reservation) = usage.reservations.get_mut(id) {
+                    reservation.unknown = true;
+                }
                 return Err("proofloop_budget_exhausted".into());
             }
-            remaining.1 -= tokens;
+            let reservation = usage.reservations.get_mut(id).ok_or("任务预算未预留")?;
+            reservation.remaining_tokens -= tokens;
+            reservation.used_tokens = reservation
+                .used_tokens
+                .checked_add(tokens)
+                .ok_or("预算计数超出范围")?;
+        }
+
+        let reserved_tokens: u128 = usage
+            .reservations
+            .values()
+            .map(|reservation| u128::from(reservation.remaining_tokens))
+            .sum();
+        let total = u128::from(usage.tokens) + reserved_tokens + u128::from(tokens);
+        if total > u128::from(self.max_tokens) {
+            usage.unknown = true;
+            if let Some(id) = handoff {
+                if let Some(reservation) = usage.reservations.get_mut(id) {
+                    reservation.unknown = true;
+                }
+            }
+            return Err("proofloop_budget_exhausted".into());
         }
         usage.tokens = usage.tokens.checked_add(tokens).ok_or("预算计数超出范围")?;
-        if usage.tokens > self.max_tokens {
-            return Err("proofloop_budget_exhausted".into());
+        Ok(())
+    }
+
+    /// Compatibility helper for callers that report a completed parent call.
+    pub fn observe_parent_usage(&self, tokens: Option<u64>) -> Result<(), String> {
+        let mut usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
+        match usage.calls.checked_add(1) {
+            Some(calls) => usage.calls = calls,
+            None => usage.unknown = true,
+        }
+        match tokens {
+            Some(value) => match usage.tokens.checked_add(value) {
+                Some(tokens) => usage.tokens = tokens,
+                None => usage.unknown = true,
+            },
+            None => usage.unknown = true,
         }
         Ok(())
     }
+
     pub fn available(&self) -> Result<(u32, u64), String> {
         let usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
         if usage.unknown {
             return Err("proofloop_usage_unavailable".into());
         }
-        let calls: u32 = usage.reservations.values().map(|v| v.0).sum();
-        let tokens: u64 = usage.reservations.values().map(|v| v.1).sum();
+        let reserved_calls: u128 = usage
+            .reservations
+            .values()
+            .map(|reservation| u128::from(reservation.remaining_calls))
+            .sum();
+        let reserved_tokens: u128 = usage
+            .reservations
+            .values()
+            .map(|reservation| u128::from(reservation.remaining_tokens))
+            .sum();
         Ok((
-            self.max_calls
-                .saturating_sub(usage.calls)
-                .saturating_sub(calls),
-            self.max_tokens
-                .saturating_sub(usage.tokens)
-                .saturating_sub(tokens),
+            u128::from(self.max_calls)
+                .saturating_sub(u128::from(usage.calls) + reserved_calls)
+                .min(u128::from(u32::MAX)) as u32,
+            u128::from(self.max_tokens)
+                .saturating_sub(u128::from(usage.tokens) + reserved_tokens)
+                .min(u128::from(u64::MAX)) as u64,
         ))
     }
-    pub fn observe_parent_usage(&self, tokens: Option<u64>) -> Result<(), String> {
-        let mut usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
-        usage.calls = usage.calls.saturating_add(1);
-        match tokens {
-            Some(value) => usage.tokens = usage.tokens.saturating_add(value),
-            None => usage.unknown = true,
-        };
-        Ok(())
-    }
+
     pub fn usage(&self) -> Result<(u32, Option<u64>), String> {
-        let u = self.usage.lock().map_err(|_| "资源预算不可用")?;
-        Ok((u.calls, if u.unknown { None } else { Some(u.tokens) }))
+        let usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
+        Ok((
+            usage.calls,
+            if usage.unknown {
+                None
+            } else {
+                Some(usage.tokens)
+            },
+        ))
+    }
+
+    /// Return usage for this handoff only, independent of parent or sibling
+    /// calls that share the same execution budget.
+    pub fn handoff_usage(&self, handoff_id: &str) -> Result<(u32, Option<u64>), String> {
+        let usage = self.usage.lock().map_err(|_| "资源预算不可用")?;
+        let reservation = usage.reservations.get(handoff_id).ok_or("任务预算未预留")?;
+        Ok((
+            reservation.used_calls,
+            if reservation.unknown || usage.active_calls.contains(handoff_id) {
+                None
+            } else {
+                Some(reservation.used_tokens)
+            },
+        ))
     }
 }
+
 pub struct BudgetLease {
     budget: Arc<SharedExecutionBudget>,
     pub handoff_id: String,
 }
+
 impl Drop for BudgetLease {
     fn drop(&mut self) {
         if let Ok(mut usage) = self.budget.usage.lock() {
-            usage.reservations.remove(&self.handoff_id);
-            if usage.active_calls.remove(&self.handoff_id) {
+            let active = usage.active_calls.remove(&self.handoff_id);
+            if active {
                 usage.unknown = true;
             }
+            usage.reservations.remove(&self.handoff_id);
         }
     }
 }
@@ -149,9 +268,10 @@ impl Drop for BudgetLease {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn concurrent_reservations_cannot_spend_same_tokens() {
-        let budget = SharedExecutionBudget::new(6, 1000);
+        let budget = SharedExecutionBudget::new(6, 1_000);
         let first = budget
             .reserve(BudgetReservation {
                 handoff_id: "a".into(),
@@ -163,7 +283,7 @@ mod tests {
             .reserve(BudgetReservation {
                 handoff_id: "b".into(),
                 calls: 2,
-                tokens: 800
+                tokens: 800,
             })
             .is_err());
         drop(first);
@@ -171,16 +291,95 @@ mod tests {
             .reserve(BudgetReservation {
                 handoff_id: "b".into(),
                 calls: 2,
-                tokens: 800
+                tokens: 800,
             })
             .is_ok());
     }
+
     #[test]
     fn missing_usage_blocks_further_budgeted_calls() {
-        let budget = SharedExecutionBudget::new(6, 1000);
+        let budget = SharedExecutionBudget::new(6, 1_000);
         budget.begin_call(None).unwrap();
         assert!(budget.settle_tokens(None, None).is_err());
         assert!(budget.begin_call(None).is_err());
         assert_eq!(budget.usage().unwrap(), (1, None));
+    }
+
+    #[test]
+    fn observation_only_parent_usage_does_not_gate_later_chat_calls() {
+        let budget = SharedExecutionBudget::new(6, 1_000);
+        budget.observe_parent_usage(None).unwrap();
+        budget.observe_parent_usage(Some(100)).unwrap();
+
+        assert_eq!(budget.usage().unwrap(), (2, None));
+        assert!(budget.available().is_err());
+        assert!(budget
+            .reserve(BudgetReservation {
+                handoff_id: "child".into(),
+                calls: 1,
+                tokens: 100,
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn parent_calls_respect_calls_reserved_for_a_child() {
+        let budget = SharedExecutionBudget::new(3, 1_000);
+        let _child = budget
+            .reserve(BudgetReservation {
+                handoff_id: "child".into(),
+                calls: 2,
+                tokens: 800,
+            })
+            .unwrap();
+
+        budget.begin_call(None).unwrap();
+        budget.settle_tokens(None, Some(100)).unwrap();
+        assert!(budget.begin_call(None).is_err());
+        assert_eq!(budget.usage().unwrap(), (1, Some(100)));
+    }
+
+    #[test]
+    fn parent_usage_cannot_be_charged_against_child_token_reservation() {
+        let budget = SharedExecutionBudget::new(6, 1_000);
+        let _child = budget
+            .reserve(BudgetReservation {
+                handoff_id: "child".into(),
+                calls: 2,
+                tokens: 800,
+            })
+            .unwrap();
+
+        budget.begin_call(None).unwrap();
+        assert!(budget.settle_tokens(None, Some(201)).is_err());
+        assert_eq!(budget.usage().unwrap(), (1, None));
+        assert!(budget.begin_call(None).is_err());
+    }
+
+    #[test]
+    fn child_usage_is_scoped_to_its_handoff() {
+        let budget = SharedExecutionBudget::new(6, 1_000);
+        let _first = budget
+            .reserve(BudgetReservation {
+                handoff_id: "first".into(),
+                calls: 2,
+                tokens: 400,
+            })
+            .unwrap();
+        let _second = budget
+            .reserve(BudgetReservation {
+                handoff_id: "second".into(),
+                calls: 2,
+                tokens: 400,
+            })
+            .unwrap();
+
+        budget.begin_call(Some("first")).unwrap();
+        budget.settle_tokens(Some("first"), Some(100)).unwrap();
+        budget.begin_call(Some("second")).unwrap();
+        budget.settle_tokens(Some("second"), Some(200)).unwrap();
+
+        assert_eq!(budget.handoff_usage("first").unwrap(), (1, Some(100)));
+        assert_eq!(budget.handoff_usage("second").unwrap(), (1, Some(200)));
     }
 }
