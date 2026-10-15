@@ -4,6 +4,12 @@
   "source_task_file": "backend/tests/fixtures/proofloop/benchmark-tasks.json",
   "task_sha256": "27afd61b82f959e038b44c9da4803b61d67b07572c8753ce86ec8e0f76fb4ac6",
   "task_count": 30,
+  "task_ids": [
+    "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10",
+    "T01", "T02", "T03", "T04", "T05", "T06", "T07", "T08", "T09", "T10",
+    "P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08", "P09", "P10"
+  ],
+  "pilot_task_ids": ["A01", "T01", "P01"],
   "runs_per_group": 3,
   "groups": {
     "V12-B0": {
@@ -37,10 +43,11 @@
   "seed": 20261016,
   "requires_real_model": true,
   "required_environment": [
-    "YILIAN_V12_API_BASE",
-    "YILIAN_CONTROL_SESSION",
+    "YILIAN_V12_GROUP_INSTANCES_FILE",
     "YILIAN_V12_TASK_BINDINGS",
-    "YILIAN_V12_ISOLATED_PROFILE"
+    "YILIAN_V12_ISOLATED_PROFILE",
+    "YILIAN_V12_BUDGET_AUTHORIZED",
+    "YILIAN_V12_SIDE_EFFECTS_AUTHORIZED"
   ],
   "model_experiment_status": "NOT TESTED"
 }
