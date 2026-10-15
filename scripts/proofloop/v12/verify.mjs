@@ -280,6 +280,9 @@ export async function verifyRun(row, task, root) {
   await verifyAudit(row, root, codes);
   if (row.illegal_execution_count !== 0) fail(codes, 'execution_authorization_not_proven');
   if (row.budget_violation_codes?.length) codes.push(...row.budget_violation_codes);
+  if (Number.isFinite(row.model_calls) && row.model_calls > (task.budget?.max_model_calls ?? Infinity)) fail(codes, 'model_call_budget_exceeded');
+  if (Number.isFinite(row.total_tokens) && row.total_tokens > (task.budget?.max_total_tokens ?? Infinity)) fail(codes, 'total_token_budget_exceeded');
+  if (Number.isFinite(row.repair_rounds) && row.repair_rounds > (task.budget?.max_repair_rounds ?? Infinity)) fail(codes, 'repair_round_budget_exceeded');
   if (Number.isFinite(row.active_ms) && row.active_ms > (task.budget?.max_wall_time_ms ?? Infinity)) fail(codes, 'active_time_budget_exceeded');
 
   return {pass: codes.length === 0, codes: [...new Set(codes)]};
