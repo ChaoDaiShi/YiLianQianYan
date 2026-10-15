@@ -811,7 +811,7 @@ pub async fn chat_handler(
             }
             None => execution.await,
         };
-        if let Some(run) = goal_run {
+        if let Some(mut run) = goal_run {
             let usage_finish = run.reservation.finish();
             let activity_finish = run
                 .activity_lease
