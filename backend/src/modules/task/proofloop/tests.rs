@@ -524,4 +524,5 @@ fn test_line_a_capability_snapshot_budget_and_filtering() {
     assert!(too_large.capabilities.is_empty());
 }
 
+mod acceptance_and_repair;
 mod planner;

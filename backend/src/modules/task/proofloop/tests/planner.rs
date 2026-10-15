@@ -93,5 +93,3 @@ async fn oversized_planner_input_is_rejected_before_model_invocation() {
 
     assert_eq!(error.code, "proofloop_planning_input_too_large");
 }
-
-mod acceptance_and_repair;
