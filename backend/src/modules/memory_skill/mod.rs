@@ -16,6 +16,8 @@
 
 mod candidate;
 mod evidence;
+pub mod feedback;
+pub mod recommendation;
 mod repository;
 mod review;
 mod sensitivity;

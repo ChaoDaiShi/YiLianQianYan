@@ -270,6 +270,7 @@ export interface RepairProposal {
 
 // Request & Response shapes
 export interface CreateProofDraftRequest {
+  requirements?: Pick<GoalContract,"deliverables"|"criteria"|"constraints"> & { budget?: Budget };
   workspace_id: string;
   user_goal: string;
   allowed_capability_ids?: string[];

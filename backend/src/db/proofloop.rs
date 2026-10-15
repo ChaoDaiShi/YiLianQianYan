@@ -234,9 +234,22 @@ impl Database {
                 .execution_active_ms
                 .saturating_add(started.elapsed().as_millis().min(u64::MAX as u128) as u64);
         }
+        let (additional_calls,additional_tokens,unknown_calls):(u32,u64,u32)=tx.query_row("SELECT COALESCE(SUM(model_calls),0),COALESCE(SUM(total_tokens),0),COALESCE(SUM(CASE WHEN total_tokens IS NULL THEN 1 ELSE 0 END),0) FROM proofloop_model_invocations WHERE goal_id=?1 AND goal_version=?2",params![proposal.goal_id,proposal.goal_version],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
+        if unknown_calls > 0 {
+            return Err(ProofLoopDbError::Integrity(
+                "proofloop_usage_unavailable".into(),
+            ));
+        }
+        let mut combined_planning = draft.planning_usage.clone();
+        combined_planning.model_calls = combined_planning
+            .model_calls
+            .saturating_add(additional_calls);
+        combined_planning.total_tokens = combined_planning
+            .total_tokens
+            .map(|tokens| tokens.saturating_add(additional_tokens));
         crate::modules::task::proofloop::budget::remaining_budget(
             contract,
-            &draft.planning_usage,
+            &combined_planning,
             &current_usage,
             confirmed_at,
             now,

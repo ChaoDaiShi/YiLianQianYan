@@ -48,6 +48,12 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
         ], edges: [{ from: 'collect', to: 'report' }], deliverable_nodes: [{ deliverable_id: 'report-file', node_id: 'report' }],
       },
     };
+    if (process.env.YILIAN_E2E_V12 === '1') {
+      const alternative=structuredClone(response.candidate);
+      alternative.nodes[0].literal_input.query='controlled alternate retrieval';
+      response.candidates=[response.candidate,alternative];
+      delete response.candidate;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ id: 'controlled-model', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(response) } }], usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 } }));
   });
   await new Promise((resolve) => model.listen(0, '127.0.0.1', resolve));
@@ -82,12 +88,23 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     assert.equal(modelCalls.length, beforeEmpty, 'empty selection cannot expand scope or call the model');
     steps.push('empty_capability_selection_rejected');
     await page.getByRole('button', { name: '全选', exact: true }).click();
+    if (process.env.YILIAN_E2E_V12 === '1') await page.getByLabel('规划策略').selectOption('ranked');
     await page.getByRole('button', { name: '生成任务计划', exact: true }).click();
     await page.getByRole('heading', { name: '任务候选计划评审' }).waitFor(); await capture('01-real-plan-review');
     const drafts = (await api('GET', '/api/task-world/proofloop/drafts')).drafts;
     assert.equal(drafts.length, 1); const draft = await api('GET', `/api/task-world/proofloop/drafts/${drafts[0].draft_id}`);
     assert.equal(draft.compilation.status, 'ready');
+    if (process.env.YILIAN_E2E_V12 === '1') {
+      assert.equal(draft.planning_review.options.length,2);
+      assert.equal(draft.planning_review.selected_candidate_id,null);
+      assert.equal(await page.getByRole('button',{name:'确认并保存到画布',exact:true}).isDisabled(),true);
+      await page.getByRole('button',{name:'选择方案 1',exact:true}).click();
+      await until(async()=>api('GET',`/api/task-world/proofloop/drafts/${draft.draft_id}`),value=>value.planning_review.selected_candidate_id==='candidate-00','candidate persisted');
+      steps.push('v12_multiple_candidates_explicit_selection_persisted');
+    }
+
     await page.getByRole('button', { name: '确认并保存到画布', exact: true }).click(); await page.waitForURL(/\/task-world\/[^/]+$/);
+    await page.getByRole('button',{name:'专家视图',exact:true}).click();
     const graphId = decodeURIComponent(page.url().split('/task-world/')[1]); const path = `/api/task-world/graphs/${graphId}`;
     if (process.env.YILIAN_E2E_IDENTIFIERS === '1') {
       assert.equal(await page.getByRole('button', { name: /^发布/ }).count(), 0);

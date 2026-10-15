@@ -79,10 +79,7 @@ pub fn validate_failure_context(context: &FailureContext) -> Result<(), ProofErr
         ));
     }
     let error_lower = context.error_message.to_ascii_lowercase();
-    if external_result_is_uncertain(Some(context.failure_code.as_str()))
-        || error_lower.contains("timeout")
-        || context.error_message.contains("超时")
-    {
+    if external_result_is_uncertain(Some(context.failure_code.as_str())) {
         return Err(ProofError::new(
             "external_mutation_uncertain",
             "外部调用结果尚未核实，不能让模型决定是否重试",

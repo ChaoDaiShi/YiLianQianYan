@@ -361,3 +361,20 @@ fn ratio_bp(numerator: usize, denominator: usize) -> u16 {
         ((numerator as u64 * 10_000) / denominator as u64) as u16
     }
 }
+
+/// Shared deterministic lexical match used by reviewed skill recommendations.
+pub(crate) fn lexical_similarity_bp(goal: &str, text: &str) -> u16 {
+    let query = tokenize(goal);
+    if query.is_empty() {
+        return 0;
+    }
+    let terms = tokenize(text);
+    ((query.intersection(&terms).count() as u64 * 10_000) / query.len() as u64) as u16
+}
+
+pub(crate) fn lexical_overlap_terms(goal: &str, text: &str) -> Vec<String> {
+    tokenize(goal)
+        .intersection(&tokenize(text))
+        .cloned()
+        .collect()
+}

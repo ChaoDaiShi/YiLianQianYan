@@ -3,16 +3,20 @@
 //! Defined in docs/superpowers/plans/2026-10-12-proofloop-parallel-development.md
 
 pub mod acceptance;
+pub mod ai_repair;
 pub mod budget;
+pub mod candidate_planner;
 pub mod capabilities;
 pub mod compiler;
 pub mod contracts;
-pub mod drafts;
 pub mod deliverable_format;
+pub mod drafts;
 pub mod enhancement_contracts;
 pub mod evidence;
+pub mod plan_selection;
 pub mod planner;
 pub mod repair;
+pub mod routing;
 pub mod schema_paths;
 
 #[cfg(test)]

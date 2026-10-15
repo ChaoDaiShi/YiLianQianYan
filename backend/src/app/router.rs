@@ -363,7 +363,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/artifacts", get(tasks::list_all_artifacts))
         .route(
             "/api/artifacts/from-execution",
-            post(artifact_download::materialize),
+            post(crate::api::artifacts::materialize),
         )
         .route(
             "/api/artifacts/:id/download",

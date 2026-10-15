@@ -50,11 +50,17 @@ pub async fn download(State(server): State<Arc<AppServer>>, Path(id): Path<Strin
                     axum::http::header::CONTENT_TYPE,
                     artifact
                         .mime_type
+                        .clone()
                         .unwrap_or_else(|| "application/octet-stream".into()),
                 ),
                 (
                     axum::http::header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{}.md\"", id),
+                    format!(
+                        "attachment; filename=\"{}{}\"; filename*=UTF-8''{}",
+                        id,
+                        download_extension(artifact.mime_type.as_deref()),
+                        encode_download_name(&artifact.name)
+                    ),
                 ),
                 (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
             ],
@@ -227,5 +233,31 @@ mod tests {
             1
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+fn encode_download_name(name: &str) -> String {
+    name.as_bytes()
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-._~".contains(byte) {
+                (*byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+fn download_extension(mime: Option<&str>) -> &'static str {
+    match mime {
+        Some("text/markdown") => ".md",
+        Some("application/json") => ".json",
+        Some("text/plain") => ".txt",
+        Some("application/pdf") => ".pdf",
+        Some("image/png") => ".png",
+        Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document") => ".docx",
+        Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") => ".xlsx",
+        _ => ".bin",
     }
 }

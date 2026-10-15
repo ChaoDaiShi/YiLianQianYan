@@ -170,6 +170,8 @@ pub struct AppServer {
     /// Authoritative v1 Task World registry and persistence boundary.
     pub task_world: TaskWorldRuntime,
     pub proofloop_budget: Arc<crate::modules::task::proofloop::budget::GoalBudgetMeter>,
+    pub delegation_slots: Arc<Semaphore>,
+    pub external_agent_slots: Arc<Semaphore>,
     /// Isolated ScopedDb wrapper binding database with active scope lease and gate latch.
     pub scoped_db: crate::db::cloud::scoped_db::ScopedDb,
     /// Shared operation lock protecting cloud sync, policy updates, login activation, and logout.
@@ -512,8 +514,8 @@ impl AppServer {
         }
         // occupied_names already covers builtins + MCP names.
 
-        let executor: Arc<dyn crate::tools::subagent::SubagentExecutor> =
-            Arc::new(crate::agent::subagent_runtime::LocalSubagentExecutor::new(
+        let executor: Arc<dyn crate::tools::subagent::SubagentExecutor> = Arc::new(
+            crate::agent::subagent_runtime::LocalSubagentExecutor::new(
                 self.config.read().clone(),
                 self.workspace_root.clone(),
                 Arc::clone(&child_source_registry),
@@ -521,7 +523,9 @@ impl AppServer {
                 self.audit_recorder.clone(),
                 self.log_buffer.clone(),
                 Arc::clone(&self.secret_resolver),
-            ));
+            )
+            .with_slots(Arc::clone(&self.delegation_slots)),
+        );
 
         let registered = crate::tools::subagent::register_discovered_subagent_tools(
             &mut parent_registry,
@@ -530,6 +534,35 @@ impl AppServer {
             executor,
         );
         tracing::info!(registered, "Subagent tools registered for runtime registry");
+        let external_gateway = Arc::new(
+            crate::safety::SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
+                self.config.read().sandbox.clone(),
+                self.workspace_root.clone(),
+                Arc::clone(&child_source_registry),
+                Arc::new(crate::agent::verifier::DefaultVerifier::new(
+                    &self.workspace_root,
+                )),
+                Arc::new(self.audit_recorder.clone()),
+            )
+            .with_db(Arc::new(self.db.clone_connection()))
+            .with_grant_enforcement(),
+        );
+        for config in self.config.read().external_agents.clone() {
+            let handler: Arc<dyn crate::integrations::acp::AcpPermissionHandler> =
+                Arc::new(crate::integrations::acp::GatewayAcpPermissionHandler::new(
+                    Arc::clone(&external_gateway),
+                    config.cwd.clone(),
+                    crate::safety::SecuritySubject::local_user(),
+                ));
+            if let Err(error) = crate::integrations::acp::register_configured_acp_agent_with_slot(
+                &mut parent_registry,
+                config,
+                Some(handler),
+                Arc::clone(&self.external_agent_slots),
+            ) {
+                tracing::warn!(error=%error,"Configured external agent is unavailable");
+            }
+        }
 
         Arc::new(parent_registry)
     }

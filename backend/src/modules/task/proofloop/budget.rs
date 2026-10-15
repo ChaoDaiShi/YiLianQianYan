@@ -108,6 +108,7 @@ pub(crate) fn remaining_budget(
 
 impl GoalBudgetMeter {
     pub fn new(db: Database) -> Result<Self, ProofError> {
+        db.initialize_proofloop_model_usage()?;
         db.recover_proofloop_time().map_err(db_error)?;
         Ok(Self {
             db,
@@ -205,15 +206,25 @@ impl GoalBudgetMeter {
         let running = self.running.lock();
         let draft = self.draft(contract)?;
         let usage = self.current_usage(&draft, &running)?;
+        let combined = self
+            .db
+            .combined_goal_model_usage(contract, &draft.planning_usage)?;
         remaining_budget(
             contract,
-            &draft.planning_usage,
+            &combined,
             &usage,
             self.db
                 .goal_confirmed_at(&contract.goal_id, contract.version)
                 .map_err(db_error)?,
             at,
         )
+    }
+
+    pub fn begin_model_activity(
+        self: &Arc<Self>,
+        draft: &ProofDraft,
+    ) -> Result<BudgetLease, ProofError> {
+        self.begin(draft, &NodeExecutionId::generate())
     }
 
     pub fn save_repair(
