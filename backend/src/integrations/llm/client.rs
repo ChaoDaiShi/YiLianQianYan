@@ -508,7 +508,7 @@ pub fn conservative_input_token_upper_bound(
     let tools_bytes = serde_json::to_vec(tools).ok()?.len() as u64;
     message_bytes
         .checked_add(tools_bytes)?
-        .checked_add(((messages.len() + tools.len()) as u64).checked_mul(64)?)
+        .checked_add(((messages.len() + tools.len()) as u64).checked_mul(64)?)?
         .checked_add(32)
 }
 

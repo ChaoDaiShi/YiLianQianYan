@@ -128,7 +128,7 @@ pub async fn propose_repair_handler(
     let mut proposal;
     let ai_repair_enabled = server.config.read().ai_repair_enabled;
     if ai_repair_enabled {
-        use crate::modules::task::proofloop::ai_repair::{FailureContext, ObservedValue};
+        use crate::modules::task::proofloop::ai_repair::FailureContext;
         let graph = match server.task_world.get_graph(&graph_id) {
             Some(v) => v,
             None => {
