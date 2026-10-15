@@ -1,6 +1,14 @@
 //! Controlled repair HTTP handlers.
 use super::*;
 
+#[derive(serde::Serialize)]
+struct RepairProposalHttpResponse {
+    #[serde(flatten)]
+    proposal: crate::modules::task::proofloop::contracts::RepairProposal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai_repair_usage: Option<crate::modules::task::proofloop::contracts::PlanningUsage>,
+}
+
 pub async fn propose_repair_handler(
     State(server): State<Arc<AppServer>>,
     Path(goal_id): Path<String>,
@@ -126,6 +134,7 @@ pub async fn propose_repair_handler(
         }
     }
     let mut proposal;
+    let mut ai_repair_usage = None;
     let ai_repair_enabled = server.config.read().ai_repair_enabled;
     if ai_repair_enabled {
         use crate::modules::task::proofloop::ai_repair::FailureContext;
@@ -237,7 +246,19 @@ pub async fn propose_repair_handler(
         config.invoke_timeout_ms = config
             .invoke_timeout_ms
             .min(contract.budget.max_wall_time_ms);
-        let client = LlmClient::new(&config, Arc::clone(&server.secret_resolver));
+        let usage_recorder =
+            std::sync::Arc::new(crate::integrations::llm::usage::DatabaseUsageRecorder::new(
+                server.db.clone_connection(),
+                config.name.clone(),
+                config.provider.clone(),
+                config.name.clone(),
+                "proofloop-ai-repair",
+            ));
+        let client = LlmClient::new_with_usage_recorder(
+            &config,
+            Arc::clone(&server.secret_resolver),
+            Some(usage_recorder),
+        );
         let messages =
             match crate::modules::task::proofloop::ai_repair::build_ai_repair_messages(&context) {
                 Ok(value) => value,
@@ -278,18 +299,32 @@ pub async fn propose_repair_handler(
                 activity_deadline,
             )
             .await;
-        let usage = match &result {
-            Ok((_, usage)) => Some(usage),
-            Err(error) => error.planning_usage.as_ref(),
+        let measured_usage = match &result {
+            Ok((_, usage)) => Some(usage.clone()),
+            Err(error) => error.planning_usage.clone(),
         };
-        if let Err(error) = server.db.finish_goal_model_call(&invocation, usage) {
+        if let Err(error) = server
+            .db
+            .finish_goal_model_call(&invocation, measured_usage.as_ref())
+        {
+            let error = measured_usage
+                .clone()
+                .map(|usage| error.with_planning_usage(usage))
+                .unwrap_or(error);
             return proof_error_response(error);
         }
         if let Err(error) = activity.finish() {
+            let error = measured_usage
+                .clone()
+                .map(|usage| error.with_planning_usage(usage))
+                .unwrap_or(error);
             return proof_error_response(error);
         }
         proposal = match result {
-            Ok((proposal, _)) => proposal,
+            Ok((proposal, usage)) => {
+                ai_repair_usage = Some(usage);
+                proposal
+            }
             Err(error) => return proof_error_response(error),
         };
         if let Err(error) = validate_repair(
@@ -299,6 +334,10 @@ pub async fn propose_repair_handler(
             &cap_snapshot,
             &contract,
         ) {
+            let error = ai_repair_usage
+                .clone()
+                .map(|usage| error.with_planning_usage(usage))
+                .unwrap_or(error);
             return proof_error_response(error);
         }
     } else {
@@ -312,10 +351,21 @@ pub async fn propose_repair_handler(
         .proofloop_budget
         .save_repair(&mut proposal, &contract, now_ms)
     {
+        let err = ai_repair_usage
+            .clone()
+            .map(|usage| err.with_planning_usage(usage))
+            .unwrap_or(err);
         return proof_error_response(err);
     }
 
-    (StatusCode::OK, Json(proposal)).into_response()
+    (
+        StatusCode::OK,
+        Json(RepairProposalHttpResponse {
+            proposal,
+            ai_repair_usage,
+        }),
+    )
+        .into_response()
 }
 
 pub async fn apply_repair_handler(
@@ -703,5 +753,61 @@ fn collect_frozen_inputs(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::RepairProposalHttpResponse;
+    use crate::modules::task::proofloop::contracts::{
+        PlanningUsage, RepairOperation, RepairProposal,
+    };
+
+    fn proposal() -> RepairProposal {
+        RepairProposal {
+            schema_version: 1,
+            repair_id: "repair-1".into(),
+            goal_id: "goal-1".into(),
+            goal_version: 2,
+            expected_graph_revision: 3,
+            source_report_id: "report-1".into(),
+            failure_execution_ids: vec!["execution-1".into()],
+            round: 1,
+            operations: vec![RepairOperation::RerunNode {
+                node_id: "node-1".into(),
+            }],
+            rerun_root_node_id: "node-1".into(),
+            affected_node_ids: vec!["node-1".into()],
+            rationale: "最小重试".into(),
+        }
+    }
+
+    #[test]
+    fn response_flattens_proposal_and_omits_usage_for_rule_repairs() {
+        let rule = serde_json::to_value(RepairProposalHttpResponse {
+            proposal: proposal(),
+            ai_repair_usage: None,
+        })
+        .unwrap();
+        assert_eq!(rule["repair_id"], "repair-1");
+        assert!(rule.get("proposal").is_none());
+        assert!(rule.get("ai_repair_usage").is_none());
+
+        let ai = serde_json::to_value(RepairProposalHttpResponse {
+            proposal: proposal(),
+            ai_repair_usage: Some(PlanningUsage {
+                model_calls: 1,
+                total_tokens: Some(37),
+                started_at_ms: 10,
+                elapsed_ms: Some(12),
+            }),
+        })
+        .unwrap();
+        assert_eq!(ai["repair_id"], "repair-1");
+        assert!(ai.get("proposal").is_none());
+        assert_eq!(ai["ai_repair_usage"]["model_calls"], 1);
+        assert_eq!(ai["ai_repair_usage"]["total_tokens"], 37);
+        assert_eq!(ai["ai_repair_usage"]["started_at_ms"], 10);
+        assert_eq!(ai["ai_repair_usage"]["elapsed_ms"], 12);
     }
 }
