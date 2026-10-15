@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { AlertCircle, CheckSquare, Sparkles, Square, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { createProofDraft, type ProofDraft } from "../../../api/proofloop";
+import { createProofDraft, type PlanningStrategy, type ProofDraft } from "../../../api/proofloop";
 import { Button, Textarea } from "../../../components/ui";
 
 export interface AvailableCapabilityItem {
@@ -34,6 +34,8 @@ export default function GoalComposer({
   const [selectedCapabilities, setSelectedCapabilities] = useState<string[]>(() =>
     availableCapabilities.map((c) => c.id),
   );
+  const [planningStrategy, setPlanningStrategy] = useState<PlanningStrategy>("existing");
+  const [candidateCount, setCandidateCount] = useState<2 | 3>(2);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,6 +80,10 @@ export default function GoalComposer({
           workspace_id: workspaceId || "default",
           user_goal: trimmedGoal,
           allowed_capability_ids: selectedCapabilities,
+          planning: {
+            strategy: planningStrategy,
+            candidate_count: planningStrategy === "existing" ? 1 : candidateCount,
+          },
         },
         controller.signal,
       );
@@ -100,7 +106,7 @@ export default function GoalComposer({
       }
       setLoading(false);
     }
-  }, [goal, workspaceId, selectedCapabilities, onDraftCreated]);
+  }, [goal, workspaceId, selectedCapabilities, planningStrategy, candidateCount, onDraftCreated]);
 
   return (
     <div className={`goal-composer flex flex-col gap-4 rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] p-4 ${className}`}>
@@ -153,6 +159,45 @@ export default function GoalComposer({
         <p className="mt-1 text-xs text-[var(--text-faint)]">
           证行编译器将基于已注册工具的输出契约进行自动参数绑定与类型检查。计划需人工审查后保存，不会自动直接执行。
         </p>
+      </div>
+
+      <div className="grid gap-3 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] p-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-xs font-medium text-[var(--text)]">
+          规划方式
+          <select
+            aria-label="规划策略"
+            value={planningStrategy}
+            onChange={(event) => setPlanningStrategy(event.target.value as PlanningStrategy)}
+            disabled={loading}
+            className="min-h-9 rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface)] px-2 text-[var(--text)]"
+          >
+            <option value="existing">原有规划</option>
+            <option value="ranked">能力匹配排序</option>
+            <option value="experience">已审核经验增强</option>
+          </select>
+          <span className="font-normal text-[var(--text-faint)]">
+            {planningStrategy === "experience"
+              ? "只参考已安装且已审核的技能版本；没有可用经验时仍会继续规划。"
+              : planningStrategy === "ranked"
+                ? "比较多个候选计划，按目标、能力和约束提供建议。"
+                : "保持原有的单方案规划流程。"}
+          </span>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-medium text-[var(--text)]">
+          候选方案数量
+          <select
+            aria-label="候选方案数量"
+            value={planningStrategy === "existing" ? 1 : candidateCount}
+            onChange={(event) => setCandidateCount(Number(event.target.value) as 2 | 3)}
+            disabled={loading || planningStrategy === "existing"}
+            className="min-h-9 rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface)] px-2 text-[var(--text)] disabled:opacity-60"
+          >
+            <option value={1}>1 个方案（原有规划）</option>
+            <option value={2}>2 个方案</option>
+            <option value={3}>3 个方案</option>
+          </select>
+          <span className="font-normal text-[var(--text-faint)]">增强规划支持 2 或 3 个方案，推荐项仍需你明确选择。</span>
+        </label>
       </div>
 
       {availableCapabilities.length > 0 && (

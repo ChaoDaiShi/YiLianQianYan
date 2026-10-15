@@ -17,8 +17,12 @@
 .studio-save[data-save-state="saving"] .studio-save-dot { background: var(--warning); }
 .studio-save[data-save-state="failed"] { color: var(--danger-fg); }
 .studio-save[data-save-state="failed"] .studio-save-dot { background: var(--danger); }
+.studio-view-switch { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 6px; min-height: 44px; padding: 4px 16px; border-bottom: 1px solid var(--studio-line); background: var(--surface-solid); }
+.studio-view-switch [aria-pressed="true"] { color: var(--accent); }
 
 .canvas-studio .studio-workspace { position: relative; display: block; flex: 1; min-height: 0; padding: 0; overflow: hidden; background: color-mix(in srgb, var(--surface-solid) 96%, var(--accent-purple)); }
+.studio-expert-view, .studio-goal-view { width: 100%; height: 100%; min-height: 0; }
+.studio-expert-view[hidden], .studio-goal-view[hidden] { display: none; }
 .canvas-studio .task-world-canvas { height: 100%; min-height: 0; --task-world-grid: color-mix(in srgb, var(--text-faint) 38%, transparent); }
 .canvas-studio .studio-flow-tools { margin: 18px; }
 .studio-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px; border: 1px solid var(--studio-line); border-radius: 12px; background: var(--surface-solid); box-shadow: 0 3px 12px #00000008; }

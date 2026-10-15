@@ -17,6 +17,7 @@ import {
 import { Badge, Button, Input } from "../../../components/ui";
 import Identifier from "../../../components/Identifier";
 import { formatIdentifier } from "../../../utils/identifiers";
+import PlanComparisonPanel from "./PlanComparisonPanel";
 import {
   formatDiagnosticMessage,
   formatDraftStatus,
@@ -47,9 +48,12 @@ export default function PlanReviewPanel({
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [pendingCandidateSelection, setPendingCandidateSelection] = useState<string | null>(null);
 
   const statusMeta = formatDraftStatus(draft.status);
-  const canConfirm = isDraftSubmittable(draft) && !confirming && !updating;
+  const selectionRequired = Boolean(draft.planning_review && !draft.planning_review.selected_candidate_id);
+  const selectionUnresolved = Boolean(draft.planning_review && pendingCandidateSelection);
+  const canConfirm = isDraftSubmittable(draft) && !selectionRequired && !selectionUnresolved && !confirming && !updating;
 
   const handleConfirm = useCallback(async () => {
     if (!canConfirm) return;
@@ -158,6 +162,18 @@ export default function PlanReviewPanel({
           </Button>
         )}
       </div>
+
+      {draft.planning_review && <PlanComparisonPanel draft={draft} onDraftChange={onUpdateDraft} onSelectionIntentChange={setPendingCandidateSelection} />}
+      {selectionRequired && (
+        <p className="rounded border border-[var(--warning-border)] bg-[var(--warning-soft)] p-3 text-xs text-[var(--warning-fg)]" role="status">
+          请先在方案比较中明确选择一个可用方案，再确认保存到画布。推荐方案不会自动选中。
+        </p>
+      )}
+      {selectionUnresolved && !selectionRequired && (
+        <p className="rounded border border-[var(--warning-border)] bg-[var(--warning-soft)] p-3 text-xs text-[var(--warning-fg)]" role="status">
+          正在保存你选择的方案。保存完成或重新选择后，才能确认当前草稿。
+        </p>
+      )}
 
       {/* Goal Contract summary */}
       <div className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] p-3 text-xs">

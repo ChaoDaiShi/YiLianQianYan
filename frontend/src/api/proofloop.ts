@@ -3,6 +3,17 @@ import type { InputBinding } from "../features/task-world/input-binding/model";
 import { API_BASE } from "./transport";
 import { controlSessionHeaders } from "./controlSession";
 import type { ApiResult } from "./taskWorld";
+import type { PlanningOptions, PlanningReview, SelectCandidateRequest } from "./proofloopEnhancements";
+export type {
+  PlanOption,
+  PlanScore,
+  PlanningOptions,
+  PlanningReview,
+  PlanningStrategy,
+  RouteScore,
+  SelectCandidateRequest,
+  SkillRecommendation,
+} from "./proofloopEnhancements";
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 export type JsonObject = { [k: string]: Json };
@@ -149,6 +160,7 @@ export interface ProofDraft {
     | "confirmed";
   confirmed_graph_revision: number | null;
   planning_usage?: { model_calls: number; total_tokens: number | null; started_at_ms: number; elapsed_ms?: number | null };
+  planning_review?: PlanningReview | null;
 }
 
 export interface ExecutionRef {
@@ -261,6 +273,7 @@ export interface CreateProofDraftRequest {
   workspace_id: string;
   user_goal: string;
   allowed_capability_ids?: string[];
+  planning?: PlanningOptions;
 }
 
 export interface UpdateProofDraftRequest {
@@ -456,6 +469,19 @@ export async function updateProofDraft(
   return requestProofLoop<ProofDraft>(
     "PUT",
     `/api/task-world/proofloop/drafts/${encodeURIComponent(draftId)}`,
+    request,
+    signal,
+  );
+}
+
+export async function selectProofCandidate(
+  draftId: string,
+  request: SelectCandidateRequest,
+  signal?: AbortSignal,
+): Promise<ApiResult<ProofDraft>> {
+  return requestProofLoop<ProofDraft>(
+    "POST",
+    `/api/task-world/proofloop/drafts/${encodeURIComponent(draftId)}/select-candidate`,
     request,
     signal,
   );
