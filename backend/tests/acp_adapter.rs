@@ -124,7 +124,7 @@ async fn dropping_acp_execution_stops_its_child_and_releases_the_session_slot() 
     tokio::fs::create_dir_all(&task_root).await.unwrap();
     let fixture = task_root.join("acp-hanging-fixture.ps1");
     let pid_file = task_root.join("child.pid");
-    tokio::fs::write(&fixture, hanging_powershell_fixture(&pid_file))
+    tokio::fs::write(&fixture, hanging_powershell_fixture())
         .await
         .unwrap();
 
@@ -210,32 +210,33 @@ async fn dropping_acp_execution_stops_its_child_and_releases_the_session_slot() 
     tokio::fs::remove_dir_all(task_root).await.unwrap();
 }
 
-fn hanging_powershell_fixture(pid_file: &std::path::Path) -> String {
-    let pid_file = pid_file.to_string_lossy().replace('\'', "''");
-    format!(
-        r#"
+fn hanging_powershell_fixture() -> &'static str {
+    r#"
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $sessionId = 'cancel-fixture-session'
-while (($line = [Console]::In.ReadLine()) -ne $null) {{
+while (($line = [Console]::In.ReadLine()) -ne $null) {
     $request = $line | ConvertFrom-Json
     $result = $null
-    switch ($request.method) {{
-        'initialize' {{ $result = @{{ protocolVersion = 1; agentCapabilities = @{{}}; agentInfo = @{{ name = 'ACP cancellation fixture'; version = '1' }} }} }}
-        'session/new' {{ $result = @{{ sessionId = $sessionId }} }}
-        'session/prompt' {{
-            [System.IO.File]::WriteAllText('{pid_file}', [string]$PID, [System.Text.UTF8Encoding]::new($false))
-            while ($true) {{ Start-Sleep -Milliseconds 100 }}
-        }}
-        'session/cancel' {{ $result = @{{}} }}
-        default {{ $result = @{{}} }}
-    }}
-    [Console]::Out.WriteLine((@{{ jsonrpc = '2.0'; id = $request.id; result = $result }} | ConvertTo-Json -Compress -Depth 20))
-}}
+    switch ($request.method) {
+        'initialize' { $result = @{ protocolVersion = 1; agentCapabilities = @{}; agentInfo = @{ name = 'ACP cancellation fixture'; version = '1' } } }
+        'session/new' { $result = @{ sessionId = $sessionId } }
+        'session/prompt' {
+            [System.IO.File]::WriteAllText('child.pid', [string]$PID, [System.Text.UTF8Encoding]::new($false))
+            while ($true) { Start-Sleep -Milliseconds 100 }
+        }
+        'session/cancel' { $result = @{} }
+        default { $result = @{} }
+    }
+    [Console]::Out.WriteLine((@{ jsonrpc = '2.0'; id = $request.id; result = $result } | ConvertTo-Json -Compress -Depth 20))
+}
 "#
-    )
 }
 
 fn powershell_fixture() -> &'static str {
     r#"
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $sessionId = 'fixture-session'
 while (($line = [Console]::In.ReadLine()) -ne $null) {
     $request = $line | ConvertFrom-Json
