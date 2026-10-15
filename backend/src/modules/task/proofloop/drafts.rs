@@ -109,6 +109,7 @@ impl DraftService {
         };
 
         let draft = ProofDraft {
+            planning_review: None,
             draft_id,
             revision: 1,
             graph_id: graph_id.to_string(),

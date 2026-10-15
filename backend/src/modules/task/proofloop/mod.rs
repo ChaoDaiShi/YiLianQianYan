@@ -8,6 +8,7 @@ pub mod capabilities;
 pub mod compiler;
 pub mod contracts;
 pub mod drafts;
+pub mod deliverable_format;
 pub mod enhancement_contracts;
 pub mod evidence;
 pub mod planner;

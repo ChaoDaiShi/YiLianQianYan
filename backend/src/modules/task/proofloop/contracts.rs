@@ -13,6 +13,8 @@ pub type FieldPath = Vec<String>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofError {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning_usage: Option<PlanningUsage>,
     pub code: String,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -24,11 +26,17 @@ pub struct ProofError {
 impl ProofError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
+            planning_usage: None,
             code: code.into(),
             message: message.into(),
             node_id: None,
             target_path: None,
         }
+    }
+
+    pub fn with_planning_usage(mut self, usage: PlanningUsage) -> Self {
+        self.planning_usage = Some(usage);
+        self
     }
 
     pub fn with_node(mut self, node_id: impl Into<String>) -> Self {
@@ -282,7 +290,7 @@ pub enum DraftStatus {
     Confirmed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanningUsage {
     pub model_calls: u32,
     pub total_tokens: Option<u64>,

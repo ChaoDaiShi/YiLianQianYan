@@ -36,10 +36,38 @@ pub fn build_capability_snapshot(
             }
         }
 
+        let Some(spec) = project_capability_descriptor(desc) else { continue; };
+
+        let spec_chars = serde_json::to_string(&spec)
+            .expect("CapabilitySpec serialization is infallible")
+            .chars()
+            .count();
+        let separator_chars = if capabilities.is_empty() { 0 } else { 1 };
+        let projected_chars = total_chars + separator_chars + spec_chars;
+        if projected_chars > MAX_SNAPSHOT_CONTEXT_CHARS {
+            break;
+        }
+        total_chars = projected_chars;
+        capabilities.push(spec);
+        if capabilities.len() >= MAX_SNAPSHOT_CAPABILITIES {
+            break;
+        }
+    }
+
+    CapabilitySnapshot {
+        snapshot_id: uuid::Uuid::new_v4().to_string(),
+        captured_at_ms: now_ms,
+        capabilities,
+    }
+}
+
+/// Shared descriptor projection used by both legacy and ranked snapshots.
+pub fn project_capability_descriptor(desc: &CapabilityDescriptor) -> Option<CapabilitySpec> {
+    let cap_id = desc.id.as_str().to_string();
         let kind = match desc.kind {
             CapabilityKind::McpTool => CapabilityKindSpec::McpTool,
             CapabilityKind::Workflow => CapabilityKindSpec::Workflow,
-            _ => continue, // ProofLoop currently only orchestrates mcp_tool and workflow
+            _ => return None,
         };
 
         let is_ready = desc.enabled
@@ -82,25 +110,5 @@ pub fn build_capability_snapshot(
             unavailable_reason,
         };
 
-        let spec_chars = serde_json::to_string(&spec)
-            .expect("CapabilitySpec serialization is infallible")
-            .chars()
-            .count();
-        let separator_chars = if capabilities.is_empty() { 0 } else { 1 };
-        let projected_chars = total_chars + separator_chars + spec_chars;
-        if projected_chars > MAX_SNAPSHOT_CONTEXT_CHARS {
-            break;
-        }
-        total_chars = projected_chars;
-        capabilities.push(spec);
-        if capabilities.len() >= MAX_SNAPSHOT_CAPABILITIES {
-            break;
-        }
-    }
-
-    CapabilitySnapshot {
-        snapshot_id: uuid::Uuid::new_v4().to_string(),
-        captured_at_ms: now_ms,
-        capabilities,
-    }
+    Some(spec)
 }

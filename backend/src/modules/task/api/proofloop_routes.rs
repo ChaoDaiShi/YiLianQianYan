@@ -3,6 +3,7 @@
 //! Defined in docs/superpowers/plans/2026-10-12-proofloop/00-contracts-and-ownership.md §5
 
 mod evaluations;
+mod checkpoints;
 mod repairs;
 pub use evaluations::*;
 pub use repairs::*;
@@ -43,7 +44,7 @@ fn proof_error_response(error: ProofError) -> Response {
     let status = match error.code.as_str() {
         "proofloop_stale_revision" | "draft_already_confirmed" => StatusCode::CONFLICT,
         "draft_not_found" => StatusCode::NOT_FOUND,
-        "aborted" => StatusCode::BAD_REQUEST,
+        "aborted" | "proofloop_invalid_planning_options" | "proofloop_candidate_not_found" | "proofloop_candidate_selection_required" => StatusCode::BAD_REQUEST,
         _ => StatusCode::UNPROCESSABLE_ENTITY,
     };
     (
@@ -54,6 +55,7 @@ fn proof_error_response(error: ProofError) -> Response {
             "message": error.message,
             "node_id": error.node_id,
             "target_path": error.target_path,
+            "planning_usage": error.planning_usage,
         })),
     )
         .into_response()
@@ -207,6 +209,9 @@ pub fn proofloop_router() -> axum::Router<Arc<AppServer>> {
     use axum::routing::{get, post};
     axum::Router::new()
         // ProofLoop engine routes (I1)
+        .route("/api/task-world/proofloop/graphs/:id/file-checkpoints", post(checkpoints::capture_files_handler))
+        .route("/api/task-world/proofloop/graphs/:id/file-checkpoints/:checkpoint/preview", get(checkpoints::preview_files_handler))
+        .route("/api/task-world/proofloop/graphs/:id/file-checkpoints/:checkpoint/restore", post(checkpoints::restore_files_handler))
         .route(
             "/api/task-world/proofloop/graphs/:id/goal",
             get(graph_goal_handler),

@@ -11,7 +11,7 @@ mod binding;
 mod ingest;
 mod limits;
 mod model;
-mod parsers;
+pub(crate) mod parsers;
 mod preview;
 
 pub use binding::bound_node_resources;
