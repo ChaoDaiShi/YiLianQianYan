@@ -40,6 +40,7 @@ export default function SettingsPage() {
   const [config, setConfig] = useState<ProofLoopSettingsConfig>(defaultConfig);
   const [saved, setSaved] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState(() => comparableConfig(defaultConfig));
+  const [lastSavedConfig, setLastSavedConfig] = useState<ProofLoopSettingsConfig>(defaultConfig);
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("model");
@@ -72,6 +73,7 @@ export default function SettingsPage() {
         setConfig(nextConfig);
         setProviderReadiness(c.provider_readiness ?? null);
         setSavedSnapshot(comparableConfig(nextConfig));
+        setLastSavedConfig(nextConfig);
       }
     });
     getIsolationStatus().then((s) => { if (s) setIsolation(s); });
@@ -110,6 +112,7 @@ export default function SettingsPage() {
       setConfig(nextConfig);
       setProviderReadiness(fresh?.provider_readiness ?? nextConfig.provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
+      setLastSavedConfig(nextConfig);
       setSecretRefreshToken((value) => value + 1);
       setReplaceVoiceKey({ stt: false, tts: false });
       setSaved(true);
@@ -119,6 +122,27 @@ export default function SettingsPage() {
       setSaveError("设置暂时无法保存");
     }
     setSaving(false);
+  };
+
+  const handleDiscard = () => {
+    setConfig({
+      ...lastSavedConfig,
+      model: {
+        ...lastSavedConfig.model,
+        api_key: "",
+        embedding_api_key: "",
+        clear_api_key: undefined,
+        clear_embedding_api_key: undefined,
+      },
+      voice: {
+        stt: { ...lastSavedConfig.voice.stt, api_key: "", clear_api_key: undefined },
+        tts: { ...lastSavedConfig.voice.tts, api_key: "", clear_api_key: undefined },
+      },
+    });
+    setReplaceVoiceKey({ stt: false, tts: false });
+    setSecretRefreshToken((value) => value + 1);
+    setSaveError("");
+    setProviderTestResults({});
   };
 
   const clearSecret = async (field: "api_key" | "embedding_api_key") => {
@@ -143,6 +167,7 @@ export default function SettingsPage() {
       setConfig(nextConfig);
       setProviderReadiness(fresh.provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
+      setLastSavedConfig(nextConfig);
       setSecretRefreshToken((value) => value + 1);
     }
     setSaved(true);
@@ -179,6 +204,7 @@ export default function SettingsPage() {
       setConfig(nextConfig);
       setProviderReadiness(fresh.provider_readiness ?? null);
       setSavedSnapshot(comparableConfig(nextConfig));
+      setLastSavedConfig(nextConfig);
       setSecretRefreshToken((value) => value + 1);
       setReplaceVoiceKey((value) => ({ ...value, [side]: false }));
     }
@@ -234,6 +260,13 @@ export default function SettingsPage() {
   };
 
   const dirty = comparableConfig(config) !== savedSnapshot;
+  const hasPendingSecretInput = Boolean(
+    (config.model.api_key && config.model.api_key.trim().length > 0) ||
+    (config.model.embedding_api_key && config.model.embedding_api_key.trim().length > 0) ||
+    (config.voice.stt.api_key && config.voice.stt.api_key.trim().length > 0) ||
+    (config.voice.tts.api_key && config.voice.tts.api_key.trim().length > 0)
+  );
+  const isUnsaved = dirty || hasPendingSecretInput;
 
   const handleBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -253,7 +286,7 @@ export default function SettingsPage() {
           <SettingsSectionFrame group={frame}>
             <div className="settings-card settings-card--wide settings-card--flush">
               <ModelSettings
-                dirty={dirty}
+                dirty={isUnsaved}
                 config={config}
                 updateField={updateField}
                 clearSecret={clearSecret}
@@ -272,7 +305,7 @@ export default function SettingsPage() {
           <SettingsSectionFrame group={frame}>
             <div className="settings-card settings-card--wide settings-card--flush">
               <VoiceSettings
-                dirty={dirty}
+                dirty={isUnsaved}
                 config={config}
                 updateVoiceField={updateVoiceField}
                 replaceVoiceKey={replaceVoiceKey}
@@ -324,20 +357,20 @@ export default function SettingsPage() {
   };
 
   const activeGroup = settingsGroup(activeSection);
-  const saveStatus = saveError ? "保存失败" : saved ? "已保存" : dirty ? "有未保存修改" : "所有更改已保存";
+  const saveStatus = saveError ? "保存失败" : saved ? "已保存" : isUnsaved ? "有未保存修改" : "所有更改已保存";
 
   return (
-    <div className="system-settings-page page-canvas flex h-full min-h-0 flex-col">
+    <div className="ui-opt-settings system-settings-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="设置"
         description={activeGroup.description}
         actions={
           <div className="settings-header-actions">
-            <Badge tone={saveError ? "danger" : saved ? "success" : dirty ? "warning" : "default"}>
+            <Badge tone={saveError ? "danger" : saved ? "success" : isUnsaved ? "warning" : "default"}>
               {saved ? <Check className="h-3.5 w-3.5" /> : null}
               {saveStatus}
             </Badge>
-            <Button onClick={handleSave} disabled={!dirty || saving || testingProvider !== null} aria-label="保存设置">
+            <Button onClick={handleSave} disabled={!isUnsaved || saving || testingProvider !== null} aria-label="保存设置">
               <Save className="h-4 w-4" />
               {saving ? "保存中…" : "保存设置"}
             </Button>
@@ -380,6 +413,36 @@ export default function SettingsPage() {
         <div className="system-settings-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-thin">
           <div className="settings-form">
             {renderSection()}
+            {isUnsaved ? (
+              <div className="ui-opt-settings-savebar" role="region" aria-label="未保存更改操作栏">
+                <div className="ui-opt-settings-savebar-content">
+                  <div className="ui-opt-settings-savebar-info">
+                    <span className="ui-opt-savebar-dot" aria-hidden="true" />
+                    <span className="ui-opt-settings-savebar-text">有未保存更改</span>
+                  </div>
+                  <div className="ui-opt-settings-savebar-actions">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleDiscard}
+                      disabled={saving || testingProvider !== null}
+                    >
+                      放弃修改
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleSave}
+                      disabled={saving || testingProvider !== null}
+                      aria-label="保存设置"
+                    >
+                      <Save className="h-4 w-4" />
+                      {saving ? "保存中…" : "保存设置"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {isUnsaved ? <div className="ui-opt-savebar-spacer" aria-hidden="true" /> : null}
           </div>
         </div>
       </div>

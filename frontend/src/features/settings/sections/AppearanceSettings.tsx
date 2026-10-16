@@ -21,7 +21,7 @@ export default function AppearanceSettings({ theme, onBackgroundUpload }: Appear
       <header className="settings-card-header"><div><h3>界面模式</h3><p>切换适合当前环境的明暗层级，状态颜色保持一致。</p></div></header>
       <div className="settings-card-body">
       <div
-        className="grid grid-cols-1 gap-3 sm:grid-cols-3"
+        className="grid grid-cols-1 gap-4 sm:grid-cols-3"
         role="radiogroup"
         aria-label="外观模式"
       >
@@ -35,28 +35,54 @@ export default function AppearanceSettings({ theme, onBackgroundUpload }: Appear
             type="button"
             role="radio"
             aria-checked={selected}
-            className={`settings-theme-option ${
+            className={`settings-theme-option ui-opt-appearance-card flex flex-col justify-between ${
               selected
                 ? "border-[var(--accent-border)] bg-[var(--accent-soft)]"
                 : "border-[var(--border-soft)] bg-[var(--surface-muted)] hover:bg-[var(--surface-hover)]"
             }`}
           >
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <Icon className="h-4 w-4 text-[var(--accent-primary)]" />
-              {selected ? <Check className="h-4 w-4 text-[var(--accent-primary)]" /> : null}
+            {/* Micro thumbnail preview */}
+            <div className="ui-opt-theme-thumbnail" data-preview-mode={item.id} aria-hidden="true">
+              <div className="ui-opt-thumb-header">
+                <span className="ui-opt-thumb-dot" />
+                <span className="ui-opt-thumb-dot" />
+                <span className="ui-opt-thumb-dot" />
+              </div>
+              <div className="ui-opt-thumb-body">
+                <div className="ui-opt-thumb-nav">
+                  <div className="ui-opt-thumb-nav-pill active" />
+                  <div className="ui-opt-thumb-nav-pill" />
+                </div>
+                <div className="ui-opt-thumb-main">
+                  <div className="ui-opt-thumb-card">
+                    <div className="ui-opt-thumb-bar w-3/4" />
+                    <div className="ui-opt-thumb-bar w-1/2" />
+                  </div>
+                  <div className="ui-opt-thumb-btn" />
+                </div>
+              </div>
             </div>
-            <span className="block text-sm font-medium text-[var(--text-primary)]">
-              {item.label}
-            </span>
-            <span className="mt-1 block text-[13px] leading-5 text-[var(--text-secondary)]">
-              {item.description}
-            </span>
+
+            <div className="mt-3">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Icon className="h-4 w-4 text-[var(--accent-primary)]" />
+                  <span className="text-sm font-medium text-[var(--text-primary)]">
+                    {item.label}
+                  </span>
+                </div>
+                {selected ? <Check className="h-4 w-4 text-[var(--accent-primary)]" /> : null}
+              </div>
+              <span className="block text-[13px] leading-5 text-[var(--text-secondary)]">
+                {item.description}
+              </span>
+            </div>
           </button>
           );
         })}
       </div>
       {theme.mode === "system" ? (
-        <p className="settings-help" role="status">
+        <p className="settings-help mt-3" role="status">
           当前跟随系统：{theme.resolvedScheme === "dark" ? "夜间" : "白天"}
         </p>
       ) : null}
@@ -77,10 +103,22 @@ export default function AppearanceSettings({ theme, onBackgroundUpload }: Appear
             </Button>
           )}
         </div>
-        <Button variant="secondary" size="sm" onClick={theme.resetTheme}>
-          <RotateCcw className="w-4 h-4" />
-          重置默认
-        </Button>
+        {theme.bgImageUrl ? (
+          <div className="mt-3 flex items-center gap-3">
+            <div
+              className="h-14 w-24 overflow-hidden rounded-lg border border-[var(--border-soft)] bg-cover bg-center shadow-sm"
+              style={{ backgroundImage: `url(${theme.bgImageUrl})` }}
+              aria-label="当前背景图预览"
+            />
+            <span className="text-xs text-[var(--text-secondary)]">已应用自定义背景图</span>
+          </div>
+        ) : null}
+        <div className="mt-3">
+          <Button variant="secondary" size="sm" onClick={theme.resetTheme}>
+            <RotateCcw className="w-4 h-4" />
+            重置默认
+          </Button>
+        </div>
       </div>
       </section>
     </>

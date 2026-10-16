@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import MonitoringToolbox from "../components/system/MonitoringToolbox";
 import { useVisibleRefresh } from "../components/system/useVisibleRefresh";
-import { Activity, Cpu, Database, Disc, HardDrive, Monitor, RefreshCw, Server } from "lucide-react";
+import { Activity, Cpu, Database, Disc, FileText, HardDrive, Monitor, RefreshCw, Server } from "lucide-react";
 import { getSystemInfo, healthCheck, type RuntimeHealth } from "../api/client";
 import {
   Button,
@@ -57,6 +58,7 @@ function SystemMetricSkeleton() {
 }
 
 export default function SystemPage() {
+  const navigate = useNavigate();
   const [data, setData] = useState<SystemData | null>(null);
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [error, setError] = useState("");
@@ -64,12 +66,12 @@ export default function SystemPage() {
   const [lastRefresh, setLastRefresh] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     const [systemResult, healthResult] = await Promise.all([getSystemInfo(), healthCheck()]);
     if (systemResult) {
       setData(systemResult as SystemData);
       setError("");
     } else {
-      setData(null);
       setError("状态暂时无法获取");
     }
     setHealth(healthResult);
@@ -80,15 +82,21 @@ export default function SystemPage() {
   useVisibleRefresh(refresh);
 
   return (
-    <div className="system-center-page page-canvas flex h-full min-h-0 flex-col">
+    <div className="ui-opt-system system-center-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="系统监控"
         description="查看应用、服务和资源的当前运行状态。"
         actions={(
-          <Button variant="secondary" size="sm" onClick={() => void refresh()} aria-label="刷新系统状态">
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            刷新
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => navigate("/logs")}>
+              <FileText className="h-3.5 w-3.5" />
+              查看日志
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => void refresh()} aria-label="刷新系统状态">
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              刷新
+            </Button>
+          </div>
         )}
       />
 
@@ -100,6 +108,13 @@ export default function SystemPage() {
             description={error}
             action={<Button variant="secondary" onClick={() => void refresh()}>重试</Button>}
           />
+        ) : null}
+
+        {error && data ? (
+          <div className="mb-4 flex items-center justify-between rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2 text-xs text-[var(--warning)]" role="status">
+            <span>状态暂时无法获取（保留上次刷新数据）</span>
+            <Button variant="ghost" size="sm" onClick={() => void refresh()}>重试</Button>
+          </div>
         ) : null}
 
         {loading && !data ? (

@@ -1,15 +1,46 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Clipboard, Pause, Play, RefreshCw, ScrollText, Trash2 } from "lucide-react";
+import { ArrowDown, Check, Clipboard, Copy, Pause, Play, RefreshCw, ScrollText, Trash2 } from "lucide-react";
 import { getLogs, type LogEntry } from "../api/client";
 import { Drawer, EmptyState, ErrorState, Input, PageHeader, Skeleton, Button, Badge } from "../components/ui";
 import { formatLogLevel, formatLogTimestamp } from "../components/system";
 
-function LogRow({ entry, onOpen }: { entry: LogEntry; onOpen: () => void }) {
+function highlightMatch(text: string, query: string) {
+  if (!query) return text;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
+  if (parts.length <= 1) return text;
+  return parts.map((part, index) =>
+    part.toLowerCase() === query.toLowerCase() ? (
+      <mark key={index} className="ui-opt-log-highlight">{part}</mark>
+    ) : (
+      part
+    )
+  );
+}
+
+function isSameEntry(a: LogEntry | null | undefined, b: LogEntry | null | undefined) {
+  if (!a || !b) return false;
+  return a.timestamp === b.timestamp && a.level === b.level && a.source === b.source && a.message === b.message;
+}
+
+function LogRow({
+  entry,
+  selected,
+  searchQuery,
+  onOpen,
+}: {
+  entry: LogEntry;
+  selected: boolean;
+  searchQuery: string;
+  onOpen: () => void;
+}) {
   const level = formatLogLevel(entry.level);
+  const isWarn = entry.level?.toLowerCase() === "warn";
+  const isError = entry.level?.toLowerCase() === "error";
 
   return (
     <div
-      className="system-log-row group"
+      className={`system-log-row group ${selected ? "ui-opt-log-selected" : ""} ${isError ? "ui-opt-log-error" : isWarn ? "ui-opt-log-warn" : ""}`}
       role="button"
       tabIndex={0}
       aria-label={`查看 ${level.label} 日志：${entry.message}`}
@@ -23,8 +54,8 @@ function LogRow({ entry, onOpen }: { entry: LogEntry; onOpen: () => void }) {
     >
       <time className="system-log-time" dateTime={new Date(entry.timestamp).toISOString()}>{formatLogTimestamp(entry.timestamp)}</time>
       <Badge tone={level.tone}>{level.label}</Badge>
-      <span className="system-log-source">{entry.source || "—"}</span>
-      <span className="system-log-message">{entry.message}</span>
+      <span className="system-log-source">{highlightMatch(entry.source || "—", searchQuery)}</span>
+      <span className="system-log-message">{highlightMatch(entry.message, searchQuery)}</span>
       <button
         type="button"
         className="system-log-copy"
@@ -52,6 +83,7 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
+  const [copiedDetail, setCopiedDetail] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const fetchLogs = useCallback(async () => {
@@ -69,8 +101,8 @@ export default function LogsPage() {
 
     setLoadError("");
     setEntries((previous) => {
-      const existingKeys = new Set(previous.map((entry) => `${entry.timestamp}-${entry.message}`));
-      const fresh = response.entries.filter((entry) => !existingKeys.has(`${entry.timestamp}-${entry.message}`));
+      const existingKeys = new Set(previous.map((entry) => `${entry.timestamp}-${entry.level}-${entry.source}-${entry.message}`));
+      const fresh = response.entries.filter((entry) => !existingKeys.has(`${entry.timestamp}-${entry.level}-${entry.source}-${entry.message}`));
       return [...previous, ...fresh].slice(-500);
     });
     setTotal(response.total);
@@ -117,6 +149,33 @@ export default function LogsPage() {
     setAutoScroll(element.scrollHeight - element.scrollTop - element.clientHeight < 40);
   };
 
+  const scrollToLatest = () => {
+    if (listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+      setAutoScroll(true);
+    }
+  };
+
+  const handleListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") {
+      return;
+    }
+    if (visibleEntries.length === 0) return;
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      const currentIndex = selectedEntry ? visibleEntries.findIndex((e) => isSameEntry(e, selectedEntry)) : -1;
+      const nextIndex = Math.min(visibleEntries.length - 1, currentIndex + 1);
+      setSelectedEntry(visibleEntries[nextIndex]);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      const currentIndex = selectedEntry ? visibleEntries.findIndex((e) => isSameEntry(e, selectedEntry)) : visibleEntries.length;
+      const prevIndex = Math.max(0, currentIndex - 1);
+      setSelectedEntry(visibleEntries[prevIndex]);
+    }
+  };
+
   const clearLogs = async () => {
     const response = await getLogs({ drain: true });
     if (!response) {
@@ -128,13 +187,20 @@ export default function LogsPage() {
     setLoadError("");
   };
 
+  const copyFullLog = (entry: LogEntry) => {
+    const fullText = `[${formatLogTimestamp(entry.timestamp)}] [${entry.level.toUpperCase()}] [${entry.source || "system"}] ${entry.message}`;
+    void navigator.clipboard?.writeText(fullText);
+    setCopiedDetail(true);
+    window.setTimeout(() => setCopiedDetail(false), 2000);
+  };
+
   return (
-    <div className="system-center-page page-canvas flex h-full min-h-0 flex-col">
+    <div className="ui-opt-logs system-center-page page-canvas flex h-full min-h-0 flex-col">
       <PageHeader
         title="日志"
-        description={`查看系统运行记录和异常信息 · ${total} 条`}
+        description={`查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（服务端总计约 ${total} 条）`}
         actions={(
-          <div className="system-logs-toolbar">
+          <div className="system-logs-toolbar flex flex-wrap items-center gap-2">
             <Input
               aria-label="搜索日志"
               placeholder="搜索消息或来源…"
@@ -170,7 +236,7 @@ export default function LogsPage() {
         )}
       />
 
-      <div className="system-logs-surface min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-4">
+      <div className="system-logs-surface relative min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-4">
         {loadError ? (
           <ErrorState
             title="日志暂时无法加载"
@@ -187,12 +253,38 @@ export default function LogsPage() {
           <EmptyState icon={<ScrollText className="h-8 w-8" />} title="暂时没有日志记录。" description="新的系统事件会显示在这里。" />
         ) : null}
         {visibleEntries.length > 0 ? (
-          <div ref={listRef} onScroll={handleScroll} className="system-log-list min-h-0 overflow-y-auto scrollbar-thin" aria-label="日志列表">
+          <div
+            ref={listRef}
+            onScroll={handleScroll}
+            onKeyDown={handleListKeyDown}
+            tabIndex={0}
+            className="system-log-list min-h-0 overflow-y-auto scrollbar-thin outline-none"
+            aria-label="日志列表"
+          >
             {visibleEntries.map((entry, index) => (
-              <LogRow key={`${entry.timestamp}-${entry.source}-${index}`} entry={entry} onOpen={() => setSelectedEntry(entry)} />
+              <LogRow
+                key={`${entry.timestamp}-${entry.source}-${index}`}
+                entry={entry}
+                selected={isSameEntry(entry, selectedEntry)}
+                searchQuery={searchQuery}
+                onOpen={() => setSelectedEntry(entry)}
+              />
             ))}
           </div>
         ) : null}
+
+        {!autoScroll && visibleEntries.length > 0 ? (
+          <button
+            type="button"
+            className="ui-opt-scroll-bottom-btn"
+            onClick={scrollToLatest}
+            aria-label="回到最新日志"
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+            回到最新
+          </button>
+        ) : null}
+
         <div className="system-logs-footer">
           <span>{visibleEntries.length} 条显示</span>
           <span>{paused ? "已暂停" : "自动刷新中"}</span>
@@ -209,8 +301,16 @@ export default function LogsPage() {
               <div><dt>来源</dt><dd>{selectedEntry.source || "—"}</dd></div>
             </dl>
             <section aria-labelledby="log-message-title">
-              <h3 id="log-message-title">消息</h3>
-              <pre>{selectedEntry.message}</pre>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 id="log-message-title">消息</h3>
+                <div className="flex gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => copyFullLog(selectedEntry)}>
+                    {copiedDetail ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedDetail ? "已复制" : "复制完整日志"}
+                  </Button>
+                </div>
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] p-3 text-xs font-mono">{selectedEntry.message}</pre>
             </section>
           </div>
         ) : null}
