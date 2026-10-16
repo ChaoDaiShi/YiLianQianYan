@@ -74,12 +74,31 @@
 .studio-node-status { color: var(--text-secondary); }
 .studio-node[data-execution-status="succeeded"] .studio-node-status { color: var(--success-fg); }
 .studio-node[data-execution-status="failed"] .studio-node-status { color: var(--danger-fg); }
-.canvas-studio .task-world-handle { width: 7px !important; height: 7px !important; background: var(--studio-accent) !important; border: 1px solid var(--surface-solid); }
+.canvas-studio .task-world-handle {
+  width: 12px !important;
+  height: 12px !important;
+  background: var(--studio-accent) !important;
+  border: 2px solid var(--surface-solid) !important;
+  border-radius: 50% !important;
+  transition: transform var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+.canvas-studio .task-world-handle::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  content: "";
+}
+.canvas-studio .task-world-handle:hover {
+  transform: scale(1.3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-accent) 30%, transparent), 0 0 10px var(--studio-accent);
+}
 @media (max-width: 1100px) {
   .studio-header { gap: 8px; padding-inline: 12px; flex-wrap: wrap; }
   .studio-identity { flex-basis: 180px; }
   .studio-save { margin-left: auto; }
-
 }
 @media (max-width: 720px) {
   .canvas-studio .studio-flow-tools { margin: 8px; max-width: calc(100% - 16px); }

@@ -291,8 +291,16 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
       setPickerOpen(false); setFocusedNodeId(id); changePanel("inspector");
     }
   };
-  const canRun = !!selectedNode && !saving && !graphLocked && getExecutorAvailability(selectedNode.executor_ref, selectedNode.capability).kind === "configured";
-  const runSelected = () => { if (canRun && selectedNode) void mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision)); };
+  const canRun = !!selectedNode && !saving && !graphLocked && selectedNode.status !== "running" && !isActiveExecution(selectedNode.latest_execution?.status);
+  const runSelected = async () => {
+    if (!selectedNode || !canRun) return;
+    const availability = getExecutorAvailability(selectedNode.executor_ref, selectedNode.capability);
+    if (availability.kind === "configured") {
+      await mutate(() => startTaskExecution(graphId, selectedNode.id, projection.revision));
+    } else {
+      await mutate(() => startTaskNode(graphId, selectedNode.id, projection.revision));
+    }
+  };
 
   const downloadGoalArtifact = async (artifact: ArtifactRecord) => {
     const blob = await downloadArtifact(artifact.id);
@@ -469,7 +477,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
               canAddNode={!saving && !graphLocked}
               onRunSelected={runSelected}
               canRunSelected={canRun}
-              runLabel={canRun ? `运行：${selectedNode?.title}` : "选择已配置执行器的节点；执行期间不可重复运行"}
+              runLabel={canRun ? `运行：${selectedNode?.title}` : (selectedNode ? "该节点正在执行中" : "请选择要运行的节点")}
             /> : <EmptyState title="画布视图不可用" description="真实图已加载，但视觉状态尚未就绪。" className="py-20" />}
           </div>
           <div className="studio-goal-view" hidden={viewMode !== "goal"}>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, CircleAlert, GitBranch, Play, Plus, Save, Trash2, X } from "lucide-react";
 import {
   createWorkflowGraph,
@@ -122,7 +122,10 @@ export default function WorkflowGraphEditor({
     setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, config } : node)));
   };
 
-  const addNode = (kind: WorkflowNodeKind) => {
+  const [customOffsets, setCustomOffsets] = useState<Record<string, { x: number; y: number }>>({});
+  const draggingNodeRef = useRef<{ id: string; startPointerX: number; startPointerY: number; initialX: number; initialY: number; moved: boolean } | null>(null);
+
+  const addNode = (kind: WorkflowNodeKind, dropLocation?: { x: number; y: number }) => {
     const base = `${kind}-${nodes.length + 1}`;
     let id = base;
     let suffix = 2;
@@ -131,6 +134,9 @@ export default function WorkflowGraphEditor({
       suffix += 1;
     }
     setNodes((current) => [...current, emptyNode(kind, id)]);
+    if (dropLocation) {
+      setCustomOffsets((prev) => ({ ...prev, [id]: dropLocation }));
+    }
     if (!entryNodeId) setEntryNodeId(id);
     setSelectedNodeId(id);
     setValidationMessage("");
@@ -139,6 +145,11 @@ export default function WorkflowGraphEditor({
   const removeNode = (nodeId: string) => {
     setNodes((current) => current.filter((node) => node.id !== nodeId));
     setEdges((current) => current.filter((edge) => edge.from !== nodeId && edge.to !== nodeId));
+    setCustomOffsets((prev) => {
+      const copy = { ...prev };
+      delete copy[nodeId];
+      return copy;
+    });
     if (entryNodeId === nodeId) setEntryNodeId("");
     if (selectedNodeId === nodeId) setSelectedNodeId(null);
   };
@@ -248,7 +259,26 @@ export default function WorkflowGraphEditor({
             <div className="mt-3 space-y-2">
               {WORKFLOW_NODE_KINDS.map((kind) => {
                 const presentation = getNodePresentation(kind);
-                return <button type="button" key={kind} data-testid={`workflow-node-library-${kind}`} className={`workflow-library-item ${TONE_CLASSES[presentation.tone]}`} onClick={() => addNode(kind)}><span className="workflow-library-icon">+</span><span className="min-w-0 text-left"><span className="block text-sm font-medium">{presentation.label}</span><span className="mt-0.5 block text-meta text-[var(--text-secondary)]">{KIND_HINTS[kind]}</span></span></button>;
+                return (
+                  <button
+                    type="button"
+                    key={kind}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData("application/workflow-node-kind", kind);
+                      event.dataTransfer.effectAllowed = "copy";
+                    }}
+                    data-testid={`workflow-node-library-${kind}`}
+                    className={`workflow-library-item cursor-grab active:cursor-grabbing ${TONE_CLASSES[presentation.tone]}`}
+                    onClick={() => addNode(kind)}
+                  >
+                    <span className="workflow-library-icon">+</span>
+                    <span className="min-w-0 text-left">
+                      <span className="block text-sm font-medium">{presentation.label}</span>
+                      <span className="mt-0.5 block text-meta text-[var(--text-secondary)]">{KIND_HINTS[kind]}</span>
+                    </span>
+                  </button>
+                );
               })}
             </div>
           </section>
@@ -272,14 +302,114 @@ export default function WorkflowGraphEditor({
                 <Badge tone="default">{nodes.length} 节点 · {edges.length} 连接</Badge>
               </div>
             </div>
-            <div className="workflow-canvas-viewport scrollbar-thin">
+            <div
+              className="workflow-canvas-viewport scrollbar-thin"
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "copy";
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const kind = event.dataTransfer.getData("application/workflow-node-kind") as WorkflowNodeKind;
+                if (!kind || !WORKFLOW_NODE_KINDS.includes(kind)) return;
+                const viewport = event.currentTarget;
+                const rect = viewport.getBoundingClientRect();
+                const rawX = event.clientX - rect.left + viewport.scrollLeft;
+                const rawY = event.clientY - rect.top + viewport.scrollTop;
+                const dropX = Math.max(20, Math.round(rawX / zoom));
+                const dropY = Math.max(20, Math.round(rawY / zoom));
+                addNode(kind, { x: dropX, y: dropY });
+              }}
+            >
               {layout.nodes.length === 0 ? <EmptyState icon={<GitBranch className="h-6 w-6" />} title="画布还是空的" description="从左侧节点库添加一个真实节点，开始搭建工作流。" className="min-h-[360px]" /> : <div className="workflow-canvas" style={{ width: layout.width * zoom, minHeight: layout.height * zoom, transform: `scale(${zoom})`, transformOrigin: "top left" }}>
-                <svg className="workflow-canvas-edges" width={layout.width} height={layout.height} aria-hidden="true"><defs><marker id="workflow-edge-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--text-faint)" /></marker></defs>{layout.edges.map((edge) => { const from = layout.nodes.find((node) => node.id === edge.from); const to = layout.nodes.find((node) => node.id === edge.to); if (!from || !to) return null; return <line key={`${edge.from}-${edge.to}`} x1={from.x + 190} y1={from.y + 56} x2={to.x} y2={to.y + 56} stroke="var(--border-soft)" strokeWidth="2" markerEnd="url(#workflow-edge-arrow)" />; })}</svg>
-                {layout.nodes.map(({ node, x, y }) => {
+                <svg className="workflow-canvas-edges" width={layout.width} height={layout.height} aria-hidden="true">
+                  <defs>
+                    <marker id="workflow-edge-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                      <path d="M0,0 L8,4 L0,8 z" fill="var(--text-faint)" />
+                    </marker>
+                  </defs>
+                  {edges.map((edge) => {
+                    const from = customOffsets[edge.from] || layout.nodes.find((item) => item.node.id === edge.from);
+                    const to = customOffsets[edge.to] || layout.nodes.find((item) => item.node.id === edge.to);
+                    if (!from || !to) return null;
+                    const x1 = from.x + 190;
+                    const y1 = from.y + 56;
+                    const x2 = to.x;
+                    const y2 = to.y + 56;
+                    const dx = Math.max(20, Math.abs(x2 - x1) * 0.5);
+                    const pathData = Math.abs(y1 - y2) < 4
+                      ? `M ${x1} ${y1} L ${x2} ${y2}`
+                      : `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+                    return (
+                      <path
+                        key={`${edge.from}-${edge.to}`}
+                        d={pathData}
+                        stroke="var(--border-soft)"
+                        strokeWidth="2"
+                        fill="none"
+                        markerEnd="url(#workflow-edge-arrow)"
+                      />
+                    );
+                  })}
+                </svg>
+                {layout.nodes.map(({ node, x: defaultX, y: defaultY }) => {
                   const presentation = getNodePresentation(node.kind);
                   const selected = selectedNodeId === node.id;
                   const isHighlighted = highlightedNodeId === node.id;
-                  return <button type="button" key={node.id} id={`wf-node-${node.id}`} className={`workflow-canvas-node ${TONE_CLASSES[presentation.tone]} ${selected ? "workflow-canvas-node-selected" : ""} ${isHighlighted ? "workflow-canvas-node-highlighted" : ""}`} style={{ left: x, top: y }} aria-label={`选择节点 ${node.id}`} aria-pressed={selected} onClick={() => setSelectedNodeId(node.id)} onKeyDown={(event) => handleNodeKeyDown(event, node.id)}><span className="flex items-center justify-between gap-2"><span className="truncate text-meta font-medium uppercase tracking-[0.08em]">{presentation.label}</span>{entryNodeId === node.id && <span className="workflow-entry-dot" title="入口节点" />}</span><span className="mt-3 block truncate text-sm font-semibold">{node.id || "未命名节点"}</span><span className="mt-1 block truncate text-meta text-[var(--text-secondary)]">{KIND_HINTS[node.kind]}</span></button>;
+                  const coords = customOffsets[node.id] || { x: defaultX, y: defaultY };
+                  return (
+                    <button
+                      type="button"
+                      key={node.id}
+                      id={`wf-node-${node.id}`}
+                      className={`workflow-canvas-node cursor-move ${TONE_CLASSES[presentation.tone]} ${selected ? "workflow-canvas-node-selected" : ""} ${isHighlighted ? "workflow-canvas-node-highlighted" : ""}`}
+                      style={{ left: coords.x, top: coords.y }}
+                      aria-label={`选择节点 ${node.id}`}
+                      aria-pressed={selected}
+                      onClick={() => {
+                        if (!draggingNodeRef.current?.moved) {
+                          setSelectedNodeId(node.id);
+                        }
+                      }}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return;
+                        draggingNodeRef.current = {
+                          id: node.id,
+                          startPointerX: event.clientX,
+                          startPointerY: event.clientY,
+                          initialX: coords.x,
+                          initialY: coords.y,
+                          moved: false,
+                        };
+                        const handlePointerMove = (e: PointerEvent) => {
+                          if (!draggingNodeRef.current) return;
+                          const dx = (e.clientX - draggingNodeRef.current.startPointerX) / zoom;
+                          const dy = (e.clientY - draggingNodeRef.current.startPointerY) / zoom;
+                          if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                            draggingNodeRef.current.moved = true;
+                          }
+                          const nextX = Math.max(10, Math.round(draggingNodeRef.current.initialX + dx));
+                          const nextY = Math.max(10, Math.round(draggingNodeRef.current.initialY + dy));
+                          setCustomOffsets((prev) => ({ ...prev, [node.id]: { x: nextX, y: nextY } }));
+                        };
+                        const handlePointerUp = () => {
+                          window.removeEventListener("pointermove", handlePointerMove);
+                          window.removeEventListener("pointerup", handlePointerUp);
+                          draggingNodeRef.current = null;
+                        };
+                        window.addEventListener("pointermove", handlePointerMove);
+                        window.addEventListener("pointerup", handlePointerUp);
+                      }}
+                      onKeyDown={(event) => handleNodeKeyDown(event, node.id)}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate text-meta font-medium uppercase tracking-[0.08em]">{presentation.label}</span>
+                        {entryNodeId === node.id && <span className="workflow-entry-dot" title="入口节点" />}
+                      </span>
+                      <span className="mt-3 block truncate text-sm font-semibold">{node.id || "未命名节点"}</span>
+                      <span className="mt-1 block truncate text-meta text-[var(--text-secondary)]">{KIND_HINTS[node.kind]}</span>
+                    </button>
+                  );
                 })}
               </div>}
             </div>

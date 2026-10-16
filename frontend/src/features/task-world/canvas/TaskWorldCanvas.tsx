@@ -79,7 +79,7 @@ function TaskWorldCanvasSurface({
     return projection.edges.map((edge) => ({
       id: `${edge.from}->${edge.to}`, source: edge.from, target: edge.to,
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-      type: "smoothstep", hidden: hidden.has(edge.from) || hidden.has(edge.to),
+      type: "bezier", hidden: hidden.has(edge.from) || hidden.has(edge.to),
     }));
   }, [projection.edges, view?.groups]);
   const [nodes, setNodes] = useState<TaskGraphCanvasNode[]>(() => reconcileCanvasNodes([], projection, view, { focusedNodeId }));
