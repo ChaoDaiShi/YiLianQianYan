@@ -385,15 +385,15 @@
 }
 
 .execution-history-details {
-  position: fixed;
+  position: relative;
   z-index: 70;
   display: flex;
   min-width: 0;
   max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 24px);
+  max-height: calc(100vh - 48px);
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--accent-border);
   border-radius: var(--radius-lg);
   background: var(--surface-solid);
   box-shadow: var(--shadow-float);
@@ -401,16 +401,7 @@
 }
 
 .execution-history-details::after {
-  position: absolute;
-  top: 1.5rem;
-  right: -0.35rem;
-  width: 0.65rem;
-  height: 0.65rem;
-  border-top: 1px solid var(--border-soft);
-  border-right: 1px solid var(--border-soft);
-  background: var(--surface-solid);
-  content: "";
-  transform: rotate(45deg);
+  display: none;
 }
 
 .execution-history-details-header {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { Badge } from "../../components/ui";
@@ -13,10 +13,6 @@ import type {
   ExecutionStatus,
   VerificationStatus,
 } from "./model";
-import {
-  getExecutionDetailPlacement,
-  type ExecutionDetailPlacement,
-} from "./executionHistoryPlacement";
 
 const EXECUTION_LABELS: Record<ExecutionStatus, string> = {
   queued: "等待执行",
@@ -86,7 +82,6 @@ function ExecutionHistoryItem({
 }: ExecutionHistoryItemProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [placement, setPlacement] = useState<ExecutionDetailPlacement | null>(null);
   const action = formatToolActionSummary(record.name, record.args);
   const elapsed =
     record.startedAt !== undefined && record.finishedAt !== undefined
@@ -103,21 +98,6 @@ function ExecutionHistoryItem({
   const detailsId = `execution-details-${record.toolCallId}`;
   const hasArgs = Object.keys(record.args).length > 0;
 
-  const updatePlacement = useCallback(() => {
-    const anchor = triggerRef.current?.getBoundingClientRect();
-    if (!anchor) return;
-    setPlacement(
-      getExecutionDetailPlacement(anchor, {
-        width: window.innerWidth,
-        height: window.innerHeight,
-      }),
-    );
-  }, []);
-
-  useLayoutEffect(() => {
-    if (expanded) updatePlacement();
-  }, [expanded, updatePlacement]);
-
   useEffect(() => {
     if (!expanded) return;
 
@@ -127,31 +107,12 @@ function ExecutionHistoryItem({
         triggerRef.current?.focus();
       }
     };
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (
-        !triggerRef.current?.contains(target) &&
-        !panelRef.current?.contains(target)
-      ) {
-        onClose();
-      }
-    };
-    const handleScroll = (event: Event) => {
-      if (panelRef.current?.contains(event.target as Node)) return;
-      updatePlacement();
-    };
 
     document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("resize", updatePlacement);
-    window.addEventListener("scroll", handleScroll, true);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("resize", updatePlacement);
-      window.removeEventListener("scroll", handleScroll, true);
     };
-  }, [expanded, onClose, updatePlacement]);
+  }, [expanded, onClose]);
 
   return (
     <li
@@ -210,45 +171,47 @@ function ExecutionHistoryItem({
         ) : null}
       </button>
 
-      {expanded && placement
+      {expanded
         ? createPortal(
           <div
-            ref={panelRef}
-            id={detailsId}
-            className="execution-history-details"
-            role="dialog"
-            aria-modal="false"
-            aria-label={`执行详情：${action}`}
-            style={{
-              left: placement.left,
-              width: placement.width,
-              ...(placement.verticalEdge === "top"
-                ? { top: placement.verticalOffset }
-                : { bottom: placement.verticalOffset }),
+            className="execution-history-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-sm animate-in fade-in duration-150"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                onClose();
+                triggerRef.current?.focus();
+              }
             }}
           >
-            <header className="execution-history-details-header">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
-                  执行详情
-                </p>
-                <h4 className="mt-1 truncate text-sm font-semibold text-[var(--text-primary)]">
-                  {action}
-                </h4>
-              </div>
-              <button
-                type="button"
-                className="rounded-md p-1.5 text-[var(--text-faint)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-                onClick={() => {
-                  onClose();
-                  triggerRef.current?.focus();
-                }}
-                aria-label="关闭执行详情"
-              >
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </header>
-            <div className="execution-history-details-scroll scrollbar-thin">
+            <div
+              ref={panelRef}
+              id={detailsId}
+              className="execution-history-details relative flex flex-col w-full max-w-2xl max-h-[85vh] rounded-2xl border border-[var(--accent-border)] bg-[var(--surface-solid)] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
+              role="dialog"
+              aria-modal="false"
+              aria-label={`执行详情：${action}`}
+            >
+              <header className="execution-history-details-header flex items-center justify-between border-b border-[var(--divider)] px-5 py-3.5 bg-[var(--surface-muted)]/50">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--accent-primary)]">
+                    执行详情
+                  </p>
+                  <h4 className="mt-1 truncate text-sm font-semibold text-[var(--text-primary)]">
+                    {action}
+                  </h4>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg p-1.5 text-[var(--text-faint)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                  onClick={() => {
+                    onClose();
+                    triggerRef.current?.focus();
+                  }}
+                  aria-label="关闭执行详情"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </header>
+              <div className="execution-history-details-scroll scrollbar-thin">
               <dl className="min-w-0 max-w-full space-y-3 text-xs">
             <div>
               <dt className="text-[var(--text-faint)]">Tool Name</dt>
@@ -312,10 +275,11 @@ function ExecutionHistoryItem({
             ) : null}
               </dl>
             </div>
-          </div>,
-          document.body,
-        )
-        : null}
+          </div>
+        </div>,
+        document.body,
+      )
+      : null}
     </li>
   );
 }
