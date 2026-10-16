@@ -1,0 +1,16 @@
+name: ACP stdio diagnosis
+
+on:
+  push:
+    branches: ["codex/fix-windows-acp-ci"]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe fixture process streams
+        run: python .github/scripts/probe-acp-stdio.py
