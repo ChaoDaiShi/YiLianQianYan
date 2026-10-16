@@ -1,5 +1,5 @@
 /* U2: use U1 colors/type and keep C2 geometry and interaction ownership intact. */
-.workspace-region > .page-canvas:not(.canvas-studio), .workbench-grid, .workbench-grid[data-chat-view="conversation"] {
+.workspace-region > .page-canvas:not(.canvas-studio):not(.setup-wizard-page), .workbench-grid {
   background: transparent;
 }
 .page-canvas:not(.canvas-studio) .page-header {

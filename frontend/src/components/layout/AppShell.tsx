@@ -40,7 +40,10 @@ export default function AppShell() {
         className="pointer-events-none absolute inset-0 transition-opacity duration-300"
         style={{
           backgroundColor: "var(--shell-overlay)",
-          opacity: theme.bgMode === "image" ? 0.35 : 0,
+          background: resolvedScheme === "light"
+            ? "linear-gradient(135deg, rgba(248, 246, 253, 0.65), rgba(239, 232, 250, 0.48))"
+            : "var(--shell-overlay)",
+          opacity: theme.bgMode === "image" ? 1 : 0,
           zIndex: theme.bgMode === "image" ? 1 : -10,
         }}
       />

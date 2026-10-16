@@ -77,7 +77,7 @@ export default function SetupWizardPage() {
   const defer = () => { window.sessionStorage.setItem("yilian.setup.deferred", "true"); navigate("/chat"); };
   const current = STEPS[step];
 
-  return <div className="setup-wizard-page page-canvas">
+  return <div className="setup-wizard-page">
     <aside className="setup-wizard-steps" aria-label="首次配置步骤"><div className="setup-brand"><img src="/favicon.png" alt="" /><div><strong>忆涟千言</strong><span>v1.1 首次配置</span></div></div>{STEPS.map((item, index) => { const Icon = item.icon; return <button key={item.id} type="button" aria-current={step === index ? "step" : undefined} onClick={() => setStep(index)}><span><Icon /></span><div><strong>{item.label}</strong><small>{index < step || (item.id === "model" && ready.model) ? "已完成" : index === step ? "当前步骤" : item.id === "identity" || item.id === "search" || item.id === "voice" ? "可跳过" : "待完成"}</small></div></button>; })}<p>高级 URL、采样、Embedding 与语音参数仍可在设置页调整。</p></aside>
     <main className="setup-wizard-main"><div className="setup-wizard-card"><header><span>STEP {step + 1} / {STEPS.length}</span><h1>{current.label}</h1></header>
       {current.id === "identity" ? <section><div className="setup-icon"><Cloud /></div><h2>{ready.identity ? "账号已连接" : "先以本地模式开始"}</h2><p>账号只用于同步与跨设备恢复。暂不登录不会限制本地 Agent、任务、画布、MCP、Voice 或资料。</p><div className="setup-choice-row"><button type="button" onClick={() => setStep(step + 1)}><strong>继续使用本地身份</strong><span>以后可在账号中心登录</span></button><button type="button" onClick={() => navigate("/account")}><strong>登录或注册</strong><span>进入账号中心安全连接</span></button></div></section> : null}
