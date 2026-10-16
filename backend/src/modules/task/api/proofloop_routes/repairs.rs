@@ -1,6 +1,16 @@
 //! Controlled repair HTTP handlers.
 use super::*;
 
+mod apply;
+
+#[derive(serde::Serialize)]
+struct RepairProposalHttpResponse {
+    #[serde(flatten)]
+    proposal: crate::modules::task::proofloop::contracts::RepairProposal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai_repair_usage: Option<crate::modules::task::proofloop::contracts::PlanningUsage>,
+}
+
 pub async fn propose_repair_handler(
     State(server): State<Arc<AppServer>>,
     Path(goal_id): Path<String>,
@@ -100,14 +110,15 @@ pub async fn propose_repair_handler(
 
     let registry = server.build_capability_registry().await;
     let descriptors = registry.list();
-    let cap_snapshot = build_capability_snapshot(&descriptors, None, now_ms);
+    let cap_snapshot =
+        build_capability_snapshot(&descriptors, Some(&contract.allowed_capability_ids), now_ms);
 
     let failed_criterion = report
         .results
         .iter()
         .find(|r| r.status == crate::modules::task::proofloop::contracts::CriterionStatus::Fail);
 
-    let mut proposal = match classify_failure(
+    let rule_proposal = classify_failure(
         &failed_exec,
         failed_criterion,
         &cap_snapshot,
@@ -115,19 +126,256 @@ pub async fn propose_repair_handler(
         rounds_used,
         report.graph_revision,
         report.report_id.clone(),
-    ) {
-        Ok(p) => p,
-        Err(err) => return proof_error_response(err),
-    };
+    );
+    if let Err(error) = &rule_proposal {
+        if matches!(
+            error.code.as_str(),
+            "repair_aborted" | "external_mutation_uncertain" | "proofloop_budget_exhausted"
+        ) {
+            return proof_error_response(error.clone());
+        }
+    }
+    let mut proposal;
+    let mut ai_repair_usage = None;
+    let ai_repair_enabled = server.config.read().ai_repair_enabled;
+    if ai_repair_enabled {
+        use crate::modules::task::proofloop::ai_repair::FailureContext;
+        let graph = match server.task_world.get_graph(&graph_id) {
+            Some(v) => v,
+            None => {
+                return proof_error_response(ProofError::new("graph_not_found", "任务图不存在"))
+            }
+        };
+        let draft = match server
+            .db
+            .confirmed_proof_draft_for_goal(&contract.goal_id, contract.version)
+        {
+            Ok(Some(v)) => v,
+            _ => {
+                return proof_error_response(ProofError::new(
+                    "draft_not_found",
+                    "已确认目标草稿不存在",
+                ))
+            }
+        };
+        let direct_sources: std::collections::HashSet<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.to == failed_exec.node_id)
+            .map(|edge| edge.from.to_string())
+            .collect();
+        let mut observed = Vec::new();
+        for evidence in &source_snapshot.evidence {
+            if !direct_sources.contains(&evidence.origin.node_id) {
+                continue;
+            }
+            let id = match crate::modules::task::NodeExecutionId::new(&evidence.origin.execution_id)
+            {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let execution = match server.db.load_node_execution(&id) {
+                Ok(Some(v)) if v.status == crate::modules::task::NodeExecutionStatus::Succeeded => {
+                    v
+                }
+                _ => continue,
+            };
+            if let Some(output) = execution.output {
+                collect_observed_values(&output, &mut Vec::new(), evidence, &mut observed);
+            }
+        }
+        // Constants frozen in the current graph are allowed observed inputs; they are not invented replacement values.
+        if let Some(node) = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == failed_exec.node_id)
+        {
+            if let Some(values) = node.input.get("capability_input") {
+                collect_frozen_inputs(
+                    values,
+                    &mut Vec::new(),
+                    &draft.draft_id,
+                    report.graph_revision,
+                    failed_exec.id.as_str(),
+                    node.id.as_str(),
+                    &mut observed,
+                );
+            }
+        }
+        let context = FailureContext {
+            contract: contract.clone(),
+            snapshot: cap_snapshot.clone(),
+            graph_revision: report.graph_revision,
+            report_id: report.report_id.clone(),
+            failed_execution_ids: vec![failed_exec.id.to_string()],
+            failed_node_id: failed_exec.node_id.to_string(),
+            failure_code: failed_exec.failure_code.clone().unwrap_or_default(),
+            error_message: failed_exec.error.clone().unwrap_or_default(),
+            observed_values: observed,
+            current_round: rounds_used,
+        };
+        if let Err(error) =
+            crate::modules::task::proofloop::ai_repair::validate_failure_context(&context)
+        {
+            return proof_error_response(error);
+        }
+        let activity = match server.proofloop_budget.begin_model_activity(&draft) {
+            Ok(v) => v,
+            Err(e) => return proof_error_response(e),
+        };
+        let activity_deadline = tokio::time::Instant::now() + activity.remaining();
+        let combined = match server
+            .db
+            .combined_goal_model_usage(&contract, &draft.planning_usage)
+        {
+            Ok(v) => v,
+            Err(e) => return proof_error_response(e),
+        };
+        let Some(used_tokens) = combined.total_tokens else {
+            return proof_error_response(ProofError::new(
+                "proofloop_usage_unavailable",
+                "目标的历史模型用量未知，不能调用修复模型",
+            ));
+        };
+        let remaining_tokens = contract.budget.max_total_tokens.saturating_sub(used_tokens);
+        if remaining_tokens == 0 {
+            return proof_error_response(ProofError::new(
+                "proofloop_budget_exhausted",
+                "目标的剩余 token 预算已耗尽",
+            ));
+        }
+        let mut config = server.effective_model_config();
+        config.invoke_timeout_ms = config
+            .invoke_timeout_ms
+            .min(contract.budget.max_wall_time_ms);
+        let usage_recorder = server
+            .db
+            .get_active_llm_model()
+            .ok()
+            .flatten()
+            .filter(|model| model.model == config.name && model.provider == config.provider)
+            .map(|model| {
+                std::sync::Arc::new(crate::integrations::llm::usage::DatabaseUsageRecorder::new(
+                    server.db.clone_connection(),
+                    model.id,
+                    model.provider,
+                    model.model,
+                    "proofloop-ai-repair",
+                ))
+                    as std::sync::Arc<dyn crate::integrations::llm::client::UsageRecorder>
+            });
+        let client = LlmClient::new_with_usage_recorder(
+            &config,
+            Arc::clone(&server.secret_resolver),
+            usage_recorder,
+        );
+        let messages =
+            match crate::modules::task::proofloop::ai_repair::build_ai_repair_messages(&context) {
+                Ok(value) => value,
+                Err(error) => return proof_error_response(error),
+            };
+        let max_output_tokens =
+            match client.output_tokens_for_total_budget(&messages, &[], remaining_tokens) {
+                Some(value) => value,
+                None => {
+                    return proof_error_response(ProofError::new(
+                        "proofloop_budget_exhausted",
+                        "修复输入已占满目标剩余 token 预算，未调用模型",
+                    ))
+                }
+            };
+        if activity_deadline <= tokio::time::Instant::now() {
+            return proof_error_response(ProofError::new(
+                "proofloop_budget_exhausted",
+                "修复活动时间预算已耗尽，未调用模型",
+            ));
+        }
+        let invocation = match server.db.reserve_goal_model_call(
+            &contract,
+            &draft.planning_usage,
+            "ai-repair",
+            now_ms,
+        ) {
+            Ok(v) => v,
+            Err(e) => return proof_error_response(e),
+        };
+        let result =
+            crate::modules::task::proofloop::ai_repair::propose_ai_repair_with_usage_and_limits(
+                &context,
+                &client,
+                &CancellationToken::new(),
+                max_output_tokens,
+                remaining_tokens,
+                activity_deadline,
+            )
+            .await;
+        let measured_usage = match &result {
+            Ok((_, usage)) => Some(usage.clone()),
+            Err(error) => error.planning_usage.clone(),
+        };
+        if let Err(error) = server
+            .db
+            .finish_goal_model_call(&invocation, measured_usage.as_ref())
+        {
+            let error = match measured_usage.clone() {
+                Some(usage) => error.with_planning_usage(usage),
+                None => error,
+            };
+            return proof_error_response(error);
+        }
+        if let Err(error) = activity.finish() {
+            let error = match measured_usage.clone() {
+                Some(usage) => error.with_planning_usage(usage),
+                None => error,
+            };
+            return proof_error_response(error);
+        }
+        proposal = match result {
+            Ok((proposal, usage)) => {
+                ai_repair_usage = Some(usage);
+                proposal
+            }
+            Err(error) => return proof_error_response(error),
+        };
+        if let Err(error) = validate_repair(
+            &proposal,
+            &graph,
+            report.graph_revision,
+            &cap_snapshot,
+            &contract,
+        ) {
+            let error = match ai_repair_usage.clone() {
+                Some(usage) => error.with_planning_usage(usage),
+                None => error,
+            };
+            return proof_error_response(error);
+        }
+    } else {
+        proposal = match rule_proposal {
+            Ok(value) => value,
+            Err(error) => return proof_error_response(error),
+        };
+    }
 
     if let Err(err) = server
         .proofloop_budget
         .save_repair(&mut proposal, &contract, now_ms)
     {
+        let err = match ai_repair_usage.clone() {
+            Some(usage) => err.with_planning_usage(usage),
+            None => err,
+        };
         return proof_error_response(err);
     }
 
-    (StatusCode::OK, Json(proposal)).into_response()
+    (
+        StatusCode::OK,
+        Json(RepairProposalHttpResponse {
+            proposal,
+            ai_repair_usage,
+        }),
+    )
+        .into_response()
 }
 
 pub async fn apply_repair_handler(
@@ -135,262 +383,7 @@ pub async fn apply_repair_handler(
     Path(repair_id): Path<String>,
     Json(request): Json<ApplyRepairRequest>,
 ) -> Response {
-    let proposal = match server.db.get_repair_proposal(&repair_id) {
-        Ok(Some(p)) => p,
-        Ok(None) => {
-            return proof_error_response(ProofError::new("repair_not_found", "未找到修复提案"))
-        }
-        Err(err) => return proof_error_response(ProofError::new("db_error", err.to_string())),
-    };
-
-    let contract = match server
-        .db
-        .load_goal_version(&proposal.goal_id, proposal.goal_version)
-    {
-        Ok(Some(c)) => c,
-        _ => return proof_error_response(ProofError::new("goal_not_found", "未找到目标契约")),
-    };
-
-    let (source_report, source_snapshot) =
-        match server.db.get_acceptance_report(&proposal.source_report_id) {
-            Ok(Some(report)) => report,
-            _ => {
-                return proof_error_response(ProofError::new(
-                    "report_not_found",
-                    "找不到修复依据的验收报告",
-                ))
-            }
-        };
-    let draft = match server
-        .db
-        .confirmed_proof_draft_for_goal(&proposal.goal_id, proposal.goal_version)
-    {
-        Ok(Some(draft)) if draft.graph_id == source_report.graph_id => draft,
-        _ => {
-            return proof_error_response(ProofError::new(
-                "goal_graph_not_found",
-                "找不到对应的目标与任务图关联",
-            ))
-        }
-    };
-    if let Ok(Some(revision)) = server.db.repair_applied_revision(&repair_id) {
-        return (
-            StatusCode::OK,
-            Json(ApplyRepairResponse {
-                graph_revision: revision,
-                affected_node_ids: proposal.affected_node_ids,
-            }),
-        )
-            .into_response();
-    }
-    if let Err(error) = server.proofloop_budget.check(&contract, now()) {
-        return proof_error_response(error);
-    }
-    let graph_id = match crate::modules::task::TaskGraphId::new(&draft.graph_id) {
-        Ok(id) => id,
-        Err(err) => {
-            return proof_error_response(ProofError::new("invalid_graph_id", err.to_string()))
-        }
-    };
-
-    if proposal.failure_execution_ids.is_empty() {
-        return proof_error_response(ProofError::new(
-            "invalid_failure_evidence",
-            "修复提案缺少来源执行记录",
-        ));
-    }
-    for failure_execution_id in &proposal.failure_execution_ids {
-        let execution_id =
-            match crate::modules::task::execution::NodeExecutionId::new(failure_execution_id) {
-                Ok(id) => id,
-                Err(error) => {
-                    return proof_error_response(ProofError::new(
-                        "invalid_execution_id",
-                        error.to_string(),
-                    ))
-                }
-            };
-        let failed_execution = match server.db.load_node_execution(&execution_id) {
-            Ok(Some(execution)) => execution,
-            _ => {
-                return proof_error_response(ProofError::new(
-                    "execution_not_found",
-                    "未找到修复提案的来源执行记录",
-                ))
-            }
-        };
-        if failed_execution.graph_id != graph_id
-            || !source_snapshot
-                .executions
-                .iter()
-                .any(|execution| execution.execution_id == failed_execution.id.as_str())
-        {
-            return proof_error_response(ProofError::new(
-                "invalid_failure_evidence",
-                "修复提案的来源执行不属于此报告选定的当前执行",
-            ));
-        }
-        if crate::modules::task::execution::external_result_is_uncertain(
-            failed_execution.failure_code(),
-        ) {
-            return proof_error_response(
-                ProofError::new(
-                    "external_mutation_uncertain",
-                    "上次调用的外部结果尚未核实，当前不能再次执行该节点",
-                )
-                .with_node(failed_execution.node_id.as_str()),
-            );
-        }
-        if failed_execution.status != crate::modules::task::NodeExecutionStatus::Failed {
-            return proof_error_response(ProofError::new(
-                "invalid_failure_evidence",
-                "修复提案的来源执行已不再处于失败状态",
-            ));
-        }
-        let latest = match server
-            .db
-            .load_node_executions(&failed_execution.graph_id, &failed_execution.node_id)
-        {
-            Ok(executions) => executions
-                .into_iter()
-                .max_by_key(|execution| execution.attempt),
-            Err(error) => {
-                return proof_error_response(ProofError::new("db_error", error.to_string()))
-            }
-        };
-        if latest.map_or(true, |latest| latest.id != failed_execution.id) {
-            return proof_error_response(ProofError::new(
-                "proofloop_evidence_stale",
-                "修复提案的来源执行已被新的 attempt 替代",
-            ));
-        }
-    }
-
-    let graph = match server.task_world.get_graph(&graph_id) {
-        Some(g) => g,
-        None => return proof_error_response(ProofError::new("graph_not_found", "未找到任务图")),
-    };
-
-    let registry = server.build_capability_registry().await;
-    let descriptors = registry.list();
-    let snapshot = build_capability_snapshot(&descriptors, None, now());
-
-    let patch = match validate_repair(
-        &proposal,
-        &graph,
-        request.expected_graph_revision,
-        &snapshot,
-        &contract,
-    ) {
-        Ok(p) => p,
-        Err(err) => return proof_error_response(err),
-    };
-
-    let candidate = match candidate_from_graph(&patch.updated_graph, draft.candidate.as_ref()) {
-        Ok(candidate) => candidate,
-        Err(error) => return proof_error_response(error),
-    };
-    let compilation = crate::modules::task::proofloop::compile_candidate(
-        &contract,
-        &candidate,
-        &snapshot,
-        &graph_id,
-        &draft.binding_confirmations,
-    );
-    if compilation.status != crate::modules::task::proofloop::CompileStatus::Ready {
-        return proof_error_response(ProofError::new(
-            "repair_compile_failed",
-            format!("修复候选未通过编译：{:?}", compilation.diagnostics),
-        ));
-    }
-    let root = match crate::modules::task::TaskNodeId::new(&patch.rerun_root_node_id) {
-        Ok(id) => id,
-        Err(error) => {
-            return proof_error_response(ProofError::new("invalid_node_id", error.to_string()))
-        }
-    };
-    let resolver =
-        match crate::modules::task::application::execution_service::executor_resolver_for_node(
-            &server,
-            patch.updated_graph.node(&root).unwrap(),
-        )
-        .await
-        {
-            Ok(resolver) => resolver,
-            Err(error) => {
-                return proof_error_response(ProofError::new(
-                    "provider_unavailable",
-                    error.to_string(),
-                ))
-            }
-        };
-    let affected_node_ids = patch.affected_node_ids.clone();
-    if let Err(error) =
-        crate::modules::task::application::execution_service::ensure_workflow_budget_supported(
-            &server,
-            patch.updated_graph.node(&root).unwrap(),
-        )
-    {
-        return proof_error_response(ProofError::new(
-            "proofloop_usage_unavailable",
-            error.to_string(),
-        ));
-    }
-    let (updated_graph, execution) = match server.task_world.apply_proofloop_repair(
-        patch,
-        request.expected_graph_revision,
-        resolver,
-        now(),
-    ) {
-        Ok(result) => result,
-        Err(crate::modules::task::TaskWorldRuntimeError::Harness(
-            crate::modules::task::TaskHarnessError::ExternalResultUnknown(execution_id),
-        )) => {
-            return proof_error_response(ProofError::new(
-                "external_mutation_uncertain",
-                format!(
-                    "上次调用的外部结果尚未核实，当前不能再次执行该节点。执行记录：{execution_id}"
-                ),
-            ))
-        }
-        Err(crate::modules::task::TaskWorldRuntimeError::Harness(
-            crate::modules::task::TaskHarnessError::RepairSourceStale(execution_id),
-        )) => {
-            return proof_error_response(ProofError::new(
-                "proofloop_evidence_stale",
-                format!("修复提案的来源执行已不再是最新失败 attempt。执行记录：{execution_id}"),
-            ))
-        }
-        Err(error) => {
-            return proof_error_response(ProofError::new(
-                "repair_application_failed",
-                error.to_string(),
-            ))
-        }
-    };
-    let dispatch_server = server.clone();
-    let dispatch_graph = graph_id.clone();
-    tokio::spawn(async move {
-        if let Err(error) =
-            crate::modules::task::application::execution_service::dispatch_execution(
-                dispatch_server,
-                dispatch_graph,
-                execution.id,
-            )
-            .await
-        {
-            tracing::error!(error = %error, "proofloop repair dispatch failed");
-        }
-    });
-
-    (
-        StatusCode::OK,
-        Json(ApplyRepairResponse {
-            graph_revision: updated_graph.revision.value(),
-            affected_node_ids,
-        }),
-    )
-        .into_response()
+    apply::apply_repair_handler_inner(State(server), Path(repair_id), Json(request)).await
 }
 
 fn candidate_from_graph(
@@ -450,3 +443,74 @@ fn candidate_from_graph(
             .unwrap_or_default(),
     })
 }
+
+fn collect_observed_values(
+    value: &serde_json::Value,
+    path: &mut Vec<String>,
+    evidence: &crate::modules::task::proofloop::EvidenceRef,
+    out: &mut Vec<crate::modules::task::proofloop::ai_repair::ObservedValue>,
+) {
+    out.push(crate::modules::task::proofloop::ai_repair::ObservedValue {
+        evidence_id: evidence.evidence_id.clone(),
+        execution_id: evidence.origin.execution_id.clone(),
+        node_id: Some(evidence.origin.node_id.clone()),
+        path: path.clone(),
+        value: value.clone(),
+    });
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                path.push(key.clone());
+                collect_observed_values(child, path, evidence, out);
+                path.pop();
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                path.push(index.to_string());
+                collect_observed_values(child, path, evidence, out);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_frozen_inputs(
+    value: &serde_json::Value,
+    path: &mut Vec<String>,
+    draft_id: &str,
+    revision: u64,
+    execution_id: &str,
+    node_id: &str,
+    out: &mut Vec<crate::modules::task::proofloop::ai_repair::ObservedValue>,
+) {
+    out.push(crate::modules::task::proofloop::ai_repair::ObservedValue {
+        evidence_id: format!("confirmed-draft:{draft_id}:graph:{revision}"),
+        execution_id: execution_id.into(),
+        node_id: Some(node_id.into()),
+        path: path.clone(),
+        value: value.clone(),
+    });
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                path.push(key.clone());
+                collect_frozen_inputs(child, path, draft_id, revision, execution_id, node_id, out);
+                path.pop();
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                path.push(index.to_string());
+                collect_frozen_inputs(child, path, draft_id, revision, execution_id, node_id, out);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+#[path = "repairs/tests.rs"]
+mod tests;

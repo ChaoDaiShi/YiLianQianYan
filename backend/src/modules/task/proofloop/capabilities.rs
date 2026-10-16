@@ -22,11 +22,25 @@ pub fn build_capability_snapshot(
     allowed_ids: Option<&[String]>,
     now_ms: i64,
 ) -> CapabilitySnapshot {
+    build_capability_snapshot_with_char_limit(
+        descriptors,
+        allowed_ids,
+        now_ms,
+        MAX_SNAPSHOT_CONTEXT_CHARS,
+    )
+}
+
+pub fn build_capability_snapshot_with_char_limit(
+    descriptors: &[CapabilityDescriptor],
+    allowed_ids: Option<&[String]>,
+    now_ms: i64,
+    max_chars: usize,
+) -> CapabilitySnapshot {
     let mut sorted_descriptors = descriptors.to_vec();
     sorted_descriptors.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
 
     let mut capabilities = Vec::new();
-    let mut total_chars = 0;
+    let mut total_chars = 2; // The serialized capability array's opening and closing brackets.
 
     for desc in &sorted_descriptors {
         let cap_id = desc.id.as_str().to_string();
@@ -36,70 +50,20 @@ pub fn build_capability_snapshot(
             }
         }
 
-        let kind = match desc.kind {
-            CapabilityKind::McpTool => CapabilityKindSpec::McpTool,
-            CapabilityKind::Workflow => CapabilityKindSpec::Workflow,
-            _ => continue, // ProofLoop currently only orchestrates mcp_tool and workflow
+        let Some(spec) = project_capability_descriptor(desc) else {
+            continue;
         };
 
-        let is_ready = desc.enabled
-            && desc.status == CapabilityRuntimeStatus::Ready
-            && desc.metadata.runtime_ready;
-
-        let readiness = if is_ready {
-            "ready".to_string()
-        } else {
-            "unavailable".to_string()
-        };
-
-        let unavailable_reason = if is_ready {
-            None
-        } else {
-            Some(format!(
-                "status: {:?}, enabled: {}, runtime_ready: {}",
-                desc.status, desc.enabled, desc.metadata.runtime_ready
-            ))
-        };
-
-        let output_provenance = if desc.output_schema.is_some() {
-            "declared".to_string()
-        } else {
-            "unknown".to_string()
-        };
-
-        let spec_chars = desc.name.len()
-            + desc.description.len()
-            + desc
-                .input_schema
-                .as_ref()
-                .map(|s| s.to_string().len())
-                .unwrap_or(0)
-            + desc
-                .output_schema
-                .as_ref()
-                .map(|s| s.to_string().len())
-                .unwrap_or(0);
-
-        if total_chars + spec_chars > MAX_SNAPSHOT_CONTEXT_CHARS && !capabilities.is_empty() {
+        let spec_chars = serde_json::to_string(&spec)
+            .expect("CapabilitySpec serialization is infallible")
+            .chars()
+            .count();
+        let separator_chars = if capabilities.is_empty() { 0 } else { 1 };
+        let projected_chars = total_chars + separator_chars + spec_chars;
+        if projected_chars > max_chars {
             break;
         }
-        total_chars += spec_chars;
-
-        let spec = CapabilitySpec {
-            capability_id: cap_id.clone(),
-            executor_ref: format!("capability://{cap_id}"),
-            kind,
-            name: desc.name.clone(),
-            description: desc.description.clone(),
-            input_schema: desc.input_schema.clone(),
-            output_schema: desc.output_schema.clone(),
-            output_path_prefix: vec!["structured".to_string()],
-            output_provenance,
-            risk: format!("{:?}", desc.risk).to_lowercase(),
-            readiness,
-            unavailable_reason,
-        };
-
+        total_chars = projected_chars;
         capabilities.push(spec);
         if capabilities.len() >= MAX_SNAPSHOT_CAPABILITIES {
             break;
@@ -111,4 +75,56 @@ pub fn build_capability_snapshot(
         captured_at_ms: now_ms,
         capabilities,
     }
+}
+
+/// Shared descriptor projection used by both legacy and ranked snapshots.
+pub fn project_capability_descriptor(desc: &CapabilityDescriptor) -> Option<CapabilitySpec> {
+    let cap_id = desc.id.as_str().to_string();
+    let kind = match desc.kind {
+        CapabilityKind::McpTool => CapabilityKindSpec::McpTool,
+        CapabilityKind::Workflow => CapabilityKindSpec::Workflow,
+        _ => return None,
+    };
+
+    let is_ready = desc.enabled
+        && desc.status == CapabilityRuntimeStatus::Ready
+        && desc.metadata.runtime_ready;
+
+    let readiness = if is_ready {
+        "ready".to_string()
+    } else {
+        "unavailable".to_string()
+    };
+
+    let unavailable_reason = if is_ready {
+        None
+    } else {
+        Some(format!(
+            "status: {:?}, enabled: {}, runtime_ready: {}",
+            desc.status, desc.enabled, desc.metadata.runtime_ready
+        ))
+    };
+
+    let output_provenance = if desc.output_schema.is_some() {
+        "declared".to_string()
+    } else {
+        "unknown".to_string()
+    };
+
+    let spec = CapabilitySpec {
+        capability_id: cap_id.clone(),
+        executor_ref: format!("capability://{cap_id}"),
+        kind,
+        name: desc.name.clone(),
+        description: desc.description.clone(),
+        input_schema: desc.input_schema.clone(),
+        output_schema: desc.output_schema.clone(),
+        output_path_prefix: vec!["structured".to_string()],
+        output_provenance,
+        risk: format!("{:?}", desc.risk).to_lowercase(),
+        readiness,
+        unavailable_reason,
+    };
+
+    Some(spec)
 }

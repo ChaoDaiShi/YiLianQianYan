@@ -52,6 +52,7 @@ fn draft(
     p: &CandidatePlan,
 ) -> ProofDraft {
     ProofDraft {
+        planning_review: None,
         draft_id: id.into(),
         revision: 1,
         graph_id: graph.to_string(),
@@ -63,8 +64,11 @@ fn draft(
         status: DraftStatus::ReadyForConfirmation,
         confirmed_graph_revision: None,
         planning_usage: PlanningUsage {
+            // This fixture constructs its plan directly without a model call.
+            model_calls: 0,
+            total_tokens: Some(0),
+            started_at_ms: now(),
             elapsed_ms: Some(0),
-            ..PlanningUsage::default()
         },
     }
 }
@@ -426,7 +430,7 @@ async fn planner_accepts_its_documented_model_response() {
     let mut candidate = serde_json::to_value(&p).unwrap();
     candidate.as_object_mut().unwrap().remove("schema_version");
     let response = json!({"deliverables":[{"id":"report","title":"report.md","mime_type":"text/markdown"}],"criteria":[],"candidate":candidate});
-    let provider=axum::Router::new().route("/chat/completions",axum::routing::post(move || {let response=response.clone();async move{Json(json!({"id":"review","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":response.to_string()}}]}))}}));
+    let provider=axum::Router::new().route("/chat/completions",axum::routing::post(move || {let response=response.clone();async move{Json(json!({"id":"review","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":response.to_string()}}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}))}}));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move { axum::serve(listener, provider).await.unwrap() });
@@ -558,7 +562,10 @@ async fn repair_checks_model_token_and_elapsed_budgets() {
             .unwrap()
             .unwrap();
         match kind {
-            "model" => c.budget.max_model_calls = 0,
+            "model" => {
+                c.budget.max_model_calls = 0;
+                d.planning_usage.model_calls = 1;
+            }
             "tokens" => {
                 c.budget.max_total_tokens = 10;
                 d.planning_usage.total_tokens = Some(11);

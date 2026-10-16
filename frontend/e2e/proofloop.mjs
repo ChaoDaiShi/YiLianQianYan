@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // Controlled fixtures exercise the actual product LLM transport, MCP runtime,
@@ -48,6 +48,13 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
         ], edges: [{ from: 'collect', to: 'report' }], deliverable_nodes: [{ deliverable_id: 'report-file', node_id: 'report' }],
       },
     };
+    if (process.env.YILIAN_E2E_V12 === '1') {
+      response.candidate.schema_version=1;
+      const alternative=structuredClone(response.candidate);
+      alternative.nodes[0].literal_input.query='controlled alternate retrieval';
+      response.candidates=[response.candidate,alternative];
+      delete response.candidate;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ id: 'controlled-model', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(response) } }], usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 } }));
   });
   await new Promise((resolve) => model.listen(0, '127.0.0.1', resolve));
@@ -82,12 +89,27 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     assert.equal(modelCalls.length, beforeEmpty, 'empty selection cannot expand scope or call the model');
     steps.push('empty_capability_selection_rejected');
     await page.getByRole('button', { name: '全选', exact: true }).click();
+    if (process.env.YILIAN_E2E_V12 === '1') await page.getByLabel('规划策略').selectOption('ranked');
     await page.getByRole('button', { name: '生成任务计划', exact: true }).click();
     await page.getByRole('heading', { name: '任务候选计划评审' }).waitFor(); await capture('01-real-plan-review');
     const drafts = (await api('GET', '/api/task-world/proofloop/drafts')).drafts;
     assert.equal(drafts.length, 1); const draft = await api('GET', `/api/task-world/proofloop/drafts/${drafts[0].draft_id}`);
     assert.equal(draft.compilation.status, 'ready');
+    if (process.env.YILIAN_E2E_V12 === '1') {
+      const usageQuery=new URLSearchParams({model_id:profile.id,from:String(draft.planning_usage.started_at_ms),to:String(Date.now()+1)});
+      const usage=await api('GET',`/api/llm/usage?${usageQuery}`);
+      assert.equal(usage.total_tokens,draft.planning_usage.total_tokens,'planning usage must reference the active model profile UUID');
+      steps.push('v12_planning_usage_attributed_to_active_profile');
+      assert.equal(draft.planning_review.options.length,2);
+      assert.equal(draft.planning_review.selected_candidate_id,null);
+      assert.equal(await page.getByRole('button',{name:'确认并保存到画布',exact:true}).isDisabled(),true);
+      await page.getByRole('button',{name:'选择方案 1',exact:true}).click();
+      await until(async()=>api('GET',`/api/task-world/proofloop/drafts/${draft.draft_id}`),value=>value.planning_review.selected_candidate_id==='candidate-00','candidate persisted');
+      steps.push('v12_multiple_candidates_explicit_selection_persisted');
+    }
+
     await page.getByRole('button', { name: '确认并保存到画布', exact: true }).click(); await page.waitForURL(/\/task-world\/[^/]+$/);
+    await page.getByRole('button',{name:'专家视图',exact:true}).click();
     const graphId = decodeURIComponent(page.url().split('/task-world/')[1]); const path = `/api/task-world/graphs/${graphId}`;
     if (process.env.YILIAN_E2E_IDENTIFIERS === '1') {
       assert.equal(await page.getByRole('button', { name: /^发布/ }).count(), 0);
@@ -156,6 +178,41 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     await capture('03-real-artifact-acceptance');
     await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByRole('button', { name: '证行验收', exact: true }).click(); await page.getByText('目标已达成', { exact: true }).waitFor();
     await page.getByRole('button', { name: '刷新', exact: true }).click(); await page.getByText('目标已达成', { exact: true }).waitFor();
+    if (process.env.YILIAN_E2E_LEGACY_REPORTS === '1') {
+      // Model the deserialized legacy API shape, without rewriting the stored report.
+      const reportsRoute = `**/api/task-world/proofloop/goals/${binding.goal_id}/evaluations`;
+      await page.route(reportsRoute, async route => {
+        const response = await route.fetch();
+        const payload = await response.json();
+        await route.fulfill({ response, json: { ...payload, reports: payload.reports.map(report => ({ ...report, deliverable_results: [] })) } });
+      });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: '证行验收', exact: true }).click();
+      await page.getByText('需重新验收', { exact: true }).waitFor();
+      assert.equal(await page.getByText('目标已达成', { exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: '证行验收', exact: true }).getAttribute('data-status'), 'warning');
+      await capture('04-legacy-report-requires-reevaluation');
+      await page.unroute(reportsRoute);
+      await page.getByRole('button', { name: '刷新', exact: true }).click();
+      await page.getByText('目标已达成', { exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: '证行验收', exact: true }).getAttribute('data-status'), 'success');
+      await capture('05-legacy-report-fresh-evaluation');
+      steps.push('legacy_report_requires_reevaluation_and_refresh_restores_verified_result');
+    }
+    if (process.env.YILIAN_E2E_V12 === '1') {
+      await page.getByRole('button', { name: '目标视图', exact: true }).click();
+      await page.getByTestId('goal-overview').getByRole('region', { name: '目标进度' }).getByText('已通过验收', { exact: true }).waitFor();
+      const downloadEvent = page.waitForEvent('download');
+      await page.getByRole('button', { name: '下载真实文件', exact: true }).click();
+      const download = await downloadEvent;
+      const downloadedFile = join(evidenceDir, 'v12-goal-downloaded-artifact.md');
+      await download.saveAs(downloadedFile);
+      assert.ok((await readFile(downloadedFile, 'utf8')).includes(uri));
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByTestId('goal-overview').getByRole('region', { name: '目标进度' }).getByText('已通过验收', { exact: true }).waitFor();
+      await capture('06-v12-goal-view-after-reload');
+      steps.push('v12_goal_view_download_and_reload_verified');
+    }
     const result = { status: 'passed', stage: 'proofloop_controlled_product_flow', llm: 'LOCAL OPENAI-COMPATIBLE FIXTURE', mcp: 'LOCAL MCP FIXTURE', external_business_benchmark: 'NOT_TESTED', steps, model_requests: modelCalls.length, remote_calls: calls, requests, graph_id: graphId, goal_id: binding.goal_id, graph_revision: reports[0].graph_revision, report: reports[0], geometry, expected_browser_422_errors: 1 };
     await writeFile(join(evidenceDir, 'proofloop-e2e-result.json'), JSON.stringify(result, null, 2)); return result;
   } finally {

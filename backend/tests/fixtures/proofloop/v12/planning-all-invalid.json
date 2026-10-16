@@ -1,0 +1,281 @@
+{
+  "fixture_class": "CONTROLLED_FIXTURE",
+  "request": {
+    "workspace_id": "ws-fixture",
+    "user_goal": "检索本地框架文档并生成结构化摘要报告",
+    "allowed_capability_ids": [
+      "mcp.fixture_catalog",
+      "mcp.fixture_compare"
+    ],
+    "planning": {
+      "strategy": "ranked",
+      "candidate_count": 2
+    },
+    "requirements": {
+      "deliverables": [
+        {
+          "id": "deliv-summary",
+          "title": "framework-summary.md",
+          "mime_type": "text/markdown"
+        }
+      ],
+      "criteria": [
+        {
+          "id": "crit-artifact-exists",
+          "description": "必须生成 framework-summary.md 文件",
+          "required": true,
+          "check": {
+            "kind": "artifact_exists",
+            "deliverable_id": "deliv-summary"
+          }
+        }
+      ],
+      "constraints": [
+        "本地优先"
+      ],
+      "budget": {
+        "max_model_calls": 4,
+        "max_total_tokens": 16000,
+        "max_wall_time_ms": 300000,
+        "max_repair_rounds": 2
+      }
+    }
+  },
+  "contract": {
+    "schema_version": 1,
+    "goal_id": "goal-declared-two-node",
+    "version": 1,
+    "workspace_id": "ws-fixture",
+    "user_goal": "检索本地框架文档并生成结构化摘要报告",
+    "deliverables": [
+      {
+        "id": "deliv-summary",
+        "title": "framework-summary.md",
+        "mime_type": "text/markdown"
+      }
+    ],
+    "criteria": [
+      {
+        "id": "crit-artifact-exists",
+        "description": "必须生成 framework-summary.md 文件",
+        "required": true,
+        "check": {
+          "kind": "artifact_exists",
+          "deliverable_id": "deliv-summary"
+        }
+      }
+    ],
+    "constraints": [
+      "本地优先"
+    ],
+    "allowed_capability_ids": [
+      "mcp.fixture_catalog",
+      "mcp.fixture_compare"
+    ],
+    "budget": {
+      "max_model_calls": 4,
+      "max_total_tokens": 16000,
+      "max_wall_time_ms": 300000,
+      "max_repair_rounds": 2
+    }
+  },
+  "snapshot": {
+    "snapshot_id": "snap-two-node",
+    "captured_at_ms": 1728691200000,
+    "capabilities": [
+      {
+        "capability_id": "mcp.fixture_catalog",
+        "executor_ref": "capability://mcp.fixture_catalog",
+        "kind": "mcp_tool",
+        "name": "目录检索工具",
+        "description": "检索本地技术文档与架构目录",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "sources"
+          ]
+        },
+        "output_path_prefix": [
+          "structured"
+        ],
+        "output_provenance": "declared",
+        "risk": "low",
+        "readiness": "ready",
+        "unavailable_reason": null
+      },
+      {
+        "capability_id": "mcp.fixture_compare",
+        "executor_ref": "capability://mcp.fixture_compare",
+        "kind": "mcp_tool",
+        "name": "对比分析工具",
+        "description": "将输入来源对比整理成规范报告",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "title",
+            "sources"
+          ]
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "artifact_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "summary"
+          ]
+        },
+        "output_path_prefix": [
+          "structured"
+        ],
+        "output_provenance": "declared",
+        "risk": "low",
+        "readiness": "ready",
+        "unavailable_reason": null
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "schema_version": 1,
+      "nodes": [
+        {
+          "id": "collect",
+          "title": "收集资料",
+          "instruction": "检索本地桌面框架技术目录",
+          "capability_id": "mcp.nonexistent_v12_fixture",
+          "literal_input": {
+            "query": "frameworks"
+          },
+          "bindings": []
+        },
+        {
+          "id": "compare",
+          "title": "对比分析",
+          "instruction": "对比选型并输出技术摘要",
+          "capability_id": "mcp.fixture_compare",
+          "literal_input": {
+            "title": "桌面技术选型报告"
+          },
+          "bindings": [
+            {
+              "target_path": [
+                "sources"
+              ],
+              "source": {
+                "kind": "dependency_output",
+                "node_id": "collect",
+                "path": [
+                  "structured",
+                  "sources"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": "collect",
+          "to": "compare"
+        }
+      ],
+      "deliverable_nodes": [
+        {
+          "deliverable_id": "deliv-summary",
+          "node_id": "compare"
+        }
+      ]
+    },
+    {
+      "schema_version": 1,
+      "nodes": [
+        {
+          "id": "collect",
+          "title": "收集资料",
+          "instruction": "检索本地桌面框架技术目录",
+          "capability_id": "mcp.nonexistent_v12_fixture",
+          "literal_input": {
+            "query": "desktop framework references"
+          },
+          "bindings": []
+        },
+        {
+          "id": "compare",
+          "title": "对比分析",
+          "instruction": "对比选型并输出技术摘要",
+          "capability_id": "mcp.fixture_compare",
+          "literal_input": {
+            "title": "桌面技术选型报告"
+          },
+          "bindings": [
+            {
+              "target_path": [
+                "sources"
+              ],
+              "source": {
+                "kind": "dependency_output",
+                "node_id": "collect",
+                "path": [
+                  "structured",
+                  "sources"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from": "collect",
+          "to": "compare"
+        }
+      ],
+      "deliverable_nodes": [
+        {
+          "deliverable_id": "deliv-summary",
+          "node_id": "compare"
+        }
+      ]
+    }
+  ],
+  "expected_compile_statuses": [
+    "invalid",
+    "invalid"
+  ]
+}

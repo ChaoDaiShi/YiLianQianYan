@@ -9,7 +9,7 @@ import { PageHeader, Button, Badge } from "../components/ui";
 import { useGlobalVoiceContext } from "../features/voice/GlobalVoiceHost";
 import { defaultConfig } from "../features/settings/model/config";
 import { comparableConfig } from "../features/settings/model/mapping";
-import type { SectionKey } from "../features/settings/model/types";
+import type { SectionKey, ProofLoopSettingsConfig } from "../features/settings/model/types";
 import { SETTINGS_GROUPS, resolveSettingsGroup, settingsGroup } from "../features/settings/model/settingsNavigation";
 import SettingsSectionFrame from "../features/settings/components/SettingsSectionFrame";
 import AgentSettings from "../features/settings/sections/AgentSettings";
@@ -37,7 +37,7 @@ import VoiceSettings from "../features/settings/sections/VoiceSettings";
  */
 export default function SettingsPage() {
   const [searchParams] = useSearchParams();
-  const [config, setConfig] = useState<AppConfig>(defaultConfig);
+  const [config, setConfig] = useState<ProofLoopSettingsConfig>(defaultConfig);
   const [saved, setSaved] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState(() => comparableConfig(defaultConfig));
   const [saveError, setSaveError] = useState("");
@@ -290,7 +290,7 @@ export default function SettingsPage() {
 
       case "agent":
         return <SettingsSectionFrame group={frame}>
-          <AgentSettings config={config} updateField={updateField} />
+          <AgentSettings config={config} updateField={updateField} onAiRepairChange={(enabled) => setConfig((previous) => ({ ...previous, ai_repair_enabled: enabled }))} />
           <CompactionSettings config={config} updateField={updateField} />
         </SettingsSectionFrame>;
 

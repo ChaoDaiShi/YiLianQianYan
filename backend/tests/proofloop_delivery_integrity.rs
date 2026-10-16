@@ -45,6 +45,7 @@ fn setup(status: NodeExecutionStatus) -> (Arc<AppServer>, GoalContract, TaskGrap
     let server = server();
     let graph = TaskGraphId::generate();
     let draft = ProofDraft {
+        planning_review: None,
         draft_id: "delivery-integrity-draft".into(),
         revision: 1,
         graph_id: graph.to_string(),

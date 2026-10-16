@@ -317,6 +317,7 @@ fn test_draft_service_update_and_confirm_workflow() {
     );
 
     let draft = ProofDraft {
+        planning_review: None,
         draft_id: draft_id.clone(),
         revision: 1,
         graph_id: graph_id.to_string(),
@@ -446,7 +447,7 @@ fn test_line_a_schema_paths_resolution_and_compatibility() {
 
 #[test]
 fn test_line_a_capability_snapshot_budget_and_filtering() {
-    use super::capabilities::build_capability_snapshot;
+    use super::capabilities::{build_capability_snapshot, MAX_SNAPSHOT_CONTEXT_CHARS};
     use crate::modules::capability::{
         CapabilityDescriptor, CapabilityId, CapabilityKind, CapabilityMetadata,
         CapabilityProviderKind, CapabilityRisk, CapabilityRuntimeStatus,
@@ -498,6 +499,30 @@ fn test_line_a_capability_snapshot_budget_and_filtering() {
     let filtered = build_capability_snapshot(&[desc1], Some(&["mcp.tool_a".to_string()]), 1000);
     assert_eq!(filtered.capabilities.len(), 1);
     assert_eq!(filtered.capabilities[0].capability_id, "mcp.tool_a");
+
+    // The serialized CapabilitySpec includes fields beyond the descriptive
+    // text, so even a first item whose name alone reaches the limit must not
+    // be admitted.
+    let oversized = CapabilityDescriptor {
+        id: CapabilityId::new("mcp.oversized").unwrap(),
+        kind: CapabilityKind::McpTool,
+        provider: CapabilityProviderKind::Mcp,
+        name: "n".repeat(MAX_SNAPSHOT_CONTEXT_CHARS),
+        description: String::new(),
+        input_schema: None,
+        output_schema: None,
+        risk: CapabilityRisk::High,
+        permissions: vec![],
+        status: CapabilityRuntimeStatus::Ready,
+        enabled: true,
+        metadata: CapabilityMetadata {
+            runtime_ready: true,
+            ..Default::default()
+        },
+    };
+    let too_large = build_capability_snapshot(&[oversized], None, 1000);
+    assert!(too_large.capabilities.is_empty());
 }
 
 mod acceptance_and_repair;
+mod planner;

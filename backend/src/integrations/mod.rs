@@ -5,6 +5,7 @@
 //! contracts defined by the domain/application layers; they do not own product
 //! policy.
 
+pub mod acp;
 pub mod llm;
 pub mod mcp;
 pub mod secret;

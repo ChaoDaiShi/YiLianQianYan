@@ -16,3 +16,6 @@ export type UpdateVoiceField = (
   key: string,
   value: string | number,
 ) => void;
+
+/** ProofLoop owns its optional top-level setting independently of editable config groups. */
+export type ProofLoopSettingsConfig = AppConfig & { ai_repair_enabled: boolean };

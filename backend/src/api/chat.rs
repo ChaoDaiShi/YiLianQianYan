@@ -14,11 +14,12 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+pub use crate::agent::delegation::GoalRef as ChatGoalRef;
 use crate::agent::engine::{self, AgentEvent};
 use crate::agent::state::AgentState;
 use crate::agent::verifier::DefaultVerifier;
 use crate::app::state::{AppServer, CHAT_MEMORY_TOP_K};
-use crate::db::{MessageRow, RetrieveQuery};
+use crate::db::{Database, MessageRow, RetrieveQuery};
 use crate::integrations::llm::client::LlmClient;
 use crate::integrations::llm::usage::DatabaseUsageRecorder;
 use crate::safety::SecurityExecutionGateway;
@@ -29,6 +30,627 @@ pub struct ChatRequest {
     pub conversation_id: Option<String>,
     pub message: String,
     pub workflow_id: Option<String>,
+    #[serde(default)]
+    pub goal_ref: Option<ChatGoalRef>,
+}
+
+struct GoalBoundChatContext {
+    goal_id: String,
+    goal_version: u32,
+    goal_summary: String,
+    evidence_ids: Vec<String>,
+    deadline: tokio::time::Instant,
+    budget: Arc<crate::modules::task::resource_budget::SharedExecutionBudget>,
+    reservation: GoalCallReservation,
+    activity_lease: crate::modules::task::proofloop::budget::BudgetLease,
+}
+
+pub(crate) struct GoalChatRun {
+    pub(crate) scope: crate::agent::delegation::ExecutionScope,
+    pub(crate) goal_ref: ChatGoalRef,
+    pub(crate) goal_summary: String,
+    reservation: GoalCallReservation,
+    activity_lease: crate::modules::task::proofloop::budget::BudgetLease,
+}
+
+impl GoalChatRun {
+    pub(crate) fn finish(self) -> Result<(), String> {
+        let Self {
+            mut reservation,
+            activity_lease,
+            ..
+        } = self;
+        let usage_finish = reservation.finish();
+        let activity_finish = activity_lease.finish().map_err(|error| error.to_string());
+        if let Err(error) = usage_finish {
+            Err(format!(
+                "ProofLoop model usage could not be settled: {error}"
+            ))
+        } else if let Err(error) = activity_finish {
+            Err(format!(
+                "ProofLoop active time could not be settled: {error}"
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+struct GoalCallReservation {
+    db: Database,
+    reservation_id: String,
+    budget: Arc<crate::modules::task::resource_budget::SharedExecutionBudget>,
+    started_at_ms: i64,
+    started: std::time::Instant,
+    attempted: bool,
+}
+
+pub(crate) type ChatApiError = (StatusCode, Json<serde_json::Value>);
+
+pub(crate) fn chat_error_message(error: ChatApiError) -> String {
+    let body = error.1 .0;
+    let code = body
+        .get("code")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("proofloop_goal_context_unavailable");
+    let message = body
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("目标聊天上下文无法验证");
+    format!("{code}: {message}")
+}
+
+impl GoalCallReservation {
+    fn finish(&mut self) -> Result<(), String> {
+        if self.attempted {
+            return Ok(());
+        }
+        self.attempted = true;
+        let usage = match self.budget.usage() {
+            Ok((model_calls, total_tokens)) => crate::modules::task::proofloop::PlanningUsage {
+                model_calls,
+                total_tokens,
+                started_at_ms: self.started_at_ms,
+                elapsed_ms: Some(self.started.elapsed().as_millis().min(u64::MAX as u128) as u64),
+            },
+            Err(error) => {
+                self.db
+                    .finish_goal_model_call(&self.reservation_id, None)
+                    .map_err(|finish_error| finish_error.to_string())?;
+                return Err(error);
+            }
+        };
+        self.db
+            .finish_goal_model_call(&self.reservation_id, Some(&usage))
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for GoalCallReservation {
+    fn drop(&mut self) {
+        if !self.attempted {
+            if let Err(error) = self.finish() {
+                tracing::error!(error = %error, "abandoned ProofLoop chat reservation could not be settled");
+            }
+        }
+    }
+}
+
+fn chat_error(status: StatusCode, code: &str, message: impl Into<String>) -> ChatApiError {
+    (
+        status,
+        Json(serde_json::json!({ "code": code, "error": message.into() })),
+    )
+}
+
+pub(crate) fn load_conversation_goal_ref(
+    db: &Database,
+    conversation_id: &str,
+) -> Result<Option<ChatGoalRef>, ChatApiError> {
+    db.load_conversation_goal_binding(conversation_id)
+        .map(|binding| {
+            binding.map(|binding| ChatGoalRef {
+                goal_id: binding.goal_id,
+                goal_version: binding.goal_version,
+            })
+        })
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "proofloop_goal_binding_read_failed",
+                error,
+            )
+        })
+}
+
+fn resolve_conversation_goal_ref(
+    requested: Option<&ChatGoalRef>,
+    persisted: Option<ChatGoalRef>,
+) -> Result<Option<ChatGoalRef>, ChatApiError> {
+    if requested
+        .zip(persisted.as_ref())
+        .is_some_and(|(requested, persisted)| requested != persisted)
+    {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_goal_rebind_rejected",
+            "此对话已绑定到其他目标版本，不能重新绑定",
+        ));
+    }
+    Ok(requested.cloned().or(persisted))
+}
+
+fn persist_conversation_goal_ref(
+    db: &Database,
+    conversation_id: &str,
+    reference: &ChatGoalRef,
+) -> Result<(), ChatApiError> {
+    let binding = crate::db::ConversationGoalBinding {
+        conversation_id: conversation_id.to_string(),
+        goal_id: reference.goal_id.clone(),
+        goal_version: reference.goal_version,
+    };
+    let bound = db.bind_conversation_goal(&binding).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "proofloop_goal_binding_persist_failed",
+            error,
+        )
+    })?;
+    if !bound {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_goal_rebind_rejected",
+            "此对话已绑定到其他目标版本，不能重新绑定",
+        ));
+    }
+    Ok(())
+}
+
+fn proof_error_response(error: crate::modules::task::proofloop::ProofError) -> ChatApiError {
+    let status = if error.code.starts_with("proofloop_") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    chat_error(status, &error.code, error.message)
+}
+
+fn current_goal_evidence(
+    db: &Database,
+    goal_id: &str,
+    goal_version: u32,
+    graph_id: &str,
+    graph_revision: u64,
+) -> Result<(Option<String>, Vec<String>), ChatApiError> {
+    let reports = db.list_acceptance_reports(goal_id).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "proofloop_report_read_failed",
+            error.to_string(),
+        )
+    })?;
+    let current = reports
+        .into_iter()
+        .filter(|report| {
+            report.goal_version == goal_version
+                && report.graph_id == graph_id
+                && report.graph_revision == graph_revision
+        })
+        .max_by_key(|report| report.checked_at_ms);
+    let Some(current) = current else {
+        return Ok((None, Vec::new()));
+    };
+    let (persisted_report, snapshot) = db
+        .get_acceptance_report(&current.report_id)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "proofloop_report_read_failed",
+                error.to_string(),
+            )
+        })?
+        .ok_or_else(|| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_report_stale",
+                "当前验收报告已不存在",
+            )
+        })?;
+    if persisted_report.goal_id != goal_id
+        || persisted_report.goal_version != goal_version
+        || persisted_report.graph_id != graph_id
+        || persisted_report.graph_revision != graph_revision
+        || snapshot.goal_id != goal_id
+        || snapshot.goal_version != goal_version
+        || snapshot.graph_id != graph_id
+        || snapshot.graph_revision != graph_revision
+    {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_report_stale",
+            "当前验收报告与已确认目标或任务图版本不一致",
+        ));
+    }
+
+    let available = snapshot
+        .evidence
+        .iter()
+        .map(|evidence| (evidence.evidence_id.as_str(), evidence))
+        .collect::<std::collections::HashMap<_, _>>();
+    let cited = persisted_report
+        .results
+        .iter()
+        .flat_map(|result| result.evidence_ids.iter())
+        .chain(
+            persisted_report
+                .deliverable_results
+                .iter()
+                .flat_map(|result| result.evidence_ids.iter()),
+        );
+    let mut seen = std::collections::HashSet::new();
+    let mut evidence_ids = Vec::new();
+    let mut stale_reference = false;
+    for (index, evidence_id) in cited.enumerate() {
+        if index >= 128 {
+            stale_reference = true;
+            break;
+        }
+        if !seen.insert(evidence_id.as_str()) {
+            continue;
+        }
+        let Some(evidence) = available.get(evidence_id.as_str()) else {
+            stale_reference = true;
+            continue;
+        };
+        if evidence.origin.graph_revision != graph_revision {
+            stale_reference = true;
+            continue;
+        }
+        if is_current_successful_evidence(db, evidence)? {
+            if evidence_ids.len() < 32 {
+                evidence_ids.push(evidence_id.clone());
+            }
+        } else {
+            stale_reference = true;
+        }
+    }
+    let status = if stale_reference {
+        "stale_evidence".to_string()
+    } else {
+        format!("{:?}", persisted_report.status)
+    };
+    Ok((Some(status), evidence_ids))
+}
+
+fn is_current_successful_evidence(
+    db: &Database,
+    evidence: &crate::modules::task::proofloop::EvidenceRef,
+) -> Result<bool, ChatApiError> {
+    let execution_ref = &evidence.origin;
+    let graph_id =
+        crate::modules::task::TaskGraphId::new(execution_ref.graph_id.clone()).map_err(|_| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_evidence_stale",
+                "证据图标识无效",
+            )
+        })?;
+    let node_id =
+        crate::modules::task::TaskNodeId::new(execution_ref.node_id.clone()).map_err(|_| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_evidence_stale",
+                "证据节点标识无效",
+            )
+        })?;
+    let execution_id = crate::modules::task::NodeExecutionId::new(
+        execution_ref.execution_id.clone(),
+    )
+    .map_err(|_| {
+        chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_evidence_stale",
+            "证据执行标识无效",
+        )
+    })?;
+    let Some(execution) = db.load_node_execution(&execution_id).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "proofloop_evidence_read_failed",
+            error.to_string(),
+        )
+    })?
+    else {
+        return Ok(false);
+    };
+    let latest = db
+        .load_node_executions(&graph_id, &node_id)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "proofloop_evidence_read_failed",
+                error.to_string(),
+            )
+        })?
+        .into_iter()
+        .max_by_key(|item| item.attempt);
+    Ok(execution.graph_id == graph_id
+        && execution.node_id == node_id
+        && execution_ref.graph_revision > 0
+        && execution.status == crate::modules::task::NodeExecutionStatus::Succeeded
+        && execution.validation.as_ref().is_some_and(|validation| {
+            validation.status == crate::modules::task::ValidationStatus::Accepted
+        })
+        && latest.is_some_and(|item| item.id == execution_id))
+}
+
+fn resolve_goal_chat_context(
+    server: &AppServer,
+    db: &Database,
+    reference: &ChatGoalRef,
+) -> Result<GoalBoundChatContext, ChatApiError> {
+    if reference.goal_id.trim().is_empty()
+        || reference.goal_id.as_str() != reference.goal_id.trim()
+        || reference.goal_id.len() > 200
+        || reference.goal_id.chars().any(char::is_control)
+        || reference.goal_version == 0
+    {
+        return Err(chat_error(
+            StatusCode::BAD_REQUEST,
+            "proofloop_goal_ref_invalid",
+            "goal_ref must contain a non-empty goal id and a positive version",
+        ));
+    }
+    let contract = db
+        .load_goal_version(&reference.goal_id, reference.goal_version)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "proofloop_goal_read_failed",
+                error.to_string(),
+            )
+        })?
+        .ok_or_else(|| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_goal_not_confirmed",
+                "指定目标版本不存在或尚未确认",
+            )
+        })?;
+    let draft = db
+        .confirmed_proof_draft_for_goal(&reference.goal_id, reference.goal_version)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "proofloop_goal_read_failed",
+                error.to_string(),
+            )
+        })?
+        .ok_or_else(|| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_goal_not_confirmed",
+                "指定目标没有已确认的计划",
+            )
+        })?;
+    let Some(confirmed_revision) = draft.confirmed_graph_revision else {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_goal_not_confirmed",
+            "指定目标没有已确认的任务图版本",
+        ));
+    };
+    if draft.status != crate::modules::task::proofloop::DraftStatus::Confirmed
+        || draft.contract != contract
+        || contract.goal_id != reference.goal_id
+        || contract.version != reference.goal_version
+    {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_goal_stale",
+            "目标草稿与已确认的目标版本不一致",
+        ));
+    }
+    let graph_id =
+        crate::modules::task::TaskGraphId::new(draft.graph_id.clone()).map_err(|error| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_goal_graph_invalid",
+                error.to_string(),
+            )
+        })?;
+    let snapshot = db
+        .load_task_supervisor_snapshot(&graph_id)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "proofloop_goal_graph_read_failed",
+                error.to_string(),
+            )
+        })?
+        .ok_or_else(|| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_goal_graph_stale",
+                "已确认的任务图不存在",
+            )
+        })?;
+    let current_revision = snapshot.supervisor.graph_revision().value();
+    if current_revision != confirmed_revision {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_goal_graph_stale",
+            "任务图已变化，必须先重新确认目标",
+        ));
+    }
+    let current_draft = db
+        .confirmed_proof_draft_for_graph(&draft.graph_id)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "proofloop_goal_read_failed",
+                error.to_string(),
+            )
+        })?
+        .ok_or_else(|| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_goal_not_current",
+                "任务图没有当前已确认目标",
+            )
+        })?;
+    if current_draft.contract.goal_id != reference.goal_id
+        || current_draft.contract.version != reference.goal_version
+        || current_draft.confirmed_graph_revision != Some(current_revision)
+    {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_goal_not_current",
+            "指定目标版本不是当前任务图已确认的目标",
+        ));
+    }
+
+    let (report_status, evidence_ids) = current_goal_evidence(
+        db,
+        &reference.goal_id,
+        reference.goal_version,
+        &draft.graph_id,
+        confirmed_revision,
+    )?;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let remaining_time = server
+        .proofloop_budget
+        .check(&contract, now)
+        .map_err(proof_error_response)?;
+    let combined_usage = db
+        .combined_goal_model_usage(&contract, &draft.planning_usage)
+        .map_err(proof_error_response)?;
+    let Some(used_tokens) = combined_usage.total_tokens else {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_usage_unavailable",
+            "目标累计 token 用量尚未核实，无法启动目标范围内的聊天",
+        ));
+    };
+    let remaining_calls = contract
+        .budget
+        .max_model_calls
+        .saturating_sub(combined_usage.model_calls);
+    let remaining_tokens = contract.budget.max_total_tokens.saturating_sub(used_tokens);
+    if remaining_calls == 0 || remaining_tokens == 0 {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "proofloop_budget_exhausted",
+            "目标的模型调用或 token 预算已耗尽",
+        ));
+    }
+    let reservation_id = db
+        .reserve_goal_model_call(&contract, &draft.planning_usage, "goal-chat", now)
+        .map_err(proof_error_response)?;
+    let budget = crate::modules::task::resource_budget::SharedExecutionBudget::new(
+        remaining_calls,
+        remaining_tokens,
+    );
+    let mut reservation = GoalCallReservation {
+        db: db.clone_connection(),
+        reservation_id,
+        budget: Arc::clone(&budget),
+        started_at_ms: now,
+        started: std::time::Instant::now(),
+        attempted: false,
+    };
+    let activity_lease = match server.proofloop_budget.begin_model_activity(&draft) {
+        Ok(lease) => lease,
+        Err(error) => {
+            let finish = reservation.finish();
+            let message = match finish {
+                Ok(()) => error.to_string(),
+                Err(finish_error) => format!(
+                    "{}; goal reservation cleanup failed: {}",
+                    error, finish_error
+                ),
+            };
+            return Err(chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_usage_unavailable",
+                message,
+            ));
+        }
+    };
+
+    let deliverables = contract
+        .deliverables
+        .iter()
+        .take(16)
+        .map(|item| format!("- {} ({})", item.title, item.mime_type))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let criteria = contract
+        .criteria
+        .iter()
+        .take(24)
+        .map(|item| {
+            format!(
+                "- {}{}: {}",
+                if item.required { "[required] " } else { "" },
+                item.id,
+                item.description
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let evidence = if evidence_ids.is_empty() {
+        "No evidence ids are available from a persisted current acceptance report.".to_string()
+    } else {
+        format!(
+            "Evidence ids available from the persisted current report: {}",
+            evidence_ids.join(", ")
+        )
+    };
+    let report = report_status.unwrap_or_else(|| "unavailable".into());
+    let goal_summary = truncate_chars(
+        &format!(
+            "Validated ProofLoop goal reference: {} version {}.\nObjective: {}\nDeliverables:\n{}\nAcceptance criteria:\n{}\nCurrent persisted report status: {}.\n{}\nUse only the listed evidence ids for claims tied to this goal; do not claim acceptance beyond the persisted report.",
+            contract.goal_id, contract.version, contract.user_goal, deliverables, criteria, report, evidence
+        ),
+        6000,
+    );
+    Ok(GoalBoundChatContext {
+        goal_id: contract.goal_id.clone(),
+        goal_version: contract.version,
+        goal_summary,
+        evidence_ids,
+        deadline: tokio::time::Instant::now() + remaining_time,
+        budget,
+        reservation,
+        activity_lease,
+    })
+}
+
+pub(crate) fn resolve_goal_chat_run(
+    server: &AppServer,
+    db: &Database,
+    reference: &ChatGoalRef,
+    cancel: CancellationToken,
+) -> Result<GoalChatRun, ChatApiError> {
+    let context = resolve_goal_chat_context(server, db, reference)?;
+    Ok(GoalChatRun {
+        scope: crate::agent::delegation::ExecutionScope {
+            cancel,
+            budget: Some(Arc::clone(&context.budget)),
+            handoff_id: None,
+            goal_id: Some(context.goal_id),
+            goal_version: Some(context.goal_version),
+            evidence_ids: context.evidence_ids,
+            deadline: Some(context.deadline),
+        },
+        goal_ref: reference.clone(),
+        goal_summary: context.goal_summary,
+        reservation: context.reservation,
+        activity_lease: context.activity_lease,
+    })
 }
 
 /// POST /api/chat — SSE streaming agent response
@@ -45,10 +667,28 @@ pub async fn chat_handler(
         ));
     }
 
+    let db = server.db.clone_connection();
+    let requested_conversation_id = req
+        .conversation_id
+        .as_ref()
+        .filter(|id| !id.is_empty())
+        .cloned();
+    let persisted_goal_ref = match requested_conversation_id.as_deref() {
+        Some(conversation_id) => load_conversation_goal_ref(&db, conversation_id)?,
+        None => None,
+    };
+    let conversation_goal_ref =
+        resolve_conversation_goal_ref(req.goal_ref.as_ref(), persisted_goal_ref)?;
+    let cancel_token = CancellationToken::new();
+    let goal_run = conversation_goal_ref
+        .as_ref()
+        .map(|goal_ref| resolve_goal_chat_run(&server, &db, goal_ref, cancel_token.clone()))
+        .transpose()?;
+    let goal_bound = goal_run.is_some();
+
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
     let (stream_tx, mut stream_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
 
-    let db = server.db.clone_connection();
     let legacy_config = server.config.read().clone();
     let active_model = db.get_active_llm_model().ok().flatten();
     let mut config = legacy_config.clone();
@@ -112,7 +752,7 @@ pub async fn chat_handler(
     // Best-effort enhancement: any retrieval/embedding failure must not block chat.
     let mut memory_mode = "lexical";
     let mut query_embedding: Option<Vec<f32>> = None;
-    if config.model.has_embedding() {
+    if !goal_bound && config.model.has_embedding() {
         let llm = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
         match llm.embed(&message).await {
             Ok(vec) => {
@@ -148,9 +788,9 @@ pub async fn chat_handler(
     }
 
     // Get or create conversation
-    let conv_id = match req.conversation_id {
-        Some(ref id) if !id.is_empty() => id.clone(),
-        _ => {
+    let conv_id = match requested_conversation_id {
+        Some(id) => id,
+        None => {
             let summary = db.create_conversation("新对话").unwrap_or_else(|_| {
                 crate::db::ConversationSummary {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -167,8 +807,11 @@ pub async fn chat_handler(
         }
     };
 
+    if let Some(goal_ref) = conversation_goal_ref.as_ref() {
+        persist_conversation_goal_ref(&db, &conv_id, goal_ref)?;
+    }
+
     // Create cancel token
-    let cancel_token = CancellationToken::new();
     server
         .active_tasks
         .lock()
@@ -176,6 +819,7 @@ pub async fn chat_handler(
 
     // Build agent state from history before persisting the current user message.
     let mut agent_state = AgentState::new(system_prompt);
+    agent_state.goal_ref = conversation_goal_ref;
     if let Ok(conv) = db.get_conversation(&conv_id) {
         let msgs: Vec<crate::integrations::llm::types::ChatMessage> = conv
             .messages
@@ -219,6 +863,10 @@ pub async fn chat_handler(
     let _ =
         db.set_conversation_run_status(&conv_id, crate::db::ConversationRunStatus::Running, None);
 
+    if let Some(run) = goal_run.as_ref() {
+        agent_state.add_user_message(run.goal_summary.clone());
+    }
+
     // Add the current user message to the LLM context exactly once.
     agent_state.add_user_message(message.clone());
 
@@ -248,7 +896,6 @@ pub async fn chat_handler(
     let log_buffer = server.log_buffer.clone();
 
     let db_clone = db.clone();
-
     tokio::spawn(async move {
         log_buffer.push("info", "agent", "Agent 循环开始");
         let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
@@ -261,7 +908,7 @@ pub async fn chat_handler(
         .with_db(Arc::new(db_clone.clone()))
         .with_grant_enforcement();
 
-        let result = engine::run_react_loop_with_channel(
+        let execution = engine::run_react_loop_with_channel(
             &mut agent_state,
             &llm_client,
             &tool_registry,
@@ -272,8 +919,21 @@ pub async fn chat_handler(
             &cancel_token,
             &event_tx,
             &log_buffer,
-        )
-        .await;
+        );
+        let goal_scope = goal_run.as_ref().map(|run| run.scope.clone());
+        let mut result = match goal_scope {
+            Some(scope) => {
+                crate::agent::delegation::EXECUTION_SCOPE
+                    .scope(scope, execution)
+                    .await
+            }
+            None => execution.await,
+        };
+        if let Some(run) = goal_run {
+            if let Err(error) = run.finish() {
+                result = Err(error);
+            }
+        }
 
         // Save new messages (only assistant + tool produced after the loaded history).
         let total_msgs = agent_state.messages.len();
@@ -409,6 +1069,7 @@ pub async fn stop_handler(
 
 #[cfg(test)]
 mod tests {
+    use super::{resolve_conversation_goal_ref, ChatRequest};
     use std::{path::PathBuf, sync::Arc};
 
     use axum::{
@@ -543,6 +1204,39 @@ mod tests {
             .count()
     }
 
+    #[test]
+    fn legacy_chat_request_defaults_goal_ref_to_none_and_goal_ref_is_strict() {
+        let legacy: ChatRequest = serde_json::from_value(json!({ "message": "hello" })).unwrap();
+        assert!(legacy.goal_ref.is_none());
+
+        let malformed = serde_json::from_value::<ChatRequest>(json!({
+            "message": "hello",
+            "goal_ref": {"goal_id": "goal-1", "goal_version": 1, "workspace_id": "other"}
+        }));
+        assert!(malformed.is_err());
+    }
+
+    #[test]
+    fn persisted_goal_binding_is_reused_when_omitted_and_cannot_be_rebound() {
+        let goal_ref = crate::agent::delegation::GoalRef {
+            goal_id: "goal-1".to_string(),
+            goal_version: 2,
+        };
+        let saved = Some(goal_ref.clone());
+        assert_eq!(
+            resolve_conversation_goal_ref(None, saved.clone()).unwrap(),
+            Some(goal_ref)
+        );
+
+        let rebound = crate::agent::delegation::GoalRef {
+            goal_id: "goal-2".to_string(),
+            goal_version: 1,
+        };
+        let error = resolve_conversation_goal_ref(Some(&rebound), saved).unwrap_err();
+        assert_eq!(error.0, StatusCode::CONFLICT);
+        assert_eq!(error.1 .0["code"], "proofloop_goal_rebind_rejected");
+    }
+
     #[tokio::test]
     async fn existing_conversation_sends_current_user_message_once_and_keeps_history() {
         let (base_url, requests, mock_llm) = start_mock_llm().await;
@@ -664,6 +1358,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(server.db.list_conversations().unwrap().is_empty());
+        mock_llm.abort();
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_goal_ref_is_rejected_before_creating_a_conversation() {
+        let (base_url, _requests, mock_llm) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+
+        let response = build_router(server.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/chat")
+                    .header(CONTROL_SESSION_HEADER, token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "message": "continue the goal",
+                            "goal_ref": {"goal_id": "missing-goal", "goal_version": 1}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
         assert!(server.db.list_conversations().unwrap().is_empty());
         mock_llm.abort();
     }

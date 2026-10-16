@@ -69,6 +69,7 @@ impl AppServer {
                 tracing::warn!(interrupted, "recovered interrupted conversation runs");
             }
         }
+        db.initialize_skill_usage()?;
         let audit_recorder = AuditRecorder::new(db.clone_connection());
         let secret_resolver = Arc::new(SecretResolver::new(Arc::clone(&secret_store)));
         let config = db.get_settings().unwrap_or_default();
@@ -189,6 +190,8 @@ impl AppServer {
             voice_dispatch_hook: Arc::new(RwLock::new(None)),
             task_world,
             proofloop_budget,
+            delegation_slots: Arc::new(Semaphore::new(2)),
+            external_agent_slots: Arc::new(Semaphore::new(1)),
             scoped_db: {
                 let lease = db.get_cloud_profile_lease().unwrap_or_else(|_| {
                     crate::modules::cloud::contracts::ScopeLease {

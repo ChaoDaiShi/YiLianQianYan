@@ -52,3 +52,5 @@ pub use crate::app::router::build_router;
 mod llm_models_tests;
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod artifacts;

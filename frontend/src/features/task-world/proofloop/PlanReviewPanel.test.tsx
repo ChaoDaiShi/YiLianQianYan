@@ -142,4 +142,29 @@ describe("PlanReviewPanel", () => {
     expect(html).toContain("所需能力不可用");
     expect(html).toContain("能力 mcp__doc_reader 当前未就绪");
   });
+
+  it("requires an explicit candidate choice before confirming an enhanced draft", () => {
+    const enhancedDraft: ProofDraft = {
+      ...baseDraft,
+      planning_review: {
+        contract_version: 1,
+        strategy: "ranked",
+        snapshot_id: "snap_1",
+        routes: [],
+        options: [],
+        recommended_candidate_id: "candidate_a",
+        selected_candidate_id: null,
+        recommendations: [],
+        scoring_version: "v1",
+      },
+    };
+    const html = renderToStaticMarkup(
+      <PlanReviewPanel draft={enhancedDraft} onConfirmed={vi.fn()} />,
+    );
+
+    expect(html).toContain("请先在方案比较中明确选择一个可用方案");
+    expect(html).toContain("推荐方案不会自动选中");
+    expect(html).toContain("确认并保存到画布");
+    expect(html).toContain('disabled=""');
+  });
 });
