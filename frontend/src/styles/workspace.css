@@ -1107,35 +1107,35 @@
 
   .memory-bubbles {
     position: relative;
-    display: grid;
-    min-height: 146px;
-    min-width: min(48vw, 430px);
-    grid-template-columns: repeat(3, minmax(62px, 1fr));
-    grid-template-rows: repeat(2, minmax(54px, 1fr));
+    display: flex;
     align-items: center;
-    justify-items: center;
-    gap: 8px;
+    gap: 16px;
+    min-height: 100px;
   }
 
   .memory-bubble,
   .memory-bubble-center {
     display: flex;
-    min-width: 72px;
     align-items: center;
     justify-content: center;
     border: 1px solid var(--border-soft);
     border-radius: 999px;
     background: var(--surface-muted);
     color: var(--text-secondary);
-    transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, transform var(--motion-fast) ease;
+    transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, transform var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+  }
+
+  .memory-bubble-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(80px, 1fr));
+    gap: 8px;
   }
 
   .memory-bubble {
-    width: 100%;
-    max-width: 118px;
+    min-width: 80px;
     flex-direction: column;
-    gap: 1px;
-    padding: 8px 12px;
+    gap: 2px;
+    padding: 6px 14px;
     font-size: var(--font-size-caption);
   }
 
@@ -1147,29 +1147,29 @@
   }
 
   .memory-bubble-center {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    z-index: 1;
-    width: 86px;
-    height: 86px;
-    transform: translate(-50%, -50%);
+    flex-shrink: 0;
+    width: 82px;
+    height: 82px;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
+    border-color: var(--accent-border);
     background: var(--accent-soft);
-    color: var(--accent-primary-hover);
+    color: var(--accent-soft-fg);
     font-size: var(--font-size-caption);
+    box-shadow: 0 4px 14px var(--cyrene-glow-pink);
   }
 
-  .memory-bubble:hover,
-  .memory-bubble-center:hover {
+  .memory-bubble:hover {
     border-color: var(--accent-border);
     background: var(--surface-hover);
     transform: translateY(-1px);
   }
 
   .memory-bubble-center:hover {
-    transform: translate(-50%, calc(-50% - 1px));
+    border-color: var(--accent-primary);
+    background: var(--accent-soft);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px var(--cyrene-glow-pink);
   }
 
   .memory-toolbar {

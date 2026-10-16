@@ -450,34 +450,28 @@ function MemoryOverview({ counts, total, onSelect }: { counts: Record<string, nu
         <p>按真实分类浏览长期记忆，不表示记忆之间存在关系。</p>
       </div>
       <div className="memory-bubbles">
-        {MEMORY_CATEGORY_OPTIONS.filter((o) => o.value).map((opt, i) => (
-          <button type="button" key={opt.value} aria-label={`按${opt.label}筛选`} onClick={() => onSelect(opt.value)} className={`memory-bubble memory-bubble-${i}`}>
-            <span>{opt.label}</span>
-            <strong>{counts[opt.value] ?? 0}</strong>
-          </button>
-        ))}
         <button type="button" aria-label="查看全部记忆" onClick={() => onSelect("")} className="memory-bubble-center">
           <Brain className="h-4 w-4" />
           <strong>{total}</strong>
           <span>条记忆</span>
         </button>
+        <div className="memory-bubble-grid">
+          {MEMORY_CATEGORY_OPTIONS.filter((o) => o.value).map((opt, i) => (
+            <button type="button" key={opt.value} aria-label={`按${opt.label}筛选`} onClick={() => onSelect(opt.value)} className={`memory-bubble memory-bubble-${i}`}>
+              <span>{opt.label}</span>
+              <strong>{counts[opt.value] ?? 0}</strong>
+            </button>
+          ))}
+        </div>
       </div>
     </section>
   );
 }
 
 function MemoryRow({
-  memory,
-  selected,
-  onSelect,
-  onEdit,
-  onDelete,
+  memory, selected, onSelect, onEdit, onDelete,
 }: {
-  memory: MemoryRecord;
-  selected: boolean;
-  onSelect: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
+  memory: MemoryRecord; selected: boolean; onSelect: () => void; onEdit: () => void; onDelete: () => void;
 }) {
   const category = getMemoryCategoryPresentation(memory.category);
   return (
@@ -522,17 +516,9 @@ function MemoryRow({
 }
 
 function MemoryDetail({
-  memory,
-  onEdit,
-  onDelete,
-  isDeleting,
-  deleteError,
+  memory, onEdit, onDelete, isDeleting, deleteError,
 }: {
-  memory: MemoryRecord;
-  onEdit: () => void;
-  onDelete: () => void;
-  isDeleting?: boolean;
-  deleteError?: string | null;
+  memory: MemoryRecord; onEdit: () => void; onDelete: () => void; isDeleting?: boolean; deleteError?: string | null;
 }) {
   const category = getMemoryCategoryPresentation(memory.category);
   return (
