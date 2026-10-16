@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Boxes, Plus, RefreshCw, Search, Settings2 } from "lucide-react";
+import { Boxes, LayoutGrid, List, Plus, RefreshCw, Search, Settings2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   CapabilityDetailSection,
@@ -37,6 +37,7 @@ export default function CapabilitiesPage() {
   const [provider, setProvider] = useState<CapabilityProviderKind | "all">("all");
   const [status, setStatus] = useState<CapabilityRuntimeStatus | "all">("all");
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "card">("list");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<CapabilityDescriptor | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -107,48 +108,281 @@ export default function CapabilitiesPage() {
     }
   };
 
+  const handleListKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    if (!visibleCapabilities.length) return;
+    e.preventDefault();
+    const currentIndex = visibleCapabilities.findIndex((c) => c.id === selectedId);
+    let nextIndex = currentIndex;
+    if (e.key === "ArrowDown") {
+      nextIndex = Math.min(currentIndex + 1, visibleCapabilities.length - 1);
+    } else if (e.key === "ArrowUp") {
+      nextIndex = Math.max(currentIndex - 1, 0);
+    }
+    if (nextIndex !== currentIndex && visibleCapabilities[nextIndex]) {
+      void selectCapability(visibleCapabilities[nextIndex]);
+    }
+  };
+
   return (
-    <div className="capability-page page-canvas">
+    <div className="capability-page page-canvas ui-opt-capabilities">
       <PageHeader
         title="能力"
         description="了解忆涟能做什么，查看可用状态与所需权限。"
-        actions={<><Button variant="secondary" onClick={() => setSourceChooserOpen(true)}><Plus className="h-4 w-4" />新增能力来源</Button><Button variant="secondary" onClick={() => void handleRefresh()} disabled={refreshing}><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />刷新能力</Button></>}
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setSourceChooserOpen(true)}>
+              <Plus className="h-4 w-4" />
+              新增能力来源
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void handleRefresh()}
+              disabled={refreshing}
+              loading={refreshing}
+              loadingLabel="刷新中…"
+            >
+              <RefreshCw className="h-4 w-4" />
+              刷新能力
+            </Button>
+          </>
+        }
       />
 
       <div className="capability-page-body">
-
-        {report && <div className="capability-refresh-report" role="status">发现 {report.discovered} · 就绪 {report.ready} · 不可用 {report.unavailable} · 重复 {report.duplicates} · Provider 失败 {report.provider_failures}</div>}
-        {error && <ErrorState title="能力信息暂时无法加载" description={error} action={<Button variant="secondary" size="sm" onClick={() => void reload()}>重试</Button>} />}
+        {report && (
+          <div className="capability-refresh-report" role="status">
+            发现 {report.discovered} · 就绪 {report.ready} · 不可用 {report.unavailable} · 重复 {report.duplicates} · Provider 失败 {report.provider_failures}
+          </div>
+        )}
+        {error && (
+          <ErrorState
+            title="能力信息暂时无法加载"
+            description={error}
+            action={
+              <Button variant="secondary" size="sm" onClick={() => void reload()}>
+                重试
+              </Button>
+            }
+          />
+        )}
 
         <section className="capability-filter-surface" aria-label="能力筛选">
-          <div className="capability-search-field">
+          <div className="capability-search-field flex-1 min-w-[220px]">
             <Search className="h-4 w-4 shrink-0 text-[var(--text-faint)]" />
-            <Input aria-label="搜索能力" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、描述或类型…" />
+            <Input
+              aria-label="搜索能力"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索名称、描述或类型…"
+            />
           </div>
-          <FilterSelect label="能力类型" value={kind} onChange={(value) => setKind(value as CapabilityKind | "all")} options={KIND_FILTERS.map((value) => ({ value, label: value === "all" ? "全部类型" : formatCapabilityKind(value) }))} />
-          <FilterSelect label="Provider" value={provider} onChange={(value) => setProvider(value as CapabilityProviderKind | "all")} options={PROVIDER_FILTERS.map((value) => ({ value, label: value === "all" ? "全部来源" : formatCapabilityProvider(value) }))} />
-          <FilterSelect label="状态" value={status} onChange={(value) => setStatus(value as CapabilityRuntimeStatus | "all")} options={STATUS_FILTERS.map((value) => ({ value, label: value === "all" ? "全部状态" : formatCapabilityStatus(value).label }))} />
+          <FilterSelect
+            label="能力类型"
+            value={kind}
+            onChange={(value) => setKind(value as CapabilityKind | "all")}
+            options={KIND_FILTERS.map((value) => ({
+              value,
+              label: value === "all" ? "全部类型" : formatCapabilityKind(value),
+            }))}
+          />
+          <FilterSelect
+            label="Provider"
+            value={provider}
+            onChange={(value) => setProvider(value as CapabilityProviderKind | "all")}
+            options={PROVIDER_FILTERS.map((value) => ({
+              value,
+              label: value === "all" ? "全部来源" : formatCapabilityProvider(value),
+            }))}
+          />
+          <FilterSelect
+            label="状态"
+            value={status}
+            onChange={(value) => setStatus(value as CapabilityRuntimeStatus | "all")}
+            options={STATUS_FILTERS.map((value) => ({
+              value,
+              label: value === "all" ? "全部状态" : formatCapabilityStatus(value).label,
+            }))}
+          />
         </section>
 
         <div className="capability-split-layout">
-          <section className="capability-list-panel" aria-label="能力列表">
-            <div className="capability-list-heading"><div><h2>忆涟现在会什么</h2><p>{visibleCapabilities.length} 项真实记录</p></div></div>
+          <section
+            className="capability-list-panel focus:outline-none"
+            aria-label="能力列表"
+            tabIndex={0}
+            onKeyDown={handleListKeyDown}
+          >
+            <div className="capability-list-heading">
+              <div>
+                <h2>忆涟现在会什么</h2>
+                <p>{visibleCapabilities.length} 项真实记录</p>
+              </div>
+              <div className="flex items-center gap-1 bg-[var(--surface-muted)] p-0.5 rounded-md border border-[var(--border-soft)]">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("list")}
+                  aria-label="列表视图"
+                  aria-pressed={viewMode === "list"}
+                  className={`p-1.5 rounded transition-colors ${
+                    viewMode === "list"
+                      ? "bg-[var(--surface-solid)] text-[var(--text)] shadow-xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text)]"
+                  }`}
+                >
+                  <List className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("card")}
+                  aria-label="卡片视图"
+                  aria-pressed={viewMode === "card"}
+                  className={`p-1.5 rounded transition-colors ${
+                    viewMode === "card"
+                      ? "bg-[var(--surface-solid)] text-[var(--text)] shadow-xs"
+                      : "text-[var(--text-muted)] hover:text-[var(--text)]"
+                  }`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {viewMode === "list" && visibleCapabilities.length > 0 && (
+              <div className="capability-matrix-header" role="row" aria-hidden="true">
+                <span>名称</span>
+                <span>类型</span>
+                <span>来源</span>
+                <span>状态</span>
+                <span>操作</span>
+              </div>
+            )}
+
             <div className="capability-list-scroll scrollbar-thin">
               {capabilities === null ? (
-                <div className="capability-skeleton-stack" aria-label="正在加载能力"><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div>
+                <div className="capability-skeleton-stack" aria-label="正在加载能力">
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                </div>
               ) : visibleCapabilities.length === 0 ? (
-                <EmptyState icon={<Boxes className="h-6 w-6" />} title="暂时没有可显示的能力信息。" description="没有匹配当前筛选条件的能力。" className="py-16" />
-              ) : (
-                <div className="capability-row-stack">
+                <EmptyState
+                  icon={<Boxes className="h-6 w-6" />}
+                  title="暂时没有可显示的能力信息。"
+                  description="没有匹配当前筛选条件的能力。"
+                  className="py-16"
+                />
+              ) : viewMode === "list" ? (
+                <div className="p-2 space-y-1">
                   {visibleCapabilities.map((capability) => {
                     const presentation = formatCapabilityStatus(capability.status);
+                    const isSelected = capability.id === selectedId;
+                    const managementTarget = getCapabilityManagementTarget(capability);
+
                     return (
-                      <button type="button" key={capability.id} aria-selected={capability.id === selectedId} onClick={() => void selectCapability(capability)} className={`capability-list-row ${capability.id === selectedId ? "capability-list-row-selected" : ""}`}>
-                        <span className="capability-list-row-heading"><Boxes className="h-4 w-4 shrink-0 text-[var(--accent-purple)]" /><strong>{capability.kind === "tool" ? formatToolDisplayName(capability.name) : capability.name}</strong><CapabilityStatusBadge label={presentation.label} tone={presentation.tone} /></span>
-                        <span className="capability-list-row-description">{capability.description || "暂无描述"}</span>
-                        <span className="capability-list-row-meta">{formatCapabilityKind(capability.kind)} · {formatCapabilityProvider(capability.provider)}</span>
-                        <span className="u2-capability-permissions">权限：{capability.permissions.length ? capability.permissions.slice(0,2).map(item=>formatPermission(item.permission)).join("、") : "未提供权限信息"}{capability.permissions.length>2 ? ` 等 ${capability.permissions.length} 项` : ""}</span>
-                        <span className="u2-capability-action">查看详情 →</span>
+                      <div
+                        key={capability.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-selected={isSelected}
+                        onClick={() => void selectCapability(capability)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            void selectCapability(capability);
+                          }
+                        }}
+                        className={`ui-opt-capability-row cursor-pointer ${
+                          isSelected ? "capability-list-row-selected" : ""
+                        }`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="flex items-center gap-2">
+                            <Boxes className="h-4 w-4 shrink-0 text-[var(--accent-purple)]" />
+                            <strong className="text-sm font-medium text-[var(--text)] truncate">
+                              {capability.kind === "tool"
+                                ? formatToolDisplayName(capability.name)
+                                : capability.name}
+                            </strong>
+                          </div>
+                          <p className="text-xs text-[var(--text-muted)] truncate mt-0.5">
+                            {capability.description || "暂无描述"}
+                          </p>
+                        </div>
+                        <div className="text-xs text-[var(--text-secondary)]">
+                          {formatCapabilityKind(capability.kind)}
+                        </div>
+                        <div className="text-xs text-[var(--text-secondary)] truncate">
+                          {formatCapabilityProvider(capability.provider)}
+                        </div>
+                        <div>
+                          <CapabilityStatusBadge
+                            label={presentation.label}
+                            tone={presentation.tone}
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-[var(--accent-primary)] hover:underline">
+                            查看详情 →
+                          </span>
+                          {managementTarget && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(managementTarget.to);
+                              }}
+                              className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:underline ml-1"
+                              aria-label={`管理 ${capability.name} 来源`}
+                            >
+                              管理来源
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="capability-card-grid-view">
+                  {visibleCapabilities.map((capability) => {
+                    const presentation = formatCapabilityStatus(capability.status);
+                    const isSelected = capability.id === selectedId;
+
+                    return (
+                      <button
+                        type="button"
+                        key={capability.id}
+                        aria-selected={isSelected}
+                        onClick={() => void selectCapability(capability)}
+                        className={`capability-matrix-card ${
+                          isSelected ? "capability-card-selected" : ""
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Boxes className="h-4 w-4 shrink-0 text-[var(--accent-purple)]" />
+                            <strong className="text-sm font-semibold truncate">
+                              {capability.kind === "tool"
+                                ? formatToolDisplayName(capability.name)
+                                : capability.name}
+                            </strong>
+                          </div>
+                          <CapabilityStatusBadge
+                            label={presentation.label}
+                            tone={presentation.tone}
+                          />
+                        </div>
+                        <p className="text-xs text-[var(--text-muted)] line-clamp-2">
+                          {capability.description || "暂无描述"}
+                        </p>
+                        <div className="text-[11px] text-[var(--text-faint)] flex items-center justify-between border-t border-[var(--border-soft)] pt-2 mt-auto">
+                          <span>
+                            {formatCapabilityKind(capability.kind)} · {formatCapabilityProvider(capability.provider)}
+                          </span>
+                          <span className="text-[var(--accent-primary)]">查看详情 →</span>
+                        </div>
                       </button>
                     );
                   })}
@@ -158,19 +392,60 @@ export default function CapabilitiesPage() {
           </section>
 
           <section className="capability-detail-panel" aria-label="能力详情">
-            {selectedDetail ? <CapabilityDetail capability={selectedDetail} loading={detailLoading} error={detailError} onManage={(to) => navigate(to)} /> : <EmptyState icon={<Boxes className="h-6 w-6" />} title="选择一项能力" description="查看真实的能力、权限与状态字段。" className="h-full min-h-[320px]" />}
+            {selectedDetail ? (
+              <CapabilityDetail
+                capability={selectedDetail}
+                loading={detailLoading}
+                error={detailError}
+                onManage={(to) => navigate(to)}
+                onRetry={() => {
+                  if (selectedDetail) void selectCapability(selectedDetail);
+                }}
+              />
+            ) : (
+              <EmptyState
+                icon={<Boxes className="h-6 w-6" />}
+                title="选择一项能力"
+                description="查看真实的能力、权限与状态字段。"
+                className="h-full min-h-[320px]"
+              />
+            )}
           </section>
         </div>
-        <details className="u2-disclosure u2-managed-imports"><summary>添加与管理能力来源 <span>托管 Skill / Plugin 导入与启用</span></summary><ManagedImports /></details>
+
+        <details className="u2-disclosure u2-managed-imports">
+          <summary>
+            添加与管理能力来源 <span>托管 Skill / Plugin 导入与启用</span>
+          </summary>
+          <ManagedImports />
+        </details>
       </div>
 
       <Modal open={sourceChooserOpen} onClose={() => setSourceChooserOpen(false)} title="新增能力来源">
         <div className="space-y-3">
-          <p className="text-sm text-[var(--text-secondary)]">能力注册表会自动发现下面这些真实来源，不会创建无法执行的空能力。</p>
-          <SourceChoice title="新建技能" description="编写一个工作区 SKILL.md。" onClick={() => navigate("/skills")} />
-          <SourceChoice title="添加 MCP 服务" description="连接提供工具的本地或远程 MCP 服务。" onClick={() => navigate("/plugins")} />
-          <SourceChoice title="管理智能体" description="创建或调整可被调用的智能体。" onClick={() => navigate("/agents")} />
-          <SourceChoice title="管理工作流" description="创建或调整可执行工作流。" onClick={() => navigate("/workflows")} />
+          <p className="text-sm text-[var(--text-secondary)]">
+            能力注册表会自动发现下面这些真实来源，不会创建无法执行的空能力。
+          </p>
+          <SourceChoice
+            title="新建技能"
+            description="编写一个工作区 SKILL.md。"
+            onClick={() => navigate("/skills")}
+          />
+          <SourceChoice
+            title="添加 MCP 服务"
+            description="连接提供工具的本地或远程 MCP 服务。"
+            onClick={() => navigate("/plugins")}
+          />
+          <SourceChoice
+            title="管理智能体"
+            description="创建或调整可被调用的智能体。"
+            onClick={() => navigate("/agents")}
+          />
+          <SourceChoice
+            title="管理工作流"
+            description="创建或调整可执行工作流。"
+            onClick={() => navigate("/workflows")}
+          />
         </div>
       </Modal>
     </div>
@@ -178,35 +453,146 @@ export default function CapabilitiesPage() {
 }
 
 function SourceChoice({ title, description, onClick }: { title: string; description: string; onClick: () => void }) {
-  return <Button variant="secondary" className="h-auto w-full justify-start px-4 py-3 text-left" onClick={onClick}><span><strong className="block text-sm">{title}</strong><span className="mt-1 block text-xs font-normal text-[var(--text-secondary)]">{description}</span></span></Button>;
-}
-
-function FilterSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
   return (
-    <label className="capability-filter-select"><span>{label}</span><select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+    <Button
+      variant="secondary"
+      className="h-auto w-full justify-start px-4 py-3 text-left"
+      onClick={onClick}
+    >
+      <span>
+        <strong className="block text-sm">{title}</strong>
+        <span className="mt-1 block text-xs font-normal text-[var(--text-secondary)]">
+          {description}
+        </span>
+      </span>
+    </Button>
   );
 }
 
-function CapabilityDetail({ capability, loading, error, onManage }: { capability: CapabilityDescriptor; loading: boolean; error: string; onManage: (to: string) => void }) {
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <label className="capability-filter-select">
+      <span>{label}</span>
+      <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function CapabilityDetail({
+  capability,
+  loading,
+  error,
+  onManage,
+  onRetry,
+}: {
+  capability: CapabilityDescriptor;
+  loading: boolean;
+  error: string;
+  onManage: (to: string) => void;
+  onRetry?: () => void;
+}) {
   const status = formatCapabilityStatus(capability.status);
   const risk = formatCapabilityRisk(capability.risk);
   const managementTarget = getCapabilityManagementTarget(capability);
+
   return (
     <div className="capability-detail-content">
-      <div className="capability-detail-heading"><div><div className="capability-detail-title-line"><Boxes className="h-5 w-5 text-[var(--accent-primary)]" /><h2>{capability.kind === "tool" ? formatToolDisplayName(capability.name) : capability.name}</h2><CapabilityStatusBadge label={status.label} tone={status.tone} /></div><p className="capability-detail-description">{capability.description || "暂无描述"}</p></div>{managementTarget && <Button variant="secondary" size="sm" onClick={() => onManage(managementTarget.to)}><Settings2 className="h-4 w-4" />管理来源</Button>}</div>
+      <div className="capability-detail-heading">
+        <div>
+          <div className="capability-detail-title-line">
+            <Boxes className="h-5 w-5 text-[var(--accent-primary)]" />
+            <h2>{capability.kind === "tool" ? formatToolDisplayName(capability.name) : capability.name}</h2>
+            <CapabilityStatusBadge label={status.label} tone={status.tone} />
+          </div>
+          <p className="capability-detail-description">{capability.description || "暂无描述"}</p>
+        </div>
+        {managementTarget && (
+          <Button variant="secondary" size="sm" onClick={() => onManage(managementTarget.to)}>
+            <Settings2 className="h-4 w-4" />
+            管理来源
+          </Button>
+        )}
+      </div>
+
       {loading && <div className="capability-detail-loading"><Skeleton className="h-4 w-1/2" /></div>}
-      {error && <ErrorState title="能力详情暂时无法加载" description={error} />}
+      {error && (
+        <div className="space-y-2">
+          <ErrorState title="能力详情暂时无法加载" description={error} />
+          {onRetry && <Button variant="secondary" size="sm" onClick={onRetry}>重试加载详情</Button>}
+        </div>
+      )}
+
       <CapabilityDetailSection title="能力概览">
-        <dl className="capability-meta-list"><CapabilityMetaRow label="类型" value={formatCapabilityKind(capability.kind)} /><CapabilityMetaRow label="Provider" value={formatCapabilityProvider(capability.provider)} /><CapabilityMetaRow label="风险" value={risk.label} /><CapabilityMetaRow label="启用状态" value={capability.enabled ? "已启用" : "已禁用"} /></dl>
-        {!managementTarget && <p className="mt-3 text-sm text-[var(--text-secondary)]">这是由系统运行时提供的内置能力，不能在注册表中直接编辑或删除。</p>}
+        <dl className="capability-meta-list">
+          <CapabilityMetaRow label="类型" value={formatCapabilityKind(capability.kind)} />
+          <CapabilityMetaRow label="Provider" value={formatCapabilityProvider(capability.provider)} />
+          <CapabilityMetaRow label="风险" value={risk.label} />
+          <CapabilityMetaRow label="启用状态" value={capability.enabled ? "已启用" : "已禁用"} />
+        </dl>
+        {!managementTarget && (
+          <p className="mt-3 text-sm text-[var(--text-secondary)]">
+            这是由系统运行时提供的内置能力，不能在注册表中直接编辑或删除。
+          </p>
+        )}
       </CapabilityDetailSection>
-      <CapabilityDetailSection title="来源与版本"><dl className="capability-meta-list"><CapabilityMetaRow label="来源" value={capability.metadata.source_name || formatCapabilityProvider(capability.provider)} /><CapabilityMetaRow label="版本" value={capability.metadata.version} /></dl></CapabilityDetailSection>
+
+      <CapabilityDetailSection title="来源与版本">
+        <dl className="capability-meta-list">
+          <CapabilityMetaRow label="来源" value={capability.metadata.source_name || formatCapabilityProvider(capability.provider)} />
+          <CapabilityMetaRow label="版本" value={capability.metadata.version} />
+        </dl>
+      </CapabilityDetailSection>
+
       <CapabilityDetailSection title="权限与作用域">
-        <div className="capability-permission-list">{capability.permissions.length > 0 ? capability.permissions.map((permission) => <div key={permission.permission}><span>{formatPermission(permission.permission)}</span><code>{permission.permission}</code><em>{permission.required ? "必需" : "可选"}</em></div>) : <span>当前没有返回权限信息。</span>}</div>
+        <div className="capability-permission-list">
+          {capability.permissions.length > 0 ? (
+            capability.permissions.map((p) => (
+              <div key={p.permission}>
+                <span>{formatPermission(p.permission)}</span>
+                <code>{p.permission}</code>
+                <em>{p.required ? "必需" : "可选"}</em>
+              </div>
+            ))
+          ) : (
+            <span>当前没有返回权限信息。</span>
+          )}
+        </div>
       </CapabilityDetailSection>
+
       <CapabilityDetailSection title="技术详情" technical>
-        <dl className="capability-meta-list"><CapabilityMetaRow label="原始名称" value={capability.name} /><CapabilityMetaRow label="能力 ID" value={capability.id} mono /><CapabilityMetaRow label="原始类型" value={capability.kind} mono /><CapabilityMetaRow label="原始 Provider" value={capability.provider} mono /><CapabilityMetaRow label="来源 ID" value={capability.metadata.source_id} mono /><CapabilityMetaRow label="来源名称" value={capability.metadata.source_name} /><CapabilityMetaRow label="版本" value={capability.metadata.version} mono /><CapabilityMetaRow label="运行时就绪" value={capability.metadata.runtime_ready ? "是" : "否"} /></dl>{capability.input_schema && <pre className="capability-content-preview mt-3">{JSON.stringify(capability.input_schema, null, 2)}</pre>}
+        <dl className="capability-meta-list">
+          <CapabilityMetaRow label="原始名称" value={capability.name} />
+          <CapabilityMetaRow label="能力 ID" value={capability.id} mono />
+          <CapabilityMetaRow label="原始类型" value={capability.kind} mono />
+          <CapabilityMetaRow label="原始 Provider" value={capability.provider} mono />
+          <CapabilityMetaRow label="来源 ID" value={capability.metadata.source_id} mono />
+          <CapabilityMetaRow label="来源名称" value={capability.metadata.source_name} />
+          <CapabilityMetaRow label="版本" value={capability.metadata.version} mono />
+          <CapabilityMetaRow label="运行时就绪" value={capability.metadata.runtime_ready ? "是" : "否"} />
+        </dl>
+        {capability.input_schema && (
+          <pre className="capability-content-preview mt-3">{JSON.stringify(capability.input_schema, null, 2)}</pre>
+        )}
       </CapabilityDetailSection>
     </div>
   );
 }
+
+
+

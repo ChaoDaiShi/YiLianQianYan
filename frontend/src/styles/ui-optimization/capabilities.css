@@ -1,0 +1,277 @@
+/* ============================================================
+   UI Optimization - Capabilities (Work Package E)
+   Scoped styles for Agents, Skills, Plugins, and Capabilities
+   ============================================================ */
+
+.ui-opt-capabilities,
+.ui-opt-agents,
+.ui-opt-skills,
+.ui-opt-plugins {
+  --cap-transition: 150ms ease-out;
+}
+
+/* ============================================================
+   Common Layout & Surfaces
+   ============================================================ */
+
+.ui-opt-capabilities .capability-page-body,
+.ui-opt-agents .capability-page-body,
+.ui-opt-skills .capability-page-body,
+.ui-opt-plugins .capability-page-body {
+  padding: 16px 20px 24px;
+  gap: 16px;
+}
+
+/* Interactive Card Base */
+.ui-opt-capabilities .ui-opt-card-interactive {
+  transition: transform var(--cap-transition), border-color var(--cap-transition), box-shadow var(--cap-transition);
+}
+
+.ui-opt-capabilities .ui-opt-card-interactive:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-primary);
+}
+
+.ui-opt-capabilities .ui-opt-card-interactive:active {
+  transform: translateY(0);
+}
+
+/* ============================================================
+   E1: Agents Page Specifics
+   ============================================================ */
+
+.ui-opt-agents .agent-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 16px;
+}
+
+.ui-opt-agents .agent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  text-align: left;
+  position: relative;
+  transition: transform var(--cap-transition), border-color var(--cap-transition), box-shadow var(--cap-transition);
+  cursor: pointer;
+}
+
+.ui-opt-agents .agent-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-hover);
+}
+
+.ui-opt-agents .agent-card-selected {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
+}
+
+.ui-opt-agents .agent-role-icon {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
+}
+
+.ui-opt-agents .agent-instructions-inset {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  word-break: break-word;
+}
+
+.ui-opt-agents .agent-badge-overflow {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-xs);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-soft);
+  color: var(--accent-primary);
+  cursor: pointer;
+  transition: background-color var(--cap-transition);
+}
+
+.ui-opt-agents .agent-badge-overflow:hover {
+  background: var(--surface-hover);
+}
+
+/* ============================================================
+   E2: Skills Page Specifics
+   ============================================================ */
+
+.ui-opt-skills .skill-reading-content {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.ui-opt-skills .skill-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  transition: all var(--cap-transition);
+}
+
+.ui-opt-skills .skill-copy-btn:hover {
+  color: var(--text);
+  border-color: var(--border-soft);
+  background: var(--surface-hover);
+}
+
+/* ============================================================
+   E3: Plugins Page Specifics
+   ============================================================ */
+
+.ui-opt-plugins .mcp-status-banner {
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ui-opt-plugins .mcp-server-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+  transition: border-color var(--cap-transition), box-shadow var(--cap-transition);
+}
+
+.ui-opt-plugins .mcp-server-card:hover {
+  border-color: var(--border-hover);
+}
+
+/* ============================================================
+   E4: Capability Matrix & Grid View
+   ============================================================ */
+
+.ui-opt-capabilities .capability-matrix-header {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(90px, .8fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(130px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--divider);
+}
+
+.ui-opt-capabilities .ui-opt-capability-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(90px, .8fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(130px, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  transition: background-color var(--cap-transition), border-color var(--cap-transition);
+}
+
+.ui-opt-capabilities .ui-opt-capability-row:hover {
+  background: var(--surface-hover);
+}
+
+.ui-opt-capabilities .ui-opt-capability-row[aria-selected="true"] {
+  background: var(--surface-hover);
+  border-color: var(--accent-primary);
+}
+
+.ui-opt-capabilities .capability-card-grid-view {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+  padding: 10px;
+}
+
+.ui-opt-capabilities .capability-matrix-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  text-align: left;
+  transition: transform var(--cap-transition), border-color var(--cap-transition);
+  cursor: pointer;
+}
+
+.ui-opt-capabilities .capability-matrix-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-hover);
+}
+
+.ui-opt-capabilities .capability-matrix-card[aria-selected="true"] {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
+}
+
+/* Responsive Matrix Adjustment */
+@media (max-width: 860px) {
+  .ui-opt-capabilities .capability-matrix-header {
+    display: none;
+  }
+
+  .ui-opt-capabilities .ui-opt-capability-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--border-soft);
+    margin-bottom: 8px;
+  }
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  .ui-opt-capabilities .ui-opt-card-interactive,
+  .ui-opt-agents .agent-card,
+  .ui-opt-capabilities .capability-matrix-card {
+    transition: none;
+    transform: none !important;
+  }
+}

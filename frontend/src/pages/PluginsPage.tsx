@@ -12,8 +12,6 @@ import {
 } from "../api/client";
 import {
   mcpTransportRuntimeLabel,
-  MCP_RUNTIME_STATUS_LABELS,
-  MCP_RUNTIME_STATUS_TONES,
   EXTERNAL_PROMPT_WARNING,
   resourcePreview,
   promptMessageText,
@@ -30,7 +28,6 @@ import {
   type McpPromptDescriptor,
   type McpResourceReadResponse,
   type McpPromptGetResponse,
-  type McpRuntimeStatus,
 } from "../api/mcpRuntime";
 import { CapabilityStatusBadge } from "../components/capabilities";
 import { Badge, Button, EmptyState, ErrorState, Input, Modal, PageHeader, Panel, Skeleton, Spinner } from "../components/ui";
@@ -56,12 +53,59 @@ const EMPTY_DETAIL: DetailState = {
   error: "",
 };
 
-function runtimeStatusTone(status: string): "default" | "success" | "warning" | "danger" | "info" {
-  return MCP_RUNTIME_STATUS_TONES[(status as McpRuntimeStatus)] ?? "default";
-}
+function getMcpPresentation(mcp: McpServer): {
+  statusTone: "default" | "success" | "warning" | "danger";
+  statusLabel: string;
+  enableTone: "default" | "success";
+  healthMessage: string | null;
+} {
+  if (!mcp.enabled) {
+    return {
+      statusTone: "default",
+      statusLabel: "已禁用",
+      enableTone: "default",
+      healthMessage: null,
+    };
+  }
 
-function runtimeStatusLabel(status: string): string {
-  return MCP_RUNTIME_STATUS_LABELS[(status as McpRuntimeStatus)] ?? status;
+  let statusTone: "default" | "success" | "warning" | "danger" = "default";
+  let statusLabel = "状态未确认";
+
+  switch (mcp.runtime_status) {
+    case "ready":
+      statusTone = "success";
+      statusLabel = "已就绪";
+      break;
+    case "misconfigured":
+      statusTone = "warning";
+      statusLabel = "配置有误";
+      break;
+    case "unavailable":
+      statusTone = "danger";
+      statusLabel = "不可用";
+      break;
+    case "degraded":
+      statusTone = "warning";
+      statusLabel = "能力受限";
+      break;
+    default:
+      statusTone = "default";
+      statusLabel = "状态未确认";
+      break;
+  }
+
+  const enableTone = mcp.runtime_status === "ready" ? "success" : "default";
+  const healthMessage =
+    mcp.runtime_status === "ready"
+      ? null
+      : mcp.safe_error || "暂不可用，查看配置或测试连接";
+
+  return {
+    statusTone,
+    statusLabel,
+    enableTone,
+    healthMessage,
+  };
 }
 
 export default function PluginsPage() {
@@ -73,6 +117,7 @@ export default function PluginsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // Add/Edit modal
   const [showModal, setShowModal] = useState(false);
@@ -198,22 +243,47 @@ export default function PluginsPage() {
 
   const handleToggle = async (id: string) => {
     setActionError("");
-    const result = await toggleMcpServer(id);
-    if (!result.ok) {
-      setActionError(result.error);
-      return;
+    setTogglingId(id);
+    try {
+      const result = await toggleMcpServer(id);
+      if (!result.ok) {
+        setActionError(result.error);
+        return;
+      }
+      await load();
+    } finally {
+      setTogglingId(null);
     }
-    await load();
   };
 
   const handleTest = async (id: string) => {
     setTestingId(id);
-    const result = await testMcpServer(id);
-    setTestResults((current) => ({
-      ...current,
-      [id]: result.ok ? result.data : { ok: false, message: result.error },
-    }));
-    setTestingId(null);
+    try {
+      const result = await testMcpServer(id);
+      if (!result.ok) {
+        setTestResults((current) => ({
+          ...current,
+          [id]: { ok: false, message: result.error || "连接测试请求失败" },
+        }));
+      } else if (result.data.ok === false) {
+        setTestResults((current) => ({
+          ...current,
+          [id]: { ok: false, message: result.data.message || "服务返回连接失败或未就绪" },
+        }));
+      } else {
+        setTestResults((current) => ({
+          ...current,
+          [id]: { ok: true, message: result.data.message || "连接测试通过" },
+        }));
+      }
+    } catch (err) {
+      setTestResults((current) => ({
+        ...current,
+        [id]: { ok: false, message: String(err) },
+      }));
+    } finally {
+      setTestingId(null);
+    }
   };
 
   const handleRefresh = async (id: string) => {
@@ -344,7 +414,7 @@ export default function PluginsPage() {
   }
 
   return (
-    <div className="page-canvas flex h-full flex-col">
+    <div className="capability-page page-canvas ui-opt-capabilities ui-opt-plugins flex h-full flex-col">
       <PageHeader
         title="插件管理"
         description="管理内置工具、MCP 服务器与外部工具扩展"
@@ -409,6 +479,16 @@ export default function PluginsPage() {
             {data.mcp.map((mcp) => {
               const isExpanded = expandedId === mcp.id;
               const d = detail[mcp.id] ?? EMPTY_DETAIL;
+              const pres = getMcpPresentation(mcp);
+              const countsList: string[] = [];
+              if (mcp.protocol_version) countsList.push(`协议 ${mcp.protocol_version}`);
+              if (mcp.tools_count != null) countsList.push(`Tools ${mcp.tools_count}`);
+              if (mcp.resources_count != null) countsList.push(`Resources ${mcp.resources_count}`);
+              if (mcp.prompts_count != null) countsList.push(`Prompts ${mcp.prompts_count}`);
+              if (mcp.env && Object.keys(mcp.env).length > 0) {
+                countsList.push(`环境变量 ${Object.keys(mcp.env).length} 个（值不展示）`);
+              }
+
               return (
                 <Panel key={mcp.id} className="group">
                   <div className="flex items-start justify-between">
@@ -417,14 +497,12 @@ export default function PluginsPage() {
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-medium text-sm">{mcp.name}</h4>
-                          {mcp.enabled ? (
-                            <Badge tone="success">已启用</Badge>
-                          ) : (
-                            <Badge tone="default">已禁用</Badge>
-                          )}
+                          <Badge tone={pres.enableTone}>
+                            {mcp.enabled ? "已启用" : "已禁用"}
+                          </Badge>
                           <CapabilityStatusBadge
-                            tone={runtimeStatusTone(mcp.runtime_status || (mcp.enabled ? "disconnected" : "disabled"))}
-                            label={runtimeStatusLabel(mcp.runtime_status || (mcp.enabled ? "disconnected" : "disabled"))}
+                            tone={pres.statusTone}
+                            label={pres.statusLabel}
                           />
                         </div>
                         <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">
@@ -432,12 +510,11 @@ export default function PluginsPage() {
                           {mcp.transport === "stdio" ? ` · ${mcp.command || "(未配置)"}` : ` · ${mcp.url || "(未配置)"}`}
                         </p>
                         <p className="text-[10px] text-[var(--text-faint)] mt-1">
-                          {mcp.protocol_version ? `协议 ${mcp.protocol_version}` : "协议未协商"} · Tools {mcp.tools_count ?? 0} · Resources {mcp.resources_count ?? 0} · Prompts {mcp.prompts_count ?? 0}
-                          {mcp.env && Object.keys(mcp.env).length > 0 ? ` · 环境变量 ${Object.keys(mcp.env).length} 个（值不展示）` : ""}
+                          {countsList.length > 0 ? countsList.join(" · ") : "未提供配置参数"}
                         </p>
-                        {mcp.safe_error && (
-                          <p className="text-[10px] text-[var(--danger)] mt-0.5 truncate max-w-[420px]">
-                            {mcp.safe_error}
+                        {pres.healthMessage && (
+                          <p className="text-[10px] text-[var(--danger)] mt-0.5 truncate max-w-[420px]" role="alert">
+                            {pres.healthMessage}
                           </p>
                         )}
                         {testResults[mcp.id] && (
@@ -451,20 +528,23 @@ export default function PluginsPage() {
                     <div className="flex flex-wrap items-center justify-end gap-1.5 flex-shrink-0">
                       <Button variant="secondary" size="sm"
                         onClick={() => handleRefresh(mcp.id)}
-                        aria-label="刷新运行时"
+                        aria-label={`刷新 ${mcp.name} 运行时`}
                       >
                         <RefreshCw className="w-3.5 h-3.5" />刷新
                       </Button>
                       <Button variant="secondary" size="sm"
                         onClick={() => toggleDetail(mcp.id)}
-                        aria-label={isExpanded ? "收起详情" : "查看详情"}
+                        aria-label={isExpanded ? `收起 ${mcp.name} 详情` : `查看 ${mcp.name} 详情`}
                         aria-expanded={isExpanded}
                       >
                         {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}详情
                       </Button>
                       <Button variant="secondary" size="sm"
                         onClick={() => handleToggle(mcp.id)}
-                        aria-label={mcp.enabled ? "禁用插件" : "启用插件"}
+                        disabled={togglingId === mcp.id}
+                        loading={togglingId === mcp.id}
+                        loadingLabel="切换中…"
+                        aria-label={mcp.enabled ? `禁用 ${mcp.name}` : `启用 ${mcp.name}`}
                         aria-pressed={mcp.enabled}
                       >
                         {mcp.enabled ? "禁用" : "启用"}
@@ -472,25 +552,23 @@ export default function PluginsPage() {
                       <Button variant="secondary" size="sm"
                         onClick={() => handleTest(mcp.id)}
                         disabled={testingId === mcp.id}
-                        aria-label="测试连接"
+                        loading={testingId === mcp.id}
+                        loadingLabel="测试中…"
+                        aria-label={`测试 ${mcp.name} 连接`}
                       >
-                        {testingId === mcp.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <TestTube className="w-3.5 h-3.5" />
-                        )}
+                        {!testingId || testingId !== mcp.id ? <TestTube className="w-3.5 h-3.5" /> : null}
                         测试
                       </Button>
                       <Button variant="secondary" size="sm"
                         onClick={() => openEdit(mcp)}
-                        aria-label="编辑插件"
+                        aria-label={`编辑 ${mcp.name}`}
                       >
                         <Wrench className="w-3.5 h-3.5" />编辑
                       </Button>
                       <Button variant="ghost" size="sm"
                         onClick={() => handleDelete(mcp.id, mcp.name)}
                         className="text-[var(--danger)]"
-                        aria-label="删除插件"
+                        aria-label={`删除 ${mcp.name}`}
                       >
                         <Trash2 className="w-3.5 h-3.5" />删除
                       </Button>
