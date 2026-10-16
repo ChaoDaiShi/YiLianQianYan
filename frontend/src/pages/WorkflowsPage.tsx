@@ -33,7 +33,7 @@ export default function WorkflowsPage() {
   const [runtimeRefresh, setRuntimeRefresh] = useState(0);
 
   return (
-    <div className="page-canvas flex h-full flex-col">
+    <div className="page-canvas ui-opt-workflows flex h-full flex-col">
       <PageHeader
         title="工作流"
         description="模板工作流用于对话；运行工作流是可执行的 DAG 运行时"
@@ -320,6 +320,9 @@ function RuntimeTab({
   setRuntimeRefresh: (n: number) => void;
 }) {
   const [runError, setRunError] = useState("");
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
+  const [locateNodeId, setLocateNodeId] = useState<string | null>(null);
 
   const handleRun = async (graph: WorkflowGraphRecord) => {
     setRunError("");
@@ -335,20 +338,39 @@ function RuntimeTab({
   const handleCreate = () => {
     setEditorGraph(null);
     setActiveRunId(null);
+    setSelectedNodeId(null);
+    setHighlightedNodeId(null);
+    setLocateNodeId(null);
     setEditorOpen(true);
   };
 
   if (editorOpen) {
     return (
-      <WorkflowGraphEditor
-        graph={editorGraph}
-        onRun={handleRun}
-        onSaved={(graph) => {
-          setEditorGraph(graph);
-          setRuntimeRefresh(runtimeRefresh + 1);
-        }}
-        onClose={() => setEditorOpen(false)}
-      />
+      <div className="space-y-4">
+        <WorkflowGraphEditor
+          graph={editorGraph}
+          onRun={handleRun}
+          selectedNodeId={selectedNodeId}
+          onSelectedNodeChange={setSelectedNodeId}
+          highlightedNodeId={highlightedNodeId}
+          locateNodeId={locateNodeId}
+          onSaved={(graph) => {
+            setEditorGraph(graph);
+            setRuntimeRefresh(runtimeRefresh + 1);
+          }}
+          onClose={() => setEditorOpen(false)}
+        />
+        {activeRunId && (
+          <WorkflowRunInspector
+            runId={activeRunId}
+            onClose={() => setActiveRunId(null)}
+            selectedNodeId={selectedNodeId}
+            onNodeSelect={(id) => setSelectedNodeId(id)}
+            onNodeHighlight={(id) => setHighlightedNodeId(id)}
+            onLocateNode={(id) => setLocateNodeId(id)}
+          />
+        )}
+      </div>
     );
   }
 

@@ -20,28 +20,35 @@ function kindSummary(definition: WorkflowGraphRecord["definition"]): string {
   return Array.from(kinds).join(" / ") || "无节点";
 }
 
+export interface RuntimeWorkflowListProps {
+  onRun: (graph: WorkflowGraphRecord) => void;
+  onEdit: (graph: WorkflowGraphRecord) => void;
+  onCreate: () => void;
+  refreshKey: number;
+  selectedGraphId?: string | null;
+  compact?: boolean;
+}
+
 export default function RuntimeWorkflowList({
   onRun,
   onEdit,
   onCreate,
   refreshKey,
-}: {
-  onRun: (graph: WorkflowGraphRecord) => void;
-  onEdit: (graph: WorkflowGraphRecord) => void;
-  onCreate: () => void;
-  refreshKey: number;
-}) {
+  selectedGraphId,
+  compact = false,
+}: RuntimeWorkflowListProps) {
   const [graphs, setGraphs] = useState<WorkflowGraphRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
+    setLoading(true);
     const res = await listWorkflowGraphs();
     if (res.ok) {
       setGraphs(res.data);
       setError("");
     } else {
-      setError(res.error);
+      setError(res.error || "无法加载运行工作流");
     }
     setLoading(false);
   }, []);
@@ -56,10 +63,10 @@ export default function RuntimeWorkflowList({
     if (res.ok) load();
   };
 
-  if (loading) {
+  if (loading && graphs.length === 0) {
     return (
-      <div className="flex justify-center py-16">
-        <Spinner className="w-8 h-8" />
+      <div className="flex justify-center py-10">
+        <Spinner className="w-6 h-6" />
       </div>
     );
   }
@@ -79,11 +86,112 @@ export default function RuntimeWorkflowList({
     );
   }
 
+  if (graphs.length === 0 && !error) {
+    return (
+      <EmptyState
+        icon={<span className="text-2xl">⚡</span>}
+        title="还没有可执行工作流"
+        description="创建一个可执行的 DAG 工作流图，然后点击运行。"
+        action={
+          <Button size="sm" onClick={onCreate}>
+            新建工作流
+          </Button>
+        }
+        className="py-6"
+      />
+    );
+  }
+
+  if (compact) {
+    return (
+      <div className="flex flex-col gap-2">
+        {graphs.map((graph) => {
+          const isSelected = selectedGraphId === graph.id;
+          return (
+            <div
+              key={graph.id}
+              onClick={() => onEdit(graph)}
+              className={`group flex flex-col gap-2 rounded-[var(--radius-md)] border p-3 cursor-pointer transition-all ${
+                isSelected
+                  ? "border-[var(--accent-primary)] bg-[var(--surface-solid)] ring-1 ring-[var(--accent-primary)]/40 shadow-sm"
+                  : "border-[var(--border-soft)] bg-[var(--surface-solid)] hover:border-[var(--border)] hover:bg-[var(--surface-hover)]"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-1.5 min-w-0">
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-semibold text-xs truncate text-[var(--text)]" title={graph.name}>
+                    {graph.name}
+                  </h4>
+                  {graph.description && (
+                    <p className="text-[11px] text-[var(--text-secondary)] line-clamp-1 mt-0.5">
+                      {graph.description}
+                    </p>
+                  )}
+                </div>
+                <Badge tone="default">
+                  <span className="text-[10px]">{graph.definition.nodes.length} 节点</span>
+                </Badge>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-[var(--text-faint)]">
+                <span>{kindSummary(graph.definition)}</span>
+                <span className="truncate">
+                  {new Date(graph.updated_at).toLocaleDateString()}
+                </span>
+              </div>
+
+              <div
+                className="flex items-center gap-1 pt-1.5 border-t border-[var(--border-soft)]/60"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Button
+                  size="sm"
+                  variant="primary"
+                  className="h-6 text-[11px] px-2"
+                  onClick={() => onRun(graph)}
+                  title="运行此工作流"
+                >
+                  <Play className="w-3 h-3" />
+                  运行
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-6 text-[11px] px-2"
+                  onClick={() => onEdit(graph)}
+                  title="编辑图"
+                >
+                  <Pencil className="w-3 h-3" />
+                  编辑
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-[11px] px-1.5 ml-auto text-[var(--text-secondary)] hover:text-[var(--danger)]"
+                  onClick={() => handleDelete(graph)}
+                  title="删除工作流"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
-    <div>
-      <div className="grid grid-cols-2 gap-4">
-        {graphs.map((graph) => (
-          <Panel key={graph.id} className="flex flex-col gap-2">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {graphs.map((graph) => {
+        const isSelected = selectedGraphId === graph.id;
+        return (
+          <Panel
+            key={graph.id}
+            className={`flex flex-col gap-2 transition-all ${
+              isSelected ? "ring-1 ring-[var(--accent-primary)]" : ""
+            }`}
+          >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h3 className="font-semibold text-sm truncate">{graph.name}</h3>
@@ -119,19 +227,8 @@ export default function RuntimeWorkflowList({
               </Button>
             </div>
           </Panel>
-        ))}
-
-        {graphs.length === 0 && !error && (
-          <div className="col-span-2">
-            <EmptyState
-              icon={<span className="text-2xl">⚡</span>}
-              title="还没有可执行工作流"
-              description="创建一个可执行的 DAG 工作流图，然后点击运行。"
-              action={<Button size="sm" onClick={onCreate}>新建工作流</Button>}
-            />
-          </div>
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 }

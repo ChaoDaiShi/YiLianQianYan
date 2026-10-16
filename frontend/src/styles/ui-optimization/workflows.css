@@ -1,0 +1,173 @@
+/* ============================================================
+   UI Optimization - Workflows (Work Package D)
+   ============================================================ */
+
+.ui-opt-workflows {
+  /* Scoped styles for workflows page */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 16px low-contrast dot matrix background */
+.ui-opt-workflows .workflow-canvas-viewport {
+  background-image: radial-gradient(circle, rgba(116, 101, 151, 0.16) 1.2px, transparent 1.2px);
+  background-size: 16px 16px;
+  background-color: color-mix(in srgb, var(--page-wash, var(--bg-app)) 72%, transparent);
+}
+
+:root[data-color-scheme="dark"] .ui-opt-workflows .workflow-canvas-viewport,
+.dark .ui-opt-workflows .workflow-canvas-viewport {
+  background-image: radial-gradient(circle, rgba(243, 239, 248, 0.08) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* Node styles */
+.ui-opt-workflows .workflow-canvas-node {
+  transition: border-color var(--motion-fast, 150ms) ease-out, box-shadow var(--motion-fast, 150ms) ease-out;
+}
+
+/* Hover only highlights border, no position/scale shift */
+.ui-opt-workflows .workflow-canvas-node:hover {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-card);
+  transform: none;
+}
+
+/* Highlighted node (from hover in run inspector) */
+.ui-opt-workflows .workflow-canvas-node-highlighted {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 0 2px var(--accent-primary), var(--shadow-card) !important;
+}
+
+/* Selected node */
+.ui-opt-workflows .workflow-canvas-node-selected {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 0 3px var(--focus-ring-soft), var(--shadow-card) !important;
+}
+
+/* Running pulse animation for running node */
+.ui-opt-workflows .workflow-canvas-node-running {
+  animation: workflow-node-pulse 2s ease-in-out infinite;
+}
+
+@keyframes workflow-node-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-card);
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--accent-primary), var(--shadow-card);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-opt-workflows .workflow-canvas-node-running {
+    animation: none;
+  }
+}
+
+/* Semantic tone colors for 5 node kinds */
+.ui-opt-workflows .workflow-node-tone-purple {
+  border-left-color: var(--accent-purple, #9d7cd8) !important;
+}
+.ui-opt-workflows .workflow-node-tone-blue {
+  border-left-color: var(--accent-blue, #7aa2f7) !important;
+}
+.ui-opt-workflows .workflow-node-tone-pink {
+  border-left-color: var(--accent-primary, #f0a3c6) !important;
+}
+.ui-opt-workflows .workflow-node-tone-gold {
+  border-left-color: var(--accent-gold, #e0af68) !important;
+}
+.ui-opt-workflows .workflow-node-tone-green {
+  border-left-color: var(--success, #73b99a) !important;
+}
+
+/* Node Run Status Badges */
+.ui-opt-workflows .workflow-node-run-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs, 4px);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.ui-opt-workflows .workflow-node-run-status-completed {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+
+.ui-opt-workflows .workflow-node-run-status-running {
+  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  color: var(--accent-primary);
+}
+
+.ui-opt-workflows .workflow-node-run-status-waiting_approval {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+}
+
+.ui-opt-workflows .workflow-node-run-status-failed {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+
+.ui-opt-workflows .workflow-node-run-status-cancelled,
+.ui-opt-workflows .workflow-node-run-status-skipped {
+  background: color-mix(in srgb, var(--text-faint) 15%, transparent);
+  color: var(--text-faint);
+}
+
+.ui-opt-workflows .workflow-node-run-status-pending,
+.ui-opt-workflows .workflow-node-run-status-ready {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
+}
+
+/* Sticky Header in editor */
+.ui-opt-workflows .workflow-editor-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: var(--surface-solid);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* Zoom controls toolbar */
+.ui-opt-workflows .workflow-zoom-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-solid);
+  font-size: 12px;
+}
+
+.ui-opt-workflows .workflow-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs, 4px);
+  color: var(--text-secondary);
+  transition: background-color var(--motion-fast, 150ms) ease;
+}
+
+.ui-opt-workflows .workflow-zoom-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.ui-opt-workflows .workflow-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

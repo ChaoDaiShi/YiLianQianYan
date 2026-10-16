@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, CircleAlert, GitBranch, Play, Plus, Save, Trash2, X } from "lucide-react";
 import {
   createWorkflowGraph,
@@ -70,11 +70,19 @@ export default function WorkflowGraphEditor({
   onSaved,
   onClose,
   onRun,
+  selectedNodeId: controlledSelectedNodeId,
+  onSelectedNodeChange,
+  highlightedNodeId,
+  locateNodeId,
 }: {
   graph: WorkflowGraphRecord | null;
   onSaved: (graph: WorkflowGraphRecord) => void;
   onClose: () => void;
   onRun?: (graph: WorkflowGraphRecord) => void;
+  selectedNodeId?: string | null;
+  onSelectedNodeChange?: (id: string | null) => void;
+  highlightedNodeId?: string | null;
+  locateNodeId?: string | null;
 }) {
   const [persistedGraph, setPersistedGraph] = useState<WorkflowGraphRecord | null>(graph);
   const [name, setName] = useState(graph?.name ?? "");
@@ -87,7 +95,13 @@ export default function WorkflowGraphEditor({
     description: graph?.description ?? "",
     definition: graph?.definition ?? definitionFor([], [], ""),
   });
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(graph?.definition.nodes[0]?.id ?? null);
+  const [internalSelectedNodeId, setInternalSelectedNodeId] = useState<string | null>(graph?.definition.nodes[0]?.id ?? null);
+  const selectedNodeId = controlledSelectedNodeId !== undefined ? controlledSelectedNodeId : internalSelectedNodeId;
+  const setSelectedNodeId = (id: string | null) => {
+    setInternalSelectedNodeId(id);
+    onSelectedNodeChange?.(id);
+  };
+  const [zoom, setZoom] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
@@ -182,6 +196,24 @@ export default function WorkflowGraphEditor({
     }
   };
 
+  useEffect(() => {
+    if (!locateNodeId) return;
+    const el = document.getElementById(`wf-node-${locateNodeId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    }
+  }, [locateNodeId]);
+
+  const handleZoomIn = () => setZoom((z) => Math.min(1.5, Math.round((z + 0.1) * 10) / 10));
+  const handleZoomOut = () => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10));
+  const handleZoomReset = () => setZoom(1);
+  const handleZoomFit = () => {
+    if (layout.width > 0 && layout.height > 0) {
+      const fitScale = Math.min(1.2, Math.max(0.6, 600 / Math.max(layout.width, layout.height)));
+      setZoom(Math.round(fitScale * 10) / 10);
+    }
+  };
+
   return (
     <div className="workflow-editor-page" data-testid="workflow-editor">
       <header className="workflow-editor-header">
@@ -225,11 +257,30 @@ export default function WorkflowGraphEditor({
 
         <main className="workflow-editor-main">
           <section className="workflow-canvas-panel" aria-label="工作流画布">
-            <div className="workflow-panel-heading"><div><h2 className="text-sm font-semibold">画布</h2><p className="text-xs text-[var(--text-secondary)]">从入口节点开始查看真实执行连接</p></div><Badge tone="default">{nodes.length} 节点 · {edges.length} 连接</Badge></div>
+            <div className="workflow-panel-heading">
+              <div>
+                <h2 className="text-sm font-semibold">画布</h2>
+                <p className="text-xs text-[var(--text-secondary)]">从入口节点开始查看真实执行连接</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="workflow-zoom-controls flex items-center gap-1 rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-xs">
+                  <button type="button" onClick={handleZoomOut} className="px-1 hover:text-[var(--text)]" aria-label="缩小">-</button>
+                  <button type="button" onClick={handleZoomReset} className="px-1 text-meta" aria-label="重置缩放">{Math.round(zoom * 100)}%</button>
+                  <button type="button" onClick={handleZoomIn} className="px-1 hover:text-[var(--text)]" aria-label="放大">+</button>
+                  <button type="button" onClick={handleZoomFit} className="ml-1 text-meta hover:text-[var(--text)]" aria-label="适应视图">适应</button>
+                </div>
+                <Badge tone="default">{nodes.length} 节点 · {edges.length} 连接</Badge>
+              </div>
+            </div>
             <div className="workflow-canvas-viewport scrollbar-thin">
-              {layout.nodes.length === 0 ? <EmptyState icon={<GitBranch className="h-6 w-6" />} title="画布还是空的" description="从左侧节点库添加一个真实节点，开始搭建工作流。" className="min-h-[360px]" /> : <div className="workflow-canvas" style={{ width: layout.width, minHeight: layout.height }}>
+              {layout.nodes.length === 0 ? <EmptyState icon={<GitBranch className="h-6 w-6" />} title="画布还是空的" description="从左侧节点库添加一个真实节点，开始搭建工作流。" className="min-h-[360px]" /> : <div className="workflow-canvas" style={{ width: layout.width * zoom, minHeight: layout.height * zoom, transform: `scale(${zoom})`, transformOrigin: "top left" }}>
                 <svg className="workflow-canvas-edges" width={layout.width} height={layout.height} aria-hidden="true"><defs><marker id="workflow-edge-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--text-faint)" /></marker></defs>{layout.edges.map((edge) => { const from = layout.nodes.find((node) => node.id === edge.from); const to = layout.nodes.find((node) => node.id === edge.to); if (!from || !to) return null; return <line key={`${edge.from}-${edge.to}`} x1={from.x + 190} y1={from.y + 56} x2={to.x} y2={to.y + 56} stroke="var(--border-soft)" strokeWidth="2" markerEnd="url(#workflow-edge-arrow)" />; })}</svg>
-                {layout.nodes.map(({ node, x, y }) => { const presentation = getNodePresentation(node.kind); const selected = selectedNodeId === node.id; return <button type="button" key={node.id} className={`workflow-canvas-node ${TONE_CLASSES[presentation.tone]} ${selected ? "workflow-canvas-node-selected" : ""}`} style={{ left: x, top: y }} aria-label={`选择节点 ${node.id}`} aria-pressed={selected} onClick={() => setSelectedNodeId(node.id)} onKeyDown={(event) => handleNodeKeyDown(event, node.id)}><span className="flex items-center justify-between gap-2"><span className="truncate text-meta font-medium uppercase tracking-[0.08em]">{presentation.label}</span>{entryNodeId === node.id && <span className="workflow-entry-dot" title="入口节点" />}</span><span className="mt-3 block truncate text-sm font-semibold">{node.id || "未命名节点"}</span><span className="mt-1 block truncate text-meta text-[var(--text-secondary)]">{KIND_HINTS[node.kind]}</span></button>; })}
+                {layout.nodes.map(({ node, x, y }) => {
+                  const presentation = getNodePresentation(node.kind);
+                  const selected = selectedNodeId === node.id;
+                  const isHighlighted = highlightedNodeId === node.id;
+                  return <button type="button" key={node.id} id={`wf-node-${node.id}`} className={`workflow-canvas-node ${TONE_CLASSES[presentation.tone]} ${selected ? "workflow-canvas-node-selected" : ""} ${isHighlighted ? "workflow-canvas-node-highlighted" : ""}`} style={{ left: x, top: y }} aria-label={`选择节点 ${node.id}`} aria-pressed={selected} onClick={() => setSelectedNodeId(node.id)} onKeyDown={(event) => handleNodeKeyDown(event, node.id)}><span className="flex items-center justify-between gap-2"><span className="truncate text-meta font-medium uppercase tracking-[0.08em]">{presentation.label}</span>{entryNodeId === node.id && <span className="workflow-entry-dot" title="入口节点" />}</span><span className="mt-3 block truncate text-sm font-semibold">{node.id || "未命名节点"}</span><span className="mt-1 block truncate text-meta text-[var(--text-secondary)]">{KIND_HINTS[node.kind]}</span></button>;
+                })}
               </div>}
             </div>
           </section>
