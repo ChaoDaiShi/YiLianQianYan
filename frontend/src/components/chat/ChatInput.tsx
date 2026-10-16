@@ -76,7 +76,8 @@ export default function ChatInput({
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+    const nextHeight = Math.max(44, Math.min(textarea.scrollHeight, 180));
+    textarea.style.height = `${nextHeight}px`;
   }, [input]);
 
   const pendingAttachments = attachments.some(item => item.state !== "ready" && item.state !== "removed");
@@ -95,6 +96,9 @@ export default function ChatInput({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) {
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void send();
@@ -114,7 +118,7 @@ export default function ChatInput({
 
   return (
     <div className="home-composer w-full" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); addFiles(Array.from(event.dataTransfer.files)); }}>
-      <div className="composer-card mx-auto rounded-2xl p-3 [width:min(680px,calc(100%-48px))]">
+      <div className="composer-card conversation-composer-inner mx-auto rounded-2xl p-3 w-full">
         <textarea
           ref={textareaRef}
           value={input}
@@ -124,7 +128,7 @@ export default function ChatInput({
           placeholder="告诉小昔涟你想完成什么……"
           rows={1}
           disabled={isLoading}
-          className="block min-h-[52px] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text)] outline-none placeholder:text-[var(--text-faint)] disabled:opacity-60"
+          className="composer-textarea block min-h-[44px] max-h-[180px] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text)] outline-none placeholder:text-[var(--text-faint)] disabled:opacity-60"
         />
         <ResourceAttachments items={attachments} onRemove={id => queue.remove(id)} />
         {resourceNotice && (
@@ -132,8 +136,8 @@ export default function ChatInput({
             {resourceNotice}
           </p>
         )}
-        <div className="composer-footer mt-2 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="composer-footer mt-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -159,29 +163,35 @@ export default function ChatInput({
               Enter 发送 · Shift + Enter 换行
             </p>
           </div>
-          {isLoading ? (
-            <Button
-              type="button"
-              variant="danger"
-              size="sm"
-              onClick={onStop}
-              title="停止执行"
-            >
-              <Square className="h-3.5 w-3.5" />
-              停止
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void send()}
-              disabled={!canSend}
-              title="发送消息"
-            >
-              <Send className="h-3.5 w-3.5" />
-              发送
-            </Button>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            {isLoading ? (
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={onStop}
+                title="停止执行"
+                aria-label="停止执行"
+              >
+                <Square className="h-3.5 w-3.5" />
+                停止
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                loading={sending}
+                loadingLabel="正在提交"
+                onClick={() => void send()}
+                disabled={!canSend || sending}
+                title="发送消息"
+                aria-label="发送消息"
+              >
+                <Send className="h-3.5 w-3.5" />
+                发送
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

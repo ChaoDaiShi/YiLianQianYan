@@ -82,7 +82,7 @@ export default function MessageList({
       onScroll={onScroll}
       className={`${MESSAGE_LIST_VIEWPORT_CLASS_NAME} conversation-message-list`}
     >
-      <div className="message-column">
+      <div className="message-column conversation-message-list-inner">
         {messages.map((message, index) => (
           <MessageBubble
             key={message.id}

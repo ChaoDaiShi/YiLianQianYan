@@ -19,6 +19,7 @@ import {
   type AgentEvent,
   type Workflow,
 } from "../../api/client";
+import { ArrowDown } from "lucide-react";
 import { bindResources } from "../../api/resources";
 import { getProviderReadiness } from "../../api/providerConnection";
 import type { ConversationalAnchor } from "../../api/voice";
@@ -445,6 +446,8 @@ export default function ChatView({
     dispatchExecution({ type: "consume_completed" });
   }, [currentConvId, execution.completed]);
 
+  const [isNearBottomState, setIsNearBottomState] = useState(true);
+
   useEffect(() => {
     if (!shouldFollowMessagesRef.current) return;
     scrollMessageListToBottom(messagesScrollRef.current);
@@ -452,10 +455,18 @@ export default function ChatView({
 
   const handleMessageScroll = useCallback(
     (event: React.UIEvent<HTMLDivElement>) => {
-      shouldFollowMessagesRef.current = isNearBottom(event.currentTarget);
+      const near = isNearBottom(event.currentTarget, 48);
+      shouldFollowMessagesRef.current = near;
+      setIsNearBottomState(near);
     },
     []
   );
+
+  const scrollToLatest = useCallback(() => {
+    shouldFollowMessagesRef.current = true;
+    setIsNearBottomState(true);
+    scrollMessageListToBottom(messagesScrollRef.current, "smooth");
+  }, []);
 
   const streaming = useMemo<StreamingState | null>(() => {
     const hasLiveOutput = runState.content.length > 0 || runState.order.length > 0;
@@ -633,15 +644,30 @@ export default function ChatView({
         />
       ) : (
         <>
-          <MessageList
-            messages={messages}
-            streaming={streaming}
-            scrollContainerRef={messagesScrollRef}
-            onScroll={handleMessageScroll}
-            error={error}
-            onRetry={handleRetry}
-            onSpeak={onManualSpeech}
-          />
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+            <MessageList
+              messages={messages}
+              streaming={streaming}
+              scrollContainerRef={messagesScrollRef}
+              onScroll={handleMessageScroll}
+              error={error}
+              onRetry={handleRetry}
+              onSpeak={onManualSpeech}
+            />
+
+            {!isNearBottomState && (
+              <button
+                type="button"
+                onClick={scrollToLatest}
+                className="chat-scroll-bottom-btn absolute bottom-3 right-6 z-20 flex items-center gap-1.5 rounded-full border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] shadow-md transition-all hover:bg-[var(--surface-hover)]"
+                aria-label="回到最新"
+                title="回到最新"
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+                <span>回到最新</span>
+              </button>
+            )}
+          </div>
 
           <footer className="conversation-composer shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
             <ChatInput

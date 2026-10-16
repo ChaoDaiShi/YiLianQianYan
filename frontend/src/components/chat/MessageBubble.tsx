@@ -27,7 +27,7 @@ export function areMessageBubblePropsEqual(
 function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
-  const [copied, setCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle");
 
   if (isTool) {
     return message.content?.startsWith("data:image/") ? (
@@ -40,9 +40,14 @@ function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: Message
   const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
 
   const copy = async () => {
-    await navigator.clipboard.writeText(message.content || "");
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(message.content || "");
+      setCopyStatus("success");
+      window.setTimeout(() => setCopyStatus("idle"), 1500);
+    } catch {
+      setCopyStatus("error");
+      window.setTimeout(() => setCopyStatus("idle"), 2000);
+    }
   };
 
   const renderMarkdownLink = ({
@@ -103,10 +108,24 @@ function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: Message
           {isUser ? (
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
-            <div className="conversation-markdown prose prose-sm max-w-none overflow-x-auto">
+            <div className="conversation-markdown prose prose-sm max-w-none">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
-                components={{ a: renderMarkdownLink }}
+                components={{
+                  a: renderMarkdownLink,
+                  table: ({ children, ...props }) => (
+                    <div className="table-scroll-container my-3 max-w-full overflow-x-auto">
+                      <table className="min-w-full divide-y border border-[var(--border-soft)]" {...props}>
+                        {children}
+                      </table>
+                    </div>
+                  ),
+                  pre: ({ children, ...props }) => (
+                    <pre className="code-scroll-container my-3 max-w-full overflow-x-auto rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] p-3 text-xs" {...props}>
+                      {children}
+                    </pre>
+                  ),
+                }}
               >
                 {message.content}
               </ReactMarkdown>
@@ -127,12 +146,20 @@ function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: Message
               <button
                 type="button"
                 onClick={() => void copy()}
-                className="rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                title="复制回答"
-                aria-label="复制回答"
+                className="flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                title={copyStatus === "success" ? "已复制" : copyStatus === "error" ? "复制失败" : "复制回答"}
+                aria-label={copyStatus === "success" ? "已复制" : copyStatus === "error" ? "复制失败" : "复制回答"}
               >
-                {copied ? (
-                  <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+                {copyStatus === "success" ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+                    <span className="text-[10px] font-medium text-[var(--success)]">已复制</span>
+                  </>
+                ) : copyStatus === "error" ? (
+                  <>
+                    <Copy className="h-3.5 w-3.5 text-[var(--danger)]" />
+                    <span className="text-[10px] font-medium text-[var(--danger)]">复制失败</span>
+                  </>
                 ) : (
                   <Copy className="h-3.5 w-3.5" />
                 )}

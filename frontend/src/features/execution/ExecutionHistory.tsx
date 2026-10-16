@@ -89,8 +89,8 @@ function ExecutionHistoryItem({
   const [placement, setPlacement] = useState<ExecutionDetailPlacement | null>(null);
   const action = formatToolActionSummary(record.name, record.args);
   const elapsed =
-    record.startedAt !== undefined
-      ? formatElapsed(record.startedAt, record.finishedAt ?? Date.now())
+    record.startedAt !== undefined && record.finishedAt !== undefined
+      ? formatElapsed(record.startedAt, record.finishedAt)
       : null;
   const failedPresentation =
     record.executionStatus === "failed" && record.result
@@ -203,9 +203,9 @@ function ExecutionHistoryItem({
             {failedPresentation.message}
           </span>
         ) : null}
-        {verificationPresentation ? (
+        {record.verificationStatus === "failed" ? (
           <span className="mt-2 block text-xs leading-5 text-[var(--danger-fg)]">
-            {verificationPresentation.message}
+            {verificationPresentation?.message || "操作结果未能通过验证检查"}
           </span>
         ) : null}
       </button>

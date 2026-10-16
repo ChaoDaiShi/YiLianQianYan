@@ -240,32 +240,44 @@ export default function ApprovalCard({
                 {approval.tool_name}
               </dd>
             </div>
+            {typeof approval.arguments?.command === "string" && (
+              <div>
+                <dt className="font-sans text-[var(--text-faint)]">Command</dt>
+                <dd className="mt-0.5 max-h-36 overflow-auto whitespace-pre-wrap break-all text-[var(--text-secondary)]">
+                  {approval.arguments.command}
+                </dd>
+              </div>
+            )}
             <div>
               <dt className="font-sans text-[var(--text-faint)]">Arguments</dt>
-              <dd className="mt-0.5 max-h-32 overflow-auto whitespace-pre-wrap break-all text-[var(--text-secondary)]">
+              <dd className="mt-0.5 max-h-36 overflow-auto whitespace-pre-wrap break-all text-[var(--text-secondary)]">
                 {maskedArgs}
               </dd>
             </div>
           </dl>
         </details>
 
-        <div className="approval-card-actions flex items-center justify-end gap-2 pt-1">
+        <div className="approval-card-actions flex flex-wrap items-center justify-end gap-2 pt-1">
           <Button
             size="sm"
             variant="secondary"
+            loading={resolving}
+            loadingLabel="提交中…"
             disabled={resolving}
             onClick={() => onReject(approval)}
             aria-label="拒绝此次工具操作"
           >
-            {resolving ? "提交中…" : "拒绝"}
+            拒绝
           </Button>
           <Button
             size="sm"
+            loading={resolving}
+            loadingLabel="提交中…"
             disabled={resolving}
             onClick={() => onApprove(approval)}
             aria-label="允许此次工具操作"
           >
-            {resolving ? "提交中…" : "允许本次"}
+            允许本次
           </Button>
         </div>
         {voiceProofUnavailable ? (

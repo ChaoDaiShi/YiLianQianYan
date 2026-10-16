@@ -1,0 +1,160 @@
+/* ============================================================
+   UI Optimization - Chat Workbench (Work Package B)
+   ============================================================ */
+
+/* Root scope for chat workbench */
+.ui-opt-chat {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Central reading and input alignment: max 860px */
+.ui-opt-chat .conversation-message-list-inner,
+.ui-opt-chat .conversation-composer-inner {
+  width: min(100%, 860px);
+  margin-inline: auto;
+  min-width: 0;
+}
+
+/* User message width boundaries */
+.ui-opt-chat .conversation-message-user {
+  max-width: min(75%, 720px);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+@media (max-width: 959px) {
+  .ui-opt-chat .conversation-message-user {
+    max-width: 92%;
+  }
+}
+
+/* Assistant message styling */
+.ui-opt-chat .conversation-message-assistant {
+  background: var(--surface-solid) !important;
+  border: 1px solid var(--border-soft);
+  line-height: 1.55;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Code blocks and tables: internal scroll only, no page horizontal scroll */
+.ui-opt-chat .conversation-markdown {
+  max-width: 100%;
+}
+
+.ui-opt-chat .conversation-markdown pre,
+.ui-opt-chat .code-scroll-container {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.ui-opt-chat .conversation-markdown table,
+.ui-opt-chat .table-scroll-container {
+  max-width: 100%;
+  overflow-x: auto;
+  display: block;
+}
+
+/* Three-column scale and layout rules */
+.ui-opt-chat[data-mode="full"] {
+  grid-template-columns: 250px minmax(0, 1fr) auto;
+}
+
+.ui-opt-chat[data-mode="full"] .conversation-region {
+  width: 250px;
+}
+
+.ui-opt-chat[data-mode="full"] .execution-region {
+  width: 360px;
+  max-width: 460px;
+}
+
+.ui-opt-chat[data-mode="compact"] {
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.ui-opt-chat[data-mode="compact"] .conversation-region {
+  width: 240px;
+}
+
+.ui-opt-chat[data-mode="narrow"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Conversation Sidebar grouping headers and action button visibility */
+.ui-opt-chat .conversation-group-header {
+  font-size: var(--font-size-caption, 11px);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  padding: 8px 12px 4px;
+  user-select: none;
+}
+
+.ui-opt-chat .conversation-row .conversation-row-action {
+  opacity: 0;
+  transition: opacity var(--motion-fast, 150ms) ease-out;
+}
+
+.ui-opt-chat .conversation-row:hover .conversation-row-action,
+.ui-opt-chat .conversation-row:focus-within .conversation-row-action,
+.ui-opt-chat .conversation-row .conversation-row-action:focus-visible {
+  opacity: 1;
+}
+
+@media (pointer: coarse), (hover: none) {
+  .ui-opt-chat .conversation-row .conversation-row-action {
+    opacity: 1;
+  }
+}
+
+/* Input dock constraints */
+.ui-opt-chat .composer-textarea {
+  min-height: 44px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.ui-opt-chat .conversation-composer {
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 16px));
+}
+
+/* Back to bottom button */
+.ui-opt-chat .chat-scroll-bottom-btn {
+  position: absolute;
+  bottom: 16px;
+  right: 24px;
+  z-index: 20;
+  box-shadow: var(--shadow-float, 0 8px 24px rgba(0, 0, 0, 0.12));
+}
+
+/* Approval card in narrow drawer and high zoom */
+.ui-opt-chat .conversation-approval-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ui-opt-chat .approval-card-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ui-opt-chat .approval-card-technical dd {
+  max-width: 100%;
+  overflow-x: auto;
+  word-break: break-all;
+}
+
+/* Prefers reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .ui-opt-chat .animate-msg-in {
+    animation: none !important;
+  }
+  .ui-opt-chat .conversation-row .conversation-row-action {
+    transition: none !important;
+  }
+}

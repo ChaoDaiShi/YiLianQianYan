@@ -73,6 +73,57 @@ export default function ChatPage() {
   }, [executionCollapsed, workspaceMode]);
 
   useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
+
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable ||
+          target.closest("[contenteditable='true']") !== null ||
+          target.closest(".monaco-editor") !== null)
+      ) {
+        return;
+      }
+
+      if (target && target.closest("[role='dialog']")) {
+        return;
+      }
+
+      const isCtrlOrMeta = event.ctrlKey || event.metaKey;
+      if (!isCtrlOrMeta || event.altKey || event.shiftKey) return;
+
+      if (event.key === "b" || event.key === "B") {
+        event.preventDefault();
+        if (workspaceMode === "narrow") {
+          setConversationDrawerOpen((prev) => {
+            const next = !prev;
+            if (next) setExecutionDrawerOpen(false);
+            return next;
+          });
+        }
+      } else if (event.key === "j" || event.key === "J") {
+        event.preventDefault();
+        if (workspaceMode === "full") {
+          setExecutionCollapsed((prev) => !prev);
+        } else {
+          setExecutionDrawerOpen((prev) => {
+            const next = !prev;
+            if (next) setConversationDrawerOpen(false);
+            return next;
+          });
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [workspaceMode]);
+
+  useEffect(() => {
     if (context.conversational_anchor?.conversation_id !== conversationId) {
       updateContext({ conversational_anchor: null, anchor_action: "replace" });
     }
@@ -116,7 +167,7 @@ export default function ChatPage() {
 
   return (
     <div
-      className={`${WORKBENCH_VIEWPORT_CLASS_NAME} page-canvas`}
+      className={`${WORKBENCH_VIEWPORT_CLASS_NAME} ui-opt-chat page-canvas`}
       data-chat-view={conversationId ? "conversation" : "home"}
       data-mode={workspaceMode}
       data-execution-collapsed={

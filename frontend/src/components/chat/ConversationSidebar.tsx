@@ -70,6 +70,85 @@ export default function ConversationSidebar({
     }
   };
 
+  const grouped = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    ).getTime();
+    const sevenDaysAgo = startOfToday - 6 * 24 * 60 * 60 * 1000;
+
+    const today: ConversationSummary[] = [];
+    const last7Days: ConversationSummary[] = [];
+    const earlier: ConversationSummary[] = [];
+    const ungrouped: ConversationSummary[] = [];
+
+    for (const conversation of filtered) {
+      const rawTime = conversation.updated_at || conversation.created_at;
+      if (!rawTime || typeof rawTime !== "number" || isNaN(rawTime) || rawTime <= 0) {
+        ungrouped.push(conversation);
+        continue;
+      }
+      const timeMs = rawTime < 1e11 ? rawTime * 1000 : rawTime;
+      if (timeMs >= startOfToday) {
+        today.push(conversation);
+      } else if (timeMs >= sevenDaysAgo) {
+        last7Days.push(conversation);
+      } else {
+        earlier.push(conversation);
+      }
+    }
+
+    return { today, last7Days, earlier, ungrouped };
+  }, [filtered]);
+
+  const renderRow = (conversation: ConversationSummary) => {
+    const active = activeId === conversation.id;
+    const displayTitle = deriveTaskDisplayTitle(conversation.title);
+    const isCommand = looksLikeCommand(conversation.title ?? "");
+    return (
+      <div
+        key={conversation.id}
+        className={`conversation-row ${active ? "conversation-row-active" : ""} group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+          active
+            ? "border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--text)]"
+            : "border-transparent text-[var(--text-muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
+        }`}
+      >
+        {active && (
+          <span className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-[var(--accent)]" />
+        )}
+        <button
+          type="button"
+          onClick={() => selectConversation(conversation.id)}
+          className="min-w-0 flex-1 truncate whitespace-nowrap text-left"
+          title={
+            isCommand
+              ? `命令：${conversation.title}`
+              : conversation.title || "新任务"
+          }
+        >
+          {displayTitle}
+        </button>
+        <button
+          type="button"
+          onClick={() => void removeConversation(conversation)}
+          className="conversation-row-action rounded p-1 text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          title="删除任务"
+          aria-label={`删除${displayTitle}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  };
+
+  const hasGroups =
+    grouped.today.length > 0 ||
+    grouped.last7Days.length > 0 ||
+    grouped.earlier.length > 0;
+
   return (
     <aside className="glass-rail conversation-sidebar flex h-full min-h-0 min-w-0 flex-col bg-[var(--panel)]">
       <div className="conversation-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
@@ -118,48 +197,36 @@ export default function ConversationSidebar({
             description={query ? "尝试更换搜索词" : "从上方新建一个任务"}
             className="py-10"
           />
-        ) : (
+        ) : !hasGroups ? (
           <div className="space-y-1">
-            {filtered.map((conversation) => {
-              const active = activeId === conversation.id;
-              const displayTitle = deriveTaskDisplayTitle(conversation.title);
-              const isCommand = looksLikeCommand(conversation.title ?? "");
-              return (
-                <div
-                  key={conversation.id}
-                  className={`conversation-row ${active ? "conversation-row-active" : ""} group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
-                    active
-                      ? "border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--text)]"
-                      : "border-transparent text-[var(--text-muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--text)]"
-                  }`}
-                >
-                  {active && (
-                    <span className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-[var(--accent)]" />
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => selectConversation(conversation.id)}
-                    className="min-w-0 flex-1 truncate whitespace-nowrap text-left"
-                    title={
-                      isCommand
-                        ? `命令：${conversation.title}`
-                        : conversation.title || "新任务"
-                    }
-                  >
-                    {displayTitle}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void removeConversation(conversation)}
-                    className="rounded p-1 text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] focus:opacity-100 group-hover:opacity-100"
-                    title="删除任务"
-                    aria-label={`删除${displayTitle}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              );
-            })}
+            {filtered.map(renderRow)}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {grouped.today.length > 0 && (
+              <section aria-label="今天">
+                <h3 className="conversation-group-header">今天</h3>
+                <div className="space-y-1">{grouped.today.map(renderRow)}</div>
+              </section>
+            )}
+            {grouped.last7Days.length > 0 && (
+              <section aria-label="近7天">
+                <h3 className="conversation-group-header">近7天</h3>
+                <div className="space-y-1">{grouped.last7Days.map(renderRow)}</div>
+              </section>
+            )}
+            {grouped.earlier.length > 0 && (
+              <section aria-label="更早">
+                <h3 className="conversation-group-header">更早</h3>
+                <div className="space-y-1">{grouped.earlier.map(renderRow)}</div>
+              </section>
+            )}
+            {grouped.ungrouped.length > 0 && (
+              <section aria-label="其他任务">
+                <h3 className="conversation-group-header">其他</h3>
+                <div className="space-y-1">{grouped.ungrouped.map(renderRow)}</div>
+              </section>
+            )}
           </div>
         )}
       </div>

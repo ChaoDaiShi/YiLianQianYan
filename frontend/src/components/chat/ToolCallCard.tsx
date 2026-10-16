@@ -61,14 +61,22 @@ const TOOL_ICONS: Record<string, React.ReactNode> = {
   keyboard: <Keyboard className="h-4 w-4" />,
 };
 
-function statusTone(status: ToolCallRecord["status"]): string {
+function statusTone(
+  status: ToolCallRecord["status"],
+  verificationStatus?: ToolCallRecord["verificationStatus"]
+): string {
+  if (verificationStatus === "failed") return "text-[var(--danger)]";
   if (status === "success") return "text-[var(--success)]";
   if (status === "error") return "text-[var(--danger)]";
   if (status === "blocked") return "text-[var(--accent-gold)]";
   return "text-[var(--accent-blue)]";
 }
 
-function statusIcon(status: ToolCallRecord["status"]) {
+function statusIcon(
+  status: ToolCallRecord["status"],
+  verificationStatus?: ToolCallRecord["verificationStatus"]
+) {
+  if (verificationStatus === "failed") return <CircleX className="h-4 w-4" />;
   if (status === "success") return <CheckCircle2 className="h-4 w-4" />;
   if (status === "error") return <CircleX className="h-4 w-4" />;
   if (status === "blocked") return <ShieldAlert className="h-4 w-4" />;
@@ -135,9 +143,10 @@ export default function ToolCallCard({
   const isBlocked = status === "blocked" || approvalStatus === "pending";
   const effectiveStatus = isBlocked ? "blocked" : status;
   const technicalArgs = formatValue(args);
-  const elapsed = startedAt !== undefined
-    ? formatElapsed(startedAt, finishedAt ?? Date.now())
-    : null;
+  const elapsed =
+    startedAt !== undefined && finishedAt !== undefined
+      ? formatElapsed(startedAt, finishedAt)
+      : null;
   const verificationLabel =
     verificationStatus === "passed"
       ? "已验证"
@@ -158,7 +167,7 @@ export default function ToolCallCard({
         " overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] " +
         (compact ? "mb-2" : "mb-3")
       }
-      data-status={effectiveStatus}
+      data-status={verificationStatus === "failed" ? "failed" : effectiveStatus}
     >
       <button
         type="button"
@@ -171,13 +180,13 @@ export default function ToolCallCard({
         <span className="tool-card-icon-well shrink-0">
           {TOOL_ICONS[name] || <Terminal className="h-4 w-4" />}
         </span>
-        <span className={"tool-card-status-icon mt-0.5 shrink-0 " + statusTone(effectiveStatus)}>
-          {statusIcon(effectiveStatus)}
+        <span className={"tool-card-status-icon mt-0.5 shrink-0 " + statusTone(effectiveStatus, verificationStatus)}>
+          {statusIcon(effectiveStatus, verificationStatus)}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-sm font-medium text-[var(--text-primary)]">
-              {formatToolStatus(effectiveStatus)}
+              {verificationStatus === "failed" ? "验证失败" : formatToolStatus(effectiveStatus)}
             </span>
             <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
               {label}
@@ -190,14 +199,18 @@ export default function ToolCallCard({
             )}
           </span>
           <span className="tool-card-summary mt-1 block truncate text-xs text-[var(--text-secondary)]">
-            {effectiveStatus === "running"
-              ? formatToolActivity(name, args)
-              : effectiveStatus === "success"
-                ? formatToolResultSummary(result)
-                : effectiveStatus === "blocked"
-                  ? "小昔涟正在等待你的许可"
-                  : errorPresentation?.message ||
-                    "这个操作没有成功，请展开错误日志了解原因。"}
+            {verificationStatus === "failed"
+              ? verificationReason
+                ? `验证失败：${verificationReason}`
+                : "操作执行完毕，但结果未能通过验证"
+              : effectiveStatus === "running"
+                ? formatToolActivity(name, args)
+                : effectiveStatus === "success"
+                  ? formatToolResultSummary(result)
+                  : effectiveStatus === "blocked"
+                    ? "小昔涟正在等待你的许可"
+                    : errorPresentation?.message ||
+                      "这个操作没有成功，请展开错误日志了解原因。"}
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2 text-[var(--text-faint)]">
