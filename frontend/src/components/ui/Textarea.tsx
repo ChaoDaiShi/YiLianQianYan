@@ -1,11 +1,30 @@
 import { cn } from "./cn";
+import { useId } from "react";
 
-interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
+  hint?: string;
+  error?: string;
 }
 
-export default function Textarea({ label, className, id, ...props }: TextareaProps) {
-  const inputId = id || (label ? `ta-${label}` : undefined);
+export default function Textarea({
+  label,
+  hint,
+  error,
+  className,
+  id,
+  ...props
+}: TextareaProps) {
+  const generatedId = useId();
+  const inputId = id || (label ? `ta-${label}` : generatedId);
+  const hintId = `${inputId}-hint`;
+  const errorId = `${inputId}-error`;
+
+  const describedBy = [
+    error ? errorId : null,
+    hint ? hintId : null,
+  ].filter(Boolean).join(" ") || undefined;
+
   return (
     <div className="w-full">
       {label && (
@@ -15,13 +34,28 @@ export default function Textarea({ label, className, id, ...props }: TextareaPro
       )}
       <textarea
         id={inputId}
+        aria-invalid={error ? "true" : undefined}
+        aria-describedby={describedBy}
         className={cn(
-          "ui-textarea min-h-[80px] w-full resize-y rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2 text-[var(--text)] transition-colors duration-[var(--motion-fast)]",
-          "focus-ring-token placeholder:text-[var(--text-secondary)] focus:border-[var(--accent-primary)] focus:outline-none",
+          "ui-textarea min-h-[80px] w-full resize-y rounded-[var(--radius-md)] border bg-[var(--surface-solid)] px-3 py-2 text-[var(--text)] transition-colors duration-[var(--motion-fast)]",
+          error
+            ? "border-[var(--danger)] focus:border-[var(--danger)] focus:ring-[var(--danger-soft)]"
+            : "border-[var(--border-soft)] focus-ring-token focus:border-[var(--accent-primary)]",
+          "placeholder:text-[var(--text-secondary)] focus:outline-none",
           className
         )}
         {...props}
       />
+      {error && (
+        <p id={errorId} className="ui-error mt-1 text-xs text-[var(--danger)]" role="alert">
+          {error}
+        </p>
+      )}
+      {!error && hint && (
+        <p id={hintId} className="ui-hint mt-1 text-xs text-[var(--text-muted)]">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

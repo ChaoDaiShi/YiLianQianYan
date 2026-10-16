@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useId, useRef, type RefObject } from "react";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -46,6 +46,9 @@ function trapTabKey(event: KeyboardEvent, panel: HTMLElement) {
   }
 }
 
+// Module-level stack of open dialogs to ensure Escape only closes the topmost dialog
+const dialogStack: string[] = [];
+
 interface DialogFocusLifecycleOptions {
   open: boolean;
   onClose: () => void;
@@ -57,6 +60,7 @@ export function useDialogFocusLifecycle({
   onClose,
   returnFocusRef,
 }: DialogFocusLifecycleOptions) {
+  const id = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const returnFocusRefRef = useRef(returnFocusRef);
@@ -78,12 +82,19 @@ export function useDialogFocusLifecycle({
   useEffect(() => {
     if (!open) return;
 
+    dialogStack.push(id);
+
     const panel = panelRef.current;
     const opener = openerRef.current;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // Only the top-most dialog in the stack handles Escape
+        const isTopDialog = dialogStack[dialogStack.length - 1] === id;
+        if (!isTopDialog) return;
+
         event.preventDefault();
+        event.stopPropagation();
         onCloseRef.current();
         return;
       }
@@ -104,12 +115,17 @@ export function useDialogFocusLifecycle({
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
+      const stackIndex = dialogStack.lastIndexOf(id);
+      if (stackIndex !== -1) {
+        dialogStack.splice(stackIndex, 1);
+      }
+
       const returnTarget = returnFocusRefRef.current?.current ?? opener;
       if (returnTarget?.isConnected) {
         returnTarget.focus();
       }
     };
-  }, [open]);
+  }, [open, id]);
 
   return panelRef;
 }

@@ -1,14 +1,23 @@
 import { cn } from "./cn";
 import { useId } from "react";
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   hint?: string;
+  error?: string;
 }
 
-export default function Input({ label, hint, className, id, ...props }: InputProps) {
+export default function Input({ label, hint, error, className, id, ...props }: InputProps) {
   const generatedId = useId();
   const inputId = id || generatedId;
+  const hintId = `${inputId}-hint`;
+  const errorId = `${inputId}-error`;
+
+  const describedBy = [
+    error ? errorId : null,
+    hint ? hintId : null,
+  ].filter(Boolean).join(" ") || undefined;
+
   return (
     <div className="w-full">
       {label && (
@@ -18,14 +27,28 @@ export default function Input({ label, hint, className, id, ...props }: InputPro
       )}
       <input
         id={inputId}
+        aria-invalid={error ? "true" : undefined}
+        aria-describedby={describedBy}
         className={cn(
-          "ui-input w-full rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2 text-[var(--text)] transition-colors duration-[var(--motion-fast)]",
-          "focus-ring-token placeholder:text-[var(--text-secondary)] focus:border-[var(--accent-primary)] focus:outline-none",
+          "ui-input w-full rounded-[var(--radius-md)] border bg-[var(--surface-solid)] px-3 py-2 text-[var(--text)] transition-colors duration-[var(--motion-fast)]",
+          error
+            ? "border-[var(--danger)] focus:border-[var(--danger)] focus:ring-[var(--danger-soft)]"
+            : "border-[var(--border-soft)] focus-ring-token focus:border-[var(--accent-primary)]",
+          "placeholder:text-[var(--text-secondary)] focus:outline-none",
           className
         )}
         {...props}
       />
-      {hint && <p className="ui-hint mt-1 text-[var(--text-muted)]">{hint}</p>}
+      {error && (
+        <p id={errorId} className="ui-error mt-1 text-xs text-[var(--danger)]" role="alert">
+          {error}
+        </p>
+      )}
+      {!error && hint && (
+        <p id={hintId} className="ui-hint mt-1 text-xs text-[var(--text-muted)]">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

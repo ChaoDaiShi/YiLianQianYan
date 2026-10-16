@@ -4,9 +4,11 @@ import NavRail from "./NavRail";
 import { useTheme } from "../../theme";
 import { APP_CONTENT_VIEWPORT_CLASS_NAME } from "./workspaceLayout";
 import RouteLoadingSurface from "./RouteLoadingSurface";
+import { useUiNavigationShortcuts } from "./useUiNavigationShortcuts";
 
 export default function AppShell() {
   const { theme, resolvedScheme } = useTheme();
+  useUiNavigationShortcuts();
 
   return (
     <div

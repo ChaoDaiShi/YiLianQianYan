@@ -1,0 +1,29 @@
+/* ============================================================
+   UI Optimization - Foundation & Shell (Work Package A)
+   ============================================================ */
+
+.ui-opt-interactive-card {
+  transition: transform 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+.ui-opt-interactive-card:hover {
+  transform: translateY(-2px);
+}
+
+.ui-opt-interactive-card:active {
+  transform: translateY(0);
+}
+
+.ui-opt-focus:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-opt-interactive-card {
+    transition: none;
+  }
+  .ui-opt-interactive-card:hover {
+    transform: none;
+  }
+}

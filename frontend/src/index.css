@@ -30,3 +30,10 @@
 @import "./styles/settings.css";
 @import "./styles/contextRail.css";
 @import "./styles/cloudExperience.css";
+@import "./styles/ui-optimization/foundation.css";
+@import "./styles/ui-optimization/chat.css";
+@import "./styles/ui-optimization/tasks-workspaces.css";
+@import "./styles/ui-optimization/workflows.css";
+@import "./styles/ui-optimization/capabilities.css";
+@import "./styles/ui-optimization/memory-knowledge.css";
+@import "./styles/ui-optimization/settings-system.css";
