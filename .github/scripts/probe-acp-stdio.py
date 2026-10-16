@@ -50,6 +50,12 @@ def probe(label, env, flags):
     print(json.dumps({"case": label, "seconds": round(time.monotonic() - started, 2), "responses": results, "stderr": b"".join(errors).decode("utf-8", errors="replace")}, ensure_ascii=True), flush=True)
 
 
-probe("client-environment-inherited-console", clean_env, 0)
-probe("client-environment-no-console", clean_env, subprocess.CREATE_NO_WINDOW)
-probe("runner-environment-no-console", os.environ.copy(), subprocess.CREATE_NO_WINDOW)
+for label, keys in (
+    ("path", ("PATH",)),
+    ("profile", ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA")),
+    ("modules", ("PSModulePath",)),
+    ("system", ("SystemDrive", "COMSPEC")),
+):
+    environment = dict(clean_env)
+    environment.update({key: os.environ[key] for key in keys if key in os.environ})
+    probe(label, environment, subprocess.CREATE_NO_WINDOW)
