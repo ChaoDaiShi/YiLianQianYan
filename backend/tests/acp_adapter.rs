@@ -70,7 +70,8 @@ async fn acp_tool_runs_stdio_session_permission_hook_and_verifies_expected_file(
             fixture.to_string_lossy().into_owned(),
         ],
         cwd: task_root.clone(),
-        env_allowlist: Vec::new(),
+        // Hosted Windows runners need this to resolve PowerShell's JSON cmdlets.
+        env_allowlist: vec!["PSModulePath".to_string()],
         timeout_seconds: 20,
     };
     let permission_handler = Arc::new(FixturePermissionHandler {
@@ -141,7 +142,7 @@ async fn dropping_acp_execution_stops_its_child_and_releases_the_session_slot() 
             fixture.to_string_lossy().into_owned(),
         ],
         cwd: task_root.clone(),
-        env_allowlist: Vec::new(),
+        env_allowlist: vec!["PSModulePath".to_string()],
         timeout_seconds: 20,
     };
     let session_slot = Arc::new(Semaphore::new(1));
