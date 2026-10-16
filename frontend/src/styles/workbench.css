@@ -1,16 +1,16 @@
 /* U2: use U1 colors/type and keep C2 geometry and interaction ownership intact. */
 .workspace-region > .page-canvas:not(.canvas-studio), .workbench-grid, .workbench-grid[data-chat-view="conversation"] {
-  background: var(--surface-solid);
+  background: transparent;
 }
 .page-canvas:not(.canvas-studio) .page-header {
   margin: 0; min-height: 64px; padding: 12px 24px; border: 0;
   border-bottom: 1px solid var(--border-soft); border-radius: 0;
-  background: var(--surface-solid); box-shadow: none; backdrop-filter: none;
+  background: var(--surface); box-shadow: none; backdrop-filter: blur(8px);
 }
 .page-canvas:not(.canvas-studio) .page-header .page-title { font-size: 18px; line-height: 24px; }
 .page-canvas:not(.canvas-studio) .page-header .page-description { font-size: var(--font-size-meta); }
 .page-canvas:not(.canvas-studio) .ui-panel {
-  background: var(--surface-solid); box-shadow: none; backdrop-filter: none;
+  background: var(--surface); box-shadow: var(--shadow-card); backdrop-filter: blur(8px);
 }
 .u2-disclosure { border-top: 1px solid var(--border-soft); padding: 14px 0; }
 .u2-disclosure > summary { cursor: pointer; font-size: var(--font-size-control); font-weight: 600; min-height: 30px; }
@@ -30,14 +30,14 @@
 /* Chat: content first; only the composer and selected conversation are raised. */
 .workbench-grid .conversation-sidebar, .workbench-grid .execution-sidebar,
 .workbench-grid[data-chat-view="conversation"] .execution-sidebar {
-  background: var(--surface-solid); box-shadow: none; backdrop-filter: none;
+  background: var(--surface); box-shadow: none; backdrop-filter: blur(8px);
 }
 .workbench-grid .conversation-create-button { background: var(--accent-soft); border-color: var(--accent-border); box-shadow: none; }
 .workbench-grid .conversation-row { border: 1px solid transparent; border-radius: 8px; box-shadow: none; }
 .workbench-grid .conversation-row-active { background: var(--accent-soft); border-color: transparent; box-shadow: inset 3px 0 var(--accent-primary); }
-.workbench-grid .glass-header, .workbench-grid[data-chat-view="conversation"] .conversation-chat .glass-header { background: var(--surface-solid); backdrop-filter: none; box-shadow: none; border-bottom: 1px solid var(--border-soft); }
-.workbench-grid .home-ambient-strong, .workbench-grid .home-ambient-stars { opacity: 0.035; }
-.workbench-grid .home-character-glow, .workbench-grid .home-character-ripple, .workbench-grid .home-character-petals { display: none; }
+.workbench-grid .glass-header, .workbench-grid[data-chat-view="conversation"] .conversation-chat .glass-header { background: var(--surface); backdrop-filter: blur(8px); box-shadow: none; border-bottom: 1px solid var(--border-soft); }
+.workbench-grid .home-ambient-strong, .workbench-grid .home-ambient-stars { opacity: var(--shell-art-opacity, 0.72); }
+.workbench-grid .home-character-glow, .workbench-grid .home-character-ripple, .workbench-grid .home-character-petals { display: block; }
 .workbench-grid .home-character-scene { width: 112px; height: 112px; margin: 4px auto; }
 .workbench-grid .home-character-image { width: 104px; height: 104px; filter: none; }
 .workbench-grid .home-status, .workbench-grid .home-quick-action { background: var(--surface-solid); box-shadow: none; border-color: var(--border-soft); }
@@ -80,18 +80,17 @@
 .memory-page .memory-detail-panel, .memory-page .memory-maintenance,
 .knowledge-page .knowledge-capability-panel, .knowledge-page .knowledge-item,
 .system-center-page .system-metric-card {
-  background: var(--surface-solid); box-shadow: none; backdrop-filter: none;
+  background: var(--surface); box-shadow: var(--shadow-card); backdrop-filter: blur(8px);
   border: 1px solid var(--border-soft);
 }
 .system-center-page .system-metric-card { border-radius: 12px; }
 .system-center-page .system-monitor-stack { gap: 20px; }
-.memory-page .memory-bubbles { opacity: 0.75; filter: none; }
+.memory-page .memory-bubbles { opacity: 1; filter: none; }
 .app-shell .nav-rail-item { box-shadow: none; }
 .app-shell .nav-rail-item[aria-current="page"] { background: var(--sidebar-active); }
 .workbench-grid .home-character-scene { animation: none; }
 /* Confirmation dialogs and auxiliary drawers retain their existing focus model. */
 [role="dialog"] { border-color: var(--border-soft); }
-.app-shell .shell-ambient-strong { opacity: 0.035; }
 /* Expanded voice is an auxiliary panel, not a cover over Chat's composer.
    This reservation is scoped to Chat; Studio keeps its frozen safe-area model. */
 .global-voice-host:has(.workbench-grid) { --chat-voice-expanded-space: min(360px, 50vh); }

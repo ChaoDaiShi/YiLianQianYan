@@ -17,27 +17,31 @@ export default function AppShell() {
     >
       <div
         className="shell-ambient shell-ambient-strong pointer-events-none absolute inset-0 z-0"
+        style={{ display: theme.bgMode === "image" ? "none" : undefined }}
         aria-hidden="true"
       />
       <div
         className="shell-ambient-overlay pointer-events-none absolute inset-0 z-0"
+        style={{ display: theme.bgMode === "image" ? "none" : undefined }}
         aria-hidden="true"
       />
       {/* Background layer */}
       <div
-        className="absolute inset-0 -z-10 transition-[background] duration-500"
+        className="absolute inset-0 transition-[background] duration-500"
         style={{
           backgroundColor: "var(--bg-app)",
           backgroundImage: "var(--bg-image)",
           backgroundSize: theme.bgMode === "image" ? "cover" : undefined,
           backgroundPosition: "center",
+          zIndex: theme.bgMode === "image" ? 0 : -10,
         }}
       />
       <div
-        className="pointer-events-none absolute inset-0 -z-10 transition-opacity duration-300"
+        className="pointer-events-none absolute inset-0 transition-opacity duration-300"
         style={{
           backgroundColor: "var(--shell-overlay)",
-          opacity: theme.bgMode === "image" ? 1 : 0,
+          opacity: theme.bgMode === "image" ? 0.35 : 0,
+          zIndex: theme.bgMode === "image" ? 1 : -10,
         }}
       />
 
