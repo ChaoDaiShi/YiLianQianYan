@@ -24,7 +24,7 @@ function inspector(status: "runnable" | "invalidated", executor_ref: string | nu
 describe("editable TaskGraph core paths", () => {
   it("disables execution for an unconfigured node while keeping semantic editing", () => {
     const html = inspector("runnable", null);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>开始执行<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?开始执行[\s\S]*?<\/button>/);
     expect(html).toContain("保存语义");
     expect(html).not.toContain("标记为运行中");
   });

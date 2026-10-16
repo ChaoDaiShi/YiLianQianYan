@@ -1,0 +1,81 @@
+/* ============================================================
+   UI Optimization - Tasks & Workspaces (Work Package C)
+   ============================================================ */
+
+.ui-opt-tasks {
+  height: 100%;
+}
+
+.ui-opt-tasks .task-center-section {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  transition: background-color var(--motion-fast) ease-out, border-color var(--motion-fast) ease-out;
+}
+
+.ui-opt-tasks .task-row-status-bar {
+  width: 3px;
+  border-radius: 9999px;
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+}
+
+.ui-opt-tasks .task-center-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.15fr);
+  gap: 16px;
+  min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 1099px) {
+  .ui-opt-tasks .task-center-grid {
+    grid-template-columns: 1fr;
+  }
+  .ui-opt-tasks .task-center-detail {
+    display: none;
+  }
+}
+
+.ui-opt-workspaces {
+  height: 100%;
+}
+
+.ui-opt-workspaces .workspace-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+
+.ui-opt-workspaces .workspace-folder-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ui-opt-workspaces .workspace-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.ui-opt-workspaces .workspace-path-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}

@@ -85,6 +85,16 @@ export default function TaskDetailPanel({
   const [detailError, setDetailError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState(false);
+  const [tab, setTab] = useState<"execution" | "io" | "events">("execution");
+
+  useEffect(() => {
+    setTimeline(null);
+    setArtifacts(null);
+    setExecutions(null);
+    setDecisions(null);
+    setDetailError(null);
+    setActionError(null);
+  }, [task.id]);
 
   const reloadDetail = useCallback(async () => {
     setTimeline(null);
@@ -170,19 +180,19 @@ export default function TaskDetailPanel({
 
           <div className="flex shrink-0 flex-wrap gap-2">
             {canStart && (
-              <Button size="sm" onClick={() => void runAction(() => startTask(task.id))} disabled={actionPending}>
+              <Button size="sm" onClick={() => void runAction(() => startTask(task.id))} disabled={actionPending} loading={actionPending}>
                 <Play className="h-3.5 w-3.5" />
                 启动
               </Button>
             )}
             {canRetry && (
-              <Button size="sm" variant="secondary" onClick={() => void runAction(() => retryTask(task.id))} disabled={actionPending}>
+              <Button size="sm" variant="secondary" onClick={() => void runAction(() => retryTask(task.id))} disabled={actionPending} loading={actionPending}>
                 <RotateCcw className="h-3.5 w-3.5" />
                 重试
               </Button>
             )}
             {!isTerminal && (
-              <Button size="sm" variant="danger" onClick={() => void runAction(() => cancelTask(task.id))} disabled={actionPending}>
+              <Button size="sm" variant="danger" onClick={() => void runAction(() => cancelTask(task.id))} disabled={actionPending} loading={actionPending}>
                 <XCircle className="h-3.5 w-3.5" />
                 取消
               </Button>
@@ -240,85 +250,167 @@ export default function TaskDetailPanel({
         )}
       </Panel>
 
-      <DetailSection title="执行活动" icon={<CheckCircle2 className="h-4 w-4 text-[var(--accent-blue)]" />}>
-        {timeline === null || executions === null ? (
-          <DetailSkeleton />
-        ) : timeline.length === 0 && executions.length === 0 ? (
-          <p className="text-sm text-[var(--text-secondary)]">暂无执行记录。</p>
-        ) : (
-          <div className="space-y-3">
-            {timeline.map((event) => (
-              <div key={event.id} className="border-l-2 border-[var(--border-soft)] pl-3">
-                <p className="text-sm text-[var(--text)]">{event.message}</p>
-                <p className="mt-1 text-xs text-[var(--text-faint)]">{formatTaskDate(event.created_at)}</p>
-                {Object.keys(event.metadata || {}).length > 0 && (
-                  <details className="mt-2 text-xs text-[var(--text-secondary)]">
-                    <summary className="cursor-pointer select-none">技术详情</summary>
-                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--surface-muted)] p-2 font-mono">
-                      {JSON.stringify(event.metadata, null, 2)}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            ))}
-            {executions.map((execution) => (
-              <div key={execution.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
-                <span className="text-[var(--text-secondary)]">第 {execution.attempt} 次执行</span>
-                <Badge tone={execution.status === "completed" ? "success" : execution.status === "failed" ? "danger" : "default"}>
-                  {execution.status}
-                </Badge>
-                {execution.error && <p className="basis-full text-xs text-[var(--danger-fg)]">{execution.error}</p>}
-              </div>
-            ))}
-          </div>
-        )}
-      </DetailSection>
+      <div className="flex items-center gap-1 border-b border-[var(--border-soft)] pb-1">
+        <button
+          type="button"
+          onClick={() => setTab("execution")}
+          className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors ${
+            tab === "execution"
+              ? "bg-[var(--accent-soft)] text-[var(--accent-soft-fg)]"
+              : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+          }`}
+        >
+          执行过程
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("io")}
+          className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors ${
+            tab === "io"
+              ? "bg-[var(--accent-soft)] text-[var(--accent-soft-fg)]"
+              : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+          }`}
+        >
+          输入与产出
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("events")}
+          className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors ${
+            tab === "events"
+              ? "bg-[var(--accent-soft)] text-[var(--accent-soft-fg)]"
+              : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+          }`}
+        >
+          事件详情
+        </button>
+      </div>
 
-      <DetailSection title="任务产物" icon={<FileText className="h-4 w-4 text-[var(--accent-purple)]" />}>
-        {artifacts === null ? (
-          <DetailSkeleton />
-        ) : artifacts.length === 0 ? (
-          <p className="text-sm text-[var(--text-secondary)]">暂无可用任务产物。</p>
-        ) : (
-          <div className="space-y-2">
-            {artifacts.map((artifact) => {
-              const Icon = artifactIcon(classifyArtifactType(artifact.name));
-              const size = formatSize(artifact.size);
-              return (
-                <div key={artifact.id} className="rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2">
-                  <div className="flex items-start gap-2">
-                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-purple)]" />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-[var(--text)]">{artifact.name}</p>
-                      <p className="mt-0.5 text-xs text-[var(--text-faint)]">
-                        {[artifact.mime_type, size, formatTaskDate(artifact.updated_at)].filter(Boolean).join(" · ") || "文件"}
-                      </p>
-                      {artifact.path && <p className="mt-1 break-all font-mono text-xs text-[var(--text-secondary)]">{artifact.path}</p>}
-                      {artifact.summary && <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{artifact.summary}</p>}
-                    </div>
+      {tab === "execution" && (
+        <div className="space-y-3">
+          {decisions && decisions.length > 0 && (
+            <DetailSection title="用户决定" icon={<Info className="h-4 w-4 text-[var(--accent-gold)]" />}>
+              <div className="space-y-2">
+                {decisions.map((decision) => (
+                  <div key={decision.id} className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
+                    <p className="text-[var(--text)]">{decision.prompt}</p>
+                    <p className="mt-1 text-xs text-[var(--text-faint)]">{decision.status === "pending" ? "等待选择" : "已处理"}</p>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </DetailSection>
-
-      <ResourceBindingPanel target={{ kind: "task", task_id: task.id }} />
-      <ArtifactResultsPanel source={evidenceSource} completed={Boolean(latestEvidenceExecution)} />
-      <MemorySkillCandidatePanel source={evidenceSource} completed={Boolean(latestEvidenceExecution)} />
-
-      {decisions && decisions.length > 0 && (
-        <DetailSection title="用户决定" icon={<Info className="h-4 w-4 text-[var(--accent-gold)]" />}>
-          <div className="space-y-2">
-            {decisions.map((decision) => (
-              <div key={decision.id} className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
-                <p className="text-[var(--text)]">{decision.prompt}</p>
-                <p className="mt-1 text-xs text-[var(--text-faint)]">{decision.status === "pending" ? "等待选择" : "已处理"}</p>
+                ))}
               </div>
-            ))}
-          </div>
-        </DetailSection>
+            </DetailSection>
+          )}
+
+          <DetailSection title="执行活动" icon={<CheckCircle2 className="h-4 w-4 text-[var(--accent-blue)]" />}>
+            {timeline === null || executions === null ? (
+              <DetailSkeleton />
+            ) : timeline.length === 0 && executions.length === 0 ? (
+              <p className="text-sm text-[var(--text-secondary)]">暂无执行记录。</p>
+            ) : (
+              <div className="space-y-3">
+                {executions.map((execution) => (
+                  <div key={execution.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
+                    <span className="text-[var(--text-secondary)]">第 {execution.attempt} 次执行</span>
+                    <Badge tone={execution.status === "completed" ? "success" : execution.status === "failed" ? "danger" : "default"}>
+                      {execution.status}
+                    </Badge>
+                    {execution.error && <p className="basis-full text-xs text-[var(--danger-fg)]">{execution.error}</p>}
+                  </div>
+                ))}
+                {timeline.map((event) => (
+                  <div key={event.id} className="border-l-2 border-[var(--border-soft)] pl-3">
+                    <p className="text-sm text-[var(--text)]">{event.message}</p>
+                    <p className="mt-1 text-xs text-[var(--text-faint)]">{formatTaskDate(event.created_at)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DetailSection>
+        </div>
+      )}
+
+      {tab === "io" && (
+        <div className="space-y-3">
+          <ResourceBindingPanel target={{ kind: "task", task_id: task.id }} />
+
+          <DetailSection title="任务产物" icon={<FileText className="h-4 w-4 text-[var(--accent-purple)]" />}>
+            {artifacts === null ? (
+              <DetailSkeleton />
+            ) : artifacts.length === 0 ? (
+              <p className="text-sm text-[var(--text-secondary)]">暂无可用任务产物。</p>
+            ) : (
+              <div className="space-y-2">
+                {artifacts.map((artifact) => {
+                  const Icon = artifactIcon(classifyArtifactType(artifact.name));
+                  const size = formatSize(artifact.size);
+                  return (
+                    <div key={artifact.id} className="rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2">
+                      <div className="flex items-start gap-2">
+                        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-purple)]" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-medium text-[var(--text)]">{artifact.name}</p>
+                            {artifact.path && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (navigator.clipboard) {
+                                    void navigator.clipboard.writeText(artifact.path || "");
+                                  }
+                                }}
+                                title="复制完整路径"
+                                className="text-xs text-[var(--accent-primary)] hover:underline shrink-0"
+                              >
+                                复制路径
+                              </button>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-[var(--text-faint)]">
+                            {[artifact.mime_type, size, formatTaskDate(artifact.updated_at)].filter(Boolean).join(" · ") || "文件"}
+                          </p>
+                          {artifact.path && <p className="mt-1 break-all font-mono text-xs text-[var(--text-secondary)]">{artifact.path}</p>}
+                          {artifact.summary && <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{artifact.summary}</p>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </DetailSection>
+
+          <ArtifactResultsPanel source={evidenceSource} completed={Boolean(latestEvidenceExecution)} />
+          <MemorySkillCandidatePanel source={evidenceSource} completed={Boolean(latestEvidenceExecution)} />
+        </div>
+      )}
+
+      {tab === "events" && (
+        <div className="space-y-3">
+          <DetailSection title="事件详情" icon={<CheckCircle2 className="h-4 w-4 text-[var(--accent-blue)]" />}>
+            {timeline === null ? (
+              <DetailSkeleton />
+            ) : timeline.length === 0 ? (
+              <p className="text-sm text-[var(--text-secondary)]">暂无事件记录。</p>
+            ) : (
+              <div className="space-y-3">
+                {timeline.map((event) => (
+                  <div key={event.id} className="border-l-2 border-[var(--border-soft)] pl-3">
+                    <p className="text-sm font-medium text-[var(--text)]">{event.message}</p>
+                    <p className="mt-1 text-xs text-[var(--text-faint)]">{formatTaskDate(event.created_at)}</p>
+                    {Object.keys(event.metadata || {}).length > 0 && (
+                      <details className="mt-2 text-xs text-[var(--text-secondary)]">
+                        <summary className="cursor-pointer select-none">技术详情</summary>
+                        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--surface-muted)] p-2 font-mono">
+                          {JSON.stringify(event.metadata, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </DetailSection>
+        </div>
       )}
 
       {detailError && (

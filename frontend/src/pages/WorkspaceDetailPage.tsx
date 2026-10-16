@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Check, Clipboard, FolderOpen, Plus } from "lucide-react";
+import { ArrowLeft, Check, Clipboard, Clock3, FolderOpen, Plus } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import {
   createTask,
@@ -39,6 +39,7 @@ export default function WorkspaceDetailPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const reload = useCallback(async () => {
@@ -75,8 +76,14 @@ export default function WorkspaceDetailPage() {
   const selectedTask = tasks?.find((task) => task.id === selectedId) || null;
 
   const handleCreate = async () => {
-    if (!title.trim()) return;
-    const result = await createTask({ workspace_id: id, title, description });
+    if (!title.trim() || creating) return;
+    setCreating(true);
+    const result = await createTask({
+      workspace_id: id,
+      title: title.trim(),
+      description: description.trim() || undefined,
+    });
+    setCreating(false);
     if (result.ok) {
       setShowCreate(false);
       setTitle("");
@@ -92,11 +99,11 @@ export default function WorkspaceDetailPage() {
     if (!path || !navigator.clipboard) return;
     await navigator.clipboard.writeText(path);
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
+    window.setTimeout(() => setCopied(false), 1500);
   };
 
   return (
-    <div className="page-canvas flex h-full min-h-0 flex-col">
+    <div className="page-canvas ui-opt-workspaces flex h-full min-h-0 flex-col">
       <PageHeader
         title={workspace?.name || "工作空间"}
         description={workspace?.description || "查看任务使用的文件与上下文。"}
@@ -133,7 +140,7 @@ export default function WorkspaceDetailPage() {
           <Panel className="mx-4 mt-4 shrink-0">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-3">
-                <div className="rounded-[var(--radius-md)] bg-[var(--accent-soft)] p-2 text-[var(--accent-primary)]">
+                <div className="workspace-folder-icon shrink-0">
                   <FolderOpen className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
@@ -141,9 +148,12 @@ export default function WorkspaceDetailPage() {
                   <h2 className="mt-0.5 truncate text-base font-semibold text-[var(--text)]">
                     {workspace?.name || "加载中…"}
                   </h2>
-                  {formatWorkspacePath(workspace?.root_path) && (
+                  {formatWorkspacePath(workspace?.root_path) ? (
                     <div className="mt-1 flex max-w-full items-center gap-2">
-                      <p className="truncate font-mono text-xs text-[var(--text-secondary)]" title={workspace?.root_path || undefined}>
+                      <p
+                        className="truncate font-mono text-xs text-[var(--text-secondary)]"
+                        title={workspace?.root_path || undefined}
+                      >
                         {workspace?.root_path}
                       </p>
                       <button
@@ -152,13 +162,29 @@ export default function WorkspaceDetailPage() {
                         className="shrink-0 rounded p-1 text-[var(--text-faint)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus-ring-token focus-visible:outline-none"
                         aria-label="复制工作空间路径"
                       >
-                        {copied ? <Check className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
+                        {copied ? (
+                          <Check className="h-3.5 w-3.5 text-[var(--success-fg)]" />
+                        ) : (
+                          <Clipboard className="h-3.5 w-3.5" />
+                        )}
                       </button>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs text-[var(--text-faint)]">未绑定本地目录</p>
+                  )}
+                  {workspace?.active_tasks !== undefined && (
+                    <div className="mt-1 flex items-center gap-1 text-xs text-[var(--text-faint)]">
+                      <Clock3 className="h-3 w-3" />
+                      <span>进行中任务 {workspace.active_tasks}</span>
                     </div>
                   )}
                 </div>
               </div>
-              {workspace && <Badge tone={workspace.status === "active" ? "success" : "default"}>{workspace.status === "active" ? "活跃" : "已归档"}</Badge>}
+              {workspace && (
+                <Badge tone={workspace.status === "active" ? "success" : "default"}>
+                  {workspace.status === "active" ? "活跃" : "已归档"}
+                </Badge>
+              )}
             </div>
           </Panel>
 
@@ -187,7 +213,10 @@ export default function WorkspaceDetailPage() {
                   {tasks === null ? (
                     <div className="space-y-2 p-1">
                       {Array.from({ length: 4 }).map((_, index) => (
-                        <div key={index} className="space-y-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] p-3">
+                        <div
+                          key={index}
+                          className="space-y-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] p-3"
+                        >
                           <Skeleton className="h-4 w-3/4" />
                           <Skeleton className="h-3 w-1/2" />
                         </div>
@@ -198,7 +227,11 @@ export default function WorkspaceDetailPage() {
                       icon={<FolderOpen className="h-5 w-5" />}
                       title="还没有关联任务"
                       description="创建一个任务后，执行记录和真实产物会显示在这里。"
-                      action={<Button size="sm" onClick={() => setShowCreate(true)}>新建任务</Button>}
+                      action={
+                        <Button size="sm" onClick={() => setShowCreate(true)}>
+                          新建任务
+                        </Button>
+                      }
                       className="py-16"
                     />
                   ) : (
@@ -215,12 +248,20 @@ export default function WorkspaceDetailPage() {
                               : "border-transparent hover:border-[var(--border-soft)] hover:bg-[var(--surface-hover)]"
                           }`}
                         >
-                          {selectedId === task.id && <span className="absolute inset-y-3 left-0 w-0.5 rounded-r-full bg-[var(--accent-primary)]" />}
+                          {selectedId === task.id && (
+                            <span className="absolute inset-y-3 left-0 w-0.5 rounded-r-full bg-[var(--accent-primary)]" />
+                          )}
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-[var(--text)]">{deriveTaskDisplayTitle(task.title)}</p>
-                            <p className="mt-1 text-xs text-[var(--text-faint)]">{formatTaskDate(task.updated_at) || "时间未知"}</p>
+                            <p className="truncate text-sm font-medium text-[var(--text)]">
+                              {deriveTaskDisplayTitle(task.title)}
+                            </p>
+                            <p className="mt-1 text-xs text-[var(--text-faint)]">
+                              {formatTaskDate(task.updated_at) || "时间未知"}
+                            </p>
                           </div>
-                          <Badge tone={getTaskStatusTone(task.status)}>{getTaskStatusLabel(task.status)}</Badge>
+                          <Badge tone={getTaskStatusTone(task.status)}>
+                            {getTaskStatusLabel(task.status)}
+                          </Badge>
                         </button>
                       ))}
                     </div>
@@ -253,11 +294,32 @@ export default function WorkspaceDetailPage() {
 
       <Modal open={showCreate} onClose={() => setShowCreate(false)} title="新建任务">
         <div className="space-y-3">
-          <Input label="标题" value={title} onChange={(event) => setTitle(event.target.value)} autoFocus />
-          <Textarea label="描述" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>取消</Button>
-            <Button type="button" onClick={() => void handleCreate()} disabled={!title.trim()}>创建</Button>
+          <Input
+            label="标题"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="例如：整理项目依赖并生成报告"
+            autoFocus
+          />
+          <Textarea
+            label="描述"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="可选描述信息"
+            rows={3}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleCreate()}
+              disabled={!title.trim() || creating}
+              loading={creating}
+            >
+              创建
+            </Button>
           </div>
         </div>
       </Modal>
