@@ -582,4 +582,3 @@ function MemoryListSkeleton() {
     </div>
   );
 }
-

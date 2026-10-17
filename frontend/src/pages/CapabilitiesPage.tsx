@@ -593,6 +593,3 @@ function CapabilityDetail({
     </div>
   );
 }
-
-
-
