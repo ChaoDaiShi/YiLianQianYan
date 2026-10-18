@@ -30,7 +30,8 @@ import {
   type McpPromptGetResponse,
 } from "../api/mcpRuntime";
 import { CapabilityStatusBadge } from "../components/capabilities";
-import { Badge, Button, EmptyState, ErrorState, Input, Modal, PageHeader, Panel, Skeleton, Spinner } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
+import { Badge, Button, EmptyState, ErrorState, Input, Modal, Panel, Skeleton, Spinner } from "../components/ui";
 import { validateMcpDraft } from "../features/mcp/mcpForm";
 
 type DetailTab = "tools" | "resources" | "prompts";
@@ -414,18 +415,18 @@ export default function PluginsPage() {
   }
 
   return (
-    <div className="capability-page page-canvas ui-opt-capabilities ui-opt-plugins flex h-full flex-col">
-      <PageHeader
-        title="插件管理"
-        description="管理内置工具、MCP 服务器与外部工具扩展"
-        actions={
-          <Button size="sm" onClick={openAdd}>
-            <Plus className="w-4 h-4" />
-            添加 MCP
-          </Button>
-        }
-      />
-
+    <PageShell
+      title="插件管理"
+      description="管理内置工具、MCP 服务器与外部工具扩展"
+      className="capability-page page-canvas ui-opt-capabilities ui-opt-plugins flex h-full flex-col"
+      contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+      actions={
+        <Button size="sm" onClick={openAdd}>
+          <Plus className="w-4 h-4" />
+          添加 MCP
+        </Button>
+      }
+    >
       <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
         {actionError && <ErrorState title="MCP 操作未完成" description={actionError} />}
         <Panel className="flex items-start gap-3">
@@ -731,7 +732,7 @@ export default function PluginsPage() {
         onSubmit={submitPromptPreview}
         onFormChange={updatePromptFormValue}
       />
-    </div>
+    </PageShell>
   );
 }
 

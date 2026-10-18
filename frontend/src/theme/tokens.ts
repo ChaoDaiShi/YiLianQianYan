@@ -173,6 +173,9 @@ export const DERIVED_TOKENS: Record<string, { aliasOf?: string; description: str
   "--text-tertiary": { aliasOf: "--text-secondary", description: "Tertiary text alias" },
   "--surface-input": { aliasOf: "--input-bg", description: "Input background alias" },
   "--panel-muted": { aliasOf: "--surface-muted", description: "Muted panel alias" },
+  "--border-subtle": { aliasOf: "--border-soft", description: "Subtle border alias" },
+  "--surface-subtle": { aliasOf: "--surface-muted", description: "Subtle surface alias" },
+  "--task-world-grid": { description: "Task world canvas grid dot color" },
 };
 
 /**

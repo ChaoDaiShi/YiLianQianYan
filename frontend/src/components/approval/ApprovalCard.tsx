@@ -288,14 +288,14 @@ export default function ApprovalCard({
             {typeof approval.arguments?.command === "string" && (
               <div>
                 <dt className="font-sans text-[var(--text-faint)]">Command</dt>
-                <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[#232032] p-2 text-xs font-mono text-[#eeeaf8] shadow-inner">
+                <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-[var(--border-soft)] bg-[var(--code-bg)] p-2 text-xs font-mono text-[var(--code-text)] shadow-inner">
                   {approval.arguments.command}
                 </dd>
               </div>
             )}
             <div>
               <dt className="font-sans text-[var(--text-faint)]">Arguments</dt>
-              <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[#232032] p-2 text-xs font-mono text-[#eeeaf8] shadow-inner">
+              <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-[var(--border-soft)] bg-[var(--code-bg)] p-2 text-xs font-mono text-[var(--code-text)] shadow-inner">
                 {maskedArgs}
               </dd>
             </div>

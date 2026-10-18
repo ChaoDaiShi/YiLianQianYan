@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Check, Clipboard, Clock3, Edit3, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Clock3, Edit3, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   createTask,
@@ -27,6 +27,8 @@ import {
   StatTile,
   ListRow,
   Section,
+  FormField,
+  showToast,
 } from "../components/ui";
 import {
   formatTaskDate,
@@ -48,7 +50,6 @@ export default function WorkspaceDetailPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   // Edit workspace modal state
   const [showEdit, setShowEdit] = useState(false);
@@ -108,6 +109,7 @@ export default function WorkspaceDetailPage() {
       setShowCreate(false);
       setTitle("");
       setDescription("");
+      showToast("任务创建成功", "success");
       void reload();
     } else {
       setTaskError(result.error);
@@ -135,6 +137,7 @@ export default function WorkspaceDetailPage() {
     setUpdating(false);
     if (result.ok) {
       setShowEdit(false);
+      showToast("工作空间信息已保存", "success");
       void reload();
     } else {
       setUpdateError(result.error || "更新工作空间失败");
@@ -146,19 +149,12 @@ export default function WorkspaceDetailPage() {
     const result = await deleteWorkspace(id);
     setDeleting(false);
     if (result.ok) {
+      showToast("工作空间已归档", "success");
       navigate("/workspaces");
     } else {
       setError(result.error || "删除工作空间失败");
       setShowDeleteConfirm(false);
     }
-  };
-
-  const copyPath = async () => {
-    const path = formatWorkspacePath(workspace?.root_path);
-    if (!path || !navigator.clipboard) return;
-    await navigator.clipboard.writeText(path);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
   };
 
   return (
@@ -217,45 +213,47 @@ export default function WorkspaceDetailPage() {
         </div>
       ) : (
         <>
-          <Panel className="mx-4 mt-4 shrink-0">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
-                <div className="workspace-folder-icon shrink-0">
-                  <FolderOpen className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <h2 className="truncate text-base font-semibold text-[var(--text)]">
-                      {workspace?.name || "加载中…"}
-                    </h2>
-                    {workspace && (
-                      <Badge tone={workspace.status === "active" ? "success" : "default"}>
-                        {workspace.status === "active" ? "活跃" : "已归档"}
-                      </Badge>
-                    )}
+          <div className="mx-4 mt-4 shrink-0">
+            <Section title="空间概览">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <div className="workspace-folder-icon shrink-0">
+                    <FolderOpen className="h-5 w-5" />
                   </div>
-                  <div className="mt-2 max-w-lg">
-                    <KeyValueRow
-                      label="根路径"
-                      value={formatWorkspacePath(workspace?.root_path) || "未绑定本地目录"}
-                      copyable={workspace?.root_path || undefined}
-                      mono
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h2 className="truncate text-base font-semibold text-[var(--text)]">
+                        {workspace?.name || "加载中…"}
+                      </h2>
+                      {workspace && (
+                        <Badge tone={workspace.status === "active" ? "success" : "default"}>
+                          {workspace.status === "active" ? "活跃" : "已归档"}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="mt-2 max-w-lg">
+                      <KeyValueRow
+                        label="根路径"
+                        value={formatWorkspacePath(workspace?.root_path) || "未绑定本地目录"}
+                        copyable={workspace?.root_path || undefined}
+                        mono
+                      />
+                    </div>
+                  </div>
+                </div>
+                {workspace?.active_tasks !== undefined && (
+                  <div className="w-48 shrink-0">
+                    <StatTile
+                      label="进行中任务"
+                      value={workspace.active_tasks}
+                      icon={Clock3}
+                      tone={workspace.active_tasks > 0 ? "info" : "default"}
                     />
                   </div>
-                </div>
+                )}
               </div>
-              {workspace?.active_tasks !== undefined && (
-                <div className="w-48 shrink-0">
-                  <StatTile
-                    label="进行中任务"
-                    value={workspace.active_tasks}
-                    icon={Clock3}
-                    tone={workspace.active_tasks > 0 ? "info" : "default"}
-                  />
-                </div>
-              )}
-            </div>
-          </Panel>
+            </Section>
+          </div>
 
           {taskError && (
             <div className="mx-4 mt-3">
@@ -376,20 +374,22 @@ export default function WorkspaceDetailPage() {
         }
       >
         <div className="space-y-4">
-          <Input
-            label="任务标题"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="例如：整理下载目录并归档"
-            autoFocus
-          />
-          <Textarea
-            label="补充描述（可选）"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="说明任务期望的成果和约束"
-            rows={3}
-          />
+          <FormField label="任务标题" required>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="例如：整理下载目录并归档"
+              autoFocus
+            />
+          </FormField>
+          <FormField label="补充描述（可选）">
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="说明任务期望的成果和约束"
+              rows={3}
+            />
+          </FormField>
         </div>
       </Modal>
 
@@ -415,31 +415,29 @@ export default function WorkspaceDetailPage() {
         }
       >
         <div className="space-y-4">
-          <Input
-            label="空间名称"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            placeholder="例如：主开发工作区"
-            autoFocus
-          />
-          <Input
-            label="本地根目录（可选）"
-            value={editRootPath}
-            onChange={(e) => setEditRootPath(e.target.value)}
-            placeholder="例如：C:\Projects\MyProject"
-          />
-          <Textarea
-            label="空间描述（可选）"
-            value={editDescription}
-            onChange={(e) => setEditDescription(e.target.value)}
-            placeholder="描述此工作空间的用途"
-            rows={3}
-          />
-          {updateError && (
-            <p className="text-xs text-[var(--danger)]" role="alert">
-              {updateError}
-            </p>
-          )}
+          <FormField label="空间名称" required error={updateError || undefined}>
+            <Input
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="例如：主开发工作区"
+              autoFocus
+            />
+          </FormField>
+          <FormField label="本地根目录（可选）">
+            <Input
+              value={editRootPath}
+              onChange={(e) => setEditRootPath(e.target.value)}
+              placeholder="例如：C:\Projects\MyProject"
+            />
+          </FormField>
+          <FormField label="空间描述（可选）">
+            <Textarea
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              placeholder="描述此工作空间的用途"
+              rows={3}
+            />
+          </FormField>
         </div>
       </Modal>
 

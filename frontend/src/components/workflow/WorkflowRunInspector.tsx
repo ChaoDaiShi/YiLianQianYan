@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X, Ban, Loader2, Navigation, AlertCircle } from "lucide-react";
-import { Button, Badge, Spinner } from "../ui";
+import { Ban, Loader2, Navigation, AlertCircle } from "lucide-react";
+import { Button, Badge, Spinner, Inspector } from "../ui";
 import { listPendingApprovals } from "../../api/approvals";
 import {
   getWorkflowRun,
@@ -159,49 +159,37 @@ export default function WorkflowRunInspector({
     Boolean(selectedNodeId) && run?.nodes?.some((node) => node.node_id === selectedNodeId);
 
   return (
-    <div className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 space-y-3.5 shadow-card-token">
-      <div className="flex items-start justify-between gap-2 border-b border-[var(--border-soft)] pb-3">
-        <div className="space-y-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h4 className="font-semibold text-sm truncate">
-              运行 {run!.run_id.slice(0, 8)}…
-            </h4>
-            <Badge tone={RUN_TONE[run!.status] || "default"}>
-              <span className="flex items-center gap-1">
-                {run!.status === "running" && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)] animate-pulse" />
-                )}
-                {RUN_STATUS_LABELS[run!.status] || run!.status}
-              </span>
-            </Badge>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] flex-wrap">
-            <span>执行 {run!.execution_id.slice(0, 8)}…</span>
-            <span>·</span>
-            <span>创建于 {new Date(run!.created_at).toLocaleTimeString()}</span>
-            <span>·</span>
-            <span>更新于 {new Date(run!.updated_at).toLocaleTimeString()}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {!terminal && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={handleCancel}
-              disabled={cancelling}
-              loading={cancelling}
-              loadingLabel="取消中…"
-            >
-              <Ban className="w-3.5 h-3.5" />
-              取消运行
-            </Button>
-          )}
-          <Button size="sm" variant="ghost" onClick={onClose} aria-label="关闭运行详情">
-            <X className="w-4 h-4" />
+    <Inspector
+      title={`运行 ${run!.run_id.slice(0, 8)}…`}
+      badge={
+        <Badge tone={RUN_TONE[run!.status] || "default"}>
+          <span className="flex items-center gap-1">
+            {run!.status === "running" && (
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-primary)] animate-pulse" />
+            )}
+            {RUN_STATUS_LABELS[run!.status] || run!.status}
+          </span>
+        </Badge>
+      }
+      description={`执行 ${run!.execution_id.slice(0, 8)}… · 创建于 ${new Date(run!.created_at).toLocaleTimeString()} · 更新于 ${new Date(run!.updated_at).toLocaleTimeString()}`}
+      actions={
+        !terminal ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={handleCancel}
+            disabled={cancelling}
+            loading={cancelling}
+            loadingLabel="取消中…"
+          >
+            <Ban className="w-3.5 h-3.5" />
+            取消运行
           </Button>
-        </div>
-      </div>
+        ) : undefined
+      }
+      onClose={onClose}
+      bodyClassName="space-y-3.5 p-4"
+    >
 
       {approval && <WorkflowApprovalCard approval={approval} onDecision={load} />}
 
@@ -237,7 +225,7 @@ export default function WorkflowRunInspector({
           ))}
         </div>
       </div>
-    </div>
+    </Inspector>
   );
 }
 

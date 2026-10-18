@@ -66,8 +66,14 @@ describe("Theme token coverage and accessibility verification", () => {
   });
 
   it("satisfies non-text contrast for focus ring and brand accent in light and dark modes", () => {
-    // Light mode accent-primary (#ea91b9) has double ring with inner surface-solid (#FFFDFF)
-    // Dark mode accent-primary (#F0A3C6) on bg-app (#171421)
+    // Light mode focus ring (#9D4373) satisfies WCAG non-text contrast (>= 3.0:1) on light canvas
+    const lightFocusRatio = contrastRatio(
+      "#9D4373",
+      CYRENE_SEMANTIC_TOKENS.light["--bg-app"],
+    );
+    expect(lightFocusRatio).toBeGreaterThanOrEqual(3.0);
+
+    // Dark mode accent-primary (#F0A3C6) on bg-app (#171421) satisfies >= 3.0:1
     const darkAccentRatio = contrastRatio(
       CYRENE_SEMANTIC_TOKENS.dark["--accent-primary"],
       CYRENE_SEMANTIC_TOKENS.dark["--bg-app"],

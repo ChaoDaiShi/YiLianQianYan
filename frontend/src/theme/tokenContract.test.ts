@@ -138,4 +138,139 @@ describe("Theme token contract and single source of truth", () => {
       `Found undefined CSS variable usages: ${missingTokens.join(", ")}`,
     ).toEqual([]);
   });
+
+  it("verifies all CSS variable usages across TSX/TS files are declared and no invalid gradient background classes exist", () => {
+    // @ts-expect-error -- Node file access is test-only
+    const { readdirSync, statSync, readFileSync } = require("node:fs");
+    // @ts-expect-error -- Node file access is test-only
+    const { join, resolve } = require("node:path");
+    // @ts-expect-error -- Node file access is test-only
+    const { fileURLToPath } = require("node:url");
+
+    function getAllSourceFiles(dir: string): string[] {
+      const results: string[] = [];
+      for (const entry of readdirSync(dir)) {
+        const fullPath = join(dir, entry);
+        const stat = statSync(fullPath);
+        if (stat.isDirectory()) {
+          if (entry !== "node_modules" && entry !== "dist") {
+            results.push(...getAllSourceFiles(fullPath));
+          }
+        } else if (fullPath.endsWith(".tsx") || fullPath.endsWith(".ts")) {
+          results.push(fullPath);
+        }
+      }
+      return results;
+    }
+
+    const currentFilePath = fileURLToPath(import.meta.url);
+    const srcDir = resolve(currentFilePath, "../..");
+    const sourceFiles = getAllSourceFiles(srcDir);
+    const tsxUsages = new Set<string>();
+    const invalidGradientUsages: string[] = [];
+
+    const declaredTokens = new Set([
+      ...Object.keys(CYRENE_SEMANTIC_TOKENS.light),
+      ...Object.keys(CYRENE_SEMANTIC_TOKENS.dark),
+      ...Object.keys(DERIVED_TOKENS),
+      "--font-size-base",
+      "--font-size-caption",
+      "--font-size-meta",
+      "--font-size-secondary",
+      "--font-size-control",
+      "--font-size-body",
+      "--font-size-reading",
+      "--font-size-title-sm",
+      "--font-size-title-md",
+      "--font-size-title-lg",
+      "--line-height-caption",
+      "--line-height-meta",
+      "--line-height-body",
+      "--line-height-reading",
+      "--line-height-title",
+      "--font-mono",
+      "--content-reading-max",
+      "--content-form-max",
+      "--content-dashboard-max",
+      "--page-padding-inline",
+      "--page-padding-block",
+      "--bg-blur",
+      "--bg-brightness",
+      "--bg-image",
+      "--voice-dock-height",
+      "--overlay-safe-bottom",
+      "--chat-voice-expanded-space",
+      "--settings-icon-color",
+      "--cap-transition",
+      "--bg",
+      "--bg-2",
+      "--panel",
+      "--panel-2",
+      "--panel-hover",
+      "--text",
+      "--text-muted",
+      "--border",
+      "--accent",
+      "--accent-fg",
+      "--input-bg",
+      "--success",
+      "--warning",
+      "--danger",
+      "--nav",
+      "--nav-text",
+      "--info",
+      "--focus-ring",
+      "--backdrop",
+      "--shadow-soft",
+      "--surface-l1",
+      "--surface-l2",
+      "--surface-l3",
+      "--cyrene-specular-border",
+      "--cyrene-gradient-primary",
+      "--accent-contrast-vivid",
+      "--cyrene-shadow-sm",
+      "--cyrene-shadow-lg",
+      "--z-ambient",
+      "--z-canvas",
+      "--z-floating-toolbar",
+      "--z-rail-drawer",
+      "--z-nav-rail",
+      "--z-sticky-header",
+      "--z-dropdown-popover",
+      "--z-modal-approval",
+      "--z-command-palette",
+      "--z-toast-tooltip",
+      "--status-success",
+      "--status-success-bg",
+      "--status-warning",
+      "--status-warning-bg",
+      "--status-danger",
+      "--status-danger-bg",
+      "--status-running",
+      "--status-running-bg",
+    ]);
+
+    for (const file of sourceFiles) {
+      if (file.includes(".test.") || file.includes("__tests__")) continue;
+      const content = readFileSync(file, "utf8");
+      // Check for invalid bg-[var(--...gradient...)] in className
+      if (content.includes("bg-[var(--cyrene-gradient")) {
+        invalidGradientUsages.push(file);
+      }
+      for (const match of content.matchAll(/var\(\s*(--[a-zA-Z0-9_-]+)/g)) {
+        tsxUsages.add(match[1]);
+      }
+    }
+
+    expect(
+      invalidGradientUsages,
+      `Found invalid Tailwind bg-[var(--cyrene-gradient)] in TSX: ${invalidGradientUsages.join(", ")}`,
+    ).toEqual([]);
+
+    const missingInTsx = Array.from(tsxUsages).filter((token) => !declaredTokens.has(token));
+    expect(
+      missingInTsx,
+      `Found undefined CSS variable usages in TSX/TS: ${missingInTsx.join(", ")}`,
+    ).toEqual([]);
+  });
 });

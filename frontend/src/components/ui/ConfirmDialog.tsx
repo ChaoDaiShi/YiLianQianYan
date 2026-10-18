@@ -43,11 +43,26 @@ export default function ConfirmDialog({
   }, [open]);
 
   const isConfirmedAllowed = !requireText || typedText.trim() === requireText.trim();
+  const [internalLoading, setInternalLoading] = useState(false);
+  const effectiveLoading = loading || internalLoading;
+
+  const handleConfirm = async () => {
+    if (!isConfirmedAllowed || effectiveLoading) return;
+    try {
+      const result = onConfirm();
+      if (result && typeof (result as Promise<void>).then === "function") {
+        setInternalLoading(true);
+        await result;
+      }
+    } finally {
+      setInternalLoading(false);
+    }
+  };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (isConfirmedAllowed && !loading) {
-      onConfirm();
+    if (isConfirmedAllowed && !effectiveLoading) {
+      void handleConfirm();
     }
   };
 
@@ -57,15 +72,15 @@ export default function ConfirmDialog({
         ref={cancelBtnRef}
         variant="secondary"
         onClick={onCancel}
-        disabled={loading}
+        disabled={effectiveLoading}
       >
         {cancelLabel}
       </Button>
       <Button
         variant={tone === "danger" ? "danger" : "primary"}
-        onClick={onConfirm}
-        disabled={!isConfirmedAllowed}
-        loading={loading}
+        onClick={handleConfirm}
+        disabled={!isConfirmedAllowed || effectiveLoading}
+        loading={effectiveLoading}
         loadingLabel="处理中"
       >
         {confirmLabel}

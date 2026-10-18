@@ -18,10 +18,10 @@ import {
   ErrorState,
   Input,
   Modal,
-  PageHeader,
   Skeleton,
   Textarea,
 } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
 import { validateSkillDraft } from "../features/skills/skillForm";
 
 type EditorMode = "create" | "edit" | null;
@@ -168,18 +168,18 @@ export default function SkillsPage() {
   };
 
   return (
-    <div className="capability-page skills-page page-canvas ui-opt-capabilities ui-opt-skills">
-      <PageHeader
-        title="技能"
-        description="管理小昔涟可以使用的技能能力。"
-        actions={
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            新增技能
-          </Button>
-        }
-      />
-
+    <PageShell
+      title="技能"
+      description="管理小昔涟可以使用的技能能力。"
+      className="capability-page skills-page page-canvas ui-opt-capabilities ui-opt-skills"
+      contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+      actions={
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4" />
+          新增技能
+        </Button>
+      }
+    >
       <div className="capability-page-body skills-page-body">
         <div className="capability-split-layout skills-split-layout">
           <aside className="capability-list-panel" aria-label="技能列表">
@@ -494,6 +494,6 @@ export default function SkillsPage() {
         onConfirm={() => void confirmRemoveSkill()}
         onCancel={() => setDeleteConfirm(null)}
       />
-    </div>
+    </PageShell>
   );
 }

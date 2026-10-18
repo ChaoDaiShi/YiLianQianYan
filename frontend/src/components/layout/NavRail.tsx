@@ -1,19 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
-  Activity,
-  BookOpen,
-  Bot,
-  Boxes,
-  Brain,
   LayoutGrid,
-  Puzzle,
-  ScrollText,
-  Search,
   Settings as SettingsIcon,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
   UserCircle,
   X,
 } from "lucide-react";
@@ -21,7 +12,7 @@ import { cn } from "../ui/cn";
 import { Tooltip } from "../ui";
 import { useTheme } from "../../theme";
 import { healthCheck } from "../../api/client";
-import { NAV_ENTRIES, type NavEntry } from "./navRegistry";
+import { NAV_ENTRIES } from "./navRegistry";
 import ModuleSetup from "../system/ModuleSetup";
 import { useProductPreferences } from "../system/useProductPreferences";
 import { TRUSTED_MODULES } from "../system/productPreferences";

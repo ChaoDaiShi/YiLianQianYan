@@ -9,26 +9,33 @@ interface StreamingTextProps {
 export default function StreamingText({ text }: StreamingTextProps) {
   const [displayedText, setDisplayedText] = useState(text);
   const lastUpdateRef = useRef(0);
-  const rafIdRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const now = Date.now();
-    // Throttle markdown parsing to at most once per 120ms during live streaming
-    if (now - lastUpdateRef.current >= 120) {
+    const elapsed = now - lastUpdateRef.current;
+
+    if (elapsed >= 120) {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
       lastUpdateRef.current = now;
       setDisplayedText(text);
-    } else {
-      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = requestAnimationFrame(() => {
+    } else if (!timerRef.current) {
+      timerRef.current = setTimeout(() => {
         lastUpdateRef.current = Date.now();
         setDisplayedText(text);
-      });
+        timerRef.current = null;
+      }, 120 - elapsed);
     }
-
-    return () => {
-      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
-    };
   }, [text]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   return (
     <div className="prose prose-sm max-w-none overflow-x-auto text-[var(--text)]">

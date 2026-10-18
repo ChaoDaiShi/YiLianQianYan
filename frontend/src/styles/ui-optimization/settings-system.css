@@ -140,44 +140,44 @@
 
 /* Specific Thumbnail Themes */
 .ui-opt-theme-thumbnail[data-preview-mode="light"] {
-  background: #f8fafc;
+  background: #F8F6FD;
 }
 .ui-opt-theme-thumbnail[data-preview-mode="light"] .ui-opt-thumb-card {
-  background: #ffffff;
-  border-color: #e2e8f0;
+  background: #FFFFFF;
+  border-color: #EFE8F6;
 }
 .ui-opt-theme-thumbnail[data-preview-mode="light"] .ui-opt-thumb-bar {
-  background: #cbd5e1;
+  background: #D4CCE2;
 }
 
 .ui-opt-theme-thumbnail[data-preview-mode="dark"] {
-  background: #090d16;
+  background: #17151F;
 }
 .ui-opt-theme-thumbnail[data-preview-mode="dark"] .ui-opt-thumb-header {
-  background: #111827;
-  border-bottom-color: #1f2937;
+  background: #201D2B;
+  border-bottom-color: #2E2A3C;
 }
 .ui-opt-theme-thumbnail[data-preview-mode="dark"] .ui-opt-thumb-nav {
-  background: #0f172a;
-  border-right-color: #1f2937;
+  background: #29263A;
+  border-right-color: #2E2A3C;
 }
 .ui-opt-theme-thumbnail[data-preview-mode="dark"] .ui-opt-thumb-card {
-  background: #1e293b;
-  border-color: #334155;
+  background: #242031;
+  border-color: #363148;
 }
 .ui-opt-theme-thumbnail[data-preview-mode="dark"] .ui-opt-thumb-bar {
-  background: #475569;
+  background: #4D4760;
 }
 
 .ui-opt-theme-thumbnail[data-preview-mode="system"] {
-  background: linear-gradient(135deg, #f8fafc 50%, #090d16 50%);
+  background: linear-gradient(135deg, #F8F6FD 50%, #17151F 50%);
 }
 
 /* Unsaved Changes Bar */
 .ui-opt-settings .ui-opt-settings-savebar {
   position: sticky;
   bottom: 20px;
-  z-index: 30;
+  z-index: var(--z-savebar, 55);
   width: 100%;
   max-width: 960px;
   margin: 24px auto 0;

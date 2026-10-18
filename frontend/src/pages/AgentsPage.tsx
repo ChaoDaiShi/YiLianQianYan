@@ -19,8 +19,11 @@ import {
   Button,
   EmptyState,
   ErrorState,
+  FormField,
   Input,
   Modal,
+  Section,
+  showToast,
   Skeleton,
   Textarea,
 } from "../components/ui";
@@ -91,6 +94,7 @@ export default function AgentsPage() {
         setName("");
         setDescription("");
         setInstructions("");
+        showToast("智能体已创建", "success");
         await reload();
         setSelectedId(result.data.id);
         setSearchParams({ agent: result.data.id });
@@ -314,40 +318,39 @@ export default function AgentsPage() {
             </p>
           )}
 
-          <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-              名称与用途
-            </legend>
-            <Input
-              label="名称"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="例如：research-assistant"
-              disabled={creating}
-              autoFocus
-            />
-            <Input
-              label="用途描述"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="简要说明该 Agent 的职责范围（可选）"
-              disabled={creating}
-            />
-          </fieldset>
+          <Section title="名称与用途">
+            <div className="space-y-3">
+              <FormField label="名称" required error={!name.trim() && createError ? "名称不可为空" : undefined}>
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="例如：research-assistant"
+                  disabled={creating}
+                  autoFocus
+                />
+              </FormField>
+              <FormField label="用途描述">
+                <Input
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  placeholder="简要说明该 Agent 的职责范围（可选）"
+                  disabled={creating}
+                />
+              </FormField>
+            </div>
+          </Section>
 
-          <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-              指令
-            </legend>
-            <Textarea
-              label="系统指令"
-              value={instructions}
-              onChange={(event) => setInstructions(event.target.value)}
-              rows={4}
-              placeholder="该 Agent 的职责与约束（LLM-only，不直接调用工具）"
-              disabled={creating}
-            />
-          </fieldset>
+          <Section title="指令">
+            <FormField label="系统指令" hint="该 Agent 的职责与约束（LLM-only，不直接调用工具）">
+              <Textarea
+                value={instructions}
+                onChange={(event) => setInstructions(event.target.value)}
+                rows={4}
+                placeholder="该 Agent 的职责与约束..."
+                disabled={creating}
+              />
+            </FormField>
+          </Section>
 
           <div className="flex justify-end gap-2 pt-2">
             <Button

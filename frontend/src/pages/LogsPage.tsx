@@ -98,6 +98,7 @@ export default function LogsPage() {
   const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
   const [copiedDetail, setCopiedDetail] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [activeLogIndex, setActiveLogIndex] = useState<number>(-1);
   const listRef = useRef<HTMLDivElement>(null);
 
   const fetchLogs = useCallback(async () => {
@@ -179,14 +180,27 @@ export default function LogsPage() {
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      const currentIndex = selectedEntry ? visibleEntries.findIndex((e) => isSameEntry(e, selectedEntry)) : -1;
-      const nextIndex = Math.min(visibleEntries.length - 1, currentIndex + 1);
-      setSelectedEntry(visibleEntries[nextIndex]);
+      setActiveLogIndex((prev) => {
+        const next = Math.min(visibleEntries.length - 1, prev + 1);
+        if (selectedEntry) {
+          setSelectedEntry(visibleEntries[next]);
+        }
+        return next;
+      });
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      const currentIndex = selectedEntry ? visibleEntries.findIndex((e) => isSameEntry(e, selectedEntry)) : visibleEntries.length;
-      const prevIndex = Math.max(0, currentIndex - 1);
-      setSelectedEntry(visibleEntries[prevIndex]);
+      setActiveLogIndex((prev) => {
+        const next = Math.max(0, prev - 1);
+        if (selectedEntry) {
+          setSelectedEntry(visibleEntries[next]);
+        }
+        return next;
+      });
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (activeLogIndex >= 0 && activeLogIndex < visibleEntries.length) {
+        setSelectedEntry(visibleEntries[activeLogIndex]);
+      }
     }
   };
 
@@ -296,9 +310,12 @@ export default function LogsPage() {
               <LogRow
                 key={`${entry.timestamp}-${entry.source}-${index}`}
                 entry={entry}
-                selected={isSameEntry(entry, selectedEntry)}
+                selected={isSameEntry(entry, selectedEntry) || index === activeLogIndex}
                 searchQuery={searchQuery}
-                onOpen={() => setSelectedEntry(entry)}
+                onOpen={() => {
+                  setActiveLogIndex(index);
+                  setSelectedEntry(entry);
+                }}
               />
             ))}
           </div>

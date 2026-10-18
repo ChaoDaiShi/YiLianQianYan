@@ -252,32 +252,73 @@ export default function AccountCenterPage() {
           {!loading && !state ? <EmptyState title="账号状态暂时不可用" description="本地核心功能不受影响，请稍后重试。" action={<Button variant="secondary" onClick={() => void refresh()}>重新载入</Button>} /> : null}
           {state && section === "account" ? <section className="cloud-section-stack" aria-labelledby="account-section-title">
             <div className="cloud-section-heading"><div><span>IDENTITY</span><h2 id="account-section-title">账号与设备</h2><p>{identityMeta?.description}</p></div><Button size="sm" variant="secondary" onClick={() => void refresh()}><RefreshCw />刷新</Button></div>
-            {identity?.status === "guest" || showSwitchLogin ? <div className="cloud-card cloud-auth-card">
-              <div className="flex items-center justify-between pb-2">
-                <Tabs
-                  variant="segment"
-                  size="sm"
-                  aria-label="账号操作"
-                  tabs={[
-                    { id: "login", label: "登录账号" },
-                    { id: "register", label: "创建账号" },
-                  ]}
-                  activeId={mode}
-                  onChange={(val) => setMode(val as "login" | "register")}
-                />
-                {showSwitchLogin && (
-                  <Button size="sm" variant="secondary" onClick={() => setShowSwitchLogin(false)}>取消切换</Button>
-                )}
-              <div id={`panel-${mode}`} role="tabpanel" aria-labelledby={`tab-${mode}`}>
-                <div className="cloud-form-grid">
-                  {mode === "register" ? <Input label="显示名称" value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} autoComplete="name" /> : null}
-                  <Input label="邮箱" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" />
-                  <Input label="密码" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} autoComplete={mode === "login" ? "current-password" : "new-password"} />
+            {identity?.status === "guest" || showSwitchLogin ? (
+              <div className="cloud-card cloud-auth-card">
+                <div className="flex items-center justify-between pb-2">
+                  <Tabs
+                    variant="segment"
+                    size="sm"
+                    aria-label="账号操作"
+                    tabs={[
+                      { id: "login", label: "登录账号" },
+                      { id: "register", label: "创建账号" },
+                    ]}
+                    activeId={mode}
+                    onChange={(val) => setMode(val as "login" | "register")}
+                  />
+                  {showSwitchLogin && (
+                    <Button size="sm" variant="secondary" onClick={() => setShowSwitchLogin(false)}>
+                      取消切换
+                    </Button>
+                  )}
                 </div>
-                <details className="cloud-disclosure"><summary>云服务地址</summary><Input label="Cloud API" value={form.cloud_base_url} onChange={(event) => setForm({ ...form, cloud_base_url: event.target.value })} hint="私有部署默认使用你的 Cloud API 地址。" /></details>
-                <div className="cloud-card-actions"><p>登录不会自动上传现有数据，也不会上传本机 Provider 密钥。</p><Button disabled={busy || !form.email.trim() || !form.password} onClick={() => void authenticate()}><LogIn />{busy ? "正在连接…" : mode === "login" ? "登录并连接" : "创建并连接"}</Button></div>
+                <div id={`panel-${mode}`} role="tabpanel" aria-labelledby={`tab-${mode}`}>
+                  <div className="cloud-form-grid">
+                    {mode === "register" ? (
+                      <Input
+                        label="显示名称"
+                        value={form.display_name}
+                        onChange={(event) => setForm({ ...form, display_name: event.target.value })}
+                        autoComplete="name"
+                      />
+                    ) : null}
+                    <Input
+                      label="邮箱"
+                      type="email"
+                      value={form.email}
+                      onChange={(event) => setForm({ ...form, email: event.target.value })}
+                      autoComplete="email"
+                    />
+                    <Input
+                      label="密码"
+                      type="password"
+                      value={form.password}
+                      onChange={(event) => setForm({ ...form, password: event.target.value })}
+                      autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    />
+                  </div>
+                  <details className="cloud-disclosure">
+                    <summary>云服务地址</summary>
+                    <Input
+                      label="Cloud API"
+                      value={form.cloud_base_url}
+                      onChange={(event) => setForm({ ...form, cloud_base_url: event.target.value })}
+                      hint="私有部署默认使用你的 Cloud API 地址。"
+                    />
+                  </details>
+                  <div className="cloud-card-actions">
+                    <p>登录不会自动上传现有数据，也不会上传本机 Provider 密钥。</p>
+                    <Button
+                      disabled={busy || !form.email.trim() || !form.password}
+                      onClick={() => void authenticate()}
+                    >
+                      <LogIn />
+                      {busy ? "正在连接…" : mode === "login" ? "登录并连接" : "创建并连接"}
+                    </Button>
+                  </div>
+                </div>
               </div>
-            </div> : null}
+            ) : null}
             {identity?.status === "guest" ? <div className="cloud-card"><AccountProfilePanel guestMode lastLogoutReport={lastLogoutReport} /></div> : null}
             {identity?.status !== "guest" ? <><div className="cloud-card">
               <div className="cloud-account-summary"><span className="cloud-account-avatar"><UserCircle /></span><div><h3>{identity?.email || "已登录账号"}</h3><p>本机身份 {identity?.local_identity_id}</p></div><Badge tone="success">会话有效</Badge></div>

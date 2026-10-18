@@ -13,9 +13,11 @@ import {
   Button,
   ConfirmDialog,
   EmptyState,
+  FormField,
   Input,
   Modal,
   Panel,
+  showToast,
   Spinner,
   Tabs,
   Textarea,
@@ -160,6 +162,7 @@ function TemplatesTab() {
         : await createWorkflow(payload);
       if (res) {
         setShowModal(false);
+        showToast(editingId ? "工作流已更新" : "工作流已创建", "success");
         await load();
       } else {
         setSaveError("保存工作流失败，请重试");
@@ -174,8 +177,15 @@ function TemplatesTab() {
   const handleDelete = async () => {
     if (!deleteConfirm) return;
     try {
-      await deleteWorkflow(deleteConfirm.id);
-      await load();
+      const res = await deleteWorkflow(deleteConfirm.id);
+      if (res) {
+        showToast("工作流已删除", "success");
+        await load();
+      } else {
+        showToast("删除工作流失败，请重试", "error");
+      }
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "删除工作流失败", "error");
     } finally {
       setDeleteConfirm(null);
     }
@@ -184,6 +194,7 @@ function TemplatesTab() {
   const handleActivate = async (id: string) => {
     await activateWorkflow(id);
     setActiveId(id);
+    showToast("工作流已激活", "success");
     await load();
   };
 
@@ -317,23 +328,31 @@ function TemplatesTab() {
               {saveError}
             </div>
           )}
-          <Input label="名称" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="例如：代码审查流水线" />
-          <Textarea
-            label="描述"
-            value={formDesc}
-            onChange={(e) => setFormDesc(e.target.value)}
-            rows={2}
-            placeholder="描述此工作流的用途..."
-          />
-          <Input label="流程节点 (逗号分隔)" value={formNodes} onChange={(e) => setFormNodes(e.target.value)} placeholder="scan, analyze, report" hint="节点将在对话中作为流程步骤展示" />
-          <Input label="标签 (逗号分隔)" value={formTags} onChange={(e) => setFormTags(e.target.value)} placeholder="代码, 安全" />
-          <Textarea
-            label="额外系统提示词"
-            value={formPrompt}
-            onChange={(e) => setFormPrompt(e.target.value)}
-            rows={3}
-            placeholder="额外的 AI 行为指导，将在对话时注入系统提示词..."
-          />
+          <FormField label="名称" required error={!formName.trim() && saveError ? "名称不可为空" : undefined}>
+            <Input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="例如：代码审查流水线" />
+          </FormField>
+          <FormField label="描述">
+            <Textarea
+              value={formDesc}
+              onChange={(e) => setFormDesc(e.target.value)}
+              rows={2}
+              placeholder="描述此工作流的用途..."
+            />
+          </FormField>
+          <FormField label="流程节点 (逗号分隔)" hint="节点将在对话中作为流程步骤展示">
+            <Input value={formNodes} onChange={(e) => setFormNodes(e.target.value)} placeholder="scan, analyze, report" />
+          </FormField>
+          <FormField label="标签 (逗号分隔)">
+            <Input value={formTags} onChange={(e) => setFormTags(e.target.value)} placeholder="代码, 安全" />
+          </FormField>
+          <FormField label="额外系统提示词" hint="额外的 AI 行为指导，将在对话时注入系统提示词">
+            <Textarea
+              value={formPrompt}
+              onChange={(e) => setFormPrompt(e.target.value)}
+              rows={3}
+              placeholder="额外的 AI 行为指导，将在对话时注入系统提示词..."
+            />
+          </FormField>
         </div>
       </Modal>
 

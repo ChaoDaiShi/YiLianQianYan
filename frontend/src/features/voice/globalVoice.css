@@ -5,7 +5,7 @@
 
 .global-voice-dock {
   position: fixed;
-  z-index: 40;
+  z-index: var(--z-voice-dock, 35);
   left: 50%;
   bottom: max(var(--overlay-dock-gap), env(safe-area-inset-bottom));
   transform: translateX(-50%);
