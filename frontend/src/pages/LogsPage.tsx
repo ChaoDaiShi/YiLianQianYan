@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Check, Clipboard, Copy, Pause, Play, RefreshCw, ScrollText, Trash2 } from "lucide-react";
 import { getLogs, type LogEntry } from "../api/client";
-import { Drawer, EmptyState, ErrorState, Input, PageHeader, Skeleton, Button, Badge } from "../components/ui";
+import { Drawer, EmptyState, ErrorState, Input, Skeleton, Button, Badge, ConfirmDialog } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
 import { formatLogLevel, formatLogTimestamp } from "../components/system";
 
 function highlightMatch(text: string, query: string) {
@@ -84,6 +85,7 @@ export default function LogsPage() {
   const [loadError, setLoadError] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
   const [copiedDetail, setCopiedDetail] = useState(false);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const fetchLogs = useCallback(async () => {
@@ -195,46 +197,47 @@ export default function LogsPage() {
   };
 
   return (
-    <div className="ui-opt-logs system-center-page page-canvas flex h-full min-h-0 flex-col">
-      <PageHeader
-        title="日志"
-        description={`查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（服务端总计约 ${total} 条）`}
-        actions={(
-          <div className="system-logs-toolbar flex flex-wrap items-center gap-2">
-            <Input
-              aria-label="搜索日志"
-              placeholder="搜索消息或来源…"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              className="system-log-search"
-            />
-            <label className="system-log-filter">
-              <span>级别</span>
-              <select aria-label="按日志级别筛选" value={filterLevel} onChange={(event) => handleFilterChange(setFilterLevel, event.target.value)}>
-                <option value="">全部</option>
-                {levelOptions.map((level) => <option key={level} value={level}>{formatLogLevel(level).label}</option>)}
-              </select>
-            </label>
-            <label className="system-log-filter">
-              <span>来源</span>
-              <select aria-label="按日志来源筛选" value={filterSource} onChange={(event) => handleFilterChange(setFilterSource, event.target.value)}>
-                <option value="">全部</option>
-                {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
-              </select>
-            </label>
-            <Button variant="secondary" size="sm" onClick={() => void fetchLogs()} aria-label="刷新日志">
-              <RefreshCw className="h-3.5 w-3.5" />刷新
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => setPaused((value) => !value)} aria-pressed={paused}>
-              {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-              {paused ? "继续" : "暂停"}
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => void clearLogs()} aria-label="清空日志">
-              <Trash2 className="h-3.5 w-3.5" />清空
-            </Button>
-          </div>
-        )}
-      />
+    <PageShell
+      title="日志"
+      description={`查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（服务端总计约 ${total} 条）`}
+      className="ui-opt-logs system-center-page page-canvas flex h-full min-h-0 flex-col"
+      contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+      actions={(
+        <div className="system-logs-toolbar flex flex-wrap items-center gap-2">
+          <Input
+            aria-label="搜索日志"
+            placeholder="搜索消息或来源…"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            className="system-log-search"
+          />
+          <label className="system-log-filter">
+            <span>级别</span>
+            <select aria-label="按日志级别筛选" value={filterLevel} onChange={(event) => handleFilterChange(setFilterLevel, event.target.value)}>
+              <option value="">全部</option>
+              {levelOptions.map((level) => <option key={level} value={level}>{formatLogLevel(level).label}</option>)}
+            </select>
+          </label>
+          <label className="system-log-filter">
+            <span>来源</span>
+            <select aria-label="按日志来源筛选" value={filterSource} onChange={(event) => handleFilterChange(setFilterSource, event.target.value)}>
+              <option value="">全部</option>
+              {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
+            </select>
+          </label>
+          <Button variant="secondary" size="sm" onClick={() => void fetchLogs()} aria-label="刷新日志">
+            <RefreshCw className="h-3.5 w-3.5" />刷新
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setPaused((value) => !value)} aria-pressed={paused}>
+            {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+            {paused ? "继续" : "暂停"}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setConfirmClearOpen(true)} aria-label="清空日志">
+            <Trash2 className="h-3.5 w-3.5" />清空
+          </Button>
+        </div>
+      )}
+    >
 
       <div className="system-logs-surface relative min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-4">
         {loadError ? (
@@ -315,6 +318,18 @@ export default function LogsPage() {
           </div>
         ) : null}
       </Drawer>
-    </div>
+      <ConfirmDialog
+        open={confirmClearOpen}
+        title="清空日志"
+        description="确定要清空服务端的系统日志吗？清空后旧日志将无法恢复。"
+        confirmLabel="清空"
+        tone="danger"
+        onConfirm={async () => {
+          setConfirmClearOpen(false);
+          await clearLogs();
+        }}
+        onCancel={() => setConfirmClearOpen(false)}
+      />
+    </PageShell>
   );
 }

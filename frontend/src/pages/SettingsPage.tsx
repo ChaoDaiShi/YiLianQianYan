@@ -5,7 +5,8 @@ import { getSettings, updateSettings, getIsolationStatus, listSecurityGrants, ty
 import { verifyProviderConnection, type ProviderConnectionKind } from "../api/providerConnection";
 import { useTheme } from "../theme";
 import type { AppConfig, ProviderReadinessProjection } from "../types";
-import { PageHeader, Button, Badge } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
+import { Button, Badge } from "../components/ui";
 import { useGlobalVoiceContext } from "../features/voice/GlobalVoiceHost";
 import { defaultConfig } from "../features/settings/model/config";
 import { comparableConfig } from "../features/settings/model/mapping";
@@ -36,7 +37,7 @@ import VoiceSettings from "../features/settings/sections/VoiceSettings";
  * regression introduced by extraction.
  */
 export default function SettingsPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [config, setConfig] = useState<ProofLoopSettingsConfig>(defaultConfig);
   const [saved, setSaved] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState(() => comparableConfig(defaultConfig));
@@ -360,24 +361,25 @@ export default function SettingsPage() {
   const saveStatus = saveError ? "保存失败" : saved ? "已保存" : isUnsaved ? "有未保存修改" : "所有更改已保存";
 
   return (
-    <div className="ui-opt-settings system-settings-page page-canvas flex h-full min-h-0 flex-col">
-      <PageHeader
-        title="设置"
-        description={activeGroup.description}
-        actions={
-          <div className="settings-header-actions">
-            <Badge tone={saveError ? "danger" : saved ? "success" : isUnsaved ? "warning" : "default"}>
-              {saved ? <Check className="h-3.5 w-3.5" /> : null}
-              {saveStatus}
-            </Badge>
-            <Button onClick={handleSave} disabled={!isUnsaved || saving || testingProvider !== null} aria-label="保存设置">
-              <Save className="h-4 w-4" />
-              {saving ? "保存中…" : "保存设置"}
-            </Button>
-          </div>
-        }
-      />
-
+    <PageShell
+      title="设置"
+      description={activeGroup.description}
+      variant="workspace"
+      className="ui-opt-settings system-settings-page page-canvas flex h-full min-h-0 flex-col"
+      contentClassName="overflow-hidden p-0 flex flex-col flex-1 min-h-0"
+      actions={
+        <div className="settings-header-actions flex items-center gap-2">
+          <Badge tone={saveError ? "danger" : saved ? "success" : isUnsaved ? "warning" : "default"}>
+            {saved ? <Check className="h-3.5 w-3.5" /> : null}
+            {saveStatus}
+          </Badge>
+          <Button onClick={handleSave} disabled={!isUnsaved || saving || testingProvider !== null} aria-label="保存设置">
+            <Save className="h-4 w-4" />
+            {saving ? "保存中…" : "保存设置"}
+          </Button>
+        </div>
+      }
+    >
       {saveError ? <div className="settings-save-error" role="alert">设置暂时无法保存，请检查连接后重试。</div> : null}
 
       <div className="system-settings-layout min-h-0 flex-1 overflow-hidden">
@@ -390,7 +392,10 @@ export default function SettingsPage() {
             <button
               key={s.key}
               type="button"
-              onClick={() => setActiveSection(s.key)}
+              onClick={() => {
+                setActiveSection(s.key);
+                setSearchParams({ section: s.key });
+              }}
               aria-current={activeSection === s.key ? "page" : undefined}
               className="settings-nav-item"
             >
@@ -446,6 +451,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }
