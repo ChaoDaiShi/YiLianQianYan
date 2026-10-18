@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Brain, Clock3, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { MemoryRecord } from "../api/client";
 import { useMemoryStore } from "../stores/memoryStore";
-import { Badge, Button, EmptyState, ErrorState, Modal, PageHeader, Skeleton, Textarea } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
+import { Badge, Button, EmptyState, ErrorState, Modal, Skeleton, Textarea } from "../components/ui";
 import {
   getMemoryCategoryPresentation,
   getMemorySourceLabel,
@@ -191,18 +192,17 @@ export default function MemoryPage() {
   };
 
   return (
-    <div className="memory-page page-canvas ui-opt-memory">
-      <PageHeader
-        title="记忆中心"
-        description="小昔涟长期保留的重要信息"
-        actions={
-          <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>
-            <Plus className="h-4 w-4" />
-            添加记忆
-          </Button>
-        }
-      />
-
+    <PageShell
+      title="记忆中心"
+      description="小昔涟长期保留的重要信息"
+      className="memory-page page-canvas ui-opt-memory"
+      actions={
+        <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>
+          <Plus className="h-4 w-4" />
+          添加记忆
+        </Button>
+      }
+    >
       <div className="memory-page-body scrollbar-thin">
         <MemoryOverview counts={categoryCounts} total={stats?.total ?? memories.length} onSelect={setFilterCategory} />
 
@@ -437,7 +437,7 @@ export default function MemoryPage() {
           />
         </div>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
 

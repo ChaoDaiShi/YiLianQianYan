@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Bot, Plus, Users } from "lucide-react";
 import {
   CapabilityDetailSection,
@@ -13,18 +14,19 @@ import {
   listAgents,
   listTeams,
 } from "../api/client";
+import PageShell from "../components/layout/PageShell";
 import {
   Button,
   EmptyState,
   ErrorState,
   Input,
   Modal,
-  PageHeader,
   Skeleton,
   Textarea,
 } from "../components/ui";
 
 export default function AgentsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [agents, setAgents] = useState<AgentDefinition[] | null>(null);
   const [teams, setTeams] = useState<AgentTeam[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +37,8 @@ export default function AgentsPage() {
   const [instructions, setInstructions] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  const agentParam = searchParams.get("agent");
 
   const reload = useCallback(async () => {
     setError(null);
@@ -54,9 +58,13 @@ export default function AgentsPage() {
   }, [reload]);
 
   useEffect(() => {
+    if (agentParam && agents?.some((agent) => agent.id === agentParam)) {
+      setSelectedId(agentParam);
+      return;
+    }
     if (selectedId && agents?.some((agent) => agent.id === selectedId)) return;
     setSelectedId(agents?.[0]?.id ?? null);
-  }, [agents, selectedId]);
+  }, [agentParam, agents, selectedId]);
 
   const selectedAgent = useMemo(
     () => agents?.find((agent) => agent.id === selectedId) ?? null,
@@ -85,6 +93,7 @@ export default function AgentsPage() {
         setInstructions("");
         await reload();
         setSelectedId(result.data.id);
+        setSearchParams({ agent: result.data.id });
       } else {
         setCreateError(result.error);
       }
@@ -96,18 +105,17 @@ export default function AgentsPage() {
   };
 
   return (
-    <div className="capability-page page-canvas ui-opt-capabilities ui-opt-agents">
-      <PageHeader
-        title="智能体"
-        description="管理承担不同角色和任务的智能体配置。"
-        actions={
-          <Button onClick={handleOpenCreate}>
-            <Plus className="h-4 w-4" />
-            新建 Agent
-          </Button>
-        }
-      />
-
+    <PageShell
+      title="智能体"
+      description="管理承担不同角色和任务的智能体配置。"
+      className="capability-page page-canvas ui-opt-capabilities ui-opt-agents"
+      actions={
+        <Button onClick={handleOpenCreate}>
+          <Plus className="h-4 w-4" />
+          新建 Agent
+        </Button>
+      }
+    >
       <div className="capability-page-body capability-page-body-stack">
         {error && (
           <ErrorState
@@ -147,7 +155,7 @@ export default function AgentsPage() {
               }
             />
           ) : agents ? (
-            <div className="capability-card-grid agent-card-grid">
+            <div className="capability-card-grid agent-card-grid" role="listbox" aria-label="智能体列表">
               {agents.map((agent) => {
                 const isSelected = agent.id === selectedId;
                 const allCapabilities = [...agent.allowed_tools, ...agent.capabilities];
@@ -158,9 +166,13 @@ export default function AgentsPage() {
                 return (
                   <button
                     type="button"
+                    role="option"
                     key={agent.id}
                     aria-selected={isSelected}
-                    onClick={() => setSelectedId(agent.id)}
+                    onClick={() => {
+                      setSelectedId(agent.id);
+                      setSearchParams({ agent: agent.id });
+                    }}
                     className={`capability-card agent-card capability-card-selectable ${
                       isSelected ? "capability-card-selected agent-card-selected" : ""
                     }`}
@@ -349,7 +361,7 @@ export default function AgentsPage() {
           </div>
         </div>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
 

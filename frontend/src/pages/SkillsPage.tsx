@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brain, Check, Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -13,6 +13,7 @@ import { CapabilityDetailSection, CapabilityMetaRow } from "../components/capabi
 import {
   Badge,
   Button,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   Input,
@@ -41,6 +42,8 @@ export default function SkillsPage() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -59,7 +62,9 @@ export default function SkillsPage() {
     setSelectedName(skill.name);
     setDetailLoading(true);
     setDetailError("");
+    const reqId = ++requestIdRef.current;
     const result = await loadSkill(skill.name);
+    if (requestIdRef.current !== reqId) return;
     if (result.ok) setSkillContent(result.data.content);
     else setDetailError(result.error || "无法加载技能内容。请检查技能目录与后端连接。");
     setDetailLoading(false);
@@ -140,18 +145,26 @@ export default function SkillsPage() {
     await reload();
   };
 
-  const removeSkill = async () => {
-    if (!selectedSkill?.editable) return;
-    if (!window.confirm(`确定删除技能“${selectedSkill.name}”及其目录内容吗？`)) return;
+  const confirmRemoveSkill = async () => {
+    if (!deleteConfirm) return;
     setDetailError("");
-    const result = await deleteSkill(selectedSkill.name);
+    const targetName = deleteConfirm;
+    const result = await deleteSkill(targetName);
+    setDeleteConfirm(null);
     if (!result.ok) {
       setDetailError(result.error);
       return;
     }
-    setSelectedName(null);
-    setSkillContent("");
+    if (selectedName === targetName) {
+      setSelectedName(null);
+      setSkillContent("");
+    }
     await reload();
+  };
+
+  const removeSkill = () => {
+    if (!selectedSkill?.editable) return;
+    setDeleteConfirm(selectedSkill.name);
   };
 
   return (
@@ -221,13 +234,14 @@ export default function SkillsPage() {
                   className="py-12"
                 />
               ) : (
-                <div className="capability-row-stack">
+                <div className="capability-row-stack" role="listbox" aria-label="技能列表">
                   {filtered.map((skill) => {
                     const isSelected = selectedName === skill.name;
                     return (
                       <button
                         key={skill.name}
                         type="button"
+                        role="option"
                         aria-selected={isSelected}
                         onClick={() => void openSkill(skill)}
                         className={`capability-list-row ${
@@ -470,6 +484,16 @@ export default function SkillsPage() {
           )}
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={Boolean(deleteConfirm)}
+        title="删除技能"
+        description={`确定删除技能“${deleteConfirm}”及其目录内容吗？此操作不可逆。`}
+        confirmLabel="删除"
+        tone="danger"
+        onConfirm={() => void confirmRemoveSkill()}
+        onCancel={() => setDeleteConfirm(null)}
+      />
     </div>
   );
 }

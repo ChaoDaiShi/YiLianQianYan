@@ -1,17 +1,17 @@
 import { ArrowRight, BookOpen, Database, FileText } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Button, PageHeader } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
+import { Button } from "../components/ui";
 
 export default function KnowledgePage() {
   const navigate = useNavigate();
 
   return (
-    <div className="knowledge-page page-canvas ui-opt-knowledge">
-      <PageHeader
-        title="知识库"
-        description="说明当前版本能力边界与外部资料接入规划"
-      />
-
+    <PageShell
+      title="知识库"
+      description="说明当前版本能力边界与外部资料接入规划"
+      className="knowledge-page page-canvas ui-opt-knowledge"
+    >
       <div className="knowledge-page-body scrollbar-thin">
         <div className="knowledge-explanation-container">
           <div className="knowledge-notice-banner" role="status">
@@ -74,6 +74,6 @@ export default function KnowledgePage() {
           </div>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }
