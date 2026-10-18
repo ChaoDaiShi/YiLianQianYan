@@ -39,9 +39,33 @@ function maskArgs(args: Record<string, unknown>): Record<string, unknown> {
 }
 
 function riskTone(risk: string): string {
-  return risk === "critical" || risk === "high"
-    ? "border-[var(--danger-border)] bg-[var(--danger-soft)] text-[var(--danger-fg)]"
-    : "border-[var(--warning-border)] bg-[var(--warning-soft)] text-[var(--warning-fg)]";
+  switch (risk) {
+    case "critical":
+      return "border-[#e05a80] bg-[#e05a80]/15 text-[#e05a80]";
+    case "high":
+      return "border-[#df7995] bg-[#df7995]/15 text-[#df7995]";
+    case "medium":
+      return "border-[#d9a441] bg-[#d9a441]/15 text-[#d9a441]";
+    case "low":
+      return "border-[#5ca8d6] bg-[#5ca8d6]/15 text-[#5ca8d6]";
+    default:
+      return "border-[var(--warning-border)] bg-[var(--warning-soft)] text-[var(--warning-fg)]";
+  }
+}
+
+function cardRiskBorder(risk: string): string {
+  switch (risk) {
+    case "critical":
+      return "border-[#e05a80] shadow-[0_0_16px_-4px_rgba(224,90,128,0.35)]";
+    case "high":
+      return "border-[#df7995] shadow-[0_0_12px_-4px_rgba(223,121,149,0.3)]";
+    case "medium":
+      return "border-[#d9a441] shadow-[0_0_12px_-4px_rgba(217,164,65,0.25)]";
+    case "low":
+      return "border-[#5ca8d6] shadow-[0_0_12px_-4px_rgba(92,168,214,0.25)]";
+    default:
+      return "border-[var(--warning-border)]";
+  }
 }
 
 function riskLabel(risk: string): string {
@@ -162,15 +186,35 @@ export default function ApprovalCard({
     session?.conversational_anchor?.conversation_id,
   ]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || resolving) return;
+      const activeEl = document.activeElement;
+      if (
+        activeEl &&
+        (activeEl.tagName === "INPUT" ||
+          activeEl.tagName === "TEXTAREA" ||
+          activeEl.tagName === "SELECT" ||
+          activeEl.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.key === "y" || event.key === "Y") {
+        event.preventDefault();
+        onApprove(approval);
+      } else if (event.key === "n" || event.key === "N") {
+        event.preventDefault();
+        onReject(approval);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [approval, onApprove, onReject, resolving]);
+
   return (
     <section
       ref={cardRef}
-      className={
-        "conversation-approval-card overflow-hidden rounded-[var(--radius-lg)] border bg-[var(--surface-solid)] " +
-        (isCritical
-          ? "border-[var(--danger-border)]"
-          : "border-[var(--warning-border)]")
-      }
+      className={`conversation-approval-card overflow-hidden rounded-[var(--radius-lg)] border bg-[var(--surface-solid)] transition-shadow duration-[var(--motion-fast)] ${cardRiskBorder(approval.risk_level)}`}
       aria-label="等待用户确认"
     >
       <div
@@ -243,14 +287,14 @@ export default function ApprovalCard({
             {typeof approval.arguments?.command === "string" && (
               <div>
                 <dt className="font-sans text-[var(--text-faint)]">Command</dt>
-                <dd className="mt-0.5 max-h-36 overflow-auto whitespace-pre-wrap break-all text-[var(--text-secondary)]">
+                <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[#232032] p-2 text-xs font-mono text-[#eeeaf8] shadow-inner">
                   {approval.arguments.command}
                 </dd>
               </div>
             )}
             <div>
               <dt className="font-sans text-[var(--text-faint)]">Arguments</dt>
-              <dd className="mt-0.5 max-h-36 overflow-auto whitespace-pre-wrap break-all text-[var(--text-secondary)]">
+              <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[#232032] p-2 text-xs font-mono text-[#eeeaf8] shadow-inner">
                 {maskedArgs}
               </dd>
             </div>
@@ -267,7 +311,7 @@ export default function ApprovalCard({
             onClick={() => onReject(approval)}
             aria-label="拒绝此次工具操作"
           >
-            拒绝
+            拒绝 <kbd className="ml-1 text-[10px] opacity-75 font-mono">N</kbd>
           </Button>
           <Button
             size="sm"
@@ -277,7 +321,7 @@ export default function ApprovalCard({
             onClick={() => onApprove(approval)}
             aria-label="允许此次工具操作"
           >
-            允许本次
+            允许本次 <kbd className="ml-1 text-[10px] opacity-80 font-mono">Y</kbd>
           </Button>
         </div>
         {voiceProofUnavailable ? (
