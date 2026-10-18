@@ -101,8 +101,8 @@ function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: Message
           className={
             "conversation-message-content relative min-w-0 text-sm leading-7 " +
             (isUser
-              ? "conversation-message-user max-w-[720px] rounded-2xl rounded-br-md border border-[var(--accent-border)] bg-[var(--accent-soft)] px-4 py-3 text-[var(--text-primary)]"
-              : "conversation-message-assistant max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-4 py-3 text-[var(--text-primary)]")
+              ? "conversation-message-user max-w-[720px] rounded-2xl rounded-br-md border border-[#ea91b9]/35 bg-gradient-to-br from-[#f9dce9]/90 to-[#f4f0fc]/95 shadow-[0_2px_8px_-2px_rgba(234,145,185,0.18)] px-4 py-3 text-[var(--text-primary)]"
+              : "conversation-message-assistant max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.7),var(--shadow-card)] px-4 py-3 text-[var(--text-primary)]")
           }
         >
           {isUser ? (
