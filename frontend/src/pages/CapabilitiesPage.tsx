@@ -265,7 +265,12 @@ export default function CapabilitiesPage() {
                   className="py-16"
                 />
               ) : viewMode === "list" ? (
-                <div className="p-2 space-y-1" role="listbox" aria-label="能力列表">
+                <div
+                  className="p-2 space-y-1"
+                  role="listbox"
+                  aria-label="能力列表"
+                  aria-activedescendant={selectedId ? `capability-option-${selectedId}` : undefined}
+                >
                   {visibleCapabilities.map((capability) => {
                     const presentation = formatCapabilityStatus(capability.status);
                     const isSelected = capability.id === selectedId;
@@ -274,8 +279,9 @@ export default function CapabilitiesPage() {
                     return (
                       <div
                         key={capability.id}
+                        id={`capability-option-${capability.id}`}
                         role="option"
-                        tabIndex={0}
+                        tabIndex={isSelected ? 0 : -1}
                         aria-selected={isSelected}
                         onClick={() => void selectCapability(capability)}
                         onKeyDown={(e) => {

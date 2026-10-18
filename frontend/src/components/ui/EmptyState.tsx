@@ -21,7 +21,10 @@ function DefaultRippleArt() {
       {/* Mid ripple disc */}
       <div className="absolute inset-2 rounded-full bg-[var(--accent-soft)] backdrop-blur-sm border border-[var(--border-soft)]" />
       {/* Core droplet */}
-      <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-[var(--cyrene-gradient-primary)] text-[var(--accent-fg)] shadow-[0_4px_12px_rgba(41,38,58,0.15)]">
+      <div
+        className="relative flex h-10 w-10 items-center justify-center rounded-full text-[var(--accent-fg)] shadow-[0_4px_12px_rgba(41,38,58,0.15)]"
+        style={{ backgroundImage: "var(--cyrene-gradient-primary)" }}
+      >
         <span className="text-base select-none">✦</span>
       </div>
     </div>

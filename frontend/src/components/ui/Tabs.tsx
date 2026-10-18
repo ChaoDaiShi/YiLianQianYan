@@ -7,6 +7,7 @@ export interface TabItem {
   badge?: ReactNode;
   icon?: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
+  panelId?: string | false;
 }
 
 export interface TabsProps {
@@ -74,6 +75,7 @@ export default function Tabs({
         {tabs.map((tab) => {
           const isActive = tab.id === activeId;
           const Icon = tab.icon;
+          const controlsId = tab.panelId === false ? undefined : (tab.panelId || `panel-${tab.id}`);
           return (
             <button
               key={tab.id}
@@ -81,7 +83,7 @@ export default function Tabs({
               type="button"
               id={`tab-${tab.id}`}
               aria-selected={isActive}
-              aria-controls={`panel-${tab.id}`}
+              aria-controls={controlsId}
               tabIndex={isActive ? 0 : -1}
               disabled={tab.disabled}
               onClick={() => onChange(tab.id)}
@@ -120,6 +122,7 @@ export default function Tabs({
       {tabs.map((tab) => {
         const isActive = tab.id === activeId;
         const Icon = tab.icon;
+        const controlsId = tab.panelId === false ? undefined : (tab.panelId || `panel-${tab.id}`);
         return (
           <button
             key={tab.id}
@@ -127,7 +130,7 @@ export default function Tabs({
             type="button"
             id={`tab-${tab.id}`}
             aria-selected={isActive}
-            aria-controls={`panel-${tab.id}`}
+            aria-controls={controlsId}
             tabIndex={isActive ? 0 : -1}
             disabled={tab.disabled}
             onClick={() => onChange(tab.id)}

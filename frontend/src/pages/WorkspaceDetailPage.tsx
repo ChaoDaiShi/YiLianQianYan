@@ -23,6 +23,10 @@ import {
   Panel,
   Skeleton,
   Textarea,
+  KeyValueRow,
+  StatTile,
+  ListRow,
+  Section,
 } from "../components/ui";
 import {
   formatTaskDate,
@@ -180,16 +184,18 @@ export default function WorkspaceDetailPage() {
             <Edit3 className="h-4 w-4" />
             编辑
           </Button>
-          <Button
-            type="button"
-            variant="danger"
-            onClick={() => setShowDeleteConfirm(true)}
-            disabled={!workspace}
-            title="删除工作空间"
-          >
-            <Trash2 className="h-4 w-4" />
-            删除
-          </Button>
+          {workspace?.status !== "archived" && (
+            <Button
+              type="button"
+              variant="danger"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={!workspace}
+              title="归档工作空间"
+            >
+              <Trash2 className="h-4 w-4" />
+              归档
+            </Button>
+          )}
           <Button type="button" onClick={() => setShowCreate(true)} disabled={!workspace}>
             <Plus className="h-4 w-4" />
             新建任务
@@ -212,52 +218,41 @@ export default function WorkspaceDetailPage() {
       ) : (
         <>
           <Panel className="mx-4 mt-4 shrink-0">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex min-w-0 items-start gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
                 <div className="workspace-folder-icon shrink-0">
                   <FolderOpen className="h-5 w-5" />
                 </div>
-                <div className="min-w-0">
-                  <p className="text-xs text-[var(--text-faint)]">当前工作空间</p>
-                  <h2 className="mt-0.5 truncate text-base font-semibold text-[var(--text)]">
-                    {workspace?.name || "加载中…"}
-                  </h2>
-                  {formatWorkspacePath(workspace?.root_path) ? (
-                    <div className="mt-1 flex max-w-full items-center gap-2">
-                      <p
-                        className="truncate font-mono text-xs text-[var(--text-secondary)]"
-                        title={workspace?.root_path || undefined}
-                      >
-                        {workspace?.root_path}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => void copyPath()}
-                        className="shrink-0 rounded p-1 text-[var(--text-faint)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] focus-ring-token focus-visible:outline-none"
-                        aria-label="复制工作空间路径"
-                      >
-                        {copied ? (
-                          <Check className="h-3.5 w-3.5 text-[var(--success-fg)]" />
-                        ) : (
-                          <Clipboard className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="mt-1 text-xs text-[var(--text-faint)]">未绑定本地目录</p>
-                  )}
-                  {workspace?.active_tasks !== undefined && (
-                    <div className="mt-1 flex items-center gap-1 text-xs text-[var(--text-faint)]">
-                      <Clock3 className="h-3 w-3" />
-                      <span>进行中任务 {workspace.active_tasks}</span>
-                    </div>
-                  )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className="truncate text-base font-semibold text-[var(--text)]">
+                      {workspace?.name || "加载中…"}
+                    </h2>
+                    {workspace && (
+                      <Badge tone={workspace.status === "active" ? "success" : "default"}>
+                        {workspace.status === "active" ? "活跃" : "已归档"}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-2 max-w-lg">
+                    <KeyValueRow
+                      label="根路径"
+                      value={formatWorkspacePath(workspace?.root_path) || "未绑定本地目录"}
+                      copyable={workspace?.root_path || undefined}
+                      mono
+                    />
+                  </div>
                 </div>
               </div>
-              {workspace && (
-                <Badge tone={workspace.status === "active" ? "success" : "default"}>
-                  {workspace.status === "active" ? "活跃" : "已归档"}
-                </Badge>
+              {workspace?.active_tasks !== undefined && (
+                <div className="w-48 shrink-0">
+                  <StatTile
+                    label="进行中任务"
+                    value={workspace.active_tasks}
+                    icon={Clock3}
+                    tone={workspace.active_tasks > 0 ? "info" : "default"}
+                  />
+                </div>
               )}
             </div>
           </Panel>
@@ -309,35 +304,27 @@ export default function WorkspaceDetailPage() {
                       className="py-16"
                     />
                   ) : (
-                    <div className="space-y-1" role="listbox" aria-label="工作空间任务列表">
+                    <div
+                      className="space-y-1"
+                      role="listbox"
+                      aria-label="工作空间任务列表"
+                      aria-activedescendant={selectedId ? `ws-task-option-${selectedId}` : undefined}
+                    >
                       {tasks.map((task) => (
-                        <button
+                        <ListRow
                           key={task.id}
-                          type="button"
-                          role="option"
-                          aria-selected={selectedId === task.id}
-                          onClick={() => setSelectedId(task.id)}
-                          className={`relative flex min-h-[68px] w-full items-center gap-3 rounded-[var(--radius-md)] border px-3 py-2 text-left transition-colors focus-ring-token focus-visible:outline-none ${
-                            selectedId === task.id
-                              ? "border-[var(--accent-border)] bg-[var(--accent-soft)]"
-                              : "border-transparent hover:border-[var(--border-soft)] hover:bg-[var(--surface-hover)]"
-                          }`}
-                        >
-                          {selectedId === task.id && (
-                            <span className="absolute inset-y-3 left-0 w-0.5 rounded-r-full bg-[var(--accent-primary)]" />
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-[var(--text)]">
-                              {deriveTaskDisplayTitle(task.title)}
-                            </p>
-                            <p className="mt-1 text-xs text-[var(--text-faint)]">
-                              {formatTaskDate(task.updated_at) || "时间未知"}
-                            </p>
-                          </div>
-                          <Badge tone={getTaskStatusTone(task.status)}>
-                            {getTaskStatusLabel(task.status)}
-                          </Badge>
-                        </button>
+                          selected={selectedId === task.id}
+                          onSelect={() => setSelectedId(task.id)}
+                          title={deriveTaskDisplayTitle(task.title)}
+                          meta={formatTaskDate(task.updated_at) || "时间未知"}
+                          trailing={
+                            <Badge tone={getTaskStatusTone(task.status)}>
+                              {getTaskStatusLabel(task.status)}
+                            </Badge>
+                          }
+                          statusBar={getTaskStatusTone(task.status)}
+                          className="min-h-[64px]"
+                        />
                       ))}
                     </div>
                   )}
@@ -456,12 +443,12 @@ export default function WorkspaceDetailPage() {
         </div>
       </Modal>
 
-      {/* Delete Workspace Confirmation */}
+      {/* Archive Workspace Confirmation */}
       <ConfirmDialog
         open={showDeleteConfirm}
-        title="删除工作空间"
-        description="此操作不可撤销，工作空间及其关联配置将被移除。"
-        confirmLabel="确认删除"
+        title="归档工作空间"
+        description="归档后将保留历史任务与文件记录，该工作空间将被移至归档状态。"
+        confirmLabel="确认归档"
         tone="danger"
         loading={deleting}
         onConfirm={() => void handleDelete()}

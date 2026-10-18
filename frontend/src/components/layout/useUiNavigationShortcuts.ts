@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { NAV_ENTRIES } from "./navRegistry";
 
 export function useUiNavigationShortcuts(): void {
   const navigate = useNavigate();
@@ -28,42 +29,28 @@ export function useUiNavigationShortcuts(): void {
         return;
       }
 
-      // Ctrl+, -> Settings
-      if ((event.ctrlKey || event.metaKey) && event.key === ",") {
-        event.preventDefault();
-        navigate("/settings");
-        return;
-      }
+      // Match shortcuts dynamically from NAV_ENTRIES
+      for (const entry of NAV_ENTRIES) {
+        if (!entry.shortcut) continue;
+        const parts = entry.shortcut.toLowerCase().split("+");
+        const key = parts[parts.length - 1];
+        const reqCtrl = parts.includes("ctrl");
+        const reqAlt = parts.includes("alt");
+        const reqShift = parts.includes("shift");
 
-      // Alt+1..6 -> Top-level views
-      if (event.altKey && !event.ctrlKey && !event.metaKey) {
-        switch (event.key) {
-          case "1":
-            event.preventDefault();
-            navigate("/tasks");
-            break;
-          case "2":
-            event.preventDefault();
-            navigate("/chat");
-            break;
-          case "3":
-            event.preventDefault();
-            navigate("/search");
-            break;
-          case "4":
-            event.preventDefault();
-            navigate("/workflows");
-            break;
-          case "5":
-            event.preventDefault();
-            navigate("/workspaces");
-            break;
-          case "6":
-            event.preventDefault();
-            navigate("/capabilities");
-            break;
-          default:
-            break;
+        const hasCtrl = event.ctrlKey || event.metaKey;
+        const hasAlt = event.altKey;
+        const hasShift = event.shiftKey;
+
+        if (
+          hasCtrl === reqCtrl &&
+          hasAlt === reqAlt &&
+          hasShift === reqShift &&
+          event.key.toLowerCase() === key
+        ) {
+          event.preventDefault();
+          navigate(entry.to);
+          return;
         }
       }
     };

@@ -466,8 +466,9 @@ export default function TaskCenterPage() {
                 </div>
                 <div
                   tabIndex={0}
-                  role="region"
+                  role="listbox"
                   aria-label="可键盘切换的任务列表"
+                  aria-activedescendant={selectedId ? `task-option-${selectedId}` : undefined}
                   onKeyDown={(e) => {
                     if (visibleTasks.length === 0) return;
                     const currentIndex = visibleTasks.findIndex((t) => t.id === selectedId);

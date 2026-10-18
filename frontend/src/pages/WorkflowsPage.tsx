@@ -67,18 +67,22 @@ export default function WorkflowsPage() {
       }
     >
       {tab === "templates" ? (
-        <TemplatesTab />
+        <div id="panel-templates" role="tabpanel" aria-labelledby="tab-templates" className="flex-1 min-h-0 flex flex-col">
+          <TemplatesTab />
+        </div>
       ) : (
-        <RuntimeTab
-          editorGraph={editorGraph}
-          setEditorGraph={setEditorGraph}
-          editorOpen={editorOpen}
-          setEditorOpen={setEditorOpen}
-          activeRunId={activeRunId}
-          setActiveRunId={setActiveRunId}
-          runtimeRefresh={runtimeRefresh}
-          setRuntimeRefresh={setRuntimeRefresh}
-        />
+        <div id="panel-runtime" role="tabpanel" aria-labelledby="tab-runtime" className="flex-1 min-h-0 flex flex-col">
+          <RuntimeTab
+            editorGraph={editorGraph}
+            setEditorGraph={setEditorGraph}
+            editorOpen={editorOpen}
+            setEditorOpen={setEditorOpen}
+            activeRunId={activeRunId}
+            setActiveRunId={setActiveRunId}
+            runtimeRefresh={runtimeRefresh}
+            setRuntimeRefresh={setRuntimeRefresh}
+          />
+        </div>
       )}
     </PageShell>
   );

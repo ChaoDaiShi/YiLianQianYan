@@ -268,14 +268,15 @@ export default function AccountCenterPage() {
                 {showSwitchLogin && (
                   <Button size="sm" variant="secondary" onClick={() => setShowSwitchLogin(false)}>取消切换</Button>
                 )}
+              <div id={`panel-${mode}`} role="tabpanel" aria-labelledby={`tab-${mode}`}>
+                <div className="cloud-form-grid">
+                  {mode === "register" ? <Input label="显示名称" value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} autoComplete="name" /> : null}
+                  <Input label="邮箱" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" />
+                  <Input label="密码" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} autoComplete={mode === "login" ? "current-password" : "new-password"} />
+                </div>
+                <details className="cloud-disclosure"><summary>云服务地址</summary><Input label="Cloud API" value={form.cloud_base_url} onChange={(event) => setForm({ ...form, cloud_base_url: event.target.value })} hint="私有部署默认使用你的 Cloud API 地址。" /></details>
+                <div className="cloud-card-actions"><p>登录不会自动上传现有数据，也不会上传本机 Provider 密钥。</p><Button disabled={busy || !form.email.trim() || !form.password} onClick={() => void authenticate()}><LogIn />{busy ? "正在连接…" : mode === "login" ? "登录并连接" : "创建并连接"}</Button></div>
               </div>
-              <div className="cloud-form-grid">
-                {mode === "register" ? <Input label="显示名称" value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} autoComplete="name" /> : null}
-                <Input label="邮箱" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" />
-                <Input label="密码" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} autoComplete={mode === "login" ? "current-password" : "new-password"} />
-              </div>
-              <details className="cloud-disclosure"><summary>云服务地址</summary><Input label="Cloud API" value={form.cloud_base_url} onChange={(event) => setForm({ ...form, cloud_base_url: event.target.value })} hint="私有部署默认使用你的 Cloud API 地址。" /></details>
-              <div className="cloud-card-actions"><p>登录不会自动上传现有数据，也不会上传本机 Provider 密钥。</p><Button disabled={busy || !form.email.trim() || !form.password} onClick={() => void authenticate()}><LogIn />{busy ? "正在连接…" : mode === "login" ? "登录并连接" : "创建并连接"}</Button></div>
             </div> : null}
             {identity?.status === "guest" ? <div className="cloud-card"><AccountProfilePanel guestMode lastLogoutReport={lastLogoutReport} /></div> : null}
             {identity?.status !== "guest" ? <><div className="cloud-card">

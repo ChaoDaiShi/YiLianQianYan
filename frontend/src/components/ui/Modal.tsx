@@ -73,10 +73,9 @@ export default function Modal({
         <div
           className={cn(
             "h-1 w-full shrink-0",
-            variant === "danger"
-              ? "bg-[var(--danger)]"
-              : "bg-[var(--cyrene-gradient-primary)]"
+            variant === "danger" && "bg-[var(--danger)]"
           )}
+          style={variant !== "danger" ? { backgroundImage: "var(--cyrene-gradient-primary)" } : undefined}
           aria-hidden="true"
         />
 

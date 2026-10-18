@@ -254,7 +254,7 @@ export default function CommandPalette() {
         onKeyDown={handleKeyDown}
       >
         {/* Top Glow bar */}
-        <div className="h-1 w-full bg-[var(--cyrene-gradient-primary)]" />
+        <div className="h-1 w-full shrink-0" style={{ backgroundImage: "var(--cyrene-gradient-primary)" }} aria-hidden="true" />
 
         {/* Search Input Bar */}
         <div className="flex items-center gap-3 border-b border-[var(--border-soft)] px-4 py-3.5">

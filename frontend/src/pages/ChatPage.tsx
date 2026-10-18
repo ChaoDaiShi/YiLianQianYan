@@ -157,6 +157,14 @@ export default function ChatPage() {
     [workspaceMode]
   );
 
+  const handleToggleExecution = useCallback(() => {
+    if (workspaceMode === "full") {
+      setExecutionCollapsed(false);
+    } else {
+      openDrawer("execution");
+    }
+  }, [workspaceMode, openDrawer]);
+
   const conversationSidebar = (onClose?: () => void) => (
     <ConversationSidebar
       activeId={conversationId}
@@ -205,7 +213,7 @@ export default function ChatPage() {
         conversationToggleRef={conversationToggleRef}
         executionToggleRef={executionToggleRef}
         onToggleConversations={() => openDrawer("conversations")}
-        onToggleExecution={() => openDrawer("execution")}
+        onToggleExecution={handleToggleExecution}
         onVoiceAnchorChange={onVoiceAnchorChange}
         conversationRefreshRevision={
           conversationRefresh?.conversation_id === conversationId

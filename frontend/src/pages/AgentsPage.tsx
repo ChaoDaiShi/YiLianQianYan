@@ -155,7 +155,12 @@ export default function AgentsPage() {
               }
             />
           ) : agents ? (
-            <div className="capability-card-grid agent-card-grid" role="listbox" aria-label="智能体列表">
+            <div
+              className="capability-card-grid agent-card-grid"
+              role="listbox"
+              aria-label="智能体列表"
+              aria-activedescendant={selectedId ? `agent-option-${selectedId}` : undefined}
+            >
               {agents.map((agent) => {
                 const isSelected = agent.id === selectedId;
                 const allCapabilities = [...agent.allowed_tools, ...agent.capabilities];
@@ -166,9 +171,11 @@ export default function AgentsPage() {
                 return (
                   <button
                     type="button"
+                    id={`agent-option-${agent.id}`}
                     role="option"
                     key={agent.id}
                     aria-selected={isSelected}
+                    tabIndex={isSelected ? 0 : -1}
                     onClick={() => {
                       setSelectedId(agent.id);
                       setSearchParams({ agent: agent.id });
