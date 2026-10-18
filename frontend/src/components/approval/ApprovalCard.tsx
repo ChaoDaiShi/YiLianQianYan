@@ -195,7 +195,7 @@ export default function ApprovalCard({
         (activeEl.tagName === "INPUT" ||
           activeEl.tagName === "TEXTAREA" ||
           activeEl.tagName === "SELECT" ||
-          activeEl.isContentEditable)
+          (activeEl instanceof HTMLElement && activeEl.isContentEditable))
       ) {
         return;
       }
