@@ -4,11 +4,17 @@ import { CheckCircle2, AlertCircle, Info, AlertTriangle, X } from "lucide-react"
 
 export type ToastType = "success" | "error" | "info" | "warning";
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface ToastMessage {
   id: string;
   message: string;
   type?: ToastType;
   duration?: number;
+  action?: ToastAction;
 }
 
 type ToastListener = (toasts: ToastMessage[]) => void;
@@ -25,10 +31,16 @@ class ToastManager {
     };
   }
 
-  show(message: string, type: ToastType = "info", duration = 3000) {
+  show(
+    message: string,
+    type: ToastType = "info",
+    duration = 3000,
+    action?: ToastAction,
+  ) {
     const id = crypto.randomUUID();
-    const item: ToastMessage = { id, message, type, duration };
-    this.toasts = [...this.toasts, item];
+    const item: ToastMessage = { id, message, type, duration, action };
+    // Keep at most 3 active toasts
+    this.toasts = [...this.toasts.slice(-2), item];
     this.notify();
 
     if (duration > 0) {
@@ -51,22 +63,27 @@ class ToastManager {
 
 export const toastManager = new ToastManager();
 
-export function showToast(message: string, type: ToastType = "info", duration = 3000) {
-  return toastManager.show(message, type, duration);
+export function showToast(
+  message: string,
+  type: ToastType = "info",
+  duration = 3000,
+  action?: ToastAction,
+) {
+  return toastManager.show(message, type, duration, action);
 }
 
 const TYPE_ICONS: Record<ToastType, React.ReactNode> = {
-  success: <CheckCircle2 className="h-4 w-4 text-[#52b798] shrink-0" />,
-  error: <AlertCircle className="h-4 w-4 text-[#e05a80] shrink-0" />,
-  warning: <AlertTriangle className="h-4 w-4 text-[#d9a441] shrink-0" />,
-  info: <Info className="h-4 w-4 text-[#99cfea] shrink-0" />,
+  success: <CheckCircle2 className="h-4 w-4 text-[var(--success)] shrink-0" />,
+  error: <AlertCircle className="h-4 w-4 text-[var(--danger)] shrink-0" />,
+  warning: <AlertTriangle className="h-4 w-4 text-[var(--warning)] shrink-0" />,
+  info: <Info className="h-4 w-4 text-[var(--info)] shrink-0" />,
 };
 
 const TYPE_BORDERS: Record<ToastType, string> = {
-  success: "border-[#52b798]/30",
-  error: "border-[#e05a80]/30",
-  warning: "border-[#d9a441]/30",
-  info: "border-[#99cfea]/30",
+  success: "border-l-4 border-l-[var(--success)] border-[var(--border-soft)]",
+  error: "border-l-4 border-l-[var(--danger)] border-[var(--border-soft)]",
+  warning: "border-l-4 border-l-[var(--warning)] border-[var(--border-soft)]",
+  info: "border-l-4 border-l-[var(--info)] border-[var(--border-soft)]",
 };
 
 export default function CyreneToast() {
@@ -86,12 +103,14 @@ export default function CyreneToast() {
     <div
       className="pointer-events-none fixed bottom-4 right-4 z-[var(--z-toast-tooltip,90)] flex flex-col gap-2 max-w-sm w-full"
       role="region"
+      aria-live="polite"
+      aria-atomic="true"
       aria-label="系统轻通知"
     >
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`pointer-events-auto flex items-center gap-2.5 rounded-xl border bg-[#29263a]/95 text-[#eeeaf8] p-3 shadow-2xl backdrop-blur-md animate-scale-in transition-all ${
+          className={`pointer-events-auto flex items-center gap-2.5 rounded-xl bg-[var(--surface-solid)] text-[var(--text-primary)] p-3 shadow-[var(--shadow-float)] backdrop-blur-md animate-scale-in transition-all ${
             TYPE_BORDERS[toast.type || "info"]
           }`}
         >
@@ -99,10 +118,22 @@ export default function CyreneToast() {
           <span className="flex-1 text-xs leading-5 break-words font-medium">
             {toast.message}
           </span>
+          {toast.action && (
+            <button
+              type="button"
+              onClick={() => {
+                toast.action?.onClick();
+                toastManager.dismiss(toast.id);
+              }}
+              className="text-xs font-semibold text-[var(--accent-primary)] hover:underline shrink-0"
+            >
+              {toast.action.label}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => toastManager.dismiss(toast.id)}
-            className="rounded p-1 text-[#eeeaf8]/60 hover:text-[#eeeaf8] transition-colors"
+            className="rounded p-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
             aria-label="关闭提示"
           >
             <X className="h-3.5 w-3.5" />

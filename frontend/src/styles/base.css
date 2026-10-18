@@ -8,47 +8,47 @@
   :root {
     color-scheme: light;
     --bg-app: #F8F6FD;
-    --bg-soft: #f4f0fc;
-    --bg-subtle: var(--bg-soft);
+    --bg-soft: #F2EEFA;
+    --bg-subtle: #F2EEFA;
     /* Shared translucent surfaces keep the global Cyrene artwork visible across every page. */
-    --surface: rgba(255, 255, 255, 0.38);
-    --surface-solid: #ffffff;
-    --surface-muted: rgba(252, 249, 255, 0.30);
-    --surface-elevated: rgba(255, 255, 255, 0.48);
-    --surface-hover: rgba(249, 243, 252, 0.58);
-    --titlebar-bg: rgba(255, 255, 255, 0.28);
+    --surface: rgba(255, 255, 255, 0.42);
+    --surface-solid: #FFFDFF;
+    --surface-muted: rgba(252, 249, 255, 0.24);
+    --surface-elevated: rgba(255, 255, 255, 0.58);
+    --surface-hover: rgba(249, 243, 252, 0.62);
+    --titlebar-bg: rgba(255, 255, 255, 0.32);
     --text-primary: #292536;
     --text-secondary: #696276;
     --text-faint: #9690A1;
-    --text-disabled: #bdb8c5;
-    --divider: rgba(91, 76, 125, 0.10);
-    --border-soft: rgba(86, 72, 117, 0.10);
+    --text-disabled: #BDB8C5;
+    --divider: rgba(91, 76, 125, 0.11);
+    --border-soft: rgba(86, 72, 117, 0.12);
     --accent-primary: #ea91b9;
-    --accent-primary-hover: #df7eaa;
+    --accent-primary-hover: #DF7EAA;
     --accent-contrast: #292536;
     --accent-fg: #292536;
-    --accent-soft: #f9dce9;
-    --accent-purple: #ad9be8;
-    --accent-blue: #99cfea;
-    --accent-gold: #ebcf8c;
-    --accent-border: rgba(234, 145, 185, 0.25);
+    --accent-soft: #F9DCE9;
+    --accent-purple: #AD9BE8;
+    --accent-blue: #99CFEA;
+    --accent-gold: #EBCF8C;
+    --accent-border: rgba(234, 145, 185, 0.26);
     --focus-ring-soft: rgba(234, 145, 185, 0.30);
-    --sidebar-bg: #29263a;
-    --sidebar-bg-2: #312c46;
-    --sidebar-text: #eeeaf8;
-    --sidebar-fg: var(--sidebar-text);
-    --sidebar-muted: #aaa3ba;
+    --sidebar-bg: #29263A;
+    --sidebar-bg-2: #312C46;
+    --sidebar-text: #EEEAF8;
+    --sidebar-fg: #EEEAF8;
+    --sidebar-muted: #AAA3BA;
     --sidebar-active: rgba(234, 145, 185, 0.17);
     --cyrene-glow-pink: rgba(234, 145, 185, 0.22);
     --cyrene-glow-purple: rgba(173, 155, 232, 0.18);
     --cyrene-glow-blue: rgba(153, 207, 234, 0.14);
     --cyrene-glass-border: rgba(255, 255, 255, 0.52);
     --cyrene-surface-tint: rgba(255, 255, 255, 0.34);
-    --cyrene-night: #29263a;
+    --cyrene-night: #29263A;
     --cyrene-water: rgba(153, 207, 234, 0.18);
     --cyrene-ripple: rgba(173, 155, 232, 0.18);
-    --shadow-card: 0 4px 16px rgba(54, 45, 79, 0.04);
-    --shadow-float: 0 12px 36px rgba(48, 38, 76, 0.10);
+    --shadow-card: 0 4px 16px rgba(54, 45, 79, 0.05);
+    --shadow-float: 0 12px 36px rgba(48, 38, 76, 0.11);
     --radius-xs: 6px;
     --radius-sm: 10px;
     --radius-md: 12px;
@@ -74,8 +74,11 @@
     --z-canvas: 10;
     --z-floating-toolbar: 20;
     --z-rail-drawer: 30;
+    --z-voice-dock: 35;
     --z-nav-rail: 40;
+    --z-overlay: 40;
     --z-sticky-header: 45;
+    --z-savebar: 55;
     --z-dropdown-popover: 60;
     --z-modal-approval: 70;
     --z-command-palette: 80;
@@ -101,28 +104,46 @@
     --accent: var(--accent-primary);
     --input-bg: rgba(255, 255, 255, 0.50);
     --success: #73b99a;
-    --success-soft: rgba(115, 185, 154, 0.12);
-    --success-border: rgba(115, 185, 154, 0.30);
-    --success-fg: #292536;
+    --success-soft: rgba(115, 185, 154, 0.14);
+    --success-border: rgba(115, 185, 154, 0.34);
+    --success-fg: #315D49;
     --warning: #d9b866;
-    --warning-soft: rgba(217, 184, 102, 0.12);
-    --warning-border: rgba(217, 184, 102, 0.30);
-    --warning-fg: #292536;
+    --warning-soft: rgba(217, 184, 102, 0.16);
+    --warning-border: rgba(217, 184, 102, 0.36);
+    --warning-fg: #72571D;
     --danger: #df7995;
-    --danger-soft: rgba(223, 121, 149, 0.12);
-    --danger-border: rgba(223, 121, 149, 0.30);
-    --danger-fg: #292536;
+    --danger-soft: rgba(223, 121, 149, 0.14);
+    --danger-border: rgba(223, 121, 149, 0.34);
+    --danger-fg: #873F59;
     --nav: var(--sidebar-bg);
     --nav-text: var(--sidebar-fg);
     --info: #84bcdc;
-    --info-soft: rgba(132, 188, 220, 0.12);
-    --info-border: rgba(132, 188, 220, 0.30);
-    --info-fg: #292536;
-    --accent-soft-fg: #292536;
+    --info-soft: rgba(132, 188, 220, 0.15);
+    --info-border: rgba(132, 188, 220, 0.34);
+    --info-fg: #37677E;
+    --accent-soft-fg: #67435A;
     --focus-ring: var(--accent-primary);
+    --focus-outline: var(--accent-soft-fg);
+    --border-subtle: var(--border-soft);
+    --surface-subtle: var(--surface-muted);
     --backdrop: rgba(41, 38, 58, 0.34);
     --shadow-soft: var(--shadow-card);
     --font-size-base: var(--font-size-body);
+    --font-size-caption: 12px;
+    --font-size-meta: 13px;
+    --font-size-secondary: 14px;
+    --font-size-control: 14px;
+    --font-size-body: 16px;
+    --font-size-reading: 17px;
+    --font-size-title-sm: 18px;
+    --font-size-title-md: 22px;
+    --font-size-title-lg: 28px;
+    --line-height-caption: 1.4;
+    --line-height-meta: 1.4;
+    --line-height-body: 1.55;
+    --line-height-reading: 1.65;
+    --line-height-title: 1.3;
+    --font-mono: "IBM Plex Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
     --page-padding-inline: clamp(16px, 2vw, 36px);
     --page-padding-block: clamp(12px, 1.5vw, 24px);
     --content-reading-max: 1040px;
@@ -135,7 +156,39 @@
     --shell-overlay: rgba(248, 246, 253, 0.12);
     --page-wash: rgba(248, 246, 253, 0.18);
     --code-bg: #252132;
-    --code-text: #f4f0f8;
+    --code-text: #F4F0F8;
+
+    /* Derived and aliased tokens (Appendix B) */
+    --shadow-sm: 0 2px 8px rgba(54, 45, 79, 0.06);
+    --input-inset-shadow: inset 0 1px 2px rgba(41, 38, 58, 0.04);
+    --overlay-scrim: var(--backdrop);
+    --risk-low-fg: var(--info-fg);
+    --risk-low-soft: var(--info-soft);
+    --risk-low-border: var(--info-border);
+    --risk-medium-fg: var(--warning-fg);
+    --risk-medium-soft: var(--warning-soft);
+    --risk-medium-border: var(--warning-border);
+    --risk-high-fg: var(--danger-fg);
+    --risk-high-soft: var(--danger-soft);
+    --risk-high-border: var(--danger-border);
+    --risk-critical-fg: var(--danger-fg);
+    --risk-critical-soft: var(--danger-soft);
+    --risk-critical-border: var(--danger);
+    --code-header-bg: color-mix(in srgb, var(--code-bg), white 6%);
+    --row-selected-bg: var(--sidebar-active);
+    --shell-readability-gradient: linear-gradient(135deg, rgba(248, 246, 253, 0.65), rgba(239, 232, 250, 0.48));
+    --danger-hover: color-mix(in srgb, var(--danger), black 10%);
+    --foreground: var(--text-primary);
+    --foreground-muted: var(--text-secondary);
+    --border-strong: var(--divider);
+    --border-hover: var(--accent-border);
+    --accent-subtle: var(--accent-soft);
+    --danger-subtle: var(--danger-soft);
+    --success-subtle: var(--success-soft);
+    --warning-subtle: var(--warning-soft);
+    --text-tertiary: var(--text-secondary);
+    --surface-input: var(--input-bg);
+    --panel-muted: var(--surface-muted);
   }
 
   html {
@@ -156,11 +209,32 @@
 
   :root.dark {
     color-scheme: dark;
+    --focus-outline: var(--accent-primary);
   }
 
   :focus-visible {
-    outline: 2px solid var(--accent-primary);
+    outline: 2px solid var(--focus-outline);
     outline-offset: 2px;
+    box-shadow: 0 0 0 1px var(--surface-solid);
+  }
+
+  @media (forced-colors: active) {
+    :focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: 2px;
+    }
+    button, a, input, select, textarea {
+      forced-color-adjust: auto;
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    :root {
+      --surface: var(--surface-solid);
+      --surface-muted: var(--surface-solid);
+      --surface-elevated: var(--surface-solid);
+      --surface-hover: var(--surface-solid);
+    }
   }
 
   ::selection {

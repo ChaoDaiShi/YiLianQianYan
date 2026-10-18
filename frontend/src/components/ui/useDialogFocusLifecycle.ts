@@ -73,7 +73,9 @@ export function useDialogFocusLifecycle({
   // Capture before the open render commits, when a child autoFocus may take over.
   if (open && !openCycleRef.current) {
     openerRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     openCycleRef.current = true;
   } else if (!open) {
     openCycleRef.current = false;

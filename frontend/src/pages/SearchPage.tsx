@@ -6,7 +6,8 @@ import { createMemory } from "../api/memory";
 import { createTask } from "../api/tasks";
 import { createWorkspace, listWorkspaces } from "../api/workspaces";
 import { openExternalUrl } from "../components/chat/externalLink";
-import { Badge, Button, EmptyState, Input, PageHeader } from "../components/ui";
+import { Badge, Button, EmptyState, Input } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
 import { buildSearchChatPrompt, buildSearchKnowledgeRecord, buildSearchTaskDraft } from "../features/cloud/cloudPresentation";
 
 export default function SearchPage() {
@@ -64,8 +65,14 @@ export default function SearchPage() {
     }
   };
 
-  return <div className="cloud-page search-page page-canvas">
-    <PageHeader title="AI 搜索" description="统一检索入口。AnySearch 是首个 Provider，凭据仍保存在本机。" actions={<Badge tone={config?.configured ? "success" : "default"}>{config?.configured ? "本机 BYOK" : "匿名模式"}</Badge>} />
+  return (
+    <PageShell
+      title="AI 搜索"
+      description="统一检索入口。AnySearch 是首个 Provider，凭据仍保存在本机。"
+      className="cloud-page search-page page-canvas flex h-full min-h-0 flex-col"
+      contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+      actions={<Badge tone={config?.configured ? "success" : "default"}>{config?.configured ? "本机 BYOK" : "匿名模式"}</Badge>}
+    >
     <div className="search-page-body scrollbar-thin">
       <form className="search-command" onSubmit={search}>
         <Search aria-hidden="true" />
@@ -78,6 +85,7 @@ export default function SearchPage() {
       {notice ? <p className="cloud-notice" role="status">{notice}</p> : null}
       {!response && !loading ? <EmptyState icon={<Search />} title="从一个问题开始" description="结果会显示标题、摘要和来源，并可以继续交给小涟、任务或知识流程。" /> : null}
       {response ? <section className="search-results" aria-label="搜索结果"><div className="search-results-meta"><span>{response.total_results} 条结果 · {response.search_time_ms} ms</span><code>{response.request_id}</code></div>{response.results.map((result, index) => <article className="search-result-card" key={`${result.url}-${index}`}><div className="search-result-index">{String(index + 1).padStart(2, "0")}</div><div className="search-result-content"><h2>{result.title || result.url}</h2><p>{result.snippet || result.content || "该来源没有提供摘要。"}</p><button type="button" className="search-source" onClick={() => void openExternalUrl(result.url)}>{result.url}<ExternalLink /></button><div className="search-result-actions"><Button size="sm" onClick={() => sendToChat(result)}><MessageSquareText />让小涟总结</Button><Button size="sm" variant="secondary" onClick={() => void addTask(result)}><ListTodo />加入任务</Button><Button size="sm" variant="secondary" onClick={() => void saveKnowledge(result)}><BookOpenCheck />保存为知识</Button></div></div></article>)}</section> : null}
-    </div>
-  </div>;
+      </div>
+    </PageShell>
+  );
 }

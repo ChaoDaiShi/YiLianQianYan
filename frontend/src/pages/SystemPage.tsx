@@ -7,10 +7,10 @@ import { getSystemInfo, healthCheck, type RuntimeHealth } from "../api/client";
 import {
   Button,
   ErrorState,
-  PageHeader,
   Panel,
   Skeleton,
 } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
 import {
   formatLogTimestamp,
   SystemMetricCard,
@@ -82,23 +82,24 @@ export default function SystemPage() {
   useVisibleRefresh(refresh);
 
   return (
-    <div className="ui-opt-system system-center-page page-canvas flex h-full min-h-0 flex-col">
-      <PageHeader
-        title="系统监控"
-        description="查看应用、服务和资源的当前运行状态。"
-        actions={(
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => navigate("/logs")}>
-              <FileText className="h-3.5 w-3.5" />
-              查看日志
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => void refresh()} aria-label="刷新系统状态">
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-              刷新
-            </Button>
-          </div>
-        )}
-      />
+    <PageShell
+      title="系统监控"
+      description="查看应用、服务和资源的当前运行状态。"
+      className="ui-opt-system system-center-page page-canvas flex h-full min-h-0 flex-col"
+      contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+      actions={(
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => navigate("/logs")}>
+            <FileText className="h-3.5 w-3.5" />
+            查看日志
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => void refresh()} aria-label="刷新系统状态">
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            刷新
+          </Button>
+        </div>
+      )}
+    >
 
       <div className="system-center-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 scrollbar-thin">
         <MonitoringToolbox data={data as unknown as Record<string, unknown> | null} health={health as unknown as Record<string, unknown> | null} />
@@ -220,6 +221,6 @@ export default function SystemPage() {
           </div>
         ) : null}
       </div>
-    </div>
+    </PageShell>
   );
 }

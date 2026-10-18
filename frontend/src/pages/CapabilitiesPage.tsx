@@ -11,17 +11,9 @@ import {
   formatCapabilityStatus,
   formatPermission,
 } from "../components/capabilities";
-import {
-  CapabilityDescriptor,
-  CapabilityKind,
-  CapabilityProviderKind,
-  CapabilityRefreshReport,
-  CapabilityRuntimeStatus,
-  getCapability,
-  listCapabilities,
-  refreshCapabilities,
-} from "../api/client";
-import { Button, EmptyState, ErrorState, Input, Modal, PageHeader, Skeleton } from "../components/ui";
+import { CapabilityDescriptor, CapabilityKind, CapabilityProviderKind, CapabilityRefreshReport, CapabilityRuntimeStatus, getCapability, listCapabilities, refreshCapabilities } from "../api/client";
+import PageShell from "../components/layout/PageShell";
+import { Button, EmptyState, ErrorState, Input, Modal, Skeleton } from "../components/ui";
 import { getCapabilityManagementTarget } from "../features/capabilities/capabilityManagement";
 import { formatToolDisplayName } from "../components/chat/toolDisplay";
 import ManagedImports from "../features/capabilities/ManagedImports";
@@ -125,30 +117,29 @@ export default function CapabilitiesPage() {
   };
 
   return (
-    <div className="capability-page page-canvas ui-opt-capabilities">
-      <PageHeader
-        title="能力"
-        description="了解忆涟能做什么，查看可用状态与所需权限。"
-        actions={
-          <>
-            <Button variant="secondary" onClick={() => setSourceChooserOpen(true)}>
-              <Plus className="h-4 w-4" />
-              新增能力来源
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => void handleRefresh()}
-              disabled={refreshing}
-              loading={refreshing}
-              loadingLabel="刷新中…"
-            >
-              <RefreshCw className="h-4 w-4" />
-              刷新能力
-            </Button>
-          </>
-        }
-      />
-
+    <PageShell
+      title="能力"
+      description="了解忆涟能做什么，查看可用状态与所需权限。"
+      className="capability-page page-canvas ui-opt-capabilities"
+      actions={
+        <>
+          <Button variant="secondary" onClick={() => setSourceChooserOpen(true)}>
+            <Plus className="h-4 w-4" />
+            新增能力来源
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => void handleRefresh()}
+            disabled={refreshing}
+            loading={refreshing}
+            loadingLabel="刷新中…"
+          >
+            <RefreshCw className="h-4 w-4" />
+            刷新能力
+          </Button>
+        </>
+      }
+    >
       <div className="capability-page-body">
         {report && (
           <div className="capability-refresh-report" role="status">
@@ -274,7 +265,12 @@ export default function CapabilitiesPage() {
                   className="py-16"
                 />
               ) : viewMode === "list" ? (
-                <div className="p-2 space-y-1">
+                <div
+                  className="p-2 space-y-1"
+                  role="listbox"
+                  aria-label="能力列表"
+                  aria-activedescendant={selectedId ? `capability-option-${selectedId}` : undefined}
+                >
                   {visibleCapabilities.map((capability) => {
                     const presentation = formatCapabilityStatus(capability.status);
                     const isSelected = capability.id === selectedId;
@@ -283,8 +279,9 @@ export default function CapabilitiesPage() {
                     return (
                       <div
                         key={capability.id}
-                        role="button"
-                        tabIndex={0}
+                        id={`capability-option-${capability.id}`}
+                        role="option"
+                        tabIndex={isSelected ? 0 : -1}
                         aria-selected={isSelected}
                         onClick={() => void selectCapability(capability)}
                         onKeyDown={(e) => {
@@ -448,7 +445,7 @@ export default function CapabilitiesPage() {
           />
         </div>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ListTodo, MessageSquare, RefreshCw, Search, Sparkles } from "lucide-react";
+import { ListTodo, MessageSquare, Search, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   listConversations,
@@ -11,14 +11,14 @@ import {
 import type { ConversationSummary } from "../types";
 import TaskDetailPanel from "../components/tasks/TaskDetailPanel";
 import Identifier from "../components/Identifier";
+import PageShell from "../components/layout/PageShell";
 import {
   Badge,
   Button,
   Drawer,
   EmptyState,
   ErrorState,
-  Input,
-  PageHeader,
+  FilterBar,
   Panel,
   Textarea,
 } from "../components/ui";
@@ -228,19 +228,20 @@ export default function TaskCenterPage() {
   };
 
   return (
-    <div className="task-center-page page-canvas ui-opt-tasks flex h-full min-h-0 flex-col">
-      <PageHeader
-        title="任务中心"
-        description="管理小昔涟执行过的任务和当前进度"
-        actions={
-          <Button type="button" onClick={() => navigate("/chat")}>
-            <Sparkles className="h-4 w-4" />
-            开始一个任务
-          </Button>
-        }
-      />
-
-      <div className="task-center-body flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 pt-4">
+    <PageShell
+      title="任务中心"
+      description="管理小昔涟执行过的任务和当前进度"
+      variant="workspace"
+      className="task-center-page page-canvas ui-opt-tasks"
+      contentClassName="p-4 gap-3 flex flex-col min-h-0"
+      actions={
+        <Button type="button" onClick={() => navigate("/chat")}>
+          <Sparkles className="h-4 w-4" />
+          开始一个任务
+        </Button>
+      }
+    >
+      <div className="task-center-body flex min-h-0 flex-1 flex-col gap-3">
         <Panel padding={false} className="shrink-0 overflow-hidden">
           <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
             <div>
@@ -336,45 +337,39 @@ export default function TaskCenterPage() {
             </div>
           )}
         </Panel>
-        <div className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] p-3 sm:flex-row sm:items-center">
-          <label className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-faint)]" />
-            <Input
-              aria-label="搜索任务"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索任务、描述、工作空间或对话"
-              className="pl-9"
-            />
-          </label>
-          <div className="flex min-w-0 flex-wrap gap-1" role="group" aria-label="任务状态筛选">
-            {FILTERS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                aria-pressed={filter === item.id}
-                onClick={() => setFilter(item.id)}
-                className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-xs transition-colors focus-ring-token focus-visible:outline-none ${
-                  filter === item.id
-                    ? "bg-[var(--accent-soft)] font-medium text-[var(--accent-soft-fg)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => void reload()}
-            aria-label="刷新任务"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            刷新
-          </Button>
-        </div>
+        <FilterBar
+          search={{
+            value: query,
+            onChange: (val) => setQuery(val),
+            placeholder: "搜索任务、描述、工作空间或对话",
+            onClear: () => setQuery(""),
+          }}
+          filters={
+            <div className="flex min-w-0 flex-wrap gap-1" role="group" aria-label="任务状态筛选">
+              {FILTERS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={filter === item.id}
+                  onClick={() => setFilter(item.id)}
+                  className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-xs transition-colors focus-ring-token focus-visible:outline-none ${
+                    filter === item.id
+                      ? "bg-[var(--accent-soft)] font-medium text-[var(--accent-soft-fg)]"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          }
+          count={{
+            total: tasks?.length ?? 0,
+            filtered: visibleTasks.length,
+            label: "任务",
+          }}
+          onRefresh={() => void reload()}
+        />
 
         {conversationError && (
           <p className="text-xs text-[var(--text-faint)]" role="status">
@@ -471,8 +466,9 @@ export default function TaskCenterPage() {
                 </div>
                 <div
                   tabIndex={0}
-                  role="region"
+                  role="listbox"
                   aria-label="可键盘切换的任务列表"
+                  aria-activedescendant={selectedId ? `task-option-${selectedId}` : undefined}
                   onKeyDown={(e) => {
                     if (visibleTasks.length === 0) return;
                     const currentIndex = visibleTasks.findIndex((t) => t.id === selectedId);
@@ -566,6 +562,6 @@ export default function TaskCenterPage() {
           </div>
         )}
       </Drawer>
-    </div>
+    </PageShell>
   );
 }

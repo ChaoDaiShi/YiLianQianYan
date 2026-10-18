@@ -1,26 +1,29 @@
-import { useId, useEffect, useState } from "react";
+import { useId, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "./cn";
 import Button from "./Button";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle";
 
-export type ModalSize = "sm" | "md" | "lg";
+export type ModalSize = "sm" | "md" | "lg" | "xl";
+export type ModalVariant = "default" | "danger";
 
 export interface ModalProps {
   open: boolean;
   onClose: () => void;
   title: string;
   size?: ModalSize;
-  children: React.ReactNode;
+  variant?: ModalVariant;
+  children: ReactNode;
   className?: string;
-  footer?: React.ReactNode;
+  footer?: ReactNode;
 }
 
 const modalSizes: Record<ModalSize, string> = {
   sm: "max-w-[480px]",
   md: "max-w-[640px]",
   lg: "max-w-[860px]",
+  xl: "max-w-[1040px]",
 };
 
 export default function Modal({
@@ -28,6 +31,7 @@ export default function Modal({
   onClose,
   title,
   size = "sm",
+  variant = "default",
   children,
   className,
   footer,
@@ -48,7 +52,7 @@ export default function Modal({
       role="presentation"
     >
       <div
-        className="absolute inset-0 bg-[#1e1b2e]/45 backdrop-blur-md animate-fade-in"
+        className="absolute inset-0 bg-[var(--backdrop)] backdrop-blur-md animate-fade-in"
         aria-hidden="true"
         onClick={onClose}
       />
@@ -65,24 +69,36 @@ export default function Modal({
         )}
         onClick={(event) => event.stopPropagation()}
       >
-        {/* Cyrene luminous top accent band */}
+        {/* Top luminous accent band */}
         <div
-          className="h-1 w-full shrink-0 bg-gradient-to-r from-[#ea91b9] via-[#ad9be8] to-[#99cfea]"
+          className={cn(
+            "h-1 w-full shrink-0",
+            variant === "danger" && "bg-[var(--danger)]"
+          )}
+          style={variant !== "danger" ? { backgroundImage: "var(--cyrene-gradient-primary)" } : undefined}
           aria-hidden="true"
         />
+
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--border-soft)] px-5 py-4">
           <h3 id={titleId} className="font-semibold text-[var(--text)]">
             {title}
           </h3>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="关闭">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+            aria-label={`关闭${title}`}
+          >
             <X className="w-4 h-4" />
           </Button>
         </div>
+
         <div className="min-h-0 flex-1 px-5 py-4 overflow-y-auto scrollbar-thin">
           {children}
         </div>
+
         {footer && (
-          <div className="flex shrink-0 justify-end gap-2 border-t border-[var(--border-soft)] px-5 py-4">
+          <div className="flex shrink-0 justify-end gap-2 border-t border-[var(--border-soft)] bg-[var(--surface-muted)] px-5 py-3.5">
             {footer}
           </div>
         )}

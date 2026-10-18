@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Bot, Plus, Users } from "lucide-react";
 import {
   CapabilityDetailSection,
@@ -13,18 +14,22 @@ import {
   listAgents,
   listTeams,
 } from "../api/client";
+import PageShell from "../components/layout/PageShell";
 import {
   Button,
   EmptyState,
   ErrorState,
+  FormField,
   Input,
   Modal,
-  PageHeader,
+  Section,
+  showToast,
   Skeleton,
   Textarea,
 } from "../components/ui";
 
 export default function AgentsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [agents, setAgents] = useState<AgentDefinition[] | null>(null);
   const [teams, setTeams] = useState<AgentTeam[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +40,8 @@ export default function AgentsPage() {
   const [instructions, setInstructions] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  const agentParam = searchParams.get("agent");
 
   const reload = useCallback(async () => {
     setError(null);
@@ -54,9 +61,13 @@ export default function AgentsPage() {
   }, [reload]);
 
   useEffect(() => {
+    if (agentParam && agents?.some((agent) => agent.id === agentParam)) {
+      setSelectedId(agentParam);
+      return;
+    }
     if (selectedId && agents?.some((agent) => agent.id === selectedId)) return;
     setSelectedId(agents?.[0]?.id ?? null);
-  }, [agents, selectedId]);
+  }, [agentParam, agents, selectedId]);
 
   const selectedAgent = useMemo(
     () => agents?.find((agent) => agent.id === selectedId) ?? null,
@@ -83,8 +94,10 @@ export default function AgentsPage() {
         setName("");
         setDescription("");
         setInstructions("");
+        showToast("智能体已创建", "success");
         await reload();
         setSelectedId(result.data.id);
+        setSearchParams({ agent: result.data.id });
       } else {
         setCreateError(result.error);
       }
@@ -96,18 +109,17 @@ export default function AgentsPage() {
   };
 
   return (
-    <div className="capability-page page-canvas ui-opt-capabilities ui-opt-agents">
-      <PageHeader
-        title="智能体"
-        description="管理承担不同角色和任务的智能体配置。"
-        actions={
-          <Button onClick={handleOpenCreate}>
-            <Plus className="h-4 w-4" />
-            新建 Agent
-          </Button>
-        }
-      />
-
+    <PageShell
+      title="智能体"
+      description="管理承担不同角色和任务的智能体配置。"
+      className="capability-page page-canvas ui-opt-capabilities ui-opt-agents"
+      actions={
+        <Button onClick={handleOpenCreate}>
+          <Plus className="h-4 w-4" />
+          新建 Agent
+        </Button>
+      }
+    >
       <div className="capability-page-body capability-page-body-stack">
         {error && (
           <ErrorState
@@ -147,7 +159,12 @@ export default function AgentsPage() {
               }
             />
           ) : agents ? (
-            <div className="capability-card-grid agent-card-grid">
+            <div
+              className="capability-card-grid agent-card-grid"
+              role="listbox"
+              aria-label="智能体列表"
+              aria-activedescendant={selectedId ? `agent-option-${selectedId}` : undefined}
+            >
               {agents.map((agent) => {
                 const isSelected = agent.id === selectedId;
                 const allCapabilities = [...agent.allowed_tools, ...agent.capabilities];
@@ -158,9 +175,15 @@ export default function AgentsPage() {
                 return (
                   <button
                     type="button"
+                    id={`agent-option-${agent.id}`}
+                    role="option"
                     key={agent.id}
                     aria-selected={isSelected}
-                    onClick={() => setSelectedId(agent.id)}
+                    tabIndex={isSelected ? 0 : -1}
+                    onClick={() => {
+                      setSelectedId(agent.id);
+                      setSearchParams({ agent: agent.id });
+                    }}
                     className={`capability-card agent-card capability-card-selectable ${
                       isSelected ? "capability-card-selected agent-card-selected" : ""
                     }`}
@@ -295,40 +318,39 @@ export default function AgentsPage() {
             </p>
           )}
 
-          <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-              名称与用途
-            </legend>
-            <Input
-              label="名称"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="例如：research-assistant"
-              disabled={creating}
-              autoFocus
-            />
-            <Input
-              label="用途描述"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="简要说明该 Agent 的职责范围（可选）"
-              disabled={creating}
-            />
-          </fieldset>
+          <Section title="名称与用途">
+            <div className="space-y-3">
+              <FormField label="名称" required error={!name.trim() && createError ? "名称不可为空" : undefined}>
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="例如：research-assistant"
+                  disabled={creating}
+                  autoFocus
+                />
+              </FormField>
+              <FormField label="用途描述">
+                <Input
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  placeholder="简要说明该 Agent 的职责范围（可选）"
+                  disabled={creating}
+                />
+              </FormField>
+            </div>
+          </Section>
 
-          <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-              指令
-            </legend>
-            <Textarea
-              label="系统指令"
-              value={instructions}
-              onChange={(event) => setInstructions(event.target.value)}
-              rows={4}
-              placeholder="该 Agent 的职责与约束（LLM-only，不直接调用工具）"
-              disabled={creating}
-            />
-          </fieldset>
+          <Section title="指令">
+            <FormField label="系统指令" hint="该 Agent 的职责与约束（LLM-only，不直接调用工具）">
+              <Textarea
+                value={instructions}
+                onChange={(event) => setInstructions(event.target.value)}
+                rows={4}
+                placeholder="该 Agent 的职责与约束..."
+                disabled={creating}
+              />
+            </FormField>
+          </Section>
 
           <div className="flex justify-end gap-2 pt-2">
             <Button
@@ -349,7 +371,7 @@ export default function AgentsPage() {
           </div>
         </div>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
 

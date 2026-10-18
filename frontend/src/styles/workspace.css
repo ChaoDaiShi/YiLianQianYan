@@ -394,6 +394,11 @@
     filter: drop-shadow(0 12px 18px rgba(71, 55, 95, 0.12));
   }
 
+  :root.dark .home-character-art,
+  :root[data-color-scheme="dark"] .home-character-art {
+    mix-blend-mode: normal;
+  }
+
   .home-character-scene {
     isolation: isolate;
     display: grid;

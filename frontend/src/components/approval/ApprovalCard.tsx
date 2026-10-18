@@ -41,13 +41,13 @@ function maskArgs(args: Record<string, unknown>): Record<string, unknown> {
 function riskTone(risk: string): string {
   switch (risk) {
     case "critical":
-      return "border-[#e05a80] bg-[#e05a80]/15 text-[#e05a80]";
+      return "border-[var(--danger-border)] bg-[var(--danger-soft)] text-[var(--danger-fg)] font-semibold";
     case "high":
-      return "border-[#df7995] bg-[#df7995]/15 text-[#df7995]";
+      return "border-[var(--danger-border)] bg-[var(--danger-soft)] text-[var(--danger-fg)]";
     case "medium":
-      return "border-[#d9a441] bg-[#d9a441]/15 text-[#d9a441]";
+      return "border-[var(--warning-border)] bg-[var(--warning-soft)] text-[var(--warning-fg)]";
     case "low":
-      return "border-[#5ca8d6] bg-[#5ca8d6]/15 text-[#5ca8d6]";
+      return "border-[var(--info-border)] bg-[var(--info-soft)] text-[var(--info-fg)]";
     default:
       return "border-[var(--warning-border)] bg-[var(--warning-soft)] text-[var(--warning-fg)]";
   }
@@ -56,15 +56,15 @@ function riskTone(risk: string): string {
 function cardRiskBorder(risk: string): string {
   switch (risk) {
     case "critical":
-      return "border-[#e05a80] shadow-[0_0_16px_-4px_rgba(224,90,128,0.35)]";
+      return "border-2 border-[var(--danger-border)] shadow-[var(--shadow-float)]";
     case "high":
-      return "border-[#df7995] shadow-[0_0_12px_-4px_rgba(223,121,149,0.3)]";
+      return "border border-[var(--danger-border)] shadow-card-token";
     case "medium":
-      return "border-[#d9a441] shadow-[0_0_12px_-4px_rgba(217,164,65,0.25)]";
+      return "border border-[var(--warning-border)] shadow-card-token";
     case "low":
-      return "border-[#5ca8d6] shadow-[0_0_12px_-4px_rgba(92,168,214,0.25)]";
+      return "border border-[var(--info-border)] shadow-card-token";
     default:
-      return "border-[var(--warning-border)]";
+      return "border border-[var(--warning-border)]";
   }
 }
 
@@ -189,6 +189,7 @@ export default function ApprovalCard({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing || resolving) return;
+      if (!cardRef.current?.contains(document.activeElement)) return;
       const activeEl = document.activeElement;
       if (
         activeEl &&
@@ -287,14 +288,14 @@ export default function ApprovalCard({
             {typeof approval.arguments?.command === "string" && (
               <div>
                 <dt className="font-sans text-[var(--text-faint)]">Command</dt>
-                <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[#232032] p-2 text-xs font-mono text-[#eeeaf8] shadow-inner">
+                <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-[var(--border-soft)] bg-[var(--code-bg)] p-2 text-xs font-mono text-[var(--code-text)] shadow-inner">
                   {approval.arguments.command}
                 </dd>
               </div>
             )}
             <div>
               <dt className="font-sans text-[var(--text-faint)]">Arguments</dt>
-              <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[#232032] p-2 text-xs font-mono text-[#eeeaf8] shadow-inner">
+              <dd className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-[var(--border-soft)] bg-[var(--code-bg)] p-2 text-xs font-mono text-[var(--code-text)] shadow-inner">
                 {maskedArgs}
               </dd>
             </div>

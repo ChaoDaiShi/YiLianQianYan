@@ -15,7 +15,7 @@
 .u2-disclosure { border-top: 1px solid var(--border-soft); padding: 14px 0; }
 .u2-disclosure > summary { cursor: pointer; font-size: var(--font-size-control); font-weight: 600; min-height: 30px; }
 .u2-disclosure > summary span { margin-left: 12px; font-size: var(--font-size-meta); font-weight: 400; color: var(--text-secondary); }
-.u2-disclosure > summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.u2-disclosure > summary:focus-visible { outline: 2px solid var(--focus-outline); outline-offset: 3px; }
 .u2-provider-field { display: flex; flex-direction: column; gap: 6px; font-size: var(--font-size-control); }
 .u2-provider-field select { width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--input-bg); color: var(--text-primary); }
 .u2-section-intro h3 { font-size: 18px; font-weight: 600; }

@@ -34,10 +34,13 @@ export default function ExecutionSidebar({
       )
     : undefined;
   const completed = history.filter(
-    (record) =>
-      record.executionStatus === "succeeded" ||
-      record.executionStatus === "rejected" ||
-      record.executionStatus === "cancelled"
+    (record) => record.executionStatus === "succeeded"
+  ).length;
+  const rejected = history.filter(
+    (record) => record.executionStatus === "rejected"
+  ).length;
+  const cancelled = history.filter(
+    (record) => record.executionStatus === "cancelled"
   ).length;
   const failures = history.filter(
     (record) =>
@@ -53,6 +56,8 @@ export default function ExecutionSidebar({
           <span className="execution-header-motif" aria-hidden="true" />
           <p className="mt-0.5 text-caption text-[var(--text-muted)]">
             {history.length} 个动作 · {completed} 个完成
+            {rejected > 0 ? ` · ${rejected} 个已拒绝` : ""}
+            {cancelled > 0 ? ` · ${cancelled} 个已取消` : ""}
             {failures > 0 ? ` · ${failures} 个异常` : ""}
           </p>
         </div>

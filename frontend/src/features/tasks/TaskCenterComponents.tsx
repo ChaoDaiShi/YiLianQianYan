@@ -21,7 +21,10 @@ export function TaskRow({
   return (
     <button
       type="button"
+      id={`task-option-${task.id}`}
+      role="option"
       aria-selected={selected}
+      tabIndex={selected ? 0 : -1}
       onClick={onSelect}
       className={`group relative flex min-h-[72px] w-full items-center gap-3 rounded-[var(--radius-md)] border px-3 py-2.5 text-left transition-colors focus-ring-token focus-visible:outline-none ${
         selected

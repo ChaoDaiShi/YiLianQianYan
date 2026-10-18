@@ -249,7 +249,7 @@ export default function PlanReviewPanel({
 
       {/* Pending Inputs to complete */}
       {draft.compilation.pending_inputs.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--accent-soft-border,var(--border-soft))] bg-[var(--surface-elevated)] p-3 text-xs">
+        <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--accent-border)] bg-[var(--surface-elevated)] p-3 text-xs">
           <div className="flex items-center gap-1.5 font-medium text-[var(--accent)]">
             <Info className="h-4 w-4" />
             <span>需要人工补充或确认的参数（{draft.compilation.pending_inputs.length} 项）</span>

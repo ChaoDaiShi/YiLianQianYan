@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Check, Clipboard, Copy, Pause, Play, RefreshCw, ScrollText, Trash2 } from "lucide-react";
 import { getLogs, type LogEntry } from "../api/client";
-import { Drawer, EmptyState, ErrorState, Input, PageHeader, Skeleton, Button, Badge } from "../components/ui";
+import {
+  Drawer,
+  EmptyState,
+  ErrorState,
+  Input,
+  Skeleton,
+  Button,
+  Badge,
+  ConfirmDialog,
+  Select,
+  KeyValueRow,
+  CodeBlock,
+} from "../components/ui";
+import PageShell from "../components/layout/PageShell";
 import { formatLogLevel, formatLogTimestamp } from "../components/system";
 
 function highlightMatch(text: string, query: string) {
@@ -84,6 +97,8 @@ export default function LogsPage() {
   const [loadError, setLoadError] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
   const [copiedDetail, setCopiedDetail] = useState(false);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [activeLogIndex, setActiveLogIndex] = useState<number>(-1);
   const listRef = useRef<HTMLDivElement>(null);
 
   const fetchLogs = useCallback(async () => {
@@ -165,14 +180,27 @@ export default function LogsPage() {
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      const currentIndex = selectedEntry ? visibleEntries.findIndex((e) => isSameEntry(e, selectedEntry)) : -1;
-      const nextIndex = Math.min(visibleEntries.length - 1, currentIndex + 1);
-      setSelectedEntry(visibleEntries[nextIndex]);
+      setActiveLogIndex((prev) => {
+        const next = Math.min(visibleEntries.length - 1, prev + 1);
+        if (selectedEntry) {
+          setSelectedEntry(visibleEntries[next]);
+        }
+        return next;
+      });
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      const currentIndex = selectedEntry ? visibleEntries.findIndex((e) => isSameEntry(e, selectedEntry)) : visibleEntries.length;
-      const prevIndex = Math.max(0, currentIndex - 1);
-      setSelectedEntry(visibleEntries[prevIndex]);
+      setActiveLogIndex((prev) => {
+        const next = Math.max(0, prev - 1);
+        if (selectedEntry) {
+          setSelectedEntry(visibleEntries[next]);
+        }
+        return next;
+      });
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (activeLogIndex >= 0 && activeLogIndex < visibleEntries.length) {
+        setSelectedEntry(visibleEntries[activeLogIndex]);
+      }
     }
   };
 
@@ -195,48 +223,65 @@ export default function LogsPage() {
   };
 
   return (
-    <div className="ui-opt-logs system-center-page page-canvas flex h-full min-h-0 flex-col">
-      <PageHeader
-        title="日志"
-        description={`查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（服务端总计约 ${total} 条）`}
-        actions={(
-          <div className="system-logs-toolbar flex flex-wrap items-center gap-2">
-            <Input
-              aria-label="搜索日志"
-              placeholder="搜索消息或来源…"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              className="system-log-search"
-            />
-            <label className="system-log-filter">
-              <span>级别</span>
-              <select aria-label="按日志级别筛选" value={filterLevel} onChange={(event) => handleFilterChange(setFilterLevel, event.target.value)}>
-                <option value="">全部</option>
-                {levelOptions.map((level) => <option key={level} value={level}>{formatLogLevel(level).label}</option>)}
-              </select>
-            </label>
-            <label className="system-log-filter">
-              <span>来源</span>
-              <select aria-label="按日志来源筛选" value={filterSource} onChange={(event) => handleFilterChange(setFilterSource, event.target.value)}>
-                <option value="">全部</option>
-                {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
-              </select>
-            </label>
-            <Button variant="secondary" size="sm" onClick={() => void fetchLogs()} aria-label="刷新日志">
-              <RefreshCw className="h-3.5 w-3.5" />刷新
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => setPaused((value) => !value)} aria-pressed={paused}>
-              {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-              {paused ? "继续" : "暂停"}
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => void clearLogs()} aria-label="清空日志">
-              <Trash2 className="h-3.5 w-3.5" />清空
-            </Button>
-          </div>
-        )}
-      />
-
-      <div className="system-logs-surface relative min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-4">
+    <PageShell
+      title="日志"
+      description={`查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（服务端总计约 ${total} 条）`}
+      className="ui-opt-logs system-center-page page-canvas flex h-full min-h-0 flex-col"
+      contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+      actions={(
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => void fetchLogs()} aria-label="刷新日志">
+            <RefreshCw className="h-3.5 w-3.5" />刷新
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setPaused((value) => !value)} aria-pressed={paused}>
+            {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+            {paused ? "继续" : "暂停"}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setConfirmClearOpen(true)} aria-label="清空日志">
+            <Trash2 className="h-3.5 w-3.5" />清空
+          </Button>
+        </div>
+      )}
+    >
+      <div className="system-logs-surface relative min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-3 flex flex-col gap-3">
+        {/* Streamlined search and filter bar inside body */}
+        <div className="system-logs-toolbar flex flex-wrap items-center gap-2.5 shrink-0 pb-1">
+          <Input
+            aria-label="搜索日志"
+            placeholder="搜索消息或来源…"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            className="system-log-search flex-1 max-w-xs"
+          />
+          <Select
+            size="sm"
+            aria-label="按日志级别筛选"
+            value={filterLevel}
+            onChange={(event) => handleFilterChange(setFilterLevel, event.target.value)}
+            className="w-28"
+            options={[
+              { value: "", label: "全部级别" },
+              ...levelOptions.map((level) => ({
+                value: level,
+                label: formatLogLevel(level).label,
+              })),
+            ]}
+          />
+          <Select
+            size="sm"
+            aria-label="按日志来源筛选"
+            value={filterSource}
+            onChange={(event) => handleFilterChange(setFilterSource, event.target.value)}
+            className="w-32"
+            options={[
+              { value: "", label: "全部来源" },
+              ...sourceOptions.map((source) => ({
+                value: source,
+                label: source,
+              })),
+            ]}
+          />
+        </div>
         {loadError ? (
           <ErrorState
             title="日志暂时无法加载"
@@ -265,9 +310,12 @@ export default function LogsPage() {
               <LogRow
                 key={`${entry.timestamp}-${entry.source}-${index}`}
                 entry={entry}
-                selected={isSameEntry(entry, selectedEntry)}
+                selected={isSameEntry(entry, selectedEntry) || index === activeLogIndex}
                 searchQuery={searchQuery}
-                onOpen={() => setSelectedEntry(entry)}
+                onOpen={() => {
+                  setActiveLogIndex(index);
+                  setSelectedEntry(entry);
+                }}
               />
             ))}
           </div>
@@ -294,27 +342,37 @@ export default function LogsPage() {
 
       <Drawer open={selectedEntry !== null} side="right" title="日志详情" onClose={() => setSelectedEntry(null)}>
         {selectedEntry ? (
-          <div className="system-log-detail">
-            <dl>
-              <div><dt>时间</dt><dd>{formatLogTimestamp(selectedEntry.timestamp)}</dd></div>
-              <div><dt>级别</dt><dd>{formatLogLevel(selectedEntry.level).label}</dd></div>
-              <div><dt>来源</dt><dd>{selectedEntry.source || "—"}</dd></div>
-            </dl>
-            <section aria-labelledby="log-message-title">
-              <div className="mb-2 flex items-center justify-between">
-                <h3 id="log-message-title">消息</h3>
-                <div className="flex gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => copyFullLog(selectedEntry)}>
-                    {copiedDetail ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                    {copiedDetail ? "已复制" : "复制完整日志"}
-                  </Button>
-                </div>
+          <div className="system-log-detail space-y-4 p-4">
+            <div className="divide-y divide-[var(--border-soft)] rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-1">
+              <KeyValueRow label="时间" value={formatLogTimestamp(selectedEntry.timestamp)} mono />
+              <KeyValueRow label="级别" value={formatLogLevel(selectedEntry.level).label} />
+              <KeyValueRow label="来源" value={selectedEntry.source || "—"} copyable={selectedEntry.source || undefined} />
+            </div>
+            <section aria-labelledby="log-message-title" className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 id="log-message-title" className="text-xs font-semibold text-[var(--text-secondary)]">消息内容</h3>
+                <Button variant="secondary" size="sm" onClick={() => copyFullLog(selectedEntry)}>
+                  {copiedDetail ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedDetail ? "已复制" : "复制完整日志"}
+                </Button>
               </div>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] p-3 text-xs font-mono">{selectedEntry.message}</pre>
+              <CodeBlock code={selectedEntry.message} maxHeight="400px" />
             </section>
           </div>
         ) : null}
       </Drawer>
-    </div>
+      <ConfirmDialog
+        open={confirmClearOpen}
+        title="清空日志"
+        description="确定要清空服务端的系统日志吗？清空后旧日志将无法恢复。"
+        confirmLabel="清空"
+        tone="danger"
+        onConfirm={async () => {
+          setConfirmClearOpen(false);
+          await clearLogs();
+        }}
+        onCancel={() => setConfirmClearOpen(false)}
+      />
+    </PageShell>
   );
 }

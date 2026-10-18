@@ -99,8 +99,8 @@
   .system-logs-toolbar {
     display: flex;
     flex-wrap: wrap;
-    align-items: end;
-    justify-content: flex-end;
+    align-items: center;
+    justify-content: flex-start;
     gap: 0.5rem;
   }
 

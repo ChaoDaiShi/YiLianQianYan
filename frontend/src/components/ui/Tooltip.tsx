@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 export interface TooltipProps {
@@ -14,6 +14,7 @@ export default function Tooltip({
   side = "right",
   delayMs = 300,
 }: TooltipProps) {
+  const tooltipId = useId();
   const triggerRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -109,6 +110,7 @@ export default function Tooltip({
 
   const tooltipElement = open ? (
     <div
+      id={tooltipId}
       role="tooltip"
       aria-hidden="false"
       style={{ top: position.top, left: position.left }}
@@ -121,6 +123,7 @@ export default function Tooltip({
   return (
     <span
       ref={triggerRef}
+      aria-describedby={open ? tooltipId : undefined}
       className="inline-flex"
       onPointerEnter={showDelayed}
       onPointerLeave={hide}

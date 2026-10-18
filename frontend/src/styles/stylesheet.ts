@@ -36,6 +36,7 @@ export const stylesheetText = [
   "settings.css",
   "contextRail.css",
   "cloudExperience.css",
+  "proofloopGoalView.css",
   "ui-optimization/foundation.css",
   "ui-optimization/chat.css",
   "ui-optimization/tasks-workspaces.css",

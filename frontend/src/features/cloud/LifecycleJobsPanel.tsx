@@ -4,7 +4,7 @@ import {
   type LifecycleJob,
   type LifecycleJobStatus,
 } from "../../api/cloud";
-import { Badge, Button } from "../../components/ui";
+import { Badge, Button, ProgressBar } from "../../components/ui";
 
 interface LifecycleJobsPanelProps {
   job: LifecycleJob | null;
@@ -123,50 +123,30 @@ export function LifecycleJobsPanel({
         </div>
       </div>
 
-      <div style={{ marginTop: "12px", marginBottom: "12px" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: "13px",
-            color: "var(--text-secondary, #666)",
-            marginBottom: "6px",
-          }}
-        >
+      <div className="my-3 space-y-1.5">
+        <div className="flex justify-between text-xs text-[var(--text-secondary)]">
           <span>执行进度</span>
           <span>{job.progress}%</span>
         </div>
-        <div
-          style={{
-            height: "8px",
-            background: "var(--bg-muted, #f0f0f0)",
-            borderRadius: "4px",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${Math.min(100, Math.max(0, job.progress))}%`,
-              background: job.status === "failed" ? "var(--color-danger, #ef4444)" : "var(--color-primary, #3b82f6)",
-              transition: "width 0.3s ease",
-            }}
-          />
-        </div>
+        <ProgressBar
+          value={job.progress}
+          tone={job.status === "failed" ? "danger" : "default"}
+          size="sm"
+        />
       </div>
 
       {isDeletion ? (
-        <dl className="cloud-data-list" style={{ marginTop: "12px" }}>
+        <dl className="cloud-data-list mt-3">
           <div>
             <dt>活跃数据清理</dt>
             <dd>
               {job.live_data_removed ? (
-                <span style={{ color: "#16a34a", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <CheckCircle2 style={{ width: 14, height: 14 }} /> 已彻底清除
+                <span className="inline-flex items-center gap-1 text-xs text-[var(--success-fg)]">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" /> 已彻底清除
                 </span>
               ) : (
-                <span style={{ color: "#ca8a04", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <Clock style={{ width: 14, height: 14 }} /> 清理处理中
+                <span className="inline-flex items-center gap-1 text-xs text-[var(--warning-fg)]">
+                  <Clock className="h-3.5 w-3.5 text-[var(--warning)]" /> 清理处理中
                 </span>
               )}
             </dd>
@@ -175,8 +155,8 @@ export function LifecycleJobsPanel({
             <dt>备份擦除状态</dt>
             <dd>
               {job.backups_cleared ? (
-                <span style={{ color: "#16a34a", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <CheckCircle2 style={{ width: 14, height: 14 }} /> 备份副本已全部擦除
+                <span className="inline-flex items-center gap-1 text-xs text-[var(--success-fg)]">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" /> 备份副本已全部擦除
                 </span>
               ) : job.backup_purge_deadline ? (
                 <span>
@@ -191,34 +171,23 @@ export function LifecycleJobsPanel({
       ) : null}
 
       {isExport && job.status === "completed" ? (
-        <div style={{ marginTop: "16px" }}>
+        <div className="mt-4">
           <Button
             variant="primary"
             onClick={() => void downloadExport()}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            className="inline-flex items-center gap-1.5"
           >
-            <Download style={{ width: 16, height: 16 }} /> 下载导出数据 (.json)
+            <Download className="h-4 w-4" /> 下载导出数据 (.json)
           </Button>
         </div>
       ) : null}
 
       {job.error_code ? (
         <div
-          style={{
-            marginTop: "12px",
-            padding: "8px 12px",
-            background: "rgba(239, 68, 68, 0.1)",
-            border: "1px solid rgba(239, 68, 68, 0.2)",
-            borderRadius: "6px",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            color: "#dc2626",
-            fontSize: "13px",
-          }}
+          className="mt-3 flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--danger-border)] bg-[var(--danger-soft)] p-2 text-xs text-[var(--danger-fg)]"
           role="status"
         >
-          <AlertCircle style={{ width: 16, height: 16, flexShrink: 0 }} />
+          <AlertCircle className="h-4 w-4 shrink-0 text-[var(--danger)]" />
           <span>错误代号：{job.error_code}</span>
         </div>
       ) : null}

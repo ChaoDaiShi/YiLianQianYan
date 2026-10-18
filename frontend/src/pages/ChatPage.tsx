@@ -9,6 +9,7 @@ import {
   type WorkspaceDrawer,
 } from "../components/layout/workspaceLayout";
 import { Drawer } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
 import ContextRail, { type ContextRailStatusTone } from "../components/layout/ContextRail";
 import ExecutionSidebar from "../features/execution/ExecutionSidebar";
 import { Activity } from "lucide-react";
@@ -156,6 +157,14 @@ export default function ChatPage() {
     [workspaceMode]
   );
 
+  const handleToggleExecution = useCallback(() => {
+    if (workspaceMode === "full") {
+      setExecutionCollapsed(false);
+    } else {
+      openDrawer("execution");
+    }
+  }, [workspaceMode, openDrawer]);
+
   const conversationSidebar = (onClose?: () => void) => (
     <ConversationSidebar
       activeId={conversationId}
@@ -166,8 +175,11 @@ export default function ChatPage() {
   );
 
   return (
-    <div
+    <PageShell
+      variant="workspace"
+      maxWidth="none"
       className={`${WORKBENCH_VIEWPORT_CLASS_NAME} ui-opt-chat page-canvas`}
+      contentClassName="contents"
       data-chat-view={conversationId ? "conversation" : "home"}
       data-mode={workspaceMode}
       data-execution-collapsed={
@@ -201,7 +213,7 @@ export default function ChatPage() {
         conversationToggleRef={conversationToggleRef}
         executionToggleRef={executionToggleRef}
         onToggleConversations={() => openDrawer("conversations")}
-        onToggleExecution={() => openDrawer("execution")}
+        onToggleExecution={handleToggleExecution}
         onVoiceAnchorChange={onVoiceAnchorChange}
         conversationRefreshRevision={
           conversationRefresh?.conversation_id === conversationId
@@ -269,6 +281,6 @@ export default function ChatPage() {
           );
         }}
       />
-    </div>
+    </PageShell>
   );
 }
