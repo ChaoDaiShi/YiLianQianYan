@@ -1,7 +1,7 @@
 import { cn } from "./cn";
-import { useId } from "react";
+import { useId, type TextareaHTMLAttributes } from "react";
 
-export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   hint?: string;
   error?: string;
@@ -16,7 +16,7 @@ export default function Textarea({
   ...props
 }: TextareaProps) {
   const generatedId = useId();
-  const inputId = id || (label ? `ta-${label}` : generatedId);
+  const inputId = id || generatedId;
   const hintId = `${inputId}-hint`;
   const errorId = `${inputId}-error`;
 

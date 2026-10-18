@@ -105,7 +105,7 @@ export default function Drawer({
     : "min(88vw, 360px)";
 
   return (
-    <div className="fixed inset-0 z-50 flex" role="presentation">
+    <div className="fixed inset-0 z-[var(--z-rail-drawer,50)] flex" role="presentation">
       <div
         className="absolute inset-0 bg-[var(--backdrop)] backdrop-blur-sm"
         aria-hidden="true"
@@ -134,6 +134,7 @@ export default function Drawer({
             aria-valuenow={width ?? MIN_WIDTH}
             aria-valuemin={MIN_WIDTH}
             aria-valuemax={MAX_WIDTH}
+            aria-valuetext={`${width ?? MIN_WIDTH} 像素`}
             tabIndex={0}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
