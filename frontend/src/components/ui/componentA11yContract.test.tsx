@@ -94,6 +94,33 @@ describe("W2 Component Library Accessibility and Structure Contract", () => {
       expect(html).toContain('role="tablist"');
       expect(html).toContain("网格");
     });
+
+    it("omits aria-controls when the panel is not mounted (panelId false)", () => {
+      const html = renderToStaticMarkup(
+        <Tabs
+          tabs={[
+            { id: "login", label: "登录", panelId: false },
+            { id: "register", label: "注册", panelId: false },
+          ]}
+          activeId="login"
+          onChange={() => {}}
+          variant="segment"
+        />
+      );
+      expect(html).not.toContain("aria-controls");
+    });
+
+    it("keeps aria-controls when the caller renders a matching panel", () => {
+      const html = renderToStaticMarkup(
+        <Tabs
+          tabs={[{ id: "runtime", label: "运行", panelId: "panel-runtime" }]}
+          activeId="runtime"
+          onChange={() => {}}
+          variant="underline"
+        />
+      );
+      expect(html).toContain('aria-controls="panel-runtime"');
+    });
   });
 
   describe("FilterBar", () => {

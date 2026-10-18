@@ -57,8 +57,10 @@ export default function WorkflowsPage() {
         !editorOpen ? (
           <Tabs
             tabs={[
-              { id: "runtime", label: "运行工作流" },
-              { id: "templates", label: "模板工作流" },
+              // Only the active tab panel is mounted, so omit aria-controls instead of
+              // pointing it at a panel id that does not exist in the DOM.
+              { id: "runtime", label: "运行工作流", panelId: false },
+              { id: "templates", label: "模板工作流", panelId: false },
             ]}
             activeId={tab}
             onChange={(id) => setTab(id as Tab)}

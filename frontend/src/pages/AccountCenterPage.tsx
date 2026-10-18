@@ -260,8 +260,10 @@ export default function AccountCenterPage() {
                     size="sm"
                     aria-label="账号操作"
                     tabs={[
-                      { id: "login", label: "登录账号" },
-                      { id: "register", label: "创建账号" },
+                      // Only the active panel is mounted (login/register share one form shell),
+                      // so do not emit aria-controls for a panel that is not in the DOM.
+                      { id: "login", label: "登录账号", panelId: false },
+                      { id: "register", label: "创建账号", panelId: false },
                     ]}
                     activeId={mode}
                     onChange={(val) => setMode(val as "login" | "register")}
