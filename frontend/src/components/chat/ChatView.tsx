@@ -19,7 +19,7 @@ import {
   type AgentEvent,
   type Workflow,
 } from "../../api/client";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, ShieldAlert } from "lucide-react";
 import { bindResources } from "../../api/resources";
 import { getProviderReadiness } from "../../api/providerConnection";
 import type { ConversationalAnchor } from "../../api/voice";
@@ -625,6 +625,25 @@ export default function ChatView({
             </button>
           </section>
         ) : null}
+
+        {pendingApprovals.length > 0 && (
+          <div
+            className="mx-4 mt-2 flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--warning-border)] bg-[var(--warning-soft)] px-4 py-2.5 text-xs text-[var(--warning-fg)] shadow-sm animate-fade-in"
+            role="status"
+          >
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4 text-[var(--warning)] shrink-0" />
+              <span>有 {pendingApprovals.length} 项操作等待确认</span>
+            </div>
+            <button
+              type="button"
+              onClick={onToggleExecution}
+              className="font-medium text-[var(--accent-primary)] hover:underline focus-visible:outline-none"
+            >
+              查看待确认
+            </button>
+          </div>
+        )}
 
       {messages.length === 0 && !streaming && !error ? (
         <WorkbenchHome

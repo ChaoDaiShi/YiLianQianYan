@@ -1,10 +1,10 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "../ui/cn";
 
 export type PageShellVariant = "standard" | "workspace";
 export type PageShellMaxWidth = "reading" | "form" | "dashboard" | "none";
 
-export interface PageShellProps {
+export interface PageShellProps extends Omit<HTMLAttributes<HTMLDivElement>, "title"> {
   title?: ReactNode;
   description?: ReactNode;
   status?: ReactNode;
@@ -90,6 +90,7 @@ export default function PageShell({
   headerClassName,
   contentClassName,
   children,
+  ...props
 }: PageShellProps) {
   const isWorkspace = variant === "workspace";
 
@@ -99,6 +100,7 @@ export default function PageShell({
         "page-canvas relative flex h-full w-full flex-col overflow-hidden bg-transparent",
         className,
       )}
+      {...props}
     >
       <PageShellHeader
         title={title}
