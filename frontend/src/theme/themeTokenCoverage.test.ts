@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CYRENE_SEMANTIC_TOKENS, PRESETS } from "./presets";
-import { CYRENE_TOKENS, TOKEN_GROUPS, DERIVED_TOKENS } from "./tokens";
+import { TOKEN_GROUPS } from "./tokens";
 
 function hexToRgb(hex: string): [number, number, number] {
   let clean = hex.replace("#", "");

@@ -1,4 +1,4 @@
-import { CYRENE_SEMANTIC_TOKENS, CYRENE_SHARED_TOKENS } from "./presets";
+import { CYRENE_SEMANTIC_TOKENS } from "./presets";
 import type { ColorScheme } from "./types";
 
 /**

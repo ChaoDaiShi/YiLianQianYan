@@ -38,7 +38,7 @@ const BACKEND_STATUS_META: Record<
   unavailable: { label: "后端不可用", color: "bg-[var(--danger)]" },
 };
 
-const CORE_NAV_IDS = new Set(["chat", "tasks", "workflows", "workspaces"]);
+const CORE_NAV_IDS = new Set(["tasks", "chat", "search", "workflows", "workspaces", "capabilities"]);
 
 export default function NavRail() {
   const navigate = useNavigate();
@@ -226,8 +226,25 @@ export default function NavRail() {
       {/* Spacer to push settings and status to bottom */}
       <div className="flex-1" />
 
-      {/* Bottom Actions: Settings & Status */}
+      {/* Bottom Actions: Settings, Safety & Status */}
       <div className="flex shrink-0 flex-col items-center gap-2 pb-1">
+        <Tooltip content="安全与审批">
+          <NavLink
+            to="/system?card=approvals"
+            aria-label="安全与审批中心"
+            className={({ isActive }) =>
+              cn(
+                "nav-rail-item relative flex h-11 w-11 items-center justify-center rounded-xl leading-tight transition-colors duration-[var(--motion-fast)]",
+                isActive
+                  ? "bg-[var(--sidebar-active)] text-white"
+                  : "text-[var(--sidebar-text)] opacity-75 hover:bg-white/10 hover:opacity-100",
+              )
+            }
+          >
+            <ShieldCheck className="h-5 w-5" />
+          </NavLink>
+        </Tooltip>
+
         <Tooltip content="设置">
           <NavLink
             to="/settings"
@@ -272,10 +289,7 @@ export default function NavRail() {
           ref={menuRef}
           role="dialog"
           aria-label="功能扩展库"
-          className="fixed left-[72px] top-12 z-50 flex w-[320px] max-h-[calc(100vh-64px)] flex-col overflow-hidden rounded-2xl border border-[var(--accent-border)] bg-[var(--surface-elevated)] p-4 text-[var(--text-primary)] shadow-2xl backdrop-blur-2xl min-[960px]:left-[84px] animate-in fade-in zoom-in-95 duration-150"
-          style={{
-            boxShadow: "0 12px 36px rgba(48,38,76,0.18), 0 0 0 1px var(--accent-border)",
-          }}
+          className="fixed left-[72px] top-12 z-50 flex w-[320px] max-h-[calc(100vh-64px)] flex-col overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)] shadow-[var(--shadow-float)] backdrop-blur-xl min-[960px]:left-[84px] animate-scale-in"
         >
           <div className="mb-3 flex items-center justify-between border-b border-[var(--divider)] pb-2.5">
             <div className="flex items-center gap-2">

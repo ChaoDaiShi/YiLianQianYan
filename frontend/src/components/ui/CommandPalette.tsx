@@ -1,266 +1,207 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
-  Activity,
-  BookOpen,
-  Bot,
-  Boxes,
-  Brain,
-  Compass,
-  FolderGit2,
-  LayoutGrid,
-  Moon,
-  Puzzle,
-  ScrollText,
   Search,
-  Settings,
   Sparkles,
   Sun,
-  User,
-  Workflow,
+  Moon,
+  Laptop,
   X,
+  ShieldAlert,
+  ShieldCheck,
+  ListTodo,
 } from "lucide-react";
 import { useTheme } from "../../theme";
+import { NAV_ENTRIES } from "../layout/navRegistry";
 
 interface CommandItem {
   id: string;
   title: string;
-  category: "导航页面" | "系统与偏好" | "高频动作";
+  category: "最近使用" | "导航页面" | "系统与偏好" | "高频动作";
   description?: string;
   icon: React.ReactNode;
   shortcut?: string;
+  keywords?: string[];
   action: () => void;
 }
 
-export interface CommandPaletteProps {
-  open?: boolean;
-  onClose?: () => void;
+const RECENT_COMMANDS_KEY = "cyrene_recent_commands";
+
+function getRecentCommandIds(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_COMMANDS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
 }
 
-export default function CommandPalette({
-  open: controlledOpen,
-  onClose: controlledOnClose,
-}: CommandPaletteProps = {}) {
-  const [internalOpen, setInternalOpen] = useState(false);
-  const isOpen = controlledOpen !== undefined ? controlledOpen : internalOpen;
-  const setIsOpen = (value: boolean) => {
-    if (controlledOnClose && !value) {
-      controlledOnClose();
-    }
-    setInternalOpen(value);
-  };
+function saveRecentCommandId(id: string) {
+  try {
+    const list = getRecentCommandIds().filter((item) => item !== id);
+    list.unshift(id);
+    localStorage.setItem(RECENT_COMMANDS_KEY, JSON.stringify(list.slice(0, 5)));
+  } catch {
+    // Ignore storage errors
+  }
+}
 
+export default function CommandPalette() {
+  const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [mounted, setMounted] = useState(false);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { setMode, resolvedScheme } = useTheme();
+  const { setMode } = useTheme();
 
   useEffect(() => {
     setMounted(true);
-  }, []);
-
-  // Global Ctrl+K / Cmd+K listener
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing) return;
-      const isCmdK = (event.ctrlKey || event.metaKey) && (event.key === "k" || event.key === "K");
-      if (isCmdK) {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && (event.key === "k" || event.key === "K")) {
         event.preventDefault();
-        setIsOpen(!isOpen);
-      } else if (event.key === "Escape" && isOpen) {
-        event.preventDefault();
-        setIsOpen(false);
+        triggerRef.current = document.activeElement as HTMLElement | null;
+        setIsOpen((open) => !open);
       }
     };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen]);
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
       setQuery("");
       setSelectedIndex(0);
       window.setTimeout(() => inputRef.current?.focus(), 50);
+    } else if (triggerRef.current) {
+      triggerRef.current.focus();
     }
   }, [isOpen]);
 
-  const runAndClose = (fn: () => void) => {
+  const runAndClose = (id: string, fn: () => void) => {
+    saveRecentCommandId(id);
     fn();
     setIsOpen(false);
   };
 
-  const commands: CommandItem[] = useMemo(() => [
-    // 导航
-    {
-      id: "nav-chat",
-      title: "对话工作台",
-      category: "导航页面",
-      description: "与小昔涟开启智能体协作对话",
-      icon: <Sparkles className="h-4 w-4 text-[#ea91b9]" />,
-      shortcut: "Alt+2",
-      action: () => navigate("/chat"),
-    },
-    {
-      id: "nav-tasks",
-      title: "任务中心",
-      category: "导航页面",
-      description: "查看与监控正在运行的任务列表",
-      icon: <LayoutGrid className="h-4 w-4 text-[#99cfea]" />,
-      shortcut: "Alt+1",
-      action: () => navigate("/tasks"),
-    },
-    {
-      id: "nav-workflows",
-      title: "工作流编排",
-      category: "导航页面",
-      description: "可视化搭建与运行任务 DAG 流程",
-      icon: <Workflow className="h-4 w-4 text-[#ad9be8]" />,
-      shortcut: "Alt+4",
-      action: () => navigate("/workflows"),
-    },
-    {
-      id: "nav-workspaces",
-      title: "工作区管理",
-      category: "导航页面",
-      description: "管理本地工作区目录与工程文件集",
-      icon: <FolderGit2 className="h-4 w-4 text-[#ebcf8c]" />,
-      shortcut: "Alt+5",
-      action: () => navigate("/workspaces"),
-    },
-    {
-      id: "nav-capabilities",
-      title: "能力与工具中心",
-      category: "导航页面",
-      description: "总览智能体、技能与工具执行健康度",
-      icon: <Boxes className="h-4 w-4 text-[#52b798]" />,
-      shortcut: "Alt+6",
-      action: () => navigate("/capabilities"),
-    },
-    {
-      id: "nav-agents",
-      title: "智能体配置 (Agents)",
-      category: "导航页面",
-      description: "管理角色人设、Prompt 与工具绑定",
-      icon: <Bot className="h-4 w-4 text-[#ad9be8]" />,
-      action: () => navigate("/agents"),
-    },
-    {
-      id: "nav-skills",
-      title: "技能库 (Skills)",
-      category: "导航页面",
-      description: "查看与试运行已安装的技能模块",
-      icon: <Puzzle className="h-4 w-4 text-[#99cfea]" />,
-      action: () => navigate("/skills"),
-    },
-    {
-      id: "nav-plugins",
-      title: "扩展插件 (Plugins)",
-      category: "导航页面",
-      description: "配置 MCP 服务、浏览器插件与适配器",
-      icon: <Compass className="h-4 w-4 text-[#ea91b9]" />,
-      action: () => navigate("/plugins"),
-    },
-    {
-      id: "nav-memory",
-      title: "长期记忆库 (Memory)",
-      category: "导航页面",
-      description: "检索与编辑用户偏好与对话提炼事实",
-      icon: <Brain className="h-4 w-4 text-[#ad9be8]" />,
-      action: () => navigate("/memory"),
-    },
-    {
-      id: "nav-knowledge",
-      title: "本地知识库 (Knowledge)",
-      category: "导航页面",
-      description: "上传文档与管理向量化检索知识库",
-      icon: <BookOpen className="h-4 w-4 text-[#ebcf8c]" />,
-      action: () => navigate("/knowledge"),
-    },
-    {
-      id: "nav-search",
-      title: "综合检索 (Search)",
-      category: "导航页面",
-      description: "跨会话、工作区与记忆的全文检索",
-      icon: <Search className="h-4 w-4 text-[#99cfea]" />,
-      shortcut: "Alt+3",
-      action: () => navigate("/search"),
-    },
-    {
-      id: "nav-system",
-      title: "系统状态监控",
-      category: "导航页面",
-      description: "监控后端进程健康、内存占用与网络指标",
-      icon: <Activity className="h-4 w-4 text-[#52b798]" />,
-      action: () => navigate("/system"),
-    },
-    {
-      id: "nav-logs",
-      title: "运行日志诊断",
-      category: "导航页面",
-      description: "实时诊断日志与堆栈输出追踪",
-      icon: <ScrollText className="h-4 w-4 text-[#d9a441]" />,
-      action: () => navigate("/logs"),
-    },
-    {
-      id: "nav-account",
-      title: "个人账户与云端",
-      category: "导航页面",
-      description: "云端契约同步、额度查看与凭据配置",
-      icon: <User className="h-4 w-4 text-[#ea91b9]" />,
-      action: () => navigate("/account"),
-    },
-    {
-      id: "nav-settings",
-      title: "系统设置",
-      category: "导航页面",
-      description: "外观主题、模型 API 密钥与安全策略",
-      icon: <Settings className="h-4 w-4 text-[#696276]" />,
-      shortcut: "Ctrl+,",
-      action: () => navigate("/settings"),
-    },
+  const commands: CommandItem[] = useMemo(() => {
+    // Derive navigation commands directly from single registry
+    const navCmds: CommandItem[] = NAV_ENTRIES.map((entry) => {
+      const Icon = entry.icon;
+      return {
+        id: `nav-${entry.id}`,
+        title: entry.label,
+        category: "导航页面",
+        description: entry.description,
+        icon: <Icon className="h-4 w-4 text-[var(--accent-primary)]" />,
+        shortcut: entry.shortcut,
+        keywords: entry.keywords ? [...entry.keywords] : undefined,
+        action: () => navigate(entry.to),
+      };
+    });
 
-    // 高频动作
-    {
-      id: "action-theme-toggle",
-      title: resolvedScheme === "dark" ? "切换为明亮「昔涟水波」" : "切换为暗夜「昔涟暗夜」",
-      category: "系统与偏好",
-      description: "即时切换全站色彩主题",
-      icon: resolvedScheme === "dark" ? <Sun className="h-4 w-4 text-[#ebcf8c]" /> : <Moon className="h-4 w-4 text-[#ad9be8]" />,
-      action: () => {
-        setMode(resolvedScheme === "dark" ? "light" : "dark");
+    const actionCmds: CommandItem[] = [
+      {
+        id: "action-new-chat",
+        title: "开启新对话",
+        category: "高频动作",
+        description: "进入智能体对话工作台开启崭新会话",
+        icon: <Sparkles className="h-4 w-4 text-[var(--accent-primary)]" />,
+        keywords: ["新对话", "新建", "chat", "new"],
+        action: () => navigate("/chat"),
       },
-    },
-    {
-      id: "action-new-chat",
-      title: "新建会话",
-      category: "高频动作",
-      description: "开启一段崭新的智能体对话",
-      icon: <Sparkles className="h-4 w-4 text-[#ea91b9]" />,
-      action: () => navigate("/chat"),
-    },
-    {
-      id: "action-new-workflow",
-      title: "创建新工作流",
-      category: "高频动作",
-      description: "进入工作流画布开始编排节点",
-      icon: <Workflow className="h-4 w-4 text-[#ad9be8]" />,
-      action: () => navigate("/workflows"),
-    },
-  ], [navigate, resolvedScheme, setMode]);
+      {
+        id: "action-new-task",
+        title: "规划新任务",
+        category: "高频动作",
+        description: "在任务中心开始新目标规划与执行",
+        icon: <ListTodo className="h-4 w-4 text-[var(--accent-purple)]" />,
+        keywords: ["新任务", "新建任务", "task"],
+        action: () => navigate("/tasks"),
+      },
+      {
+        id: "action-approvals",
+        title: "查看待审批操作",
+        category: "高频动作",
+        description: "前往安全网关与系统监控审批待确认操作",
+        icon: <ShieldAlert className="h-4 w-4 text-[var(--warning)]" />,
+        keywords: ["审批", "approval", "待确认", "安全"],
+        action: () => navigate("/system?card=approvals"),
+      },
+      {
+        id: "action-security-settings",
+        title: "打开安全与权限设置",
+        category: "高频动作",
+        description: "配置工具风险策略与沙箱安全边界",
+        icon: <ShieldCheck className="h-4 w-4 text-[var(--success)]" />,
+        keywords: ["安全", "权限", "gateway", "permission"],
+        action: () => navigate("/settings?section=permission"),
+      },
+      // 系统偏好
+      {
+        id: "pref-theme-light",
+        title: "切换到昔涟 · 浅色模式",
+        category: "系统与偏好",
+        description: "白昼通透晨光材质外观",
+        icon: <Sun className="h-4 w-4 text-[var(--accent-gold)]" />,
+        keywords: ["浅色", "白天", "light"],
+        action: () => setMode("light"),
+      },
+      {
+        id: "pref-theme-dark",
+        title: "切换到昔涟 · 暗色模式",
+        category: "系统与偏好",
+        description: "夜幕静谧深紫琉璃材质外观",
+        icon: <Moon className="h-4 w-4 text-[var(--accent-purple)]" />,
+        keywords: ["深色", "暗色", "夜间", "dark"],
+        action: () => setMode("dark"),
+      },
+      {
+        id: "pref-theme-system",
+        title: "跟随系统外观设置",
+        category: "系统与偏好",
+        description: "自动适配 Windows 系统主题切换",
+        icon: <Laptop className="h-4 w-4 text-[var(--text-secondary)]" />,
+        keywords: ["系统", "跟随", "auto", "system"],
+        action: () => setMode("system"),
+      },
+    ];
+
+    return [...navCmds, ...actionCmds];
+  }, [navigate, setMode]);
 
   const filteredCommands = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return commands;
+    if (!q) {
+      const recentIds = getRecentCommandIds();
+      if (recentIds.length === 0) return commands;
+
+      const recentItems: CommandItem[] = [];
+      const otherItems: CommandItem[] = [];
+
+      for (const cmd of commands) {
+        if (recentIds.includes(cmd.id)) {
+          recentItems.push({ ...cmd, category: "最近使用" });
+        } else {
+          otherItems.push(cmd);
+        }
+      }
+
+      // Sort recentItems by order in recentIds
+      recentItems.sort((a, b) => recentIds.indexOf(a.id) - recentIds.indexOf(b.id));
+      return [...recentItems, ...otherItems];
+    }
+
     return commands.filter(
       (cmd) =>
         cmd.title.toLowerCase().includes(q) ||
         (cmd.description && cmd.description.toLowerCase().includes(q)) ||
-        cmd.category.toLowerCase().includes(q)
+        cmd.category.toLowerCase().includes(q) ||
+        cmd.keywords?.some((k) => k.toLowerCase().includes(q)),
     );
   }, [commands, query]);
 
@@ -275,8 +216,11 @@ export default function CommandPalette({
       event.preventDefault();
       const current = filteredCommands[selectedIndex];
       if (current) {
-        runAndClose(current.action);
+        runAndClose(current.id, current.action);
       }
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setIsOpen(false);
     }
   };
 
@@ -290,7 +234,7 @@ export default function CommandPalette({
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-[#1e1b2e]/55 backdrop-blur-md animate-fade-in"
+        className="absolute inset-0 bg-[var(--backdrop)] backdrop-blur-md animate-fade-in"
         aria-hidden="true"
       />
 
@@ -299,19 +243,24 @@ export default function CommandPalette({
         role="dialog"
         aria-modal="true"
         aria-label="全局命令中心"
-        className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-white/20 bg-[var(--surface-solid)] text-[var(--text-primary)] shadow-2xl backdrop-blur-xl animate-scale-in"
+        className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text-primary)] shadow-[var(--shadow-float)] backdrop-blur-xl animate-scale-in"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         {/* Top Glow bar */}
-        <div className="h-1 w-full bg-gradient-to-r from-[#ea91b9] via-[#ad9be8] to-[#99cfea]" />
+        <div className="h-1 w-full bg-[var(--cyrene-gradient-primary)]" />
 
         {/* Search Input Bar */}
         <div className="flex items-center gap-3 border-b border-[var(--border-soft)] px-4 py-3.5">
-          <Search className="h-5 w-5 shrink-0 text-[#ea91b9]" />
+          <Search className="h-5 w-5 shrink-0 text-[var(--accent-primary)]" />
           <input
             ref={inputRef}
             type="text"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls="command-listbox"
+            aria-expanded="true"
+            aria-activedescendant={filteredCommands[selectedIndex] ? `cmd-${filteredCommands[selectedIndex].id}` : undefined}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -338,11 +287,18 @@ export default function CommandPalette({
           </kbd>
         </div>
 
-        {/* Command List */}
-        <div ref={listRef} className="max-h-[360px] overflow-y-auto p-2 scrollbar-thin">
+        {/* Command Listbox */}
+        <div
+          ref={listRef}
+          id="command-listbox"
+          role="listbox"
+          aria-label="命令建议列表"
+          className="max-h-[360px] overflow-y-auto p-2 scrollbar-thin"
+        >
           {filteredCommands.length === 0 ? (
             <div className="py-10 text-center text-sm text-[var(--text-faint)]">
-              未找到匹配的命令或页面
+              <p>没有匹配的命令或页面</p>
+              <p className="mt-1 text-xs text-[var(--text-disabled)]">可以尝试输入关键词、快捷键或页面功能</p>
             </div>
           ) : (
             filteredCommands.map((cmd, index) => {
@@ -350,8 +306,11 @@ export default function CommandPalette({
               return (
                 <button
                   type="button"
+                  role="option"
+                  id={`cmd-${cmd.id}`}
+                  aria-selected={selected}
                   key={cmd.id}
-                  onClick={() => runAndClose(cmd.action)}
+                  onClick={() => runAndClose(cmd.id, cmd.action)}
                   onMouseEnter={() => setSelectedIndex(index)}
                   className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors duration-[100ms] ${
                     selected
