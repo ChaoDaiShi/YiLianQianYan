@@ -1,22 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Check, Clipboard, Clock3, FolderOpen, Plus } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { ArrowLeft, Check, Clipboard, Clock3, Edit3, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   createTask,
+  deleteWorkspace,
   getWorkspace,
   listTasks,
+  updateWorkspace,
   type Task,
   type Workspace,
 } from "../api/client";
 import TaskDetailPanel from "../components/tasks/TaskDetailPanel";
+import PageShell from "../components/layout/PageShell";
 import {
   Badge,
   Button,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   Input,
   Modal,
-  PageHeader,
   Panel,
   Skeleton,
   Textarea,
@@ -31,6 +34,7 @@ import { formatWorkspacePath } from "../features/tasks/workspacePresentation";
 
 export default function WorkspaceDetailPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -41,6 +45,18 @@ export default function WorkspaceDetailPage() {
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Edit workspace modal state
+  const [showEdit, setShowEdit] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editRootPath, setEditRootPath] = useState("");
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
+  // Delete workspace confirmation state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -94,6 +110,45 @@ export default function WorkspaceDetailPage() {
     }
   };
 
+  const handleOpenEdit = () => {
+    if (!workspace) return;
+    setEditName(workspace.name);
+    setEditDescription(workspace.description || "");
+    setEditRootPath(workspace.root_path || "");
+    setUpdateError(null);
+    setShowEdit(true);
+  };
+
+  const handleUpdate = async () => {
+    if (!editName.trim() || updating) return;
+    setUpdating(true);
+    setUpdateError(null);
+    const result = await updateWorkspace(id, {
+      name: editName.trim(),
+      description: editDescription.trim() || undefined,
+      root_path: editRootPath.trim() || undefined,
+    });
+    setUpdating(false);
+    if (result.ok) {
+      setShowEdit(false);
+      void reload();
+    } else {
+      setUpdateError(result.error || "更新工作空间失败");
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    const result = await deleteWorkspace(id);
+    setDeleting(false);
+    if (result.ok) {
+      navigate("/workspaces");
+    } else {
+      setError(result.error || "删除工作空间失败");
+      setShowDeleteConfirm(false);
+    }
+  };
+
   const copyPath = async () => {
     const path = formatWorkspacePath(workspace?.root_path);
     if (!path || !navigator.clipboard) return;
@@ -103,26 +158,45 @@ export default function WorkspaceDetailPage() {
   };
 
   return (
-    <div className="page-canvas ui-opt-workspaces flex h-full min-h-0 flex-col">
-      <PageHeader
-        title={workspace?.name || "工作空间"}
-        description={workspace?.description || "查看任务使用的文件与上下文。"}
-        actions={
-          <>
-            <Link to="/workspaces">
-              <Button type="button" variant="ghost">
-                <ArrowLeft className="h-4 w-4" />
-                返回
-              </Button>
-            </Link>
-            <Button type="button" onClick={() => setShowCreate(true)} disabled={!workspace}>
-              <Plus className="h-4 w-4" />
-              新建任务
+    <PageShell
+      title={workspace?.name || "工作空间"}
+      description={workspace?.description || "查看任务使用的文件与上下文。"}
+      className="page-canvas ui-opt-workspaces flex h-full min-h-0 flex-col"
+      actions={
+        <div className="flex items-center gap-2">
+          <Link to="/workspaces">
+            <Button type="button" variant="ghost">
+              <ArrowLeft className="h-4 w-4" />
+              返回
             </Button>
-          </>
-        }
-      />
-
+          </Link>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleOpenEdit}
+            disabled={!workspace}
+            title="编辑工作空间"
+          >
+            <Edit3 className="h-4 w-4" />
+            编辑
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            onClick={() => setShowDeleteConfirm(true)}
+            disabled={!workspace}
+            title="删除工作空间"
+          >
+            <Trash2 className="h-4 w-4" />
+            删除
+          </Button>
+          <Button type="button" onClick={() => setShowCreate(true)} disabled={!workspace}>
+            <Plus className="h-4 w-4" />
+            新建任务
+          </Button>
+        </div>
+      }
+    >
       {error ? (
         <div className="min-h-0 flex-1 p-4">
           <ErrorState
@@ -235,11 +309,12 @@ export default function WorkspaceDetailPage() {
                       className="py-16"
                     />
                   ) : (
-                    <div className="space-y-1">
+                    <div className="space-y-1" role="listbox" aria-label="工作空间任务列表">
                       {tasks.map((task) => (
                         <button
                           key={task.id}
                           type="button"
+                          role="option"
                           aria-selected={selectedId === task.id}
                           onClick={() => setSelectedId(task.id)}
                           className={`relative flex min-h-[68px] w-full items-center gap-3 rounded-[var(--radius-md)] border px-3 py-2 text-left transition-colors focus-ring-token focus-visible:outline-none ${
@@ -292,37 +367,106 @@ export default function WorkspaceDetailPage() {
         </>
       )}
 
-      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="新建任务">
-        <div className="space-y-3">
-          <Input
-            label="标题"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="例如：整理项目依赖并生成报告"
-            autoFocus
-          />
-          <Textarea
-            label="描述"
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="可选描述信息"
-            rows={3}
-          />
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>
+      {/* New Task Modal */}
+      <Modal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        title="新建任务"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowCreate(false)}>
               取消
             </Button>
             <Button
-              type="button"
               onClick={() => void handleCreate()}
               disabled={!title.trim() || creating}
               loading={creating}
+              loadingLabel="创建中…"
             >
-              创建
+              创建任务
             </Button>
-          </div>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Input
+            label="任务标题"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="例如：整理下载目录并归档"
+            autoFocus
+          />
+          <Textarea
+            label="补充描述（可选）"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="说明任务期望的成果和约束"
+            rows={3}
+          />
         </div>
       </Modal>
-    </div>
+
+      {/* Edit Workspace Modal */}
+      <Modal
+        open={showEdit}
+        onClose={() => setShowEdit(false)}
+        title="编辑工作空间"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowEdit(false)}>
+              取消
+            </Button>
+            <Button
+              onClick={() => void handleUpdate()}
+              disabled={!editName.trim() || updating}
+              loading={updating}
+              loadingLabel="保存中…"
+            >
+              保存修改
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Input
+            label="空间名称"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            placeholder="例如：主开发工作区"
+            autoFocus
+          />
+          <Input
+            label="本地根目录（可选）"
+            value={editRootPath}
+            onChange={(e) => setEditRootPath(e.target.value)}
+            placeholder="例如：C:\Projects\MyProject"
+          />
+          <Textarea
+            label="空间描述（可选）"
+            value={editDescription}
+            onChange={(e) => setEditDescription(e.target.value)}
+            placeholder="描述此工作空间的用途"
+            rows={3}
+          />
+          {updateError && (
+            <p className="text-xs text-[var(--danger)]" role="alert">
+              {updateError}
+            </p>
+          )}
+        </div>
+      </Modal>
+
+      {/* Delete Workspace Confirmation */}
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        title="删除工作空间"
+        description="此操作不可撤销，工作空间及其关联配置将被移除。"
+        confirmLabel="确认删除"
+        tone="danger"
+        loading={deleting}
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+    </PageShell>
   );
 }

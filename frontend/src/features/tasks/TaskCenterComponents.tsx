@@ -21,6 +21,7 @@ export function TaskRow({
   return (
     <button
       type="button"
+      role="option"
       aria-selected={selected}
       onClick={onSelect}
       className={`group relative flex min-h-[72px] w-full items-center gap-3 rounded-[var(--radius-md)] border px-3 py-2.5 text-left transition-colors focus-ring-token focus-visible:outline-none ${

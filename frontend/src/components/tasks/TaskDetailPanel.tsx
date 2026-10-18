@@ -18,6 +18,7 @@ import {
   listTaskDecisions,
   listTaskExecutions,
   listTaskTimeline,
+  resolveTaskDecision,
   retryTask,
   startTask,
   type Artifact,
@@ -82,6 +83,7 @@ export default function TaskDetailPanel({
   const [artifacts, setArtifacts] = useState<Artifact[] | null>(null);
   const [executions, setExecutions] = useState<TaskExecution[] | null>(null);
   const [decisions, setDecisions] = useState<TaskDecision[] | null>(null);
+  const [resolvingDecisionId, setResolvingDecisionId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState(false);
@@ -134,6 +136,24 @@ export default function TaskDetailPanel({
     }
     onChanged?.();
     void reloadDetail();
+  };
+
+  const handleResolveDecision = async (decisionId: string, optionId: string) => {
+    setResolvingDecisionId(decisionId);
+    setActionError(null);
+    try {
+      const result = await resolveTaskDecision(decisionId, optionId);
+      if (!result.ok) {
+        setActionError(result.error || "决策提交失败");
+        return;
+      }
+      onChanged?.();
+      void reloadDetail();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResolvingDecisionId(null);
+    }
   };
 
   const isTerminal = TERMINAL_STATUSES.has(task.status);
@@ -290,11 +310,35 @@ export default function TaskDetailPanel({
         <div className="space-y-3">
           {decisions && decisions.length > 0 && (
             <DetailSection title="用户决定" icon={<Info className="h-4 w-4 text-[var(--accent-gold)]" />}>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {decisions.map((decision) => (
-                  <div key={decision.id} className="rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-sm">
-                    <p className="text-[var(--text)]">{decision.prompt}</p>
-                    <p className="mt-1 text-xs text-[var(--text-faint)]">{decision.status === "pending" ? "等待选择" : "已处理"}</p>
+                  <div key={decision.id} className="rounded-lg border border-[var(--warning-border)] bg-[var(--surface-muted)] p-3 text-sm">
+                    <p className="font-medium text-[var(--text)]">{decision.prompt}</p>
+                    {decision.status === "pending" ? (
+                      <div className="mt-2.5 flex flex-wrap gap-2">
+                        {decision.options && decision.options.length > 0 ? (
+                          decision.options.map((opt) => (
+                            <Button
+                              key={opt.id}
+                              size="sm"
+                              variant="secondary"
+                              loading={resolvingDecisionId === decision.id}
+                              onClick={() => void handleResolveDecision(decision.id, opt.id)}
+                              title={opt.description}
+                            >
+                              {opt.label}
+                            </Button>
+                          ))
+                        ) : (
+                          <p className="text-xs text-[var(--text-faint)]">等待选择</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="mt-1.5 flex items-center gap-1 text-xs text-[var(--success-fg)]">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
+                        已处理
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>

@@ -7,14 +7,15 @@ import {
   Input,
   Textarea,
   Modal,
-  PageHeader,
   Panel,
   EmptyState,
   ErrorState,
   Skeleton,
+  FilterBar,
 } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
 import {
-  Workspace,
+  type Workspace,
   listWorkspaces,
   createWorkspace,
 } from "../api/client";
@@ -24,6 +25,7 @@ import { formatTaskDate } from "../features/tasks/taskPresentation";
 export default function WorkspacesPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -45,6 +47,14 @@ export default function WorkspacesPage() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const handleOpenCreate = () => {
+    setName("");
+    setDescription("");
+    setRootPath("");
+    setCreateError(null);
+    setShowCreate(true);
+  };
 
   const handleCreate = async () => {
     if (!name.trim()) return;
@@ -81,20 +91,46 @@ export default function WorkspacesPage() {
     }
   };
 
-  return (
-    <div className="page-canvas ui-opt-workspaces flex h-full flex-col">
-      <PageHeader
-        title="工作空间"
-        description="查看任务使用的文件与上下文。"
-        actions={
-          <Button onClick={() => { setShowCreate(true); setCreateError(null); }}>
-            <Plus className="h-4 w-4" />
-            创建工作空间
-          </Button>
-        }
-      />
+  const filteredWorkspaces = (workspaces || []).filter((w) => {
+    if (!query.trim()) return true;
+    const q = query.toLowerCase();
+    return (
+      w.name.toLowerCase().includes(q) ||
+      (w.description && w.description.toLowerCase().includes(q)) ||
+      (w.root_path && w.root_path.toLowerCase().includes(q))
+    );
+  });
 
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-4">
+  return (
+    <PageShell
+      title="工作空间"
+      description="查看任务使用的文件与上下文。"
+      className="page-canvas ui-opt-workspaces flex h-full flex-col"
+      actions={
+        <Button onClick={handleOpenCreate}>
+          <Plus className="h-4 w-4" />
+          创建工作空间
+        </Button>
+      }
+    >
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-4 space-y-4">
+        {workspaces !== null && workspaces.length > 0 && (
+          <FilterBar
+            search={{
+              value: query,
+              onChange: setQuery,
+              placeholder: "搜索工作空间名称、路径...",
+              onClear: () => setQuery(""),
+            }}
+            count={{
+              total: workspaces.length,
+              filtered: filteredWorkspaces.length,
+              label: "个空间",
+            }}
+            onRefresh={() => void reload()}
+          />
+        )}
+
         {error && (
           <ErrorState
             className="mb-3"
@@ -107,6 +143,7 @@ export default function WorkspacesPage() {
             }
           />
         )}
+
         {workspaces === null ? (
           <div className="workspace-card-grid">
             {Array.from({ length: 4 }).map((_, index) => (
@@ -129,15 +166,26 @@ export default function WorkspacesPage() {
             title="还没有工作空间"
             description="选择一个工作目录后，小昔涟可以在其中读取和处理文件。"
             action={
-              <Button onClick={() => { setShowCreate(true); setCreateError(null); }}>
+              <Button onClick={handleOpenCreate}>
                 <Plus className="h-4 w-4" />
                 创建工作空间
               </Button>
             }
           />
+        ) : filteredWorkspaces.length === 0 ? (
+          <EmptyState
+            variant="search"
+            title="没有匹配的工作空间"
+            description="尝试调整搜索词。"
+            action={
+              <Button variant="secondary" size="sm" onClick={() => setQuery("")}>
+                清除筛选
+              </Button>
+            }
+          />
         ) : (
           <div className="workspace-card-grid">
-            {workspaces.map((workspace) => (
+            {filteredWorkspaces.map((workspace) => (
               <Link key={workspace.id} to={`/workspaces/${workspace.id}`} className="block">
                 <Panel className="flex h-full min-h-[160px] flex-col justify-between cursor-pointer transition-[background-color,border-color] hover:border-[var(--accent-border)] hover:bg-[var(--surface-hover)]">
                   <div>
@@ -243,6 +291,6 @@ export default function WorkspacesPage() {
           </div>
         </div>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
