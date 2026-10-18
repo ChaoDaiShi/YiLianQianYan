@@ -168,39 +168,44 @@
   mix-blend-mode: multiply;
 }
 
+:root.dark .conversation-chat .conversation-assistant-avatar,
+:root[data-color-scheme="dark"] .conversation-chat .conversation-assistant-avatar {
+  mix-blend-mode: normal;
+}
+
 .conversation-markdown {
-  color: #353044;
+  color: var(--text-primary);
 }
 
 .conversation-markdown h1,
 .conversation-markdown h2,
 .conversation-markdown h3,
 .conversation-markdown h4 {
-  color: var(--cyrene-night);
+  color: var(--text-primary);
   letter-spacing: -0.01em;
 }
 
 .conversation-markdown a {
-  color: #7560bc;
+  color: var(--accent-purple);
 }
 
 .conversation-markdown blockquote {
   border-left: 2px solid var(--accent-purple);
-  background: rgba(237, 232, 249, 0.42);
-  color: #696276;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
 }
 
 .conversation-markdown code:not(pre code) {
-  border: 1px solid rgba(173, 155, 232, 0.16);
+  border: 1px solid var(--border-soft);
   border-radius: 0.35rem;
-  background: rgba(237, 232, 249, 0.74);
-  color: var(--cyrene-night);
+  background: var(--surface-muted);
+  color: var(--accent-soft-fg);
 }
 
 .conversation-markdown pre {
-  border-color: rgba(173, 155, 232, 0.22);
-  background: linear-gradient(145deg, #302b46, #242037);
-  color: #f8f3ff;
+  border-color: var(--border-soft);
+  background: var(--code-bg);
+  color: var(--code-text);
 }
 
 .conversation-markdown pre code {
@@ -208,8 +213,8 @@
 }
 
 .conversation-markdown th {
-  background: rgba(239, 234, 249, 0.82);
-  color: var(--cyrene-night);
+  background: var(--surface-muted);
+  color: var(--text-primary);
   text-transform: none;
 }
 
@@ -222,24 +227,24 @@
 }
 
 .conversation-chat .agent-progress-card {
-  border-color: rgba(153, 207, 234, 0.34);
+  border-color: var(--accent-border);
   border-left: 3px solid var(--accent-purple);
-  background: rgba(224, 230, 249, 0.58);
+  background: var(--surface-muted);
   box-shadow: none;
 }
 
 .conversation-chat .agent-progress-header {
-  color: var(--cyrene-night);
+  color: var(--text-primary);
 }
 
 .conversation-chat .agent-progress-dot {
   background: var(--accent-blue) !important;
-  box-shadow: 0 0 0 4px rgba(153, 207, 234, 0.16);
+  box-shadow: 0 0 0 4px var(--focus-ring-soft);
 }
 
 .conversation-chat .conversation-tool-card {
-  border-color: rgba(86, 72, 117, 0.12);
-  background: rgba(255, 255, 255, 0.5);
+  border-color: var(--border-soft);
+  background: var(--surface-elevated);
   box-shadow: none;
 }
 
@@ -255,7 +260,8 @@
   border-left: 2px solid var(--accent-gold);
 }
 
-.conversation-chat .conversation-tool-card[data-status="error"] {
+.conversation-chat .conversation-tool-card[data-status="error"],
+.conversation-chat .conversation-tool-card[data-status="failed"] {
   border-left: 2px solid var(--danger);
 }
 
@@ -265,10 +271,10 @@
   min-width: 1.75rem;
   height: 1.75rem;
   place-items: center;
-  border: 1px solid rgba(173, 155, 232, 0.2);
+  border: 1px solid var(--accent-border);
   border-radius: 0.55rem;
-  background: rgba(237, 232, 249, 0.72);
-  color: var(--cyrene-night);
+  background: var(--surface-muted);
+  color: var(--text-primary);
 }
 
 .tool-card-status-icon {
@@ -277,17 +283,17 @@
 }
 
 .conversation-chat .tool-card-details {
-  border-color: rgba(173, 155, 232, 0.22);
-  background: var(--cyrene-night);
-  color: #f8f3ff;
+  border-color: var(--border-soft);
+  background: var(--code-bg);
+  color: var(--code-text);
 }
 
 .conversation-chat .tool-card-details dt {
-  color: rgba(248, 243, 255, 0.62);
+  color: var(--text-secondary);
 }
 
 .conversation-chat .tool-card-details dd {
-  color: rgba(248, 243, 255, 0.9);
+  color: var(--text-primary);
 }
 
 .conversation-chat .tool-card-details dd[class*="bg-[var"] {
@@ -295,18 +301,18 @@
 }
 
 .conversation-chat .conversation-approval-card {
-  border-color: rgba(235, 207, 140, 0.48);
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: 0 8px 24px rgba(91, 76, 125, 0.08);
+  border-color: var(--warning-border);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-card);
 }
 
 .conversation-chat .approval-card-header {
-  border-color: rgba(235, 207, 140, 0.34);
-  background: linear-gradient(135deg, rgba(255, 249, 230, 0.84), rgba(249, 239, 246, 0.74));
+  border-color: var(--warning-border);
+  background: var(--surface-elevated);
 }
 
 .conversation-chat .approval-card-title {
-  color: var(--cyrene-night);
+  color: var(--text-primary);
 }
 
 .approval-card-star {
@@ -316,20 +322,20 @@
 }
 
 .conversation-chat .approval-card-technical {
-  border-color: rgba(173, 155, 232, 0.22);
-  background: rgba(237, 232, 249, 0.46);
+  border-color: var(--border-soft);
+  background: var(--surface-muted);
 }
 
 .conversation-chat .conversation-error-notice {
-  border-color: rgba(214, 126, 156, 0.25);
-  background: rgba(252, 237, 242, 0.72);
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
   box-shadow: none;
 }
 
 .conversation-chat .conversation-error-notice pre {
-  border-color: rgba(173, 155, 232, 0.22);
-  background: var(--cyrene-night);
-  color: #f8f3ff;
+  border-color: var(--border-soft);
+  background: var(--code-bg);
+  color: var(--code-text);
 }
 
 .conversation-composer {

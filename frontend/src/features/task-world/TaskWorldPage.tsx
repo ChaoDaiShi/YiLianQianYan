@@ -52,7 +52,6 @@ import {
 import { downloadArtifact, listArtifactResults, type ArtifactRecord } from "../../api/evidence";
 import { formatIdentifier } from "../../utils/identifiers";
 import GoalOverview from "./goal-view/GoalOverview";
-import "../../styles/proofloopGoalView.css";
 
 type StudioPanel = "trail" | "inspector" | "tools" | "proofloop" | null;
 
