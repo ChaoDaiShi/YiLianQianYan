@@ -13,11 +13,13 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-[image:var(--cyrene-gradient-primary)] text-white shadow-[0_2px_10px_-2px_rgba(234,145,185,0.55)] border border-white/30 hover:brightness-105 active:scale-[0.97]",
+    "bg-[var(--accent-primary)] text-[var(--accent-fg)] shadow-sm hover:bg-[var(--accent-primary-hover)] hover:shadow active:translate-y-[0.5px]",
   secondary:
-    "border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] hover:bg-[var(--surface-hover)] active:scale-[0.98]",
-  ghost: "bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] active:scale-[0.98]",
-  danger: "bg-[#e05a80] hover:bg-[#d1476e] text-white shadow-[0_2px_8px_rgba(224,90,128,0.35)] active:scale-[0.97]",
+    "border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] hover:bg-[var(--surface-hover)] active:translate-y-[0.5px]",
+  ghost:
+    "bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] active:translate-y-[0.5px]",
+  danger:
+    "bg-[var(--danger)] text-[var(--danger-fg)] hover:opacity-90 active:translate-y-[0.5px]",
 };
 
 const sizes: Record<Size, string> = {

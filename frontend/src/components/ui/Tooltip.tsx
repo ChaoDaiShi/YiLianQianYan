@@ -98,14 +98,21 @@ export default function Tooltip({
     };
   }, []);
 
+  const sideTransform =
+    actualSide === "left"
+      ? "-translate-x-full -translate-y-1/2"
+      : actualSide === "right"
+        ? "-translate-y-1/2"
+        : actualSide === "top"
+          ? "-translate-x-1/2 -translate-y-full"
+          : "-translate-x-1/2";
+
   const tooltipElement = open ? (
     <div
       role="tooltip"
       aria-hidden="false"
       style={{ top: position.top, left: position.left }}
-      className={`ui-tooltip pointer-events-none fixed z-[var(--z-toast-tooltip,90)] max-w-[260px] -translate-y-1/2 rounded-[var(--radius-sm)] border border-white/10 bg-[#29263a]/95 text-[#eeeaf8] px-2.5 py-1.5 text-[12px] leading-snug shadow-xl backdrop-blur-md whitespace-normal break-words transition-opacity duration-[var(--motion-fast)] opacity-100 ${
-        actualSide === "left" ? "-translate-x-full" : ""
-      }`}
+      className={`ui-tooltip pointer-events-none fixed z-[var(--z-toast-tooltip,90)] max-w-[260px] rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] text-[var(--text)] px-2.5 py-1.5 text-[12px] leading-snug shadow-[var(--shadow-float)] backdrop-blur-md whitespace-normal break-words transition-opacity duration-[var(--motion-fast)] opacity-100 ${sideTransform}`}
     >
       {content}
     </div>

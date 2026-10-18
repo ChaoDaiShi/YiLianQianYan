@@ -26,8 +26,7 @@ export default function Panel({
     <div
       className={cn(
         "ui-panel min-w-0 glass-surface shadow-card-token rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] transition-[background-color,border-color,box-shadow,transform] duration-[var(--motion-fast)]",
-        "shadow-[inset_0_1px_0_0_rgba(255,255,255,0.65),var(--shadow-card)]",
-        interactive && "cursor-pointer hover:border-[var(--accent-border)] hover:-translate-y-0.5 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.8),var(--cyrene-shadow-lg)] active:translate-y-0",
+        interactive && "cursor-pointer hover:border-[var(--accent-border)] hover:-translate-y-0.5 hover:shadow-[var(--shadow-float)] active:translate-y-0",
         padding && densityPaddings[density],
         className
       )}
