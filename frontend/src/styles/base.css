@@ -122,7 +122,8 @@
     --info-border: rgba(132, 188, 220, 0.34);
     --info-fg: #37677E;
     --accent-soft-fg: #67435A;
-    --focus-ring: #9D4373;
+    --focus-ring: var(--accent-primary);
+    --focus-outline: var(--accent-soft-fg);
     --border-subtle: var(--border-soft);
     --surface-subtle: var(--surface-muted);
     --backdrop: rgba(41, 38, 58, 0.34);
@@ -208,17 +209,13 @@
 
   :root.dark {
     color-scheme: dark;
+    --focus-outline: var(--accent-primary);
   }
 
   :focus-visible {
-    outline: 2px solid var(--focus-ring);
+    outline: 2px solid var(--focus-outline);
     outline-offset: 2px;
     box-shadow: 0 0 0 1px var(--surface-solid);
-  }
-
-  :root.dark :focus-visible,
-  [data-color-scheme="dark"] :focus-visible {
-    outline-color: var(--accent-primary);
   }
 
   @media (forced-colors: active) {

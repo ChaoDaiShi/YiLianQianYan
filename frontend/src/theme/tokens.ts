@@ -162,6 +162,10 @@ export const DERIVED_TOKENS: Record<string, { aliasOf?: string; description: str
   "--row-selected-bg": { aliasOf: "--sidebar-active", description: "List row selected background" },
   "--shell-readability-gradient": { description: "Shell readability gradient" },
   "--danger-hover": { description: "Danger button hover state" },
+  "--focus-outline": {
+    aliasOf: "--accent-soft-fg (light) / --accent-primary (dark)",
+    description: "Focus outline derived from the frozen palette; >= 3:1 non-text contrast without adding a hue",
+  },
   "--foreground": { aliasOf: "--text-primary", description: "Tailwind compat alias for text-primary" },
   "--foreground-muted": { aliasOf: "--text-secondary", description: "Tailwind compat alias for text-secondary" },
   "--border-strong": { aliasOf: "--divider", description: "Divider border strong alias" },

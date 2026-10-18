@@ -39,7 +39,7 @@
 }
 
 .ui-opt-memory .memory-search-field:focus-within {
-  border-color: var(--focus-ring);
+  border-color: var(--focus-outline);
   background: var(--surface-solid);
 }
 
@@ -117,7 +117,7 @@
 }
 
 .ui-opt-memory .memory-source-filter:focus {
-  border-color: var(--focus-ring);
+  border-color: var(--focus-outline);
 }
 
 /* Two-column layout */
@@ -192,7 +192,7 @@
 }
 
 .ui-opt-memory .memory-row:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -271,7 +271,7 @@
 }
 
 .ui-opt-memory .memory-row-action-btn:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid var(--focus-outline);
   outline-offset: 1px;
 }
 

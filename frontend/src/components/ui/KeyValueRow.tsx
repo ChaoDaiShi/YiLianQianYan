@@ -66,7 +66,7 @@ export default function KeyValueRow({
             type="button"
             onClick={handleCopy}
             aria-label={copied ? "已复制" : "复制"}
-            className="shrink-0 rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] transition-colors"
+            className="shrink-0 rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-outline)] transition-colors"
           >
             {copied ? (
               <Check className="h-3.5 w-3.5 text-[var(--success)]" />

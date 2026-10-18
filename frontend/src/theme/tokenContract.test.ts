@@ -45,6 +45,17 @@ describe("Theme token contract and single source of truth", () => {
     }
   });
 
+  it("derives the focus outline from the frozen palette and never overrides it with a new hue", () => {
+    // The global :focus-visible rule must consume the derived outline token, which
+    // base.css resolves from --accent-soft-fg (light) / --accent-primary (dark).
+    expect(stylesheetText).toContain("outline: 2px solid var(--focus-outline)");
+    expect(stylesheetText).toContain("--focus-outline: var(--accent-soft-fg)");
+    expect(stylesheetText).toContain("--focus-outline: var(--accent-primary)");
+    // A one-off literal focus color must not be reintroduced.
+    expect(stylesheetText).not.toMatch(/--focus-ring:\s*#[0-9a-fA-F]{3,8}/);
+    expect(stylesheetText).not.toContain("#9D4373");
+  });
+
   it("contains no undefined CSS variables in stylesheet", () => {
     const varUsages = [...stylesheetText.matchAll(/var\(\s*(--[a-zA-Z0-9_-]+)/g)].map((m) => m[1]);
     const uniqueUsages = Array.from(new Set(varUsages));

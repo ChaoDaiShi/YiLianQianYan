@@ -72,7 +72,7 @@ export default function ListRow({
       onKeyDown={handleKeyDown}
       className={cn(
         "group relative flex items-center justify-between gap-3 rounded-[var(--radius-md)] border p-3 text-left transition-[background-color,border-color,box-shadow] duration-[var(--motion-fast)] select-none",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-outline)]",
         selected
           ? "border-[var(--accent-primary)] bg-[var(--accent-soft)] shadow-sm"
           : "border-[var(--border-soft)] bg-[var(--surface-solid)] hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)]",

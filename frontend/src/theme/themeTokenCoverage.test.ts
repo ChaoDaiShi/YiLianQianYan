@@ -65,19 +65,20 @@ describe("Theme token coverage and accessibility verification", () => {
     expect(darkRatio).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("satisfies non-text contrast for focus ring and brand accent in light and dark modes", () => {
-    // Light mode focus ring (#9D4373) satisfies WCAG non-text contrast (>= 3.0:1) on light canvas
+  it("satisfies non-text contrast for the palette-derived focus outline in light and dark modes", () => {
+    // --focus-outline resolves from the frozen palette: light = --accent-soft-fg,
+    // dark = --accent-primary. Both must reach WCAG 1.4.11 non-text contrast (>= 3.0:1)
+    // against the application canvas. No extra focus hue is introduced.
     const lightFocusRatio = contrastRatio(
-      "#9D4373",
+      CYRENE_SEMANTIC_TOKENS.light["--accent-soft-fg"],
       CYRENE_SEMANTIC_TOKENS.light["--bg-app"],
     );
     expect(lightFocusRatio).toBeGreaterThanOrEqual(3.0);
 
-    // Dark mode accent-primary (#F0A3C6) on bg-app (#171421) satisfies >= 3.0:1
-    const darkAccentRatio = contrastRatio(
+    const darkFocusRatio = contrastRatio(
       CYRENE_SEMANTIC_TOKENS.dark["--accent-primary"],
       CYRENE_SEMANTIC_TOKENS.dark["--bg-app"],
     );
-    expect(darkAccentRatio).toBeGreaterThanOrEqual(3.0);
+    expect(darkFocusRatio).toBeGreaterThanOrEqual(3.0);
   });
 });

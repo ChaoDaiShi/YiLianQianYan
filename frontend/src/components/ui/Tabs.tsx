@@ -89,7 +89,7 @@ export default function Tabs({
               onClick={() => onChange(tab.id)}
               onKeyDown={handleKeyDown}
               className={cn(
-                "inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-sm)] font-medium transition-[background-color,color,box-shadow] duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50",
+                "inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-sm)] font-medium transition-[background-color,color,box-shadow] duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-outline)] disabled:pointer-events-none disabled:opacity-50",
                 size === "sm" ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm",
                 isActive
                   ? "bg-[var(--surface-solid)] text-[var(--text-primary)] shadow-sm"
@@ -136,7 +136,7 @@ export default function Tabs({
             onClick={() => onChange(tab.id)}
             onKeyDown={handleKeyDown}
             className={cn(
-              "group relative inline-flex items-center gap-2 font-medium transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50",
+              "group relative inline-flex items-center gap-2 font-medium transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-outline)] disabled:pointer-events-none disabled:opacity-50",
               size === "sm" ? "pb-2 text-xs" : "pb-3 text-sm",
               isActive
                 ? "text-[var(--accent-primary)] font-semibold"

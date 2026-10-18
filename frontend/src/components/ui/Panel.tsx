@@ -46,7 +46,7 @@ export default function Panel({
         "ui-panel min-w-0 rounded-[var(--radius-lg)] border border-[var(--border-soft)] shadow-card-token transition-[background-color,border-color,box-shadow,transform] duration-[var(--motion-fast)]",
         variant === "solid" ? "bg-[var(--surface-solid)]" : "glass-surface bg-[var(--surface)]",
         interactive &&
-          "cursor-pointer hover:border-[var(--accent-border)] hover:-translate-y-0.5 hover:shadow-[var(--shadow-float)] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]",
+          "cursor-pointer hover:border-[var(--accent-border)] hover:-translate-y-0.5 hover:shadow-[var(--shadow-float)] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-outline)]",
         padding && densityPaddings[density],
         className
       )}

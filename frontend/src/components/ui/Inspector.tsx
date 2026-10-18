@@ -88,7 +88,7 @@ export default function Inspector({
               type="button"
               onClick={onClose}
               aria-label="关闭详情面板"
-              className="rounded-[var(--radius-sm)] p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] transition-colors"
+              className="rounded-[var(--radius-sm)] p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-outline)] transition-colors"
             >
               <X className="h-4 w-4" />
             </button>
