@@ -7,7 +7,19 @@ import {
   startWorkflowRun,
   type Workflow,
 } from "../api/client";
-import { PageHeader, Button, Badge, Modal, Input, EmptyState, Spinner, Panel } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
+import {
+  Badge,
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  Input,
+  Modal,
+  Panel,
+  Spinner,
+  Tabs,
+  Textarea,
+} from "../components/ui";
 import RuntimeWorkflowList from "../components/workflow/RuntimeWorkflowList";
 import WorkflowGraphEditor from "../components/workflow/WorkflowGraphEditor";
 import WorkflowRunInspector from "../components/workflow/WorkflowRunInspector";
@@ -33,49 +45,42 @@ export default function WorkflowsPage() {
   const [runtimeRefresh, setRuntimeRefresh] = useState(0);
 
   return (
-    <div className="page-canvas ui-opt-workflows flex h-full flex-col">
-      <PageHeader
-        title="工作流"
-        description="模板工作流用于对话；运行工作流是可执行的 DAG 运行时"
-        actions={
-          <div className="flex items-center gap-1 rounded-lg bg-[var(--panel-2)] p-1">
-            <button
-              onClick={() => setTab("templates")}
-              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-                tab === "templates" ? "bg-[var(--accent)] text-[var(--accent-fg)]" : "text-[var(--text-muted)] hover:text-[var(--text)]"
-              }`}
-            >
-              模板工作流
-            </button>
-            <button
-              onClick={() => setTab("runtime")}
-              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-                tab === "runtime" ? "bg-[var(--accent)] text-[var(--accent-fg)]" : "text-[var(--text-muted)] hover:text-[var(--text)]"
-              }`}
-            >
-              运行工作流
-            </button>
-          </div>
-        }
-      />
-
-      <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-        {tab === "templates" ? (
-          <TemplatesTab />
-        ) : (
-          <RuntimeTab
-            editorGraph={editorGraph}
-            setEditorGraph={setEditorGraph}
-            editorOpen={editorOpen}
-            setEditorOpen={setEditorOpen}
-            activeRunId={activeRunId}
-            setActiveRunId={setActiveRunId}
-            runtimeRefresh={runtimeRefresh}
-            setRuntimeRefresh={setRuntimeRefresh}
+    <PageShell
+      title="工作流"
+      description="模板工作流用于对话；运行工作流是可执行的 DAG 运行时"
+      variant={editorOpen ? "workspace" : "standard"}
+      className="page-canvas ui-opt-workflows flex h-full flex-col"
+      contentClassName={editorOpen ? "overflow-hidden p-0" : undefined}
+      actions={
+        !editorOpen ? (
+          <Tabs
+            tabs={[
+              { id: "runtime", label: "运行工作流" },
+              { id: "templates", label: "模板工作流" },
+            ]}
+            activeId={tab}
+            onChange={(id) => setTab(id as Tab)}
+            variant="segment"
+            size="sm"
           />
-        )}
-      </div>
-    </div>
+        ) : null
+      }
+    >
+      {tab === "templates" ? (
+        <TemplatesTab />
+      ) : (
+        <RuntimeTab
+          editorGraph={editorGraph}
+          setEditorGraph={setEditorGraph}
+          editorOpen={editorOpen}
+          setEditorOpen={setEditorOpen}
+          activeRunId={activeRunId}
+          setActiveRunId={setActiveRunId}
+          runtimeRefresh={runtimeRefresh}
+          setRuntimeRefresh={setRuntimeRefresh}
+        />
+      )}
+    </PageShell>
   );
 }
 
@@ -93,6 +98,8 @@ function TemplatesTab() {
   const [formTags, setFormTags] = useState("");
   const [formPrompt, setFormPrompt] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
 
   const load = async () => {
     const res = await listWorkflows();
@@ -106,7 +113,7 @@ function TemplatesTab() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const openAdd = () => {
     setEditingId(null);
@@ -115,6 +122,7 @@ function TemplatesTab() {
     setFormNodes("");
     setFormTags("");
     setFormPrompt("");
+    setSaveError("");
     setShowModal(true);
   };
 
@@ -125,12 +133,14 @@ function TemplatesTab() {
     setFormNodes(wf.nodes.join(", "));
     setFormTags(wf.tags.join(", "));
     setFormPrompt(wf.system_prompt_extra || "");
+    setSaveError("");
     setShowModal(true);
   };
 
   const handleSave = async () => {
     if (!formName.trim()) return;
     setSaving(true);
+    setSaveError("");
     const nodes = formNodes.trim() ? formNodes.split(",").map((n) => n.trim()).filter(Boolean) : [];
     const tags = formTags.trim() ? formTags.split(",").map((t) => t.trim()).filter(Boolean) : [];
     const payload = {
@@ -140,26 +150,37 @@ function TemplatesTab() {
       tags,
       system_prompt_extra: formPrompt.trim(),
     };
-    if (editingId) {
-      await updateWorkflow(editingId, payload);
-    } else {
-      await createWorkflow(payload);
+    try {
+      const res = editingId
+        ? await updateWorkflow(editingId, payload)
+        : await createWorkflow(payload);
+      if (res) {
+        setShowModal(false);
+        await load();
+      } else {
+        setSaveError("保存工作流失败，请重试");
+      }
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "保存工作流失败");
+    } finally {
+      setSaving(false);
     }
-    setShowModal(false);
-    setSaving(false);
-    load();
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!window.confirm(`确定删除工作流 "${name}" 吗？`)) return;
-    await deleteWorkflow(id);
-    load();
+  const handleDelete = async () => {
+    if (!deleteConfirm) return;
+    try {
+      await deleteWorkflow(deleteConfirm.id);
+      await load();
+    } finally {
+      setDeleteConfirm(null);
+    }
   };
 
   const handleActivate = async (id: string) => {
     await activateWorkflow(id);
     setActiveId(id);
-    load();
+    await load();
   };
 
   if (loading) {
@@ -176,7 +197,7 @@ function TemplatesTab() {
         icon={<AlertTriangle className="w-12 h-12 text-[var(--warning)]" />}
         title="无法加载工作流"
         description={error}
-        action={<Button variant="secondary" onClick={load}>重试</Button>}
+        action={<Button variant="secondary" onClick={() => void load()}>重试</Button>}
       />
     );
   }
@@ -190,7 +211,7 @@ function TemplatesTab() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {workflows.map((wf) => {
           const isActive = wf.id === activeId;
           return (
@@ -216,27 +237,30 @@ function TemplatesTab() {
                     ))}
                   </div>
                 </div>
-                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity flex-shrink-0">
                   {!isActive && (
                     <button
-                      onClick={() => handleActivate(wf.id)}
-                      className="p-1.5 rounded hover:bg-[var(--accent)]/20 text-[var(--text-muted)] hover:text-[var(--accent)]"
+                      type="button"
+                      onClick={() => void handleActivate(wf.id)}
+                      className="p-1.5 rounded hover:bg-[var(--accent)]/20 text-[var(--text-muted)] hover:text-[var(--accent)] focus-ring-token focus-visible:outline-none"
                       title="激活此工作流"
                     >
                       <CheckCircle2 className="w-4 h-4" />
                     </button>
                   )}
                   <button
+                    type="button"
                     onClick={() => openEdit(wf)}
-                    className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
+                    className="p-1.5 rounded hover:bg-[var(--panel-hover)] text-[var(--text-muted)] hover:text-[var(--text)] focus-ring-token focus-visible:outline-none"
                     title="编辑"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
                   {!wf.is_builtin && (
                     <button
-                      onClick={() => handleDelete(wf.id, wf.name)}
-                      className="p-1.5 rounded hover:bg-[var(--danger)]/20 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                      type="button"
+                      onClick={() => setDeleteConfirm({ id: wf.id, name: wf.name })}
+                      className="p-1.5 rounded hover:bg-[var(--danger)]/20 text-[var(--text-muted)] hover:text-[var(--danger)] focus-ring-token focus-visible:outline-none"
                       title="删除"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -259,8 +283,9 @@ function TemplatesTab() {
         })}
 
         <button
+          type="button"
           onClick={openAdd}
-          className="border-2 border-dashed border-[var(--border)] rounded-xl p-5 flex flex-col items-center justify-center text-center min-h-[200px] hover:border-[var(--accent)]/40 transition-colors cursor-pointer group"
+          className="border-2 border-dashed border-[var(--border)] rounded-xl p-5 flex flex-col items-center justify-center text-center min-h-[200px] hover:border-[var(--accent)]/40 transition-colors cursor-pointer group focus-ring-token focus-visible:outline-none"
         >
           <Plus className="w-8 h-8 mb-2 text-[var(--text-faint)] group-hover:text-[var(--accent)] transition-colors" />
           <p className="font-medium text-sm text-[var(--text-muted)] group-hover:text-[var(--text)]">自定义工作流</p>
@@ -275,7 +300,7 @@ function TemplatesTab() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowModal(false)}>取消</Button>
-            <Button onClick={handleSave} disabled={saving}>
+            <Button onClick={() => void handleSave()} disabled={saving}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               {editingId ? "保存" : "创建"}
             </Button>
@@ -283,19 +308,40 @@ function TemplatesTab() {
         }
       >
         <div className="space-y-4">
+          {saveError && (
+            <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-xs text-[var(--danger)]" role="alert">
+              {saveError}
+            </div>
+          )}
           <Input label="名称" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="例如：代码审查流水线" />
-          <div>
-            <label className="block text-sm font-medium mb-1">描述</label>
-            <textarea value={formDesc} onChange={(e) => setFormDesc(e.target.value)} rows={2} placeholder="描述此工作流的用途..." className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none" />
-          </div>
+          <Textarea
+            label="描述"
+            value={formDesc}
+            onChange={(e) => setFormDesc(e.target.value)}
+            rows={2}
+            placeholder="描述此工作流的用途..."
+          />
           <Input label="流程节点 (逗号分隔)" value={formNodes} onChange={(e) => setFormNodes(e.target.value)} placeholder="scan, analyze, report" hint="节点将在对话中作为流程步骤展示" />
           <Input label="标签 (逗号分隔)" value={formTags} onChange={(e) => setFormTags(e.target.value)} placeholder="代码, 安全" />
-          <div>
-            <label className="block text-sm font-medium mb-1">额外系统提示词</label>
-            <textarea value={formPrompt} onChange={(e) => setFormPrompt(e.target.value)} rows={3} placeholder="额外的 AI 行为指导，将在对话时注入系统提示词..." className="w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 resize-none font-mono" />
-          </div>
+          <Textarea
+            label="额外系统提示词"
+            value={formPrompt}
+            onChange={(e) => setFormPrompt(e.target.value)}
+            rows={3}
+            placeholder="额外的 AI 行为指导，将在对话时注入系统提示词..."
+          />
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={Boolean(deleteConfirm)}
+        title="删除工作流"
+        description={`确定删除工作流 "${deleteConfirm?.name}" 吗？此操作不可逆。`}
+        confirmLabel="删除"
+        tone="danger"
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setDeleteConfirm(null)}
+      />
     </div>
   );
 }
@@ -346,29 +392,38 @@ function RuntimeTab({
 
   if (editorOpen) {
     return (
-      <div className="space-y-4">
-        <WorkflowGraphEditor
-          graph={editorGraph}
-          onRun={handleRun}
-          selectedNodeId={selectedNodeId}
-          onSelectedNodeChange={setSelectedNodeId}
-          highlightedNodeId={highlightedNodeId}
-          locateNodeId={locateNodeId}
-          onSaved={(graph) => {
-            setEditorGraph(graph);
-            setRuntimeRefresh(runtimeRefresh + 1);
-          }}
-          onClose={() => setEditorOpen(false)}
-        />
-        {activeRunId && (
-          <WorkflowRunInspector
-            runId={activeRunId}
-            onClose={() => setActiveRunId(null)}
+      <div className="flex h-full min-h-0 flex-1 flex-col">
+        {runError && (
+          <div className="mx-4 mt-3 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]" role="alert">
+            {runError}
+          </div>
+        )}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <WorkflowGraphEditor
+            graph={editorGraph}
+            onRun={handleRun}
             selectedNodeId={selectedNodeId}
-            onNodeSelect={(id) => setSelectedNodeId(id)}
-            onNodeHighlight={(id) => setHighlightedNodeId(id)}
-            onLocateNode={(id) => setLocateNodeId(id)}
+            onSelectedNodeChange={setSelectedNodeId}
+            highlightedNodeId={highlightedNodeId}
+            locateNodeId={locateNodeId}
+            onSaved={(graph) => {
+              setEditorGraph(graph);
+              setRuntimeRefresh(runtimeRefresh + 1);
+            }}
+            onClose={() => setEditorOpen(false)}
           />
+        </div>
+        {activeRunId && (
+          <div className="shrink-0 max-h-[40vh] overflow-y-auto border-t border-[var(--border-soft)]">
+            <WorkflowRunInspector
+              runId={activeRunId}
+              onClose={() => setActiveRunId(null)}
+              selectedNodeId={selectedNodeId}
+              onNodeSelect={(id) => setSelectedNodeId(id)}
+              onNodeHighlight={(id) => setHighlightedNodeId(id)}
+              onLocateNode={(id) => setLocateNodeId(id)}
+            />
+          </div>
         )}
       </div>
     );

@@ -48,15 +48,16 @@
 
 /* Running pulse animation for running node */
 .ui-opt-workflows .workflow-canvas-node-running {
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-card);
   animation: workflow-node-pulse 2s ease-in-out infinite;
 }
 
 @keyframes workflow-node-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-card);
+    opacity: 1;
   }
   50% {
-    box-shadow: 0 0 0 4px var(--accent-primary), var(--shadow-card);
+    opacity: 0.82;
   }
 }
 
