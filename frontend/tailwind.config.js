@@ -51,8 +51,22 @@ export default {
         sans: ['"IBM Plex Sans"', "Segoe UI", "PingFang SC", "Microsoft YaHei", "sans-serif"],
         mono: ['"IBM Plex Mono"', "Cascadia Code", "Consolas", "ui-monospace", "monospace"],
       },
+      zIndex: {
+        ambient: "var(--z-ambient)",
+        canvas: "var(--z-canvas)",
+        "floating-toolbar": "var(--z-floating-toolbar)",
+        "rail-drawer": "var(--z-rail-drawer)",
+        "nav-rail": "var(--z-nav-rail)",
+        "sticky-header": "var(--z-sticky-header)",
+        "dropdown-popover": "var(--z-dropdown-popover)",
+        "modal-approval": "var(--z-modal-approval)",
+        "command-palette": "var(--z-command-palette)",
+        "toast-tooltip": "var(--z-toast-tooltip)",
+      },
       animation: {
         "pulse-dot": "pulse-dot 1.4s infinite ease-in-out",
+        "cyrene-breathe": "cyrene-breathe 3.2s ease-in-out infinite",
+        "cyrene-shimmer": "cyrene-shimmer 2s linear infinite",
       },
       keyframes: {
         "pulse-dot": {

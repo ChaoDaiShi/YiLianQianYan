@@ -1,4 +1,5 @@
-import { useId } from "react";
+import { useId, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "./cn";
 import Button from "./Button";
@@ -33,13 +34,21 @@ export default function Modal({
 }: ModalProps) {
   const panelRef = useDialogFocusLifecycle({ open, onClose });
   const titleId = useId();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
+  const modalContent = (
+    <div
+      className="fixed inset-0 z-[var(--z-modal-approval,70)] flex items-center justify-center p-4"
+      role="presentation"
+    >
       <div
-        className="absolute inset-0 bg-[var(--backdrop)] backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 bg-[#1e1b2e]/45 backdrop-blur-md animate-fade-in"
         aria-hidden="true"
         onClick={onClose}
       />
@@ -50,12 +59,17 @@ export default function Modal({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          "shadow-float-token relative flex flex-col w-full max-h-[calc(100dvh-32px)] rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] outline-none animate-scale-in",
+          "shadow-float-token relative flex flex-col w-full max-h-[calc(100dvh-32px)] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] outline-none animate-scale-in",
           modalSizes[size],
           className
         )}
         onClick={(event) => event.stopPropagation()}
       >
+        {/* Cyrene luminous top accent band */}
+        <div
+          className="h-1 w-full shrink-0 bg-gradient-to-r from-[#ea91b9] via-[#ad9be8] to-[#99cfea]"
+          aria-hidden="true"
+        />
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--border-soft)] px-5 py-4">
           <h3 id={titleId} className="font-semibold text-[var(--text)]">
             {title}
@@ -75,4 +89,10 @@ export default function Modal({
       </div>
     </div>
   );
+
+  if (mounted && typeof document !== "undefined") {
+    return createPortal(modalContent, document.body);
+  }
+
+  return modalContent;
 }
