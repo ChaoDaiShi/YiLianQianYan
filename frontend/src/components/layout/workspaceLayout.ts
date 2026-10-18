@@ -2,7 +2,7 @@ export const APP_CONTENT_VIEWPORT_CLASS_NAME =
   "relative z-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden";
 
 export const WORKBENCH_VIEWPORT_CLASS_NAME =
-  "workbench-grid min-h-0 overflow-hidden grid-rows-[minmax(0,1fr)]";
+  "workbench-grid grid min-h-0 overflow-hidden grid-rows-[minmax(0,1fr)]";
 
 export const CHAT_COLUMN_VIEWPORT_CLASS_NAME =
   "flex h-full min-h-0 min-w-0 flex-col overflow-hidden";

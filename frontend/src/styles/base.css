@@ -173,7 +173,8 @@
     --risk-critical-border: var(--danger);
     --code-header-bg: color-mix(in srgb, var(--code-bg), white 6%);
     --row-selected-bg: var(--sidebar-active);
-    --shell-readability-gradient: linear-gradient(180deg, var(--shell-overlay) 0%, var(--page-wash) 100%);
+    --shell-readability-gradient: linear-gradient(135deg, rgba(248, 246, 253, 0.65), rgba(239, 232, 250, 0.48));
+    --danger-hover: color-mix(in srgb, var(--danger), black 10%);
     --foreground: var(--text-primary);
     --foreground-muted: var(--text-secondary);
     --border-strong: var(--divider);

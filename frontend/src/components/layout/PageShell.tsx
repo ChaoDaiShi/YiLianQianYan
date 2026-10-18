@@ -93,11 +93,15 @@ export default function PageShell({
   ...props
 }: PageShellProps) {
   const isWorkspace = variant === "workspace";
+  const hasCustomDisplay =
+    typeof className === "string" &&
+    /\b(grid|workbench-grid|block|inline-block)\b/.test(className);
 
   return (
     <div
       className={cn(
-        "page-canvas relative flex h-full w-full flex-col overflow-hidden bg-transparent",
+        "page-canvas relative h-full w-full overflow-hidden bg-transparent",
+        !hasCustomDisplay && "flex flex-col",
         className,
       )}
       {...props}

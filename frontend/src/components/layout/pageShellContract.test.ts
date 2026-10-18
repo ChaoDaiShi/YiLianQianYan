@@ -23,7 +23,14 @@ describe("PageShell and Navigation Registry Contracts", () => {
     expect(pageShellSource).toContain("page-canvas");
     expect(pageShellSource).toContain("page-header");
     expect(pageShellSource).toContain("PageShellHeader");
+    expect(pageShellSource).toContain("hasCustomDisplay");
     expect(pageShellSource).toContain("variant");
     expect(pageShellSource).toContain("maxWidth");
+  });
+
+  it("ensures WORKBENCH_VIEWPORT_CLASS_NAME contains grid utility to prevent column collapsing", async () => {
+    const { WORKBENCH_VIEWPORT_CLASS_NAME } = await import("./workspaceLayout");
+    expect(WORKBENCH_VIEWPORT_CLASS_NAME).toContain("workbench-grid");
+    expect(WORKBENCH_VIEWPORT_CLASS_NAME).toContain("grid");
   });
 });

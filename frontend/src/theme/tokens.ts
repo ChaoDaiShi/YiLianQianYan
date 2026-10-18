@@ -161,6 +161,7 @@ export const DERIVED_TOKENS: Record<string, { aliasOf?: string; description: str
   "--code-header-bg": { description: "Code block header background" },
   "--row-selected-bg": { aliasOf: "--sidebar-active", description: "List row selected background" },
   "--shell-readability-gradient": { description: "Shell readability gradient" },
+  "--danger-hover": { description: "Danger button hover state" },
   "--foreground": { aliasOf: "--text-primary", description: "Tailwind compat alias for text-primary" },
   "--foreground-muted": { aliasOf: "--text-secondary", description: "Tailwind compat alias for text-secondary" },
   "--border-strong": { aliasOf: "--divider", description: "Divider border strong alias" },

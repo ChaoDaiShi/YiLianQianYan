@@ -28,16 +28,22 @@ interface CommandItem {
 
 const RECENT_COMMANDS_KEY = "cyrene_recent_commands";
 
-function getRecentCommandIds(): string[] {
+export function getRecentCommandIds(): string[] {
   try {
     const raw = localStorage.getItem(RECENT_COMMANDS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === "string");
+    }
+    return [];
   } catch {
     return [];
   }
 }
 
-function saveRecentCommandId(id: string) {
+export function saveRecentCommandId(id: string) {
+  if (typeof id !== "string" || !id) return;
   try {
     const list = getRecentCommandIds().filter((item) => item !== id);
     list.unshift(id);
