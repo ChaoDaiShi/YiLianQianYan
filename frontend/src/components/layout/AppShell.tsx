@@ -5,6 +5,7 @@ import { useTheme } from "../../theme";
 import { APP_CONTENT_VIEWPORT_CLASS_NAME } from "./workspaceLayout";
 import RouteLoadingSurface from "./RouteLoadingSurface";
 import { useUiNavigationShortcuts } from "./useUiNavigationShortcuts";
+import { CommandPalette, CyreneToast } from "../ui";
 
 export default function AppShell() {
   const { theme, resolvedScheme } = useTheme();
@@ -49,6 +50,8 @@ export default function AppShell() {
       />
 
       <NavRail />
+      <CommandPalette />
+      <CyreneToast />
       <main className={`${APP_CONTENT_VIEWPORT_CLASS_NAME} workspace-region relative z-10`}>
         <Suspense fallback={<RouteLoadingSurface />}>
           <Outlet />
