@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export interface TooltipProps {
   content: string;
@@ -16,22 +17,48 @@ export default function Tooltip({
   const triggerRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [actualSide, setActualSide] = useState(side);
+  const [mounted, setMounted] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const calculatePosition = () => {
     const rect = triggerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
+    const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1024;
+    const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 768;
+
+    let targetSide = side;
+    // Auto flip horizontally
+    if (side === "right" && rect.right + 260 > viewportWidth - 12) {
+      targetSide = "left";
+    } else if (side === "left" && rect.left - 260 < 12) {
+      targetSide = "right";
+    }
+
+    // Auto flip vertically
+    if (side === "top" && rect.top - 48 < 12) {
+      targetSide = "bottom";
+    } else if (side === "bottom" && rect.bottom + 48 > viewportHeight - 12) {
+      targetSide = "top";
+    }
+
+    setActualSide(targetSide);
+
     let top = 0;
     let left = 0;
 
-    if (side === "left") {
+    if (targetSide === "left") {
       top = rect.top + rect.height / 2;
       left = rect.left - 8;
-    } else if (side === "right") {
+    } else if (targetSide === "right") {
       top = rect.top + rect.height / 2;
       left = rect.right + 8;
-    } else if (side === "top") {
+    } else if (targetSide === "top") {
       top = rect.top - 8;
       left = rect.left + rect.width / 2;
     } else {
@@ -40,11 +67,8 @@ export default function Tooltip({
     }
 
     // Boundary clamp
-    const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1024;
-    const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 768;
-
-    left = Math.max(16, Math.min(viewportWidth - 276, left));
-    top = Math.max(16, Math.min(viewportHeight - 60, top));
+    left = Math.max(12, Math.min(viewportWidth - 276, left));
+    top = Math.max(12, Math.min(viewportHeight - 60, top));
 
     setPosition({ top, left });
   };
@@ -74,6 +98,19 @@ export default function Tooltip({
     };
   }, []);
 
+  const tooltipElement = open ? (
+    <div
+      role="tooltip"
+      aria-hidden="false"
+      style={{ top: position.top, left: position.left }}
+      className={`ui-tooltip pointer-events-none fixed z-[var(--z-toast-tooltip,90)] max-w-[260px] -translate-y-1/2 rounded-[var(--radius-sm)] border border-white/10 bg-[#29263a]/95 text-[#eeeaf8] px-2.5 py-1.5 text-[12px] leading-snug shadow-xl backdrop-blur-md whitespace-normal break-words transition-opacity duration-[var(--motion-fast)] opacity-100 ${
+        actualSide === "left" ? "-translate-x-full" : ""
+      }`}
+    >
+      {content}
+    </div>
+  ) : null;
+
   return (
     <span
       ref={triggerRef}
@@ -88,18 +125,9 @@ export default function Tooltip({
       }}
     >
       {children}
-      {open && (
-        <span
-          role="tooltip"
-          aria-hidden="false"
-          style={{ top: position.top, left: position.left }}
-          className={`ui-tooltip pointer-events-none fixed z-50 max-w-[260px] -translate-y-1/2 rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-2.5 py-1.5 text-[13px] leading-snug text-[var(--text)] shadow-[var(--shadow-float)] whitespace-normal break-words transition-opacity duration-[var(--motion-fast)] opacity-100 ${
-            side === "left" ? "-translate-x-full" : ""
-          }`}
-        >
-          {content}
-        </span>
-      )}
+      {mounted && tooltipElement && typeof document !== "undefined"
+        ? createPortal(tooltipElement, document.body)
+        : tooltipElement}
     </span>
   );
 }
