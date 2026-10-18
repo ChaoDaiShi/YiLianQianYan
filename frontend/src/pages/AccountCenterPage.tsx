@@ -23,7 +23,8 @@ import {
   type CloudSession,
   type LogoutReport,
 } from "../api/cloud";
-import { Badge, Button, EmptyState, Input, PageHeader, Skeleton } from "../components/ui";
+import { Badge, Button, EmptyState, Input, Skeleton, Tabs, ConfirmDialog } from "../components/ui";
+import PageShell from "../components/layout/PageShell";
 import { identityPresentation, syncPresentation } from "../features/cloud/cloudPresentation";
 import { LifecycleJobsPanel } from "../features/cloud/LifecycleJobsPanel";
 import { AccountProfilePanel } from "../features/cloud/AccountProfilePanel";
@@ -62,6 +63,7 @@ export default function AccountCenterPage() {
   const [conflictsLoadError, setConflictsLoadError] = useState("");
   const [sessions,setSessions]=useState<CloudSession[]>([]);
   const [lastLogoutReport, setLastLogoutReport] = useState<LogoutReport | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const next = await getCloudIdentity();
@@ -208,12 +210,17 @@ export default function AccountCenterPage() {
     setBusy(false);
   }, []);
 
-  const deleteAccount = async () => {
-    if (window.prompt("此操作将永久删除云端账号。请输入 DELETE 继续：") !== "DELETE") return;
-    setBusy(true); setError("");
+  const confirmDeleteAccount = async () => {
+    setDeleteDialogOpen(false);
+    setBusy(true);
+    setError("");
     const result = await requestAccountDeletion();
-    if (result.ok) { setLifecycleJob(result.data.job); await refresh(); }
-    else setError(result.error);
+    if (result.ok) {
+      setLifecycleJob(result.data.job);
+      await refresh();
+    } else {
+      setError(result.error);
+    }
     setBusy(false);
   };
 
@@ -222,12 +229,13 @@ export default function AccountCenterPage() {
   const syncMeta = state ? syncPresentation(state.sync) : null;
 
   return (
-    <div className="cloud-page page-canvas">
-      <PageHeader
-        title="账号中心"
-        description="本地功能始终可用；登录后再由你决定是否启用跨设备同步。"
-        actions={identityMeta ? <Badge tone={identityMeta.tone}>{identityMeta.label}</Badge> : undefined}
-      />
+    <PageShell
+      title="账号中心"
+      description="本地功能始终可用；登录后再由你决定是否启用跨设备同步。"
+      className="cloud-page page-canvas flex h-full min-h-0 flex-col"
+      contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+      actions={identityMeta ? <Badge tone={identityMeta.tone}>{identityMeta.label}</Badge> : undefined}
+    >
       <div className="cloud-layout">
         <nav className="cloud-section-nav" aria-label="账号中心分类">
           {SECTIONS.map((item) => {
@@ -246,7 +254,17 @@ export default function AccountCenterPage() {
             <div className="cloud-section-heading"><div><span>IDENTITY</span><h2 id="account-section-title">账号与设备</h2><p>{identityMeta?.description}</p></div><Button size="sm" variant="secondary" onClick={() => void refresh()}><RefreshCw />刷新</Button></div>
             {identity?.status === "guest" || showSwitchLogin ? <div className="cloud-card cloud-auth-card">
               <div className="flex items-center justify-between pb-2">
-                <div className="cloud-mode-switch" role="tablist" aria-label="账号操作"><button type="button" role="tab" aria-selected={mode === "login"} onClick={() => setMode("login")}>登录账号</button><button type="button" role="tab" aria-selected={mode === "register"} onClick={() => setMode("register")}>创建账号</button></div>
+                <Tabs
+                  variant="segment"
+                  size="sm"
+                  aria-label="账号操作"
+                  tabs={[
+                    { id: "login", label: "登录账号" },
+                    { id: "register", label: "创建账号" },
+                  ]}
+                  activeId={mode}
+                  onChange={(val) => setMode(val as "login" | "register")}
+                />
                 {showSwitchLogin && (
                   <Button size="sm" variant="secondary" onClick={() => setShowSwitchLogin(false)}>取消切换</Button>
                 )}
@@ -286,12 +304,22 @@ export default function AccountCenterPage() {
             <SyncPrivacyPanel />
             <div className="cloud-card"><div className="cloud-card-title"><div><h3>默认不上传的内容</h3><p>敏感信息继续由本机 SecretStore 管理。</p></div><ShieldCheck /></div><ul className="cloud-bullet-list"><li>LLM、STT、TTS、AnySearch 与 MCP 密钥</li><li>完整 MCP 参数和完整工具结果</li><li>未经选择的对话、记忆、文件正文与二进制</li></ul></div>
             <div className="cloud-card"><h3>本机与云端生命周期</h3><dl className="cloud-data-list"><div><dt>退出登录</dt><dd>结束当前会话，不删除云端数据</dd></div><div><dt>注销账号</dt><dd>撤销全部会话并启动永久 DeletionJob</dd></div><div><dt>本机清理</dt><dd>始终由你单独选择，不与云端删除混为一体</dd></div></dl></div>
-            {identity?.status !== "guest" ? <div className="cloud-card"><div className="cloud-card-title"><div><h3>云端数据摘要</h3><p>这里只展示实体数量与对象占用，不读取正文。</p></div><Database /></div><dl className="cloud-data-list">{Object.entries(dataSummary?.counts || {}).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{value} 项</dd></div>)}<div><dt>对象存储</dt><dd>{dataSummary ? `${dataSummary.object_bytes} bytes` : "正在读取…"}</dd></div></dl><div className="cloud-card-actions"><Button variant="secondary" disabled={busy} onClick={() => void requestExport()}>导出我的云端数据</Button><Button variant="danger" disabled={busy || identity?.status === "closing"} onClick={() => void deleteAccount()}>永久注销云端账号</Button></div></div> : null}
+            {identity?.status !== "guest" ? <div className="cloud-card"><div className="cloud-card-title"><div><h3>云端数据摘要</h3><p>这里只展示实体数量与对象占用，不读取正文。</p></div><Database /></div><dl className="cloud-data-list">{Object.entries(dataSummary?.counts || {}).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{value} 项</dd></div>)}<div><dt>对象存储</dt><dd>{dataSummary ? `${dataSummary.object_bytes} bytes` : "正在读取…"}</dd></div></dl><div className="cloud-card-actions"><Button variant="secondary" disabled={busy} onClick={() => void requestExport()}>导出我的云端数据</Button><Button variant="danger" disabled={busy || identity?.status === "closing"} onClick={() => setDeleteDialogOpen(true)}>永久注销云端账号</Button></div></div> : null}
             {lifecycleJob ? <LifecycleJobsPanel job={lifecycleJob} onRefresh={() => void refreshJob(lifecycleJob.kind, lifecycleJob.id)} isRefreshing={busy} /> : null}
           </section> : null}
           {error ? <p className="cloud-error" role="alert">{error}</p> : null}
         </main>
       </div>
-    </div>
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        title="永久注销云端账号"
+        description="此操作将永久删除云端账号及关联会话，但不会删除本地工作数据。"
+        confirmLabel="永久注销"
+        tone="danger"
+        requireText="DELETE"
+        onConfirm={confirmDeleteAccount}
+        onCancel={() => setDeleteDialogOpen(false)}
+      />
+    </PageShell>
   );
 }
