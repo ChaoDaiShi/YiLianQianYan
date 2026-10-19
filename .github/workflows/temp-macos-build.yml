@@ -1,6 +1,6 @@
 name: Temp macOS unsigned build
 
-# Temporary workflow used to produce an unsigned macOS installer for local
+# Temporary workflow used to produce unsigned macOS installers for local
 # testing from a Windows development machine. Not part of the release path.
 on:
   push:
@@ -12,10 +12,18 @@ permissions:
   contents: write
 
 jobs:
-  build-macos-universal:
-    name: Build unsigned universal .app + .dmg
+  build-macos:
+    name: macOS ${{ matrix.arch }} unsigned .app + .dmg
     runs-on: macos-14
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
 
@@ -28,20 +36,34 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Set up Rust (universal targets)
+      - name: Set up Rust (${{ matrix.target }})
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
+
+      - name: Baseline environment
+        shell: bash
+        run: |
+          uname -a
+          rustc -Vv
+          cargo -V
+          node -v
+          npm -v
+          df -h /
+          du -sh . 2>/dev/null || true
 
       - name: Install dependencies
         run: |
           npm ci
           npm --prefix ./frontend ci
 
-      - name: Build macOS app and dmg (universal, unsigned)
+      - name: Build macOS app and dmg (unsigned)
         env:
           CI: "true"
-        run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run tauri -- build --target ${{ matrix.target }} --bundles app,dmg 2>&1 | tee build.log
 
       - name: Collect unsigned bundles
         shell: bash
@@ -54,28 +76,30 @@ jobs:
           echo "DMG=$DMG"
           test -n "$APP"
           test -n "$DMG"
-          cp "$DMG" artifacts/
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "artifacts/忆涟千言-macos-universal-unsigned.zip"
-          shasum -a 256 artifacts/* > artifacts/SHA256SUMS.txt
-          cat artifacts/SHA256SUMS.txt
+          cp "$DMG" "artifacts/忆涟千言-macos-${{ matrix.target }}-unsigned.dmg"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "artifacts/忆涟千言-macos-${{ matrix.target }}-unsigned.zip"
+          shasum -a 256 artifacts/* > "artifacts/SHA256SUMS-${{ matrix.target }}.txt"
+          cat "artifacts/SHA256SUMS-${{ matrix.target }}.txt"
           ls -lh artifacts
 
       - name: Upload build artifacts
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: yilian-macos-universal-unsigned
+          name: yilian-macos-${{ matrix.target }}-unsigned
           path: artifacts/*
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish temporary prerelease
+        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="temp-macos-${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" artifacts/*.dmg artifacts/*.zip artifacts/SHA256SUMS.txt \
+          TAG="temp-macos-${GITHUB_RUN_NUMBER}-${{ matrix.arch }}"
+          gh release create "$TAG" artifacts/*.dmg artifacts/*.zip "artifacts/SHA256SUMS-${{ matrix.target }}.txt" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "临时 macOS 未签名构建 ${GITHUB_RUN_NUMBER}" \
+            --title "临时 macOS 未签名构建 ${GITHUB_RUN_NUMBER} (${{ matrix.arch }})" \
             --notes "临时测试构建（未签名、未公证），仅用于本机验证 UI 与功能。
 
           安装：将 .dmg 中的「忆涟千言」拖入 /Applications。
@@ -83,5 +107,31 @@ jobs:
           - 右键 App → 打开，或
           - 终端执行：xattr -dr com.apple.quarantine \"/Applications/忆涟千言.app\"
 
+          架构：${{ matrix.target }}
           构建来源：${GITHUB_SHA}" \
             --prerelease
+
+      - name: Publish build diagnostics (always)
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          mkdir -p ci-diagnostics
+          {
+            echo "run=${GITHUB_RUN_NUMBER} arch=${{ matrix.arch }} target=${{ matrix.target }} sha=${GITHUB_SHA}"
+            echo "--- environment ---"
+            uname -a
+            rustc -Vv
+            df -h /
+          } > "ci-diagnostics/build-${GITHUB_RUN_NUMBER}-${{ matrix.arch }}.log"
+          if [ -f build.log ]; then
+            echo "--- build.log (tail 800) ---" >> "ci-diagnostics/build-${GITHUB_RUN_NUMBER}-${{ matrix.arch }}.log"
+            tail -n 800 build.log >> "ci-diagnostics/build-${GITHUB_RUN_NUMBER}-${{ matrix.arch }}.log"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-diagnostics
+          git commit -m "ci: macOS build diagnostics ${GITHUB_RUN_NUMBER} ${{ matrix.arch }}" || true
+          git push origin HEAD:refs/heads/build/macos-logs-${{ matrix.arch }} --force || true
