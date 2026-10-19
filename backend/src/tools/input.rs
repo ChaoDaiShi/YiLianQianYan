@@ -50,6 +50,8 @@ static KEY_MAP: LazyLock<HashMap<&'static str, Key>> = LazyLock::new(|| {
     m.insert("esc", Key::Escape);
     m.insert("backspace", Key::Backspace);
     m.insert("delete", Key::Delete);
+    // enigo exposes these keys only on Windows; omit them on macOS/Linux.
+    #[cfg(windows)]
     m.insert("insert", Key::Insert);
     m.insert("home", Key::Home);
     m.insert("end", Key::End);
@@ -58,10 +60,13 @@ static KEY_MAP: LazyLock<HashMap<&'static str, Key>> = LazyLock::new(|| {
 
     // Lock keys
     m.insert("caps_lock", Key::CapsLock);
+    #[cfg(windows)]
     m.insert("num_lock", Key::Numlock);
 
     // Misc
+    #[cfg(windows)]
     m.insert("print_screen", Key::PrintScr);
+    #[cfg(windows)]
     m.insert("pause", Key::Pause);
 
     // Function keys
