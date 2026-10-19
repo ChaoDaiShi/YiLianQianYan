@@ -119,19 +119,23 @@ jobs:
         run: |
           set +e
           mkdir -p ci-diagnostics
+          LOG="ci-diagnostics/build-${GITHUB_RUN_NUMBER}-${{ matrix.arch }}.txt"
           {
             echo "run=${GITHUB_RUN_NUMBER} arch=${{ matrix.arch }} target=${{ matrix.target }} sha=${GITHUB_SHA}"
             echo "--- environment ---"
             uname -a
             rustc -Vv
             df -h /
-          } > "ci-diagnostics/build-${GITHUB_RUN_NUMBER}-${{ matrix.arch }}.log"
+          } > "$LOG"
           if [ -f build.log ]; then
-            echo "--- build.log (tail 800) ---" >> "ci-diagnostics/build-${GITHUB_RUN_NUMBER}-${{ matrix.arch }}.log"
-            tail -n 800 build.log >> "ci-diagnostics/build-${GITHUB_RUN_NUMBER}-${{ matrix.arch }}.log"
+            echo "--- build.log (tail 800) ---" >> "$LOG"
+            tail -n 800 build.log >> "$LOG"
           fi
+          ls -lh "$LOG"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ci-diagnostics
-          git commit -m "ci: macOS build diagnostics ${GITHUB_RUN_NUMBER} ${{ matrix.arch }}" || true
-          git push origin HEAD:refs/heads/build/macos-logs-${{ matrix.arch }} --force || true
+          # *.log is gitignored in this repository; force-add the .txt diagnostics file.
+          git add -f "$LOG"
+          git commit -m "ci: macOS build diagnostics ${GITHUB_RUN_NUMBER} ${{ matrix.arch }}" || echo "commit failed"
+          git push origin HEAD:refs/heads/build/macos-logs-${{ matrix.arch }} --force || echo "push failed"
+
