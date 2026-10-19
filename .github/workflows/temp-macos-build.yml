@@ -1,0 +1,87 @@
+name: Temp macOS unsigned build
+
+# Temporary workflow used to produce an unsigned macOS installer for local
+# testing from a Windows development machine. Not part of the release path.
+on:
+  push:
+    branches:
+      - "build/macos-temp-*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-universal:
+    name: Build unsigned universal .app + .dmg
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Set up Rust (universal targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix ./frontend ci
+
+      - name: Build macOS app and dmg (universal, unsigned)
+        env:
+          CI: "true"
+        run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Collect unsigned bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          APP=$(find target -type d -name "*.app" -path "*bundle/macos*" | head -n 1)
+          DMG=$(find target -type f -name "*.dmg" | head -n 1)
+          echo "APP=$APP"
+          echo "DMG=$DMG"
+          test -n "$APP"
+          test -n "$DMG"
+          cp "$DMG" artifacts/
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "artifacts/忆涟千言-macos-universal-unsigned.zip"
+          shasum -a 256 artifacts/* > artifacts/SHA256SUMS.txt
+          cat artifacts/SHA256SUMS.txt
+          ls -lh artifacts
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: yilian-macos-universal-unsigned
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish temporary prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="temp-macos-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" artifacts/*.dmg artifacts/*.zip artifacts/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "临时 macOS 未签名构建 ${GITHUB_RUN_NUMBER}" \
+            --notes "临时测试构建（未签名、未公证），仅用于本机验证 UI 与功能。
+
+          安装：将 .dmg 中的「忆涟千言」拖入 /Applications。
+          首次打开如被 Gatekeeper 拦截：
+          - 右键 App → 打开，或
+          - 终端执行：xattr -dr com.apple.quarantine \"/Applications/忆涟千言.app\"
+
+          构建来源：${GITHUB_SHA}" \
+            --prerelease
