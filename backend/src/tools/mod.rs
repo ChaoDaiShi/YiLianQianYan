@@ -16,6 +16,7 @@ pub mod trait_def;
 pub mod upscale;
 
 pub use ai_search::AiSearchTool;
+pub mod basic_services;
 pub use gui_launch::{OpenApplicationTool, OpenUrlTool};
 pub use input::{KeyboardTool, MouseTool};
 pub use mcp::{McpToolAdapter, McpToolAdapterError};

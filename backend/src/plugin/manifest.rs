@@ -76,6 +76,27 @@ pub struct PluginContributions {
     pub workflows: Vec<String>,
     #[serde(default)]
     pub mcp_server_templates: Vec<McpServerTemplate>,
+    #[serde(default)]
+    pub features: Vec<PluginFeature>,
+    #[serde(default)]
+    pub settings: Vec<super::settings::PluginSetting>,
+}
+
+/// A page entry reusing a contribution already present in this package.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginFeatureTarget {
+    pub kind: String,
+    pub contribution: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginFeature {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub target: PluginFeatureTarget,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -151,6 +172,28 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), ManifestError>
         || manifest.contributes.mcp_server_templates.len() > MAX_PLUGIN_CONTRIBUTIONS_PER_KIND
     {
         return Err(ManifestError::TooManyContributions);
+    }
+    if manifest.contributes.features.len() > MAX_PLUGIN_CONTRIBUTIONS_PER_KIND {
+        return Err(ManifestError::TooManyContributions);
+    }
+    super::settings::validate(&manifest.contributes.settings)?;
+    let mut feature_ids = std::collections::HashSet::new();
+    for feature in &manifest.contributes.features {
+        PluginId::new(&feature.id)?;
+        let declared = match feature.target.kind.as_str() {
+            "skill" => &manifest.contributes.skills,
+            "workflow" => &manifest.contributes.workflows,
+            "agent" => &manifest.contributes.agents,
+            _ => return Err(ManifestError::InvalidJson),
+        };
+        if feature.title.trim().is_empty()
+            || feature.title.chars().count() > 120
+            || feature.description.chars().count() > MAX_PLUGIN_DESCRIPTION_CHARS
+            || !feature_ids.insert(&feature.id)
+            || !declared.contains(&feature.target.contribution)
+        {
+            return Err(ManifestError::InvalidJson);
+        }
     }
     // Secret check on *descriptive* fields only. MCP template `env` values are
     // environment-variable *names* by design, so they are not scanned here.

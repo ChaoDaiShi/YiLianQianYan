@@ -49,6 +49,7 @@ pub async fn gateway(
             Arc::new(DefaultVerifier::new(&server.workspace_root)),
             Arc::new(server.audit_recorder.clone()),
         )
+        .with_permissions_config(server.config.clone())
         .with_db(Arc::new(server.db.clone_connection()))
         .with_grant_enforcement(),
     )

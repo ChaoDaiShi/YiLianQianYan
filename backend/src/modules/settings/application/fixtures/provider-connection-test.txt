@@ -1,0 +1,5 @@
+STT connection test fixture
+Phrase: 你好，这是一次语音连接测试。
+Generated using Windows SAPI system speech synthesis on 2026-10-21.
+Format: RIFF WAV, mono, 16000 Hz, PCM signed 16-bit, 3.925 seconds.
+This fixed spoken test audio is sent to the selected STT service only when the user starts a connection test or call. It is not a runtime ASR/TTS fallback.

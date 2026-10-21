@@ -28,7 +28,33 @@ use crate::safety::CONTROL_SESSION_HEADER;
 
 pub fn build_router(server: Arc<AppServer>) -> Router {
     let protected = Router::new()
+        .merge(crate::api::connectors::router())
+        .merge(crate::api::knowledge::router())
+        .merge(skills_route::discovery_router())
+        .merge(crate::api::workspace_git::router())
+        .merge(crate::api::conversation_modes::router())
+        .merge(crate::api::settings_canvas::router())
+        .merge(crate::api::plugin_settings::router())
+        .route("/api/logs/tools", get(logs::get_tool_logs))
+        .merge(crate::api::connector_messages::router())
+        .merge(crate::api::access_rules::router())
+        .route(
+            "/api/plugins/features",
+            get(capabilities::list_plugin_features),
+        )
+        .route(
+            "/api/capabilities/local-discovery",
+            post(capabilities::discover_local_services),
+        )
+        .route(
+            "/api/agents/:id/profile",
+            get(agents::get_agent_profile).put(agents::update_agent_profile),
+        )
+        .merge(crate::api::model_pools::router())
+        .merge(crate::api::basic_services::router())
+        .route("/api/conversations/:id", put(conversations::rename_handler))
         .route("/api/chat", post(chat::chat_handler))
+        .route("/api/chat/readiness", get(chat::readiness_handler))
         .route("/api/cloud/identity", get(cloud::identity_handler))
         .route("/api/cloud/profile", get(cloud::profile_handler))
         .route(
@@ -154,7 +180,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/task-world/graphs", post(task_world::create_graph))
         .route(
             "/api/task-world/graphs/:graph_id",
-            get(task_world::get_graph),
+            get(task_world::get_graph).delete(task_world::delete_graph),
         )
         .route(
             "/api/task-world/graphs/:graph_id/detail",
@@ -557,6 +583,7 @@ fn control_plane_cors() -> CorsLayer {
             Method::GET,
             Method::POST,
             Method::PUT,
+            Method::PATCH,
             Method::DELETE,
             Method::OPTIONS,
         ])

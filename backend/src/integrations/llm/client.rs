@@ -15,6 +15,10 @@ use crate::integrations::secret::SecretResolver;
 
 pub trait UsageRecorder: Send + Sync {
     fn record(&self, usage: &Usage);
+    fn record_stream_usage(&self, _usage: &Usage) {}
+    fn request_started(&self) {}
+    fn begin_attempt(&self, _request: &str, _attempt: &str, _tier: usize) {}
+    fn finish_attempt(&self, _failure: Option<&str>) {}
 }
 
 /// Errors that can occur during LLM calls
@@ -22,6 +26,8 @@ pub trait UsageRecorder: Send + Sync {
 pub enum LlmError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
+    #[error("Provider request failed (HTTP {status}, code {code:?})")]
+    Provider { status: u16, code: Option<String> },
     #[error("Parse error: {0}")]
     Parse(String),
     #[error("API error: {0}")]
@@ -44,6 +50,8 @@ pub enum LlmError {
 
 /// LLM client for OpenAI-compatible chat completion APIs
 pub struct LlmClient {
+    thinking_mode: super::thinking::ThinkingMode,
+    pool: Option<super::model_pool::ModelPoolRuntime>,
     http: HttpClient,
     config: ModelConfig,
     resolver: Arc<SecretResolver>,
@@ -69,6 +77,8 @@ impl LlmClient {
             .expect("Failed to create HTTP client");
 
         Self {
+            thinking_mode: super::thinking::ThinkingMode::Standard,
+            pool: None,
             http,
             config: config.clone(),
             resolver,
@@ -77,6 +87,42 @@ impl LlmClient {
         }
     }
 
+    pub fn with_model_pool(mut self, pool: super::model_pool::ModelPoolRuntime) -> Self {
+        self.pool = Some(pool.with_thinking_mode(self.thinking_mode));
+        self
+    }
+
+    pub fn with_thinking_mode(mut self, mode: super::thinking::ThinkingMode) -> Self {
+        self.set_thinking_mode(mode);
+        self
+    }
+
+    pub(super) fn set_thinking_mode(&mut self, mode: super::thinking::ThinkingMode) {
+        self.thinking_mode = mode;
+        if let Some(pool) = &mut self.pool {
+            pool.set_thinking_mode(mode);
+        }
+    }
+
+    fn request_body(&self, request: ChatCompletionRequest) -> Result<serde_json::Value, LlmError> {
+        let mut value =
+            serde_json::to_value(request).map_err(|e| LlmError::Parse(e.to_string()))?;
+        self.thinking_mode
+            .apply(&self.config, &mut value)
+            .map_err(LlmError::Api)?;
+        Ok(value)
+    }
+
+    pub(super) fn begin_attempt(&self, request: &str, attempt: &str, tier: usize) {
+        if let Some(recorder) = &self.usage_recorder {
+            recorder.begin_attempt(request, attempt, tier)
+        }
+    }
+    pub(super) fn finish_attempt(&self, failure: Option<&str>) {
+        if let Some(recorder) = &self.usage_recorder {
+            recorder.finish_attempt(failure)
+        }
+    }
     fn record_usage(&self, usage: &Usage) {
         if let Some(recorder) = &self.usage_recorder {
             recorder.record(usage);
@@ -117,11 +163,18 @@ impl LlmClient {
 
     /// Resolve the chat API key through the SecretResolver (never a String).
     async fn api_key(&self) -> Result<SecretString, LlmError> {
-        self.resolver
+        let resolved = self
+            .resolver
             .resolve_api_key(&self.config)
             .await
-            .map_err(|_| LlmError::SecretUnavailable)?
-            .ok_or(LlmError::NoApiKey)
+            .map_err(|_| LlmError::SecretUnavailable)?;
+        match resolved {
+            Some(key) => Ok(key),
+            None if matches!(self.config.provider.as_str(), "ollama" | "lmstudio") => {
+                Ok(SecretString::from(String::new()))
+            }
+            None => Err(LlmError::NoApiKey),
+        }
     }
 
     /// Resolve the embedding API key through the SecretResolver.
@@ -155,6 +208,19 @@ impl LlmClient {
         tools: &[serde_json::Value],
         max_tokens: u32,
     ) -> Result<ChatCompletionResponse, LlmError> {
+        if let Some(pool) = &self.pool {
+            return pool.invoke(messages, tools, max_tokens).await;
+        }
+        self.invoke_single_with_max_tokens(messages, tools, max_tokens)
+            .await
+    }
+
+    pub(super) async fn invoke_single_with_max_tokens(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        max_tokens: u32,
+    ) -> Result<ChatCompletionResponse, LlmError> {
         let _guard = self.limiter.lock().await;
 
         let request = ChatCompletionRequest {
@@ -172,7 +238,11 @@ impl LlmClient {
             stream_options: None,
         };
 
+        let request = self.request_body(request)?;
         let api_key = self.api_key().await?;
+        if let Some(recorder) = &self.usage_recorder {
+            recorder.request_started();
+        }
 
         tracing::debug!(
             "LLM invoke: {} messages, {} tools",
@@ -195,10 +265,19 @@ impl LlmClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api(format!("HTTP {}: {}", status, body)));
+            return Err(provider_error(
+                &self.config.provider,
+                status.as_u16(),
+                &body,
+            ));
         }
 
-        let completion: ChatCompletionResponse = response.json().await?;
+        let value: serde_json::Value = response.json().await?;
+        if let Some(error) = response_error(&self.config.provider, 200, &value) {
+            return Err(error);
+        }
+        let completion: ChatCompletionResponse =
+            serde_json::from_value(value).map_err(|error| LlmError::Parse(error.to_string()))?;
         if let Some(usage) = completion.usage.as_ref() {
             self.record_usage(usage);
         }
@@ -339,7 +418,11 @@ impl LlmClient {
             }),
         };
 
+        let request = self.request_body(request)?;
         let api_key = self.api_key().await?;
+        if let Some(recorder) = &self.usage_recorder {
+            recorder.request_started();
+        }
 
         tracing::debug!(
             "LLM stream: {} messages, {} tools",
@@ -363,23 +446,28 @@ impl LlmClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api(format!("HTTP {}: {}", status, body)));
+            return Err(provider_error(
+                &self.config.provider,
+                status.as_u16(),
+                &body,
+            ));
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel(256);
 
         // Spawn a task to read the SSE stream
+        let provider = self.config.provider.clone();
         tokio::spawn(async move {
             let mut byte_stream = response.bytes_stream();
             let mut buffer = String::new();
+            let mut finished = false;
 
             loop {
-                match tokio::time::timeout(
-                    Duration::from_secs(60),
-                    futures::TryStreamExt::try_next(&mut byte_stream),
-                )
-                .await
-                {
+                let next = tokio::select! {
+                    _=tx.closed()=>return,
+                    result=tokio::time::timeout(Duration::from_secs(60),futures::TryStreamExt::try_next(&mut byte_stream))=>result,
+                };
+                match next {
                     Ok(Ok(Some(bytes))) => {
                         buffer.push_str(&String::from_utf8_lossy(&bytes));
 
@@ -398,8 +486,16 @@ impl LlmClient {
                                     return;
                                 }
 
+                                if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+                                    if let Some(error) = response_error(&provider, 200, &value) {
+                                        let _ = tx.send(Err(error)).await;
+                                        return;
+                                    }
+                                }
                                 match serde_json::from_str::<StreamChunk>(data) {
                                     Ok(chunk) => {
+                                        finished |=
+                                            chunk.choices.iter().any(|c| c.finish_reason.is_some());
                                         if tx.send(Ok(chunk)).await.is_err() {
                                             // Receiver dropped
                                             return;
@@ -414,7 +510,13 @@ impl LlmClient {
                         }
                     }
                     Ok(Ok(None)) => {
-                        // EOF — stream ended
+                        if !finished {
+                            let _ = tx
+                                .send(Err(LlmError::Stream(
+                                    "stream closed before completion".into(),
+                                )))
+                                .await;
+                        }
                         return;
                     }
                     Ok(Err(e)) => {
@@ -456,10 +558,64 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
         max_tokens: u32,
-        mut on_token: F,
+        on_token: F,
     ) -> Result<StreamAccumulator, LlmError>
     where
         F: FnMut(&str) + Send,
+    {
+        self.stream_with_reasoning_max_tokens(messages, tools, max_tokens, on_token, |_| {})
+            .await
+    }
+    pub async fn stream_with_reasoning_max_tokens<F, R>(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        max_tokens: u32,
+        on_token: F,
+        on_reasoning: R,
+    ) -> Result<StreamAccumulator, LlmError>
+    where
+        F: FnMut(&str) + Send,
+        R: FnMut(&str) + Send,
+    {
+        if let Some(pool) = &self.pool {
+            return pool
+                .stream_with_reasoning(messages, tools, max_tokens, on_token, on_reasoning)
+                .await;
+        }
+        self.stream_single_with_reasoning_max_tokens(
+            messages,
+            tools,
+            max_tokens,
+            on_token,
+            on_reasoning,
+        )
+        .await
+    }
+    pub(super) async fn stream_single_with_callbacks_max_tokens<F>(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        max_tokens: u32,
+        on_token: F,
+    ) -> Result<StreamAccumulator, LlmError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        self.stream_single_with_reasoning_max_tokens(messages, tools, max_tokens, on_token, |_| {})
+            .await
+    }
+    pub(super) async fn stream_single_with_reasoning_max_tokens<F, R>(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        max_tokens: u32,
+        mut on_token: F,
+        mut on_reasoning: R,
+    ) -> Result<StreamAccumulator, LlmError>
+    where
+        F: FnMut(&str) + Send,
+        R: FnMut(&str) + Send,
     {
         let mut rx = self
             .invoke_stream_with_max_tokens(messages, tools, max_tokens)
@@ -469,11 +625,24 @@ impl LlmClient {
         while let Some(chunk_result) = rx.recv().await {
             match chunk_result {
                 Ok(chunk) => {
+                    if let Some(usage) = &chunk.usage {
+                        if let Some(recorder) = &self.usage_recorder {
+                            recorder.record_stream_usage(usage);
+                        }
+                    }
                     if chunk.usage.is_some() {
                         accumulator.usage = chunk.usage.clone();
                     }
                     for choice in &chunk.choices {
                         accumulator.apply_delta(&choice.delta);
+                        if let Some(reasoning) = choice
+                            .delta
+                            .reasoning_content
+                            .as_deref()
+                            .filter(|value| !value.is_empty())
+                        {
+                            on_reasoning(reasoning);
+                        }
 
                         // Emit content tokens as they arrive
                         if let Some(ref content) = choice.delta.content {
@@ -484,6 +653,9 @@ impl LlmClient {
                     }
                 }
                 Err(e) => {
+                    if let Some(usage) = accumulator.usage.as_ref() {
+                        self.record_usage(usage);
+                    }
                     tracing::error!("Stream error: {}", e);
                     return Err(e);
                 }
@@ -855,6 +1027,7 @@ mod tests {
         ));
         let client = LlmClient::new(&config, resolver);
         let msg = ChatMessage {
+            reasoning_content: None,
             role: "user".to_string(),
             content: Some("hi".to_string()),
             tool_calls: None,
@@ -867,5 +1040,65 @@ mod tests {
             captured.lock().unwrap().as_deref(),
             Some("Bearer SECRET_CHAT")
         );
+    }
+}
+
+fn provider_error(provider: &str, status: u16, body: &str) -> LlmError {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| response_error(provider, status, &v))
+        .unwrap_or(LlmError::Provider { status, code: None })
+}
+/// Registered official MiniMax business codes and explicit OpenAI/DashScope error objects.
+pub(crate) fn response_error(
+    provider: &str,
+    status: u16,
+    value: &serde_json::Value,
+) -> Option<LlmError> {
+    if provider == "minimax" {
+        if let Some(code) = value
+            .pointer("/base_resp/status_code")
+            .and_then(serde_json::Value::as_i64)
+            .filter(|c| *c != 0)
+        {
+            return Some(match code {
+                1001 => LlmError::Timeout,
+                1002 | 1039 | 1041 | 2045 => LlmError::Provider {
+                    status: 429,
+                    code: Some("rate_limit_exceeded".into()),
+                },
+                1004 | 2049 => LlmError::Provider {
+                    status: 401,
+                    code: Some("invalid_api_key".into()),
+                },
+                1008 | 2056 => LlmError::Provider {
+                    status: 402,
+                    code: Some("insufficient_quota".into()),
+                },
+                1000 | 1024 | 1033 => LlmError::Provider {
+                    status: 500,
+                    code: Some("service_error".into()),
+                },
+                _ => LlmError::Provider {
+                    status,
+                    code: Some(format!("minimax_{code}")),
+                },
+            });
+        }
+    }
+    let error = value.get("error");
+    let code = error
+        .and_then(|e| {
+            e.get("code")
+                .filter(|v| v.is_string())
+                .or_else(|| e.get("type"))
+        })
+        .or_else(|| value.get("code"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    if error.is_some() || code.is_some() {
+        Some(LlmError::Provider { status, code })
+    } else {
+        None
     }
 }

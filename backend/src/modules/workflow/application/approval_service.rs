@@ -82,9 +82,21 @@ pub async fn resolve_workflow_approval(
             arguments: approval.arguments.clone(),
             subject: SecuritySubject::from_subject_id(approval.subject_id.clone()),
         };
-        let outcome = gateway
-            .execute_approved(&request, approval.risk_level)
-            .await;
+        let outcome = match run.execution_context.agent_id.as_ref() {
+            Some(agent) => {
+                crate::safety::execution_gateway::CURRENT_AGENT_ID
+                    .scope(
+                        agent.to_string(),
+                        gateway.execute_approved(&request, approval.risk_level),
+                    )
+                    .await
+            }
+            None => {
+                gateway
+                    .execute_approved(&request, approval.risk_level)
+                    .await
+            }
+        };
 
         run.transition_node(&node_id, NodeRunStatus::Running, now)
             .map_err(|error| error.to_string())?;

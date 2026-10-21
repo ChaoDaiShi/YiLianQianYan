@@ -13,7 +13,9 @@ use crate::db::Database;
 use crate::integrations::secret::{SecretResolver, SecretSource};
 
 use crate::modules::settings::application::secret_lifecycle::chat_source;
-use crate::modules::settings::domain::policy::{supported_voice_provider, valid_provider_url};
+use crate::modules::settings::domain::policy::{
+    supported_voice_stt_provider, supported_voice_tts_provider, valid_provider_url,
+};
 
 #[derive(serde::Serialize)]
 pub(crate) struct ProviderReadinessItem {
@@ -108,7 +110,7 @@ pub(crate) async fn build_provider_readiness(
         stt: ProviderReadinessItem {
             configured: stt_configured,
             available: stt_configured
-                && supported_voice_provider(&config.voice.stt.provider)
+                && supported_voice_stt_provider(&config.voice.stt.provider)
                 && config.voice.stt.structurally_configured(),
             provider: config.voice.stt.provider.clone(),
             model: config.voice.stt.model.clone(),
@@ -116,7 +118,7 @@ pub(crate) async fn build_provider_readiness(
         tts: ProviderReadinessItem {
             configured: tts_configured,
             available: tts_configured
-                && supported_voice_provider(&config.voice.tts.provider)
+                && supported_voice_tts_provider(&config.voice.tts.provider)
                 && config.voice.tts.structurally_configured(),
             provider: config.voice.tts.provider.clone(),
             model: config.voice.tts.model.clone(),

@@ -226,12 +226,13 @@ impl CapabilityProvider for SkillProvider {
                     CapabilityProviderKind::SkillRuntime,
                     &s.name,
                     &s.description,
-                    CapabilityRuntimeStatus::Ready,
-                    true,
+                    if s.compatibility.runtime_ready {CapabilityRuntimeStatus::Ready}else{CapabilityRuntimeStatus::Unavailable},
+                    s.compatibility.runtime_ready,
                     CapabilityMetadata {
-                        source_id: Some(s.name.clone()),
-                        source_name: Some(s.name.clone()),
-                        runtime_ready: true,
+                        source_id: Some(s.source_id.clone()),
+                        source_name: Some(s.source.clone()),
+                        runtime_ready: s.compatibility.runtime_ready,
+                        extra:serde_json::json!({"compatibility":s.compatibility,"root_dir":s.root_dir}),
                         ..Default::default()
                     },
                 );

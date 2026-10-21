@@ -67,6 +67,8 @@ pub async fn start_workflow_run(
     server: &AppServer,
     graph_id: &str,
 ) -> Result<RunStarted, RunServiceError> {
+    crate::modules::capability::import_store::require_active_plugin_resource(&server.db, graph_id)
+        .map_err(RunServiceError::InvalidRun)?;
     let graph = server
         .db
         .get_workflow_graph(graph_id)
@@ -75,13 +77,17 @@ pub async fn start_workflow_run(
 
     // Subject is resolved server-side (the local desktop user), never client-supplied.
     let now = chrono::Utc::now().timestamp_millis();
-    let context = ExecutionContext::new(
+    let mut context = ExecutionContext::new(
         ExecutionId::generate(),
         SecuritySubject::local_user().subject_id,
         "workflow-runner",
         None,
         now,
     );
+    context.agent_id = crate::safety::execution_gateway::current_agent_id()
+        .map(crate::modules::task::AgentId::new)
+        .transpose()
+        .map_err(|e| RunServiceError::InvalidRun(e.to_string()))?;
     let run = WorkflowRun::new(
         WorkflowRunId::generate(),
         context,
@@ -154,6 +160,10 @@ pub(crate) async fn execute_for_task_harness(
     cancel: CancellationToken,
     node_context: Option<&NodeContext>,
 ) -> Result<Option<Value>, String> {
+    crate::modules::capability::import_store::require_active_plugin_resource(
+        &server.db,
+        workflow_graph_id,
+    )?;
     let mut graph = server
         .db
         .get_workflow_graph(workflow_graph_id)?
@@ -290,7 +300,9 @@ pub(crate) async fn build_gateway(server: &AppServer) -> Arc<SecurityExecutionGa
             Arc::new(DefaultVerifier::new(&server.workspace_root)),
             Arc::new(server.audit_recorder.clone()),
         )
+        .with_permissions_config(server.config.clone())
         .with_db(Arc::new(server.db.clone_connection()))
+        .with_agent_context(crate::safety::execution_gateway::current_agent_id())
         .with_grant_enforcement(),
     )
 }

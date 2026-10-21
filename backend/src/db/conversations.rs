@@ -74,8 +74,15 @@ pub struct ConversationSummary {
 pub struct Conversation {
     pub id: String,
     pub title: String,
+    pub workspace_mode: super::conversation_modes::WorkspaceMode,
     pub messages: Vec<MessageRow>,
+    pub message_reasoning: std::collections::BTreeMap<String, String>,
+    pub turn_reasoning: std::collections::BTreeMap<String, String>,
     pub execution_history: Vec<ConversationExecutionRecord>,
+    pub run_status: ConversationRunStatus,
+    pub run_error: Option<String>,
+    pub run_started_at: Option<i64>,
+    pub run_finished_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -113,7 +120,43 @@ pub struct MessageRow {
     pub created_at: i64,
 }
 
+fn reasoning_map(
+    conn: &rusqlite::Connection,
+    conversation: &str,
+    prefix: &str,
+    role: &str,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut query = conn.prepare("SELECT m.id,s.value FROM messages m JOIN settings s ON s.key=?2||m.id WHERE m.conversation_id=?1 AND m.role=?3 AND length(s.value)>0 ORDER BY m.created_at,m.rowid").map_err(|e|e.to_string())?;
+    let rows = query
+        .query_map(params![conversation, prefix, role], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
 impl Database {
+    pub fn current_chat_reasoning(&self, conversation: &str) -> Result<String, String> {
+        use rusqlite::OptionalExtension;
+        self.conn().query_row("SELECT s.value FROM messages m LEFT JOIN settings s ON s.key='chat_turn_reasoning:'||m.id WHERE m.conversation_id=?1 AND m.role='user' ORDER BY m.created_at DESC,m.rowid DESC LIMIT 1",[conversation],|row|row.get::<_,Option<String>>(0)).optional().map(|value|value.flatten().unwrap_or_default()).map_err(|error|error.to_string())
+    }
+    /// Only provider reasoning deltas are appended, attached to the actual persisted user turn.
+    pub fn append_chat_reasoning_event(
+        &self,
+        event: &crate::agent::engine::AgentEvent,
+    ) -> Result<(), String> {
+        if !matches!(
+            event.event_type.as_str(),
+            "reasoning" | "reasoning_snapshot"
+        ) {
+            return Ok(());
+        }
+        let Some(reasoning) = event.token.as_deref().filter(|text| !text.is_empty()) else {
+            return Ok(());
+        };
+        self.conn().execute("INSERT INTO settings(key,value) SELECT 'chat_turn_reasoning:'||id,?2 FROM messages WHERE conversation_id=?1 AND role='user' ORDER BY created_at DESC,rowid DESC LIMIT 1 ON CONFLICT(key) DO UPDATE SET value=CASE WHEN ?3 THEN excluded.value ELSE settings.value||excluded.value END",params![event.conversation_id,reasoning,event.event_type == "reasoning_snapshot"]).map_err(|e|e.to_string())?;
+        Ok(())
+    }
     pub fn create_conversation(&self, title: &str) -> Result<ConversationSummary, String> {
         let conn = self.conn();
         let id = uuid::Uuid::new_v4().to_string();
@@ -176,7 +219,7 @@ impl Database {
         use rusqlite::OptionalExtension;
         let conn = self.conn();
         let mut stmt = conn
-            .prepare("SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?1")
+            .prepare("SELECT id, title, created_at, updated_at, run_status, run_error, run_started_at, run_finished_at FROM conversations WHERE id = ?1")
             .map_err(|e| e.to_string())?;
         let row_opt = stmt
             .query_row(params![id], |row| {
@@ -185,23 +228,46 @@ impl Database {
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
                 ))
             })
             .optional()
             .map_err(|e| e.to_string())?;
         drop(stmt);
 
-        let Some((conv_id, title, created_at, updated_at)) = row_opt else {
+        let Some((
+            conv_id,
+            title,
+            created_at,
+            updated_at,
+            run_status,
+            run_error,
+            run_started_at,
+            run_finished_at,
+        )) = row_opt
+        else {
             return Ok(None);
         };
 
         let messages = self.get_messages_internal(&conn, &conv_id)?;
         let execution_history = self.get_execution_history_internal(&conn, &conv_id)?;
+        let message_reasoning = reasoning_map(&conn, &conv_id, "chat_reasoning:", "assistant")?;
+        let turn_reasoning = reasoning_map(&conn, &conv_id, "chat_turn_reasoning:", "user")?;
         Ok(Some(Conversation {
+            workspace_mode: super::conversation_modes::load_mode_on(&conn, &conv_id)?,
             id: conv_id,
             title,
             messages,
+            message_reasoning,
+            turn_reasoning,
             execution_history,
+            run_status: ConversationRunStatus::from_stored(&run_status),
+            run_error,
+            run_started_at,
+            run_finished_at,
             created_at,
             updated_at,
         }))
@@ -220,6 +286,7 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
+        transaction.execute("DELETE FROM settings WHERE key = ?1 OR key = 'conversation_mode:' || ?2 OR key IN (SELECT 'chat_reasoning:' || id FROM messages WHERE conversation_id = ?2) OR key IN (SELECT 'chat_turn_reasoning:' || id FROM messages WHERE conversation_id = ?2)", params![format!("chat_options:{id}"),id]).map_err(|e|e.to_string())?;
         transaction
             .execute(
                 "DELETE FROM messages WHERE conversation_id = ?1",
@@ -228,6 +295,8 @@ impl Database {
             .map_err(|e| e.to_string())?;
         transaction
             .execute("DELETE FROM conversations WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        super::connectors::remove_connector_entity_on(&transaction, "conversation", id)
             .map_err(|e| e.to_string())?;
         if let Some(identity) = identity {
             let _ = crate::db::cloud::capture::record_local_deletion_tx(
@@ -263,6 +332,14 @@ impl Database {
     /// This closes the anchor-validation/delete race even when SQLite foreign
     /// key enforcement is disabled by an older database connection.
     pub fn add_message_if_conversation_exists(&self, msg: &MessageRow) -> Result<(), String> {
+        self.add_chat_message_with_reasoning(msg, None)
+    }
+
+    pub fn add_chat_message_with_reasoning(
+        &self,
+        msg: &MessageRow,
+        reasoning: Option<&str>,
+    ) -> Result<(), String> {
         let mut conn = self.conn();
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -288,6 +365,14 @@ impl Database {
                     msg.tool_calls, msg.tool_call_id, msg.tool_name, msg.tool_result, msg.created_at],
             )
             .map_err(|e| e.to_string())?;
+        if let Some(reasoning) = reasoning {
+            transaction
+                .execute(
+                    "INSERT OR REPLACE INTO settings(key,value) VALUES(?1,?2)",
+                    params![format!("chat_reasoning:{}", msg.id), reasoning],
+                )
+                .map_err(|e| e.to_string())?;
+        }
         let now = chrono::Utc::now().timestamp_millis();
         transaction
             .execute(
@@ -613,6 +698,20 @@ mod tests {
         assert_eq!(listed[0].run_status, ConversationRunStatus::Running);
         assert!(listed[0].run_started_at.is_some());
         assert!(listed[0].run_finished_at.is_none());
+        let detail = db.get_conversation(&conversation.id).unwrap();
+        assert_eq!(detail.run_status, ConversationRunStatus::Running);
+        assert_eq!(detail.run_started_at, listed[0].run_started_at);
+        assert!(detail.run_finished_at.is_none());
+        db.set_conversation_run_status(
+            &conversation.id,
+            ConversationRunStatus::Failed,
+            Some("provider rejected"),
+        )
+        .unwrap();
+        let failed = db.get_conversation(&conversation.id).unwrap();
+        assert_eq!(failed.run_status, ConversationRunStatus::Failed);
+        assert_eq!(failed.run_error.as_deref(), Some("provider rejected"));
+        assert!(failed.run_finished_at.is_some());
     }
 
     #[test]

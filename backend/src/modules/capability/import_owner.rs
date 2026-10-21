@@ -1,7 +1,7 @@
 //! Runtime owner for enabled managed Skill imports.
 //!
-//! Imported content stays inert until the user explicitly enables it. Only a
-//! validated `SKILL.md` is materialized; declarative plugins are never loaded
+//! Imported content stays inert until the user explicitly enables it. Validated
+//! Skill instructions and bundled resources are materialized byte-for-byte; declarative plugins are never loaded
 //! as executable code here.
 
 use super::import_store::Package;
@@ -25,6 +25,7 @@ pub struct ActivationSnapshot {
     target: PathBuf,
     previous_owner: Option<Vec<u8>>,
     previous_skill: Option<Vec<u8>>,
+    previous_resources: std::collections::BTreeMap<String, Vec<u8>>,
     existed: bool,
 }
 
@@ -62,11 +63,47 @@ fn snapshot(store: &ManagedSkillStore, id: &str) -> Result<ActivationSnapshot, S
             target,
             previous_owner: None,
             previous_skill: None,
+            previous_resources: Default::default(),
             existed: false,
         });
     }
     require_owned_target(&target, id)?;
+    fn resources(
+        root: &Path,
+        current: &Path,
+        result: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    ) -> Result<(), String> {
+        for entry in std::fs::read_dir(current).map_err(|_| "managed_import_runtime_unavailable")? {
+            let entry = entry.map_err(|_| "managed_import_runtime_unavailable")?;
+            let meta = std::fs::symlink_metadata(entry.path())
+                .map_err(|_| "managed_import_runtime_unavailable")?;
+            if meta.file_type().is_symlink() {
+                return Err("managed_import_runtime_path_unsafe".into());
+            }
+            if meta.is_dir() {
+                resources(root, &entry.path(), result)?;
+            } else {
+                let relative = entry
+                    .path()
+                    .strip_prefix(root)
+                    .map_err(|_| "managed_import_runtime_path_unsafe")?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if relative != "SKILL.md" && relative != OWNER_FILE {
+                    result.insert(
+                        relative,
+                        std::fs::read(entry.path())
+                            .map_err(|_| "managed_import_runtime_unavailable")?,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut previous_resources = Default::default();
+    resources(&target, &target, &mut previous_resources)?;
     Ok(ActivationSnapshot {
+        previous_resources,
         previous_owner: Some(
             std::fs::read(target.join(OWNER_FILE))
                 .map_err(|_| "managed_import_runtime_unavailable")?,
@@ -107,7 +144,20 @@ pub fn activate(
             std::fs::write(saved.target.join(OWNER_FILE), raw)
                 .map_err(|_| "managed_import_runtime_unavailable")?;
             std::fs::write(saved.target.join("SKILL.md"), content)
-                .map_err(|_| "managed_import_runtime_unavailable".to_string())
+                .map_err(|_| "managed_import_runtime_unavailable".to_string())?;
+            for relative in package.files.keys() {
+                let path = saved.target.join(relative);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|_| "managed_import_runtime_unavailable")?;
+                }
+                std::fs::write(
+                    path,
+                    super::import_store::resource_bytes(package, relative)?,
+                )
+                .map_err(|_| "managed_import_runtime_unavailable")?;
+            }
+            Ok(())
         });
     if let Err(error) = result {
         let _ = restore(saved);
@@ -135,6 +185,10 @@ pub fn restore(saved: ActivationSnapshot) -> Result<(), String> {
         }
         return Ok(());
     }
+    if saved.target.exists() {
+        std::fs::remove_dir_all(&saved.target)
+            .map_err(|_| "managed_import_runtime_rollback_failed")?;
+    }
     std::fs::create_dir_all(&saved.target).map_err(|_| "managed_import_runtime_rollback_failed")?;
     std::fs::write(
         saved.target.join(OWNER_FILE),
@@ -146,6 +200,14 @@ pub fn restore(saved: ActivationSnapshot) -> Result<(), String> {
         saved.previous_skill.unwrap_or_default(),
     )
     .map_err(|_| "managed_import_runtime_rollback_failed")?;
+    for (relative, bytes) in saved.previous_resources {
+        let path = saved.target.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|_| "managed_import_runtime_rollback_failed")?;
+        }
+        std::fs::write(path, bytes).map_err(|_| "managed_import_runtime_rollback_failed")?;
+    }
     Ok(())
 }
 
@@ -158,8 +220,10 @@ pub fn is_active(store: &ManagedSkillStore, package: &Package) -> bool {
         return false;
     };
     owner.content_hash == package.content_hash
-        && package.files.get("SKILL.md").is_some_and(|expected| {
-            std::fs::read_to_string(target.join("SKILL.md")).is_ok_and(|actual| actual == *expected)
+        && package.files.iter().all(|(relative, _)| {
+            super::import_store::resource_bytes(package, relative).is_ok_and(|expected| {
+                std::fs::read(target.join(relative)).is_ok_and(|actual| actual == expected)
+            })
         })
 }
 

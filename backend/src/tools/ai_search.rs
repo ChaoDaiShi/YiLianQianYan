@@ -5,14 +5,12 @@ use super::{RiskLevel, Tool, ToolExecutionContext, ToolResult};
 use crate::{
     db::Database,
     integrations::secret::SecretStore,
-    modules::cloud::search::{AnySearchProvider, SearchProvider, SearchRequest},
+    modules::cloud::search::SearchRequest,
     safety::{
         DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
         ToolSecurityDescriptor,
     },
 };
-
-const ANYSEARCH_ENDPOINT: &str = "https://api.anysearch.com/v1/search";
 
 pub struct AiSearchTool {
     db: Database,
@@ -24,22 +22,27 @@ impl AiSearchTool {
         Self { db, secret_store }
     }
 
-    fn official_base_url(&self) -> Result<String, DescriptorError> {
-        let (_, base, _) = self.db.cloud_search_config().map_err(|_| {
-            DescriptorError::InvalidDescriptor("search configuration is unavailable".into())
+    fn endpoint(&self) -> Result<(String, String, &'static str), DescriptorError> {
+        let (provider, base, _) = self.db.cloud_search_config().map_err(|_| {
+            DescriptorError::InvalidDescriptor("search configuration unavailable".into())
         })?;
-        let parsed = url::Url::parse(&base).map_err(|_| {
-            DescriptorError::InvalidDescriptor("search provider URL is invalid".into())
-        })?;
-        if parsed.scheme() != "https"
-            || parsed.host_str() != Some("api.anysearch.com")
-            || parsed.port_or_known_default() != Some(443)
-        {
+        let (url, method) =
+            crate::modules::cloud::search::configured_search_endpoint(&provider, &base)
+                .map_err(|e| DescriptorError::InvalidDescriptor(e.to_string()))?;
+        let official = matches!(
+            (provider.as_str(), url.as_str()),
+            ("anysearch", "https://api.anysearch.com/v1/search")
+                | ("tavily", "https://api.tavily.com/search")
+                | ("brave", "https://api.search.brave.com/res/v1/web/search")
+                | ("bocha", "https://api.bochaai.com/v1/web-search")
+                | ("bocha", "https://api.bocha.cn/v1/web-search")
+        );
+        if !official {
             return Err(DescriptorError::InvalidDescriptor(
-                "agent search only permits the official AnySearch endpoint".into(),
+                "agent search requires selected official provider endpoint".into(),
             ));
         }
-        Ok(base.trim_end_matches('/').to_string())
+        Ok((provider, url, method))
     }
 }
 
@@ -50,7 +53,7 @@ impl Tool for AiSearchTool {
     }
 
     fn description(&self) -> &str {
-        "搜索当前公开信息并返回结构化标题、摘要与来源。仅连接官方 AnySearch endpoint。"
+        "搜索当前公开信息并返回结构化标题、摘要与来源。连接已配置的官方搜索服务。"
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -75,15 +78,15 @@ impl Tool for AiSearchTool {
         &self,
         _args: &serde_json::Value,
     ) -> Result<ToolSecurityDescriptor, DescriptorError> {
-        self.official_base_url()?;
+        let (_, endpoint, method) = self.endpoint()?;
         let descriptor = ToolSecurityDescriptor {
             tool_name: self.name().into(),
             requested_permissions: vec![
                 PermissionId::NetworkRequest.in_scope(ResourceScope::NetworkTarget)
             ],
             resources: vec![ResourceDescriptor::Network {
-                url: ANYSEARCH_ENDPOINT.into(),
-                method: "POST".into(),
+                url: endpoint,
+                method: method.into(),
             }],
             default_risk: RiskLevel::Medium,
             side_effects: vec![SideEffectKind::NetworkEgress],
@@ -101,11 +104,24 @@ impl Tool for AiSearchTool {
         args: serde_json::Value,
         context: &ToolExecutionContext,
     ) -> ToolResult {
+        let (_, endpoint, method) = match self.endpoint() {
+            Ok(v) => v,
+            Err(e) => return ToolResult::error(e.to_string()),
+        };
+        let parsed = match url::Url::parse(&endpoint) {
+            Ok(v) => v,
+            Err(_) => return ToolResult::error("搜索地址无效"),
+        };
         if context
-            .authorized_network("https", "api.anysearch.com", 443, "POST")
+            .authorized_network(
+                parsed.scheme(),
+                parsed.host_str().unwrap_or(""),
+                parsed.port_or_known_default().unwrap_or(443),
+                method,
+            )
             .is_none()
         {
-            return ToolResult::error("AI 搜索缺少安全网关创建的网络授权证据");
+            return ToolResult::error("AI 搜索缺少执行网关的网络授权");
         }
         let query = args
             .get("query")
@@ -132,12 +148,19 @@ impl Tool for AiSearchTool {
             .get("language")
             .and_then(|value| value.as_str())
             .map(str::to_string);
-        let base = match self.official_base_url() {
-            Ok(value) => value,
-            Err(error) => return ToolResult::error(error.to_string()),
+        let (provider, base, secret_ref) = match self.db.cloud_search_config() {
+            Ok(v) => v,
+            Err(_) => return ToolResult::error("搜索配置不可用"),
         };
-        let provider = AnySearchProvider::new(base, Arc::clone(&self.secret_store));
-        match provider.search(request).await {
+        match crate::modules::cloud::search::search_configured(
+            &provider,
+            base,
+            Arc::clone(&self.secret_store),
+            secret_ref,
+            request,
+        )
+        .await
+        {
             Ok(mut response) => {
                 for result in &mut response.results {
                     result.snippet = result

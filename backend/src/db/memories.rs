@@ -299,11 +299,22 @@ impl Database {
     }
 
     pub fn list_memories(&self, query: &MemoryQuery) -> Result<Vec<Memory>, String> {
+        self.list_memory_candidates(query, false)
+    }
+
+    fn list_memory_candidates(
+        &self,
+        query: &MemoryQuery,
+        exclude_documents: bool,
+    ) -> Result<Vec<Memory>, String> {
         let conn = self.conn();
         let mut sql = String::from(
             "SELECT id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at
              FROM memories WHERE 1=1"
         );
+        if exclude_documents {
+            sql.push_str(" AND NOT EXISTS(SELECT 1 FROM knowledge_document_chunks c WHERE c.memory_id=memories.id)");
+        }
         let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref cat) = query.category {
@@ -394,6 +405,10 @@ impl Database {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM memories WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        super::connectors::remove_connector_entity_on(&tx, "memory", id)
+            .map_err(|e| e.to_string())?;
+        super::connectors::remove_connector_entity_on(&tx, "knowledge", id)
             .map_err(|e| e.to_string())?;
         if let Some(identity) = identity {
             let _ = crate::db::cloud::capture::record_local_deletion_tx(
@@ -544,13 +559,33 @@ impl Database {
         query: &RetrieveQuery,
         query_embedding: Option<&[f32]>,
     ) -> Result<Vec<ScoredMemory>, String> {
-        let candidates = self.list_memories(&MemoryQuery {
-            category: query.category.clone(),
-            source: None,
-            q: None,
-            limit: Some(RETRIEVAL_CANDIDATE_LIMIT),
-            offset: None,
-        })?;
+        self.retrieve_memory_candidates(query, query_embedding, false)
+    }
+
+    pub fn retrieve_chat_memories(
+        &self,
+        query: &RetrieveQuery,
+        query_embedding: Option<&[f32]>,
+    ) -> Result<Vec<ScoredMemory>, String> {
+        self.retrieve_memory_candidates(query, query_embedding, true)
+    }
+
+    fn retrieve_memory_candidates(
+        &self,
+        query: &RetrieveQuery,
+        query_embedding: Option<&[f32]>,
+        exclude_documents: bool,
+    ) -> Result<Vec<ScoredMemory>, String> {
+        let candidates = self.list_memory_candidates(
+            &MemoryQuery {
+                category: query.category.clone(),
+                source: None,
+                q: None,
+                limit: Some(RETRIEVAL_CANDIDATE_LIMIT),
+                offset: None,
+            },
+            exclude_documents,
+        )?;
 
         let now = chrono::Utc::now().timestamp_millis();
         let use_hybrid = query_embedding.is_some();
@@ -619,16 +654,22 @@ impl Database {
 
     /// Batch delete memories (reserved for future use)
     pub fn delete_memories_by_ids(&self, ids: &[String]) -> Result<usize, String> {
-        let conn = self.conn();
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         let mut count = 0;
         for id in ids {
-            if conn
-                .execute("DELETE FROM memories WHERE id = ?1", params![id])
-                .is_ok()
-            {
-                count += 1;
+            let deleted = tx
+                .execute("DELETE FROM memories WHERE id=?1", params![id])
+                .map_err(|e| e.to_string())?;
+            if deleted > 0 {
+                super::connectors::remove_connector_entity_on(&tx, "memory", id)
+                    .map_err(|e| e.to_string())?;
+                super::connectors::remove_connector_entity_on(&tx, "knowledge", id)
+                    .map_err(|e| e.to_string())?;
+                count += deleted;
             }
         }
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(count)
     }
 }
@@ -791,4 +832,8 @@ mod tests {
         assert_eq!(db.count_memories_without_embedding().unwrap(), 0);
         std::fs::remove_file(path).ok();
     }
+}
+
+pub(super) fn keyword_score(query: &str, content: &str) -> f64 {
+    compute_text_score(query, content)
 }

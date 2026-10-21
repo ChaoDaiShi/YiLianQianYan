@@ -487,11 +487,14 @@ fn default_timeout_ms() -> u64 {
 // ── Permissions ──
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum PermissionMode {
-    Yolo,
-    Ask,
-    Plan,
+    #[serde(alias = "plan")]
+    FullApproval,
+    #[serde(alias = "ask")]
+    PartialApproval,
+    #[serde(alias = "yolo")]
+    FullAccess,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -512,7 +515,7 @@ impl Default for PermissionsConfig {
 }
 
 fn default_permission_mode() -> PermissionMode {
-    PermissionMode::Ask
+    PermissionMode::PartialApproval
 }
 fn default_interrupt_on() -> Vec<String> {
     vec![

@@ -155,10 +155,52 @@ fn restore_supervisor(
 }
 
 impl Database {
+    /// Remove mutable graph state while preserving completed attempts and proof audit.
+    pub(crate) fn delete_task_graph_state(
+        &self,
+        graph: &TaskGraph,
+        deleted_at: i64,
+    ) -> Result<(), TaskWorldPersistenceError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute("INSERT INTO task_world_deleted_graphs(graph_id,graph_json,deleted_at) VALUES(?1,?2,?3)",params![graph.id.as_str(),encode_json("graph",graph)?,deleted_at])?;
+        for table in [
+            "task_canvas_views",
+            "task_world_checkpoints",
+            "task_world_execution_controls",
+            "task_graph_revision_history",
+            "task_world_supervisor_snapshots",
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE graph_id=?1"),
+                [graph.id.as_str()],
+            )?;
+        }
+        // Resource entities and their files remain; only graph/node references disappear.
+        let has_bindings:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='resource_bindings')",[],|r|r.get(0))?;
+        if has_bindings {
+            tx.execute("DELETE FROM resource_bindings WHERE target_kind IN ('graph','node') AND target_id=?1",[graph.id.as_str()])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    pub(crate) fn task_graph_was_deleted(
+        &self,
+        id: &TaskGraphId,
+    ) -> Result<bool, TaskWorldPersistenceError> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_world_deleted_graphs WHERE graph_id=?1)",
+            [id.as_str()],
+            |r| r.get(0),
+        )?)
+    }
+
     /// Explicitly install the v1 Task World persistence schema.  Database::new
     /// intentionally does not call this method.
     pub(crate) fn initialize_task_world_schema(&self) -> Result<(), TaskWorldPersistenceError> {
         self.apply_product_migration(&TASK_WORLD_SCHEMA_MIGRATION)?;
+        self.apply_product_migration(&ProductMigrationSpec::new(1022, "1022_task_graph_deletion_audit", MigrationOwner::V1TaskWorld,
+            "CREATE TABLE task_world_deleted_graphs(graph_id TEXT PRIMARY KEY,graph_json TEXT NOT NULL,deleted_at INTEGER NOT NULL);"))?;
         self.initialize_task_canvas_schema()?;
         self.initialize_task_execution_schema()
             .map_err(|error| TaskWorldPersistenceError::Integrity(error.to_string()))?;

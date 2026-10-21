@@ -107,6 +107,7 @@ mod tests {
 
     fn message(role: &str, content: &str) -> ChatMessage {
         ChatMessage {
+            reasoning_content: None,
             role: role.to_string(),
             content: Some(content.to_string()),
             tool_calls: None,
@@ -117,6 +118,7 @@ mod tests {
 
     fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ChatMessage {
         ChatMessage {
+            reasoning_content: None,
             role: "assistant".to_string(),
             content: None,
             tool_calls: Some(vec![ToolCall {
@@ -134,6 +136,7 @@ mod tests {
 
     fn tool_result(id: &str, name: &str, content: &str) -> ChatMessage {
         ChatMessage {
+            reasoning_content: None,
             role: "tool".to_string(),
             content: Some(content.to_string()),
             tool_calls: None,

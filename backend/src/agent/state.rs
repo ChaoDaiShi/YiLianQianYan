@@ -25,6 +25,7 @@ impl AgentState {
     pub fn new(system_prompt: String) -> Self {
         let mut messages = Vec::new();
         messages.push(ChatMessage {
+            reasoning_content: None,
             role: "system".to_string(),
             content: Some(system_prompt.clone()),
             tool_calls: None,
@@ -45,6 +46,7 @@ impl AgentState {
     pub fn add_user_message(&mut self, content: String) {
         self.input = content.clone();
         self.messages.push(ChatMessage {
+            reasoning_content: None,
             role: "user".to_string(),
             content: Some(content),
             tool_calls: None,
@@ -56,6 +58,7 @@ impl AgentState {
     /// Add a transient system instruction used to correct the active run.
     pub fn add_system_message(&mut self, content: String) {
         self.messages.push(ChatMessage {
+            reasoning_content: None,
             role: "system".to_string(),
             content: Some(content),
             tool_calls: None,
@@ -71,6 +74,7 @@ impl AgentState {
         tool_calls: Option<Vec<crate::integrations::llm::types::ToolCall>>,
     ) {
         self.messages.push(ChatMessage {
+            reasoning_content: None,
             role: "assistant".to_string(),
             content,
             tool_calls,
@@ -82,6 +86,7 @@ impl AgentState {
     /// Add a tool result message to the conversation
     pub fn add_tool_result(&mut self, tool_call_id: String, tool_name: String, result: String) {
         self.messages.push(ChatMessage {
+            reasoning_content: None,
             role: "tool".to_string(),
             content: Some(result),
             tool_calls: None,
@@ -120,6 +125,7 @@ impl AgentState {
 
         // Re-add system prompt
         self.messages.push(ChatMessage {
+            reasoning_content: None,
             role: "system".to_string(),
             content: Some(self.system_prompt.clone()),
             tool_calls: None,

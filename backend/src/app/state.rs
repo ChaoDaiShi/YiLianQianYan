@@ -133,6 +133,8 @@ pub struct AppServer {
     pub workspace_root: String,
     /// Active generation tasks (conversation_id → cancel token)
     pub active_tasks: Mutex<HashMap<String, CancellationToken>>,
+    /// Serializes persistence handoff between a chat turn and its approval continuation.
+    pub chat_turn_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Active workflow runs (run_id → cancel token). Distinct from `active_tasks`
     /// because a workflow run is an independent execution lifecycle.
     pub active_workflow_runs: Arc<Mutex<HashMap<String, CancellationToken>>>,
@@ -221,6 +223,13 @@ impl AppServer {
                 Arc::clone(&self.secret_resolver),
                 Arc::clone(&self.voice_stt_requests),
             )))
+        } else if matches!(config.provider.as_str(), "fish" | "aliyun") {
+            Ok(Arc::new(
+                crate::modules::voice::providers_extra::AdditionalSttProvider::from_config(
+                    &config,
+                    Arc::clone(&self.secret_resolver),
+                ),
+            ))
         } else {
             Err(VoiceProviderError::ProviderUnavailable)
         }
@@ -238,6 +247,13 @@ impl AppServer {
                 &config,
                 Arc::clone(&self.secret_resolver),
             )))
+        } else if matches!(config.provider.as_str(), "fish" | "aliyun" | "volcengine") {
+            Ok(Arc::new(
+                crate::modules::voice::providers_extra::AdditionalTtsProvider::from_config(
+                    &config,
+                    Arc::clone(&self.secret_resolver),
+                ),
+            ))
         } else {
             Err(VoiceProviderError::ProviderUnavailable)
         }
@@ -367,8 +383,13 @@ impl AppServer {
     /// resolved per-request in `chat_handler` and appended via
     /// [`append_memory_context`].
     pub fn build_system_prompt(&self) -> String {
-        let config = self.config.read();
-        let mut prompt = config.agent.system_prompt.clone();
+        self.build_system_prompt_with_skills(None)
+    }
+
+    pub fn build_system_prompt_with_skills(&self, selected: Option<&HashSet<String>>) -> String {
+        let mut prompt = crate::config::types::AppConfig::default()
+            .agent
+            .system_prompt;
 
         if !prompt.contains("open_url") || !prompt.contains("open_application") {
             prompt.push_str(
@@ -377,12 +398,23 @@ impl AppServer {
         }
 
         let sd = self.skill_discovery.read();
-        if sd.has_skills() {
+        if let Some(names) = selected {
+            for skill in sd
+                .all()
+                .iter()
+                .filter(|s| names.contains(&s.name) && s.compatibility.runtime_ready)
+            {
+                prompt.push_str(&format!(
+                    "\n\n已绑定 Skill {}：{}",
+                    skill.name, skill.description
+                ));
+            }
+        } else if sd.has_skills() {
             prompt.push_str("\n\n");
             prompt.push_str(&sd.render_prompt_section());
         }
 
-        if !self.subagents.is_empty() {
+        if selected.is_none() && !self.subagents.is_empty() {
             prompt.push_str("\n\n## Available Subagents\n\n");
             for sub in &self.subagents {
                 prompt.push_str(&format!(
@@ -451,10 +483,22 @@ impl AppServer {
             &self.workspace_root,
             Arc::clone(&self.managed_process_registry),
         );
+        base_registry.register(Arc::new(crate::tools::LoadSkillTool::with_discovery(
+            Arc::clone(&self.skill_discovery),
+        )));
         base_registry.register(Arc::new(AiSearchTool::new(
             self.db.clone_connection(),
             Arc::clone(&self.secret_store),
         )));
+        for kind in ["vision", "image"] {
+            base_registry.register(Arc::new(
+                crate::tools::basic_services::BasicServiceTool::new(
+                    self.db.clone_connection(),
+                    Arc::clone(&self.secret_resolver),
+                    kind,
+                ),
+            ));
+        }
         let mut occupied_names: HashSet<String> = base_registry
             .list_tools()
             .into_iter()
@@ -504,6 +548,13 @@ impl AppServer {
             );
         }
 
+        self.skill_discovery.write().set_available_tools(
+            base_registry
+                .list_tools()
+                .into_iter()
+                .map(|tool| tool.name)
+                .collect(),
+        );
         // Freeze the Child Source snapshot (builtins + MCP, never subagents).
         let child_source_registry = Arc::new(base_registry);
 
@@ -544,6 +595,7 @@ impl AppServer {
                 )),
                 Arc::new(self.audit_recorder.clone()),
             )
+            .with_permissions_config(self.config.clone())
             .with_db(Arc::new(self.db.clone_connection()))
             .with_grant_enforcement(),
         );

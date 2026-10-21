@@ -256,6 +256,9 @@ impl TaskWorldRuntime {
         }
         let mut executions_by_graph: HashMap<TaskGraphId, Vec<NodeExecution>> = HashMap::new();
         for execution in persisted_executions {
+            if database.task_graph_was_deleted(&execution.graph_id)? {
+                continue;
+            }
             executions_by_graph
                 .entry(execution.graph_id.clone())
                 .or_default()
@@ -295,6 +298,50 @@ impl TaskWorldRuntime {
         })
     }
 
+    /// Serialize deletion against graph mutations, dispatch and canvas saves.
+    pub fn delete_graph(
+        &self,
+        graph_id: &TaskGraphId,
+        expected_revision: u64,
+        deleted_at: i64,
+    ) -> Result<(), TaskWorldRuntimeError> {
+        let _control = self.control_dispatch_lock.lock();
+        let _canvas = self.canvas_write_lock.lock();
+        let mut supervisors = self.supervisors.write();
+        let current = supervisors
+            .get(graph_id)
+            .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        let actual = current.graph().revision.value();
+        if expected_revision == 0 || expected_revision != actual {
+            return Err(TaskWorldRuntimeError::StaleRevision {
+                expected: expected_revision,
+                actual,
+            });
+        }
+        if let Some((node_id, execution)) = active_command(current) {
+            return Err(TaskWorldRuntimeError::CommandExecutionActive {
+                node_id: node_id.to_string(),
+                request_id: execution.request_id.to_string(),
+            });
+        }
+        self.ensure_no_active_harness_execution(graph_id)?;
+        self.ensure_no_unsettled_provider(graph_id)?;
+        self.database
+            .delete_task_graph_state(current.graph(), deleted_at)?;
+        supervisors.remove(graph_id);
+        self.harnesses.write().remove(graph_id);
+        self.execution_controls.write().remove(graph_id);
+        self.execution_tokens
+            .lock()
+            .retain(|_, entry| entry.graph_id != *graph_id);
+        drop(supervisors);
+        self.publish(
+            "task.graph.deleted",
+            json!({"graph_id":graph_id.as_str(),"graph_revision":actual}),
+        );
+        Ok(())
+    }
+
     /// Return graph definitions in stable identity order for v1-owned APIs.
     pub fn list_graphs(&self) -> Vec<TaskGraph> {
         let mut graphs = self
@@ -320,7 +367,11 @@ impl TaskWorldRuntime {
         &self,
         graph_id: &TaskGraphId,
     ) -> Result<TaskExecutionControl, TaskWorldRuntimeError> {
-        self.ensure_graph(graph_id)?;
+        let supervisors_guard = self.supervisors.read();
+        if !supervisors_guard.contains_key(graph_id) {
+            return Err(TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()));
+        }
+
         if let Some(control) = self.database.load_task_execution_control(graph_id)? {
             self.execution_controls
                 .write()
@@ -1310,6 +1361,12 @@ impl TaskWorldRuntime {
     where
         F: FnOnce(&TaskSupervisor) -> Result<(), TaskWorldPersistenceError>,
     {
+        let _control_dispatch_guard = self.control_dispatch_lock.lock();
+        if self.database.task_graph_was_deleted(&graph_id)? {
+            return Err(TaskWorldRuntimeError::GraphAlreadyExists(
+                graph_id.to_string(),
+            ));
+        }
         let graph = TaskGraph::new(graph_id.clone(), GraphRevision::initial(), nodes, edges)?;
         let mut harness = TaskHarness::new(graph.clone(), ExecutorResolver::new())?;
         harness.set_context_builder(
@@ -2036,6 +2093,7 @@ impl TaskWorldRuntime {
         expected_revision: u64,
         now: i64,
     ) -> Result<TaskCheckpoint, TaskWorldRuntimeError> {
+        let _control_dispatch_guard = self.control_dispatch_lock.lock();
         let expected_revision = GraphRevision::new(expected_revision)?;
         let supervisors = self.supervisors.read();
         let supervisor = supervisors
@@ -2547,6 +2605,85 @@ mod tests {
     use crate::shared::event::EventHub;
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn graph_deletion_is_targeted_revision_checked_and_persistent() {
+        let path = std::env::temp_dir().join(format!("task-delete-{}.db", uuid::Uuid::new_v4()));
+        let db = Database::new(&path).unwrap();
+        let runtime = TaskWorldRuntime::new(&db, EventHub::new(16)).unwrap();
+        let ids = ["a", "b", "c"].map(|id| TaskGraphId::new(id).unwrap());
+        for id in &ids {
+            runtime.create_graph(id.clone(), vec![], vec![], 1).unwrap();
+            runtime.checkpoint(id, 1, 2).unwrap();
+        }
+        assert!(matches!(
+            runtime.delete_graph(&ids[1], 2, 3),
+            Err(TaskWorldRuntimeError::StaleRevision { .. })
+        ));
+        assert_eq!(runtime.list_graphs().len(), 3);
+        runtime.delete_graph(&ids[1], 1, 3).unwrap();
+        assert!(runtime.get_graph(&ids[1]).is_none());
+        assert!(runtime.get_graph(&ids[0]).is_some());
+        assert!(db.load_task_revision_history(&ids[1]).unwrap().is_empty());
+        drop(runtime);
+        drop(db);
+        let db = Database::new(&path).unwrap();
+        let runtime = TaskWorldRuntime::new(&db, EventHub::new(4)).unwrap();
+        assert_eq!(runtime.list_graphs().len(), 2);
+        assert!(runtime.get_graph(&ids[1]).is_none());
+        assert!(runtime
+            .create_graph(ids[1].clone(), vec![], vec![], 4)
+            .is_err());
+        runtime.delete_graph(&ids[0], 1, 4).unwrap();
+        runtime.delete_graph(&ids[2], 1, 5).unwrap();
+        assert!(runtime.list_graphs().is_empty());
+        assert!(matches!(
+            runtime.delete_graph(&ids[2], 1, 6),
+            Err(TaskWorldRuntimeError::GraphNotFound(_))
+        ));
+        drop(runtime);
+        drop(db);
+        let db = Database::new(&path).unwrap();
+        let runtime = TaskWorldRuntime::new(&db, EventHub::new(4)).unwrap();
+        assert!(runtime.list_graphs().is_empty());
+        drop(runtime);
+        drop(db);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn graph_deletion_rejects_active_execution_without_changing_state() {
+        let db = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&db, EventHub::new(4)).unwrap();
+        let id = TaskGraphId::new("running-delete").unwrap();
+        let node = TaskNodeId::new("n").unwrap();
+        runtime
+            .create_graph(
+                id.clone(),
+                vec![TaskNode::new(
+                    node.clone(),
+                    TaskNodeKind::Work,
+                    "Node",
+                    json!({"executor_ref":"workflow://local"}),
+                )
+                .unwrap()],
+                vec![],
+                1,
+            )
+            .unwrap();
+        runtime
+            .start_execution_with_resolver(
+                &id,
+                &node,
+                1,
+                ExecutorResolver::new().with_workflow("local"),
+                2,
+            )
+            .unwrap();
+        assert!(runtime.delete_graph(&id, 1, 3).is_err());
+        assert!(runtime.get_graph(&id).is_some());
+        assert!(!db.task_graph_was_deleted(&id).unwrap());
+    }
 
     #[test]
     fn active_harness_semantic_edits_are_rejected_before_any_persistence() {

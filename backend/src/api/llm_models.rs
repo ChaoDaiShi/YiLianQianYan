@@ -22,6 +22,8 @@ const MAX_MODELS: usize = 32;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LlmModelPayload {
+    #[serde(default)]
+    pub provider_account_id: Option<String>,
     pub provider: String,
     pub label: String,
     pub model: String,
@@ -70,6 +72,7 @@ pub struct LlmModelResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UsageQuery {
+    pub timezone_offset_minutes: Option<i32>,
     pub model_id: Option<String>,
     pub from: Option<i64>,
     pub to: Option<i64>,
@@ -206,14 +209,39 @@ pub async fn list_handler(
 
 pub async fn create_handler(
     State(server): State<Arc<AppServer>>,
-    Json(payload): Json<LlmModelPayload>,
+    Json(mut payload): Json<LlmModelPayload>,
 ) -> Result<(StatusCode, Json<LlmModelView>), (StatusCode, Json<serde_json::Value>)> {
+    let mut account = if let Some(account_id) = &payload.provider_account_id {
+        Some(
+            server
+                .db
+                .list_provider_accounts()
+                .map_err(internal_error)?
+                .into_iter()
+                .find(|a| &a.id == account_id)
+                .ok_or_else(|| bad_request("厂商账户不存在".into()))?,
+        )
+    } else {
+        None
+    };
+    if let Some(a) = &account {
+        if !payload.api_key.is_empty() || payload.clear_api_key {
+            return Err(bad_request("账户模型凭据请在账户中编辑".into()));
+        }
+        payload.provider = a.provider_id.clone();
+        payload.base_url = a.base_url.clone();
+        payload.api_key_env = String::new();
+    }
     validate_payload(&payload).map_err(bad_request)?;
     if server.db.list_llm_models().map_err(internal_error)?.len() >= MAX_MODELS {
         return Err(bad_request("模型数量已达到 32 个上限".to_string()));
     }
     let id = uuid::Uuid::new_v4().to_string();
-    let secret_ref = llm_model_key_ref(&id);
+    let secret_ref = account
+        .as_ref()
+        .and_then(|a| a.credential_id.clone())
+        .map(SecretRef::new)
+        .unwrap_or_else(|| llm_model_key_ref(&id));
     if !payload.api_key.trim().is_empty() {
         save_secret(&server, &secret_ref, payload.api_key.trim())
             .await
@@ -233,6 +261,10 @@ pub async fn create_handler(
             true,
         );
     }
+    if let Some(a) = account.as_mut() {
+        a.profile_ids.push(row.id.clone());
+        server.db.save_provider_account(a).map_err(internal_error)?;
+    }
     Ok((StatusCode::CREATED, Json(to_view(&server, row).await)))
 }
 
@@ -247,6 +279,24 @@ pub async fn update_handler(
         .get_llm_model(&id)
         .map_err(internal_error)?
         .ok_or_else(|| bad_request("模型不存在".to_string()))?;
+    if let Some(a) = server
+        .db
+        .list_provider_accounts()
+        .map_err(internal_error)?
+        .into_iter()
+        .find(|a| {
+            a.profile_ids.contains(&id)
+                || a.credential_id.as_deref() == Some(existing.api_key_ref.as_str())
+        })
+    {
+        if payload.clear_api_key
+            || !payload.api_key.is_empty()
+            || payload.provider != a.provider_id
+            || payload.base_url != a.base_url
+        {
+            return Err(bad_request("账户模型的地址与凭据请在厂商账户中编辑".into()));
+        }
+    }
     let secret_ref = SecretRef::new(existing.api_key_ref.clone());
     if payload.clear_api_key {
         server
@@ -275,8 +325,29 @@ pub async fn delete_handler(
         .get_llm_model(&id)
         .map_err(internal_error)?
         .ok_or_else(|| bad_request("模型不存在".to_string()))?;
+    if server
+        .db
+        .list_model_pools()
+        .map_err(internal_error)?
+        .iter()
+        .any(|p| p.tiers.iter().any(|t| t.profile_ids.contains(&id)))
+        || server
+            .db
+            .list_provider_accounts()
+            .map_err(internal_error)?
+            .iter()
+            .any(|a| a.profile_ids.contains(&id))
+    {
+        return Err(bad_request("模型仍被账户或模型池引用，请先移除引用".into()));
+    }
     let secret_ref = SecretRef::new(row.api_key_ref);
-    if server.secret_store.delete(&secret_ref).await.is_err() {
+    let account_owned = server
+        .db
+        .list_provider_accounts()
+        .map_err(internal_error)?
+        .iter()
+        .any(|a| a.credential_id.as_deref() == Some(secret_ref.key.as_str()));
+    if !account_owned && server.secret_store.delete(&secret_ref).await.is_err() {
         record_secret_event(
             &server.audit_recorder,
             AuditEventType::SecretDeleted,
@@ -346,6 +417,7 @@ pub async fn verify_handler(
     let result = client
         .invoke(
             &[ChatMessage {
+                reasoning_content: None,
                 role: "user".to_string(),
                 content: Some("ping".to_string()),
                 tool_calls: None,
@@ -396,6 +468,12 @@ pub async fn usage_handler(
     State(server): State<Arc<AppServer>>,
     Query(query): Query<UsageQuery>,
 ) -> Result<Json<crate::db::LlmUsageReport>, (StatusCode, Json<serde_json::Value>)> {
+    if query
+        .timezone_offset_minutes
+        .is_some_and(|offset| !(-840..=840).contains(&offset))
+    {
+        return Err(bad_request("无效本地时区偏移".into()));
+    }
     let now = chrono::Utc::now().timestamp_millis();
     let from = query.from.unwrap_or(now - 30 * 86_400_000);
     let to = query.to.unwrap_or(now + 1);
@@ -407,7 +485,12 @@ pub async fn usage_handler(
     Ok(Json(
         server
             .db
-            .aggregate_llm_usage(query.model_id.as_deref(), from, to)
+            .aggregate_llm_usage_in_timezone(
+                query.model_id.as_deref(),
+                from,
+                to,
+                query.timezone_offset_minutes.unwrap_or(0),
+            )
             .map_err(internal_error)?,
     ))
 }
@@ -417,6 +500,12 @@ pub(crate) fn normalize_provider_error(error: &LlmError) -> &'static str {
         LlmError::NoApiKey | LlmError::EmbeddingNoApiKey | LlmError::SecretUnavailable => {
             "INVALID_CONFIGURATION"
         }
+        LlmError::Provider { status: 401, .. } => "INVALID_CREDENTIAL",
+        LlmError::Provider { status: 429, .. } => "RATE_LIMITED",
+        LlmError::Provider {
+            code: Some(code), ..
+        } if code == "model_not_found" => "MODEL_NOT_FOUND",
+        LlmError::Provider { .. } => "PROVIDER_UNREACHABLE",
         LlmError::Timeout => "TIMEOUT",
         LlmError::Http(error) if error.is_timeout() => "TIMEOUT",
         LlmError::Http(_) => "PROVIDER_UNREACHABLE",

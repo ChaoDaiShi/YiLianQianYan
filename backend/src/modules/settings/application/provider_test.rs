@@ -11,7 +11,9 @@ use crate::integrations::llm::client::LlmClient;
 use crate::integrations::llm::types::ChatMessage;
 use crate::modules::voice::{AudioInput, SpeechRequest, VoiceProviderError};
 
-use crate::modules::settings::domain::policy::supported_voice_provider;
+use crate::modules::settings::domain::policy::{
+    supported_voice_stt_provider, supported_voice_tts_provider,
+};
 use crate::modules::settings::domain::readiness::active_runtime_model;
 
 pub(crate) fn provider_test_error(error: &'static str) -> (StatusCode, Json<serde_json::Value>) {
@@ -42,25 +44,10 @@ pub(crate) fn normalize_voice_connection_error(error: &VoiceProviderError) -> &'
     }
 }
 
-pub(crate) fn minimal_silent_wav() -> Vec<u8> {
-    const SAMPLE_RATE: u32 = 16_000;
-    const SAMPLES: u32 = 160;
-    const DATA_BYTES: u32 = SAMPLES * 2;
-    let mut wav = Vec::with_capacity(44 + DATA_BYTES as usize);
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&(36 + DATA_BYTES).to_le_bytes());
-    wav.extend_from_slice(b"WAVEfmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
-    wav.extend_from_slice(&(SAMPLE_RATE * 2).to_le_bytes());
-    wav.extend_from_slice(&2u16.to_le_bytes());
-    wav.extend_from_slice(&16u16.to_le_bytes());
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&DATA_BYTES.to_le_bytes());
-    wav.resize(44 + DATA_BYTES as usize, 0);
-    wav
+/// Fixed spoken Chinese phrase synthesized with Windows SAPI, mono 16 kHz PCM.
+/// Silence is not a connection test: an empty transcript is a valid ASR response.
+pub(crate) fn connection_test_audio() -> Vec<u8> {
+    include_bytes!("fixtures/provider-connection-test.wav").to_vec()
 }
 
 /// Leaf entry point for a minimal, real provider call. The HTTP handler in
@@ -77,6 +64,7 @@ pub(crate) async fn verify_provider(
             client
                 .invoke(
                     &[ChatMessage {
+                        reasoning_content: None,
                         role: "user".to_string(),
                         content: Some("ping".to_string()),
                         tool_calls: None,
@@ -89,14 +77,25 @@ pub(crate) async fn verify_provider(
                 .map(|_| ())
                 .map_err(|error| crate::api::llm_models::normalize_provider_error(&error))
         }
+        "embedding" => {
+            let client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
+            match client.embed("忆涟千言：向量连接测试").await {
+                Ok(vector) => {
+                    return Ok(Json(
+                        serde_json::json!({"status":"ok","dimensions":vector.len(),"vector":vector}),
+                    ))
+                }
+                Err(error) => Err(crate::api::llm_models::normalize_provider_error(&error)),
+            }
+        }
         "stt" => {
-            if !supported_voice_provider(&config.voice.stt.provider) {
+            if !supported_voice_stt_provider(&config.voice.stt.provider) {
                 Err("INVALID_CONFIGURATION")
             } else {
                 match server.stt_provider() {
                     Ok(provider) => provider
                         .transcribe(AudioInput {
-                            bytes: minimal_silent_wav(),
+                            bytes: connection_test_audio(),
                             media_type: "audio/wav".to_string(),
                             filename: "provider-connection-test.wav".to_string(),
                             language: Some(config.voice.stt.language),
@@ -109,7 +108,7 @@ pub(crate) async fn verify_provider(
             }
         }
         "tts" => {
-            if !supported_voice_provider(&config.voice.tts.provider) {
+            if !supported_voice_tts_provider(&config.voice.tts.provider) {
                 Err("INVALID_CONFIGURATION")
             } else {
                 match server.tts_provider() {

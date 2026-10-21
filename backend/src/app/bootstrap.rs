@@ -170,6 +170,7 @@ impl AppServer {
             subagents,
             workspace_root: workspace_root.to_string(),
             active_tasks: Mutex::new(HashMap::new()),
+            chat_turn_gates: Mutex::new(HashMap::new()),
             active_workflow_runs: Arc::new(Mutex::new(HashMap::new())),
             active_task_executions: Arc::new(Mutex::new(HashMap::new())),
             log_buffer,

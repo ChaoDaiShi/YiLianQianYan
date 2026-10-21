@@ -56,6 +56,7 @@ pub(crate) fn build_planning_messages(
 
     [
         ChatMessage {
+            reasoning_content: None,
             role: "system".into(),
             content: Some(SYSTEM_PROMPT.into()),
             tool_calls: None,
@@ -63,6 +64,7 @@ pub(crate) fn build_planning_messages(
             name: None,
         },
         ChatMessage {
+            reasoning_content: None,
             role: "user".into(),
             content: Some(user_prompt),
             tool_calls: None,

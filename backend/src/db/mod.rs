@@ -2,20 +2,28 @@
 // Database module — SQLite persistence (thread-safe, cloneable)
 // ============================================================
 
+pub mod access_rules;
 mod artifact_provenance;
+pub mod basic_services;
 pub mod cloud;
+pub mod connector_messages;
+pub mod connectors;
 mod conversation_goal;
+pub mod conversation_modes;
 mod conversations;
+pub mod knowledge;
 mod llm_models;
 mod mcp;
 mod memories;
 mod migrations;
+pub mod model_pools;
 mod proofloop;
 mod proofloop_model_usage;
 mod resource_bindings;
 mod resources;
 mod security_audit;
 mod settings;
+pub mod settings_canvas;
 mod skill_candidates;
 mod skill_usage;
 mod task;
@@ -71,6 +79,16 @@ impl Database {
         db.run_v09_bootstrap()?;
         db.run_versioned_migrations(adopted_v09)?;
         db.initialize_cloud_schema()?;
+        db.init_basic_services()
+            .map_err(rusqlite::Error::InvalidParameterName)?;
+        db.initialize_connectors_schema()?;
+        db.initialize_connector_messages_schema()?;
+        db.initialize_knowledge_schema()?;
+        db.initialize_access_rules_schema()?;
+        db.init_model_pools()
+            .map_err(rusqlite::Error::InvalidParameterName)?;
+        db.init_provider_accounts()
+            .map_err(rusqlite::Error::InvalidParameterName)?;
         // Seed after migrations so the lock is released between calls
         db.seed_builtin_workflows()?;
         Ok(db)

@@ -24,6 +24,7 @@ use crate::utils::text::truncate_chars;
 
 /// Agent streaming event (shared with API layer)
 #[derive(Debug, Clone, Serialize)]
+#[serde(into = "serde_json::Value")]
 pub struct AgentEvent {
     #[serde(rename = "type")]
     pub event_type: String,
@@ -58,6 +59,47 @@ pub struct AgentEvent {
     pub should_replan: Option<bool>,
 }
 
+impl From<AgentEvent> for serde_json::Value {
+    fn from(event: AgentEvent) -> Self {
+        if matches!(event.event_type.as_str(), "model_route" | "workspace_mode") {
+            if let Some(mut route) = event.args.clone() {
+                route["type"] = serde_json::json!(event.event_type);
+                route["conversation_id"] = serde_json::json!(event.conversation_id);
+                return route;
+            }
+        }
+        let mut value = serde_json::json!({"type":event.event_type,"conversation_id":event.conversation_id,"token":event.token,"tool_call_id":event.tool_call_id,"tool_name":event.tool_name,"args":event.args,"result":event.result,"status":event.status,"error":event.error,"message_id":event.message_id,"risk_level":event.risk_level,"reason":event.reason,"approval_id":event.approval_id,"verification_success":event.verification_success,"verification_reason":event.verification_reason,"should_replan":event.should_replan});
+        value
+            .as_object_mut()
+            .expect("event object")
+            .retain(|_, value| !value.is_null());
+        value
+    }
+}
+
+impl AgentEvent {
+    pub(crate) fn error_event(conversation_id: &str, error: String) -> Self {
+        Self {
+            event_type: "error".into(),
+            conversation_id: conversation_id.into(),
+            token: None,
+            tool_call_id: None,
+            tool_name: None,
+            args: None,
+            result: None,
+            status: None,
+            error: Some(error),
+            message_id: None,
+            risk_level: None,
+            reason: None,
+            approval_id: None,
+            verification_success: None,
+            verification_reason: None,
+            should_replan: None,
+        }
+    }
+}
+
 /// Result of running the agent loop.
 pub enum RunOutcome {
     /// The loop produced a final answer (the "done" event was already sent).
@@ -69,6 +111,35 @@ pub enum RunOutcome {
 const MAX_ITERATIONS: usize = 20;
 const MAX_CONSECUTIVE_SAME_TOOL: usize = 3;
 const MAX_COMPLETION_REPLANS: usize = 2;
+
+fn record_reasoning_delta(
+    tx: &Sender<AgentEvent>,
+    conversation: &str,
+    journal: &parking_lot::Mutex<String>,
+    reasoning: &str,
+) {
+    journal.lock().push_str(reasoning);
+    let mut event = AgentEvent::error_event(conversation, String::new());
+    event.event_type = "reasoning".into();
+    event.error = None;
+    event.token = Some(reasoning.into());
+    let _ = tx.try_send(event);
+}
+async fn flush_reasoning_snapshot(
+    tx: &Sender<AgentEvent>,
+    conversation: &str,
+    journal: &parking_lot::Mutex<String>,
+) {
+    let complete = journal.lock().clone();
+    if complete.is_empty() {
+        return;
+    }
+    let mut event = AgentEvent::error_event(conversation, String::new());
+    event.event_type = "reasoning_snapshot".into();
+    event.error = None;
+    event.token = Some(complete);
+    let _ = tx.send(event).await;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FinalResponseGate {
@@ -606,6 +677,7 @@ async fn run_react_loop_inner(
     let mut last_tool_name = String::new();
     let mut consecutive_same_tool = 0usize;
     let mut completion_replans = 0usize;
+    let reasoning_journal = parking_lot::Mutex::new(String::new());
 
     loop {
         if cancel_token.is_cancelled() {
@@ -681,11 +753,15 @@ async fn run_react_loop_inner(
                 should_replan: None,
             });
         };
-        let invocation = client.stream_with_callbacks_max_tokens(
+        let on_reasoning = |reasoning: &str| {
+            record_reasoning_delta(tx, conversation_id, &reasoning_journal, reasoning);
+        };
+        let invocation = client.stream_with_reasoning_max_tokens(
             &state.messages,
             &tools_openai,
             strict_output_limit.unwrap_or_else(|| client.max_output_tokens()),
             on_token,
+            on_reasoning,
         );
         let result = if let Some(deadline) =
             execution_scope.as_ref().and_then(|scope| scope.deadline)
@@ -693,10 +769,12 @@ async fn run_react_loop_inner(
             tokio::select! {
                 biased;
                 _=cancel_token.cancelled()=>{
+                    flush_reasoning_snapshot(tx, conversation_id, &reasoning_journal).await;
                     if let Some(scope)=&execution_scope {if let Some(budget)=&scope.budget{if strict_budget{let _=budget.settle_tokens(scope.handoff_id.as_deref(),None);}else{let _=budget.observe_parent_usage(None);}}}
                     return Err("已取消".into());
                 },
                 _=tokio::time::sleep_until(deadline)=>{
+                    flush_reasoning_snapshot(tx, conversation_id, &reasoning_journal).await;
                     if let Some(scope)=&execution_scope {if let Some(budget)=&scope.budget{if strict_budget{let _=budget.settle_tokens(scope.handoff_id.as_deref(),None);}else{let _=budget.observe_parent_usage(None);}}}
                     cancel_token.cancel();
                     return Err("执行超时".into());
@@ -707,12 +785,14 @@ async fn run_react_loop_inner(
             tokio::select! {
                 biased;
                 _=cancel_token.cancelled()=>{
+                    flush_reasoning_snapshot(tx, conversation_id, &reasoning_journal).await;
                     if let Some(scope)=&execution_scope {if let Some(budget)=&scope.budget{if strict_budget{let _=budget.settle_tokens(scope.handoff_id.as_deref(),None);}else{let _=budget.observe_parent_usage(None);}}}
                     return Err("已取消".into());
                 },
                 response=invocation=>response,
             }
         };
+        flush_reasoning_snapshot(tx, conversation_id, &reasoning_journal).await;
         if let Some(scope) = &execution_scope {
             if let Some(budget) = &scope.budget {
                 let tokens = result
@@ -744,6 +824,9 @@ async fn run_react_loop_inner(
                     },
                     Some(tool_calls.clone()),
                 );
+                if let Some(message) = state.messages.last_mut() {
+                    message.reasoning_content = Some(accumulator.reasoning_content.clone());
+                }
 
                 for (i, tc) in tool_calls.iter().enumerate() {
                     if cancel_token.is_cancelled() {
@@ -853,6 +936,9 @@ async fn run_react_loop_inner(
         }
         let output = accumulator.content.clone();
         state.add_assistant_message(Some(output.clone()), None);
+        if let Some(message) = state.messages.last_mut() {
+            message.reasoning_content = Some(accumulator.reasoning_content.clone());
+        }
         state.output = output.clone();
 
         let msg_id = uuid::Uuid::new_v4().to_string();
@@ -1419,5 +1505,42 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("skipped"));
+    }
+}
+
+#[cfg(test)]
+mod route_wire_tests {
+    use super::*;
+    #[tokio::test]
+    async fn reasoning_snapshot_recovers_deltas_dropped_by_a_full_live_channel() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let journal = parking_lot::Mutex::new(String::new());
+        record_reasoning_delta(&tx, "c", &journal, "first ");
+        record_reasoning_delta(&tx, "c", &journal, "second ");
+        record_reasoning_delta(&tx, "c", &journal, "third");
+        assert_eq!(rx.recv().await.unwrap().token.as_deref(), Some("first "));
+        assert!(
+            rx.try_recv().is_err(),
+            "live channel really dropped the later deltas"
+        );
+        flush_reasoning_snapshot(&tx, "c", &journal).await;
+        let complete = rx.recv().await.unwrap();
+        assert_eq!(complete.event_type, "reasoning_snapshot");
+        assert_eq!(complete.token.as_deref(), Some("first second third"));
+    }
+    #[test]
+    fn model_route_serializes_actual_payload_at_top_level() {
+        let mut event = AgentEvent::error_event("conversation-a", String::new());
+        event.event_type = "model_route".into();
+        event.error = None;
+        event.args = Some(
+            serde_json::json!({"phase":"switched","request_id":"request-a","attempt_id":"attempt-b","replace_content":true,"interrupted_content":"unfinished text","to_profile_id":"second"}),
+        );
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["type"], "model_route");
+        assert_eq!(value["conversation_id"], "conversation-a");
+        assert_eq!(value["replace_content"], true);
+        assert_eq!(value["interrupted_content"], "unfinished text");
+        assert!(value.get("args").is_none());
     }
 }

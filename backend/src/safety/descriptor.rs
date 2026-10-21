@@ -240,7 +240,14 @@ fn builtin_descriptor_profile(
         },
         "ai_search" => match descriptor.resources.as_slice() {
             [ResourceDescriptor::Network { url, method }]
-                if url == "https://api.anysearch.com/v1/search" && method == "POST" =>
+                if matches!(
+                    (url.as_str(), method.as_str()),
+                    ("https://api.anysearch.com/v1/search", "POST")
+                        | ("https://api.tavily.com/search", "POST")
+                        | ("https://api.search.brave.com/res/v1/web/search", "GET")
+                        | ("https://api.bochaai.com/v1/web-search", "POST")
+                        | ("https://api.bocha.cn/v1/web-search", "POST")
+                ) =>
             {
                 profile(
                     vec![permission(
@@ -253,6 +260,17 @@ fn builtin_descriptor_profile(
             }
             _ => return Err(invalid_resources()),
         },
+        "vision_analysis" | "image_generation" => {
+            if descriptor.resources.is_empty()||!descriptor.resources.iter().all(|resource|matches!(resource,ResourceDescriptor::Network{url,method} if method=="POST"&&url::Url::parse(url).ok().is_some_and(|target|matches!(target.scheme(),"http"|"https")&&target.host_str().is_some()&&target.username().is_empty()&&target.password().is_none()))){return Err(invalid_resources())}
+            profile(
+                vec![permission(
+                    PermissionId::NetworkRequest,
+                    ResourceScope::NetworkTarget,
+                )],
+                RiskLevel::Medium,
+                vec![SideEffectKind::NetworkEgress],
+            )
+        }
         "open_url" => match descriptor.resources.as_slice() {
             [ResourceDescriptor::Network { url, method }, ResourceDescriptor::Desktop {
                 action,
@@ -389,6 +407,19 @@ fn builtin_descriptor_profile(
                 RiskLevel::Low,
                 vec![],
             ),
+            _ => return Err(invalid_resources()),
+        },
+        "run_workflow" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Agent { action }] if action.starts_with("run_workflow:") => {
+                profile(
+                    vec![permission(
+                        PermissionId::AgentPlan,
+                        ResourceScope::AgentInternal,
+                    )],
+                    RiskLevel::Medium,
+                    vec![],
+                )
+            }
             _ => return Err(invalid_resources()),
         },
         "write_todos" => match descriptor.resources.as_slice() {

@@ -38,6 +38,16 @@ fn not_found_error(entity: &str) -> StorageApiError {
     )
 }
 
+fn document_owned_chunk() -> StorageApiError {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "code": "knowledge_document_owned_chunk",
+            "error": "该片段由知识文档管理，请在知识库中重新导入或移除源文档"
+        })),
+    )
+}
+
 // ── List / Search ──
 
 pub async fn list_handler(
@@ -105,6 +115,14 @@ pub async fn update_handler(
     Path(id): Path<String>,
     Json(req): Json<UpdateMemoryRequest>,
 ) -> Result<Json<Memory>, StorageApiError> {
+    if server
+        .db
+        .knowledge_chunk_document(&id)
+        .map_err(storage_error)?
+        .is_some()
+    {
+        return Err(document_owned_chunk());
+    }
     match server.db.find_memory(&id) {
         Ok(Some(_)) => server
             .db
@@ -122,6 +140,14 @@ pub async fn delete_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StorageApiError> {
+    if server
+        .db
+        .knowledge_chunk_document(&id)
+        .map_err(storage_error)?
+        .is_some()
+    {
+        return Err(document_owned_chunk());
+    }
     server
         .db
         .delete_memory(&id)
@@ -278,6 +304,7 @@ fn extraction_tool_definition() -> serde_json::Value {
 fn build_extraction_prompt(conversation_text: &str) -> Vec<ChatMessage> {
     vec![
         ChatMessage {
+            reasoning_content: None,
             role: "system".to_string(),
             content: Some(
                 "你是忆涟千言的记忆提取模块。你的任务是从对话中提取可跨对话保留的长期记忆。\n\n\
@@ -296,6 +323,7 @@ fn build_extraction_prompt(conversation_text: &str) -> Vec<ChatMessage> {
             name: None,
         },
         ChatMessage {
+            reasoning_content: None,
             role: "user".to_string(),
             content: Some(format!("请从以下对话中提取长期记忆：\n\n{conversation_text}")),
             tool_calls: None,
@@ -723,6 +751,82 @@ mod tests {
         // Create a conversation so foreign keys on source_conversation_id work
         let conv = server.db.create_conversation("test conversation").unwrap();
         (server, db_path, conv.id)
+    }
+
+    #[tokio::test]
+    async fn imported_knowledge_chunks_reject_memory_mutation_while_manual_memories_remain_editable(
+    ) {
+        let (server, _db_path, _) = test_server("document-chunk-ownership");
+        let (document, _) = server
+            .db
+            .import_knowledge(
+                "test-resource",
+                "source.txt",
+                "text/plain",
+                "document-guard-test-hash",
+                22,
+                "canonical original document",
+            )
+            .unwrap();
+        let chunks = server
+            .db
+            .knowledge_chunks(Some(&document.id), None)
+            .unwrap();
+        let chunk = &chunks[0];
+        let update: UpdateMemoryRequest =
+            serde_json::from_value(serde_json::json!({"content":"must not overwrite"})).unwrap();
+        let rejected = update_handler(
+            State(server.clone()),
+            Path(chunk.memory_id.clone()),
+            Json(update),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(rejected.0, StatusCode::CONFLICT);
+        assert_eq!(rejected.1 .0["code"], "knowledge_document_owned_chunk");
+        let rejected = delete_handler(State(server.clone()), Path(chunk.memory_id.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.0, StatusCode::CONFLICT);
+        assert_eq!(
+            server
+                .db
+                .find_memory(&chunk.memory_id)
+                .unwrap()
+                .unwrap()
+                .content,
+            "canonical original document"
+        );
+        assert_eq!(
+            server
+                .db
+                .knowledge_chunks(Some(&document.id), None)
+                .unwrap()
+                .len(),
+            chunks.len()
+        );
+
+        let manual = server
+            .db
+            .create_memory(&CreateMemoryRequest {
+                content: "manual knowledge".into(),
+                category: "knowledge".into(),
+                source: "manual".into(),
+                source_conversation_id: None,
+                metadata: None,
+            })
+            .unwrap();
+        let update: UpdateMemoryRequest =
+            serde_json::from_value(serde_json::json!({"content":"updated manual knowledge"}))
+                .unwrap();
+        let updated = update_handler(State(server.clone()), Path(manual.id.clone()), Json(update))
+            .await
+            .unwrap();
+        assert_eq!(updated.0.content, "updated manual knowledge");
+        delete_handler(State(server.clone()), Path(manual.id.clone()))
+            .await
+            .unwrap();
+        assert!(server.db.find_memory(&manual.id).unwrap().is_none());
     }
 
     // ── Unit tests: validation helpers ──

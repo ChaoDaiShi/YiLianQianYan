@@ -100,11 +100,16 @@ impl Database {
     }
 
     pub fn delete_workflow(&self, id: &str) -> Result<(), rusqlite::Error> {
-        let conn = self.conn();
-        conn.execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let deleted = tx.execute(
             "DELETE FROM workflows WHERE id = ?1 AND is_builtin = 0",
             rusqlite::params![id],
         )?;
+        if deleted > 0 {
+            super::connectors::remove_connector_entity_on(&tx, "workflow", id)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 

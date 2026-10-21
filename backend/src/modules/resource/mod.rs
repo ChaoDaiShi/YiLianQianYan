@@ -8,6 +8,7 @@
 //! bindings, and it only reads them.
 
 mod binding;
+mod document;
 mod ingest;
 mod limits;
 mod model;
@@ -15,6 +16,7 @@ pub(crate) mod parsers;
 mod preview;
 
 pub use binding::bound_node_resources;
+pub use document::{extract_document_text, MAX_DOCUMENT_CHARS};
 pub use ingest::ingest_resource;
 pub use limits::{validate_upload, MAX_INPUT_BYTES, MAX_INPUT_FILES, MAX_PREVIEW_CHARS};
 pub use model::ResourcePreview;

@@ -59,3 +59,36 @@ pub async fn get_graph_detail(
         Err(error) => runtime_error(error),
     }
 }
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteGraphQuery {
+    pub expected_revision: u64,
+}
+pub async fn delete_graph(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<DeleteGraphQuery>,
+) -> Response {
+    let graph_id = match parse_graph_id(id) {
+        Ok(id) => id,
+        Err(e) => return runtime_error(e),
+    };
+    match server.task_world.delete_graph(
+        &graph_id,
+        query.expected_revision,
+        chrono::Utc::now().timestamp_millis(),
+    ) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e @ TaskWorldRuntimeError::StaleRevision { .. }) => {
+            planning_error(StatusCode::CONFLICT, "revision_conflict", e.to_string())
+        }
+        Err(e @ TaskWorldRuntimeError::CommandExecutionActive { .. }) => {
+            planning_error(StatusCode::CONFLICT, "graph_running", e.to_string())
+        }
+        Err(e @ TaskWorldRuntimeError::Harness(TaskHarnessError::ActiveExecution(_))) => {
+            planning_error(StatusCode::CONFLICT, "graph_running", e.to_string())
+        }
+        Err(e) => runtime_error(e),
+    }
+}

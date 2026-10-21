@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::{
     agent::verifier::{DefaultVerifier, VerificationResult, Verifier},
-    config::types::SandboxConfig,
+    config::types::{AppConfig, PermissionMode, SandboxConfig},
     db::Database,
     isolation::SharedManagedProcessRegistry,
     tools::{
@@ -24,6 +24,11 @@ use super::{
     DescriptorError, PermissionId, PolicyDecision, PolicyEngine, ResourceDescriptor, ResourceScope,
     SafetyPolicy, SecuritySubject, ToolSecurityDescriptor, POLICY_VERSION,
 };
+
+tokio::task_local! {pub static CURRENT_AGENT_ID: String;}
+pub fn current_agent_id() -> Option<String> {
+    CURRENT_AGENT_ID.try_with(Clone::clone).ok()
+}
 
 #[derive(Debug)]
 pub struct SecurityExecutionRequest {
@@ -65,10 +70,13 @@ pub enum SecurityGatewayError {
     MissingRoleBinding(String),
     #[error("invalid role binding '{role}' for subject: {subject_id}")]
     InvalidRoleBinding { subject_id: String, role: String },
+    #[error("security rule storage unavailable: {0}")]
+    AccessRules(String),
 }
 
 pub struct SecurityExecutionGateway {
     policy_engine: PolicyEngine,
+    permissions_config: Option<Arc<parking_lot::RwLock<AppConfig>>>,
     sandbox_config: SandboxConfig,
     workspace_root: PathBuf,
     tool_registry: Arc<ToolRegistry>,
@@ -79,6 +87,7 @@ pub struct SecurityExecutionGateway {
     /// loaded live from the DB per evaluation (so approval revalidation sees
     /// current grants). Off by default for legacy construction paths + tests.
     grants_enabled: bool,
+    agent_context: Option<String>,
     managed_process_registry: SharedManagedProcessRegistry,
 }
 
@@ -166,6 +175,7 @@ impl SecurityExecutionGateway {
         let managed_process_registry = tool_registry.process_registry();
         Self {
             policy_engine: PolicyEngine,
+            permissions_config: None,
             sandbox_config,
             workspace_root: workspace_root.into(),
             tool_registry,
@@ -173,6 +183,7 @@ impl SecurityExecutionGateway {
             audit_recorder,
             db: None,
             grants_enabled: false,
+            agent_context: None,
             managed_process_registry,
         }
     }
@@ -182,6 +193,27 @@ impl SecurityExecutionGateway {
     pub fn with_db(mut self, db: Arc<Database>) -> Self {
         self.db = Some(db);
         self
+    }
+
+    /// Read the persisted application approval mode for every action, including resumed runs.
+    pub fn with_permissions_config(mut self, config: Arc<parking_lot::RwLock<AppConfig>>) -> Self {
+        self.permissions_config = Some(config);
+        self
+    }
+
+    pub fn with_agent_context(mut self, agent_id: Option<String>) -> Self {
+        self.agent_context = agent_id;
+        self
+    }
+    pub async fn execute_for_agent(
+        &self,
+        agent_id: &str,
+        request: &SecurityExecutionRequest,
+        risk: RiskLevel,
+    ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        CURRENT_AGENT_ID
+            .scope(agent_id.to_string(), self.execute(request, risk))
+            .await
     }
 
     /// Enable resource-grant enforcement (production). Grants are loaded live
@@ -979,6 +1011,82 @@ impl SecurityExecutionGateway {
             return Ok(PolicyDecision::Deny(context));
         }
 
+        let mut access_full = false;
+        let mut access_complete = false;
+        let mut access_approve = false;
+        let mut access_evidence = Vec::new();
+        if let Some(db) = &self.db {
+            let rules = db
+                .list_access_rules()
+                .map_err(SecurityGatewayError::AccessRules)?;
+            if request.subject.subject_id == "local-user" && !rules.is_empty() {
+                let agent = self.agent_context.clone().or_else(current_agent_id).or(db
+                    .connector_agent_for_conversation(&request.conversation_id)
+                    .map_err(SecurityGatewayError::AccessRules)?);
+                let mut complete = !descriptor.requested_permissions.is_empty();
+                let mut all_explicit = complete;
+                for permission in &descriptor.requested_permissions {
+                    let resources = if descriptor.resources.is_empty() {
+                        vec![None]
+                    } else {
+                        descriptor.resources.iter().map(Some).collect()
+                    };
+                    for resource in resources {
+                        let resolution = crate::db::access_rules::resolve_access_rule(
+                            &rules,
+                            permission.permission,
+                            resource,
+                            agent.as_deref(),
+                            &request.tool_name,
+                            &self.workspace_root,
+                            self.managed_process_registry.clone(),
+                        );
+                        match resolution.as_ref().map(|r| r.mode) {
+                            Some(crate::db::access_rules::AccessMode::Deny) => {
+                                context.reason = "operation denied by explicit access rule".into();
+                                return Ok(PolicyDecision::Deny(context));
+                            }
+                            Some(crate::db::access_rules::AccessMode::Approve) => {
+                                access_approve = true;
+                                complete = false;
+                            }
+                            Some(crate::db::access_rules::AccessMode::Full) => {
+                                if let (Some(resource), Some(resolution)) =
+                                    (resource, resolution.as_ref())
+                                {
+                                    let rule = rules
+                                        .iter()
+                                        .find(|rule| rule.id == resolution.effective_rule_id)
+                                        .expect("resolved rule exists in current snapshot");
+                                    if let Some(evidence) = authorized_resource_from_evaluation(
+                                        resource,
+                                        &GrantEvaluation {
+                                            decision: GrantDecision::Allow,
+                                            matched_grant_id: Some(rule.id.clone()),
+                                            matched_resource: Some(
+                                                rule.resource.clone().unwrap_or(
+                                                    crate::safety::grant::GrantResource::Any,
+                                                ),
+                                            ),
+                                        },
+                                        false,
+                                    ) {
+                                        access_evidence.push(evidence);
+                                    }
+                                }
+                            }
+                            None => {
+                                complete = false;
+                                all_explicit = false;
+                            }
+                        }
+                    }
+                }
+                access_full = complete;
+                access_complete = all_explicit;
+            }
+        }
+
         // PolicyEngine currently accepts raw role/descriptor/risk inputs and
         // rebuilds its own DecisionContext. Until that API accepts a context
         // directly, this gateway validates the canonical context first and
@@ -1001,7 +1109,7 @@ impl SecurityExecutionGateway {
             if let Some(db) = &self.db {
                 let grants = db
                     .list_grants(&request.subject.subject_id)
-                    .unwrap_or_default();
+                    .map_err(|e| SecurityGatewayError::AccessRules(e.to_string()))?;
                 let grant_evaluator = GrantEvaluator::new(grants, &self.workspace_root)
                     .with_registry(std::sync::Arc::clone(&self.managed_process_registry));
                 let now_ms = chrono::Utc::now().timestamp_millis();
@@ -1063,6 +1171,48 @@ impl SecurityExecutionGateway {
             }));
         }
         context.authorized_resources = authorized_resources;
+        if let Some(config) = &self.permissions_config {
+            if matches!(rbac, PolicyDecision::Deny(_)) {
+                return Ok(rbac);
+            }
+            let mode = config.read().permissions.mode.clone();
+            if access_approve && mode != PermissionMode::FullAccess {
+                context.reason = "explicit access rule requires approval".into();
+                return Ok(PolicyDecision::RequireApproval(context));
+            }
+            return Ok(match mode {
+                PermissionMode::FullApproval => {
+                    context.reason = "完全审批：每次操作都需要批准".into();
+                    PolicyDecision::RequireApproval(context)
+                }
+                PermissionMode::PartialApproval
+                    if matches!(context.risk_level, RiskLevel::High | RiskLevel::Critical)
+                        || matches!(rbac, PolicyDecision::RequireApproval(_)) =>
+                {
+                    context.reason = "部分审批：敏感或危险操作需要批准".into();
+                    PolicyDecision::RequireApproval(context)
+                }
+                PermissionMode::PartialApproval => {
+                    context.reason = "部分审批：允许常规操作".into();
+                    PolicyDecision::Allow(context)
+                }
+                PermissionMode::FullAccess => {
+                    context.reason = "完全权限：用户已允许直接执行操作".into();
+                    PolicyDecision::Allow(context)
+                }
+            });
+        }
+        if access_full {
+            context.reason =
+                "explicit full access covers every requested permission and resource".into();
+            context.authorized_resources = access_evidence;
+            return Ok(PolicyDecision::Allow(context));
+        }
+        if access_approve && (access_complete || !matches!(rbac, PolicyDecision::Deny(_))) {
+            context.reason = "explicit access rule requires approval".into();
+            return Ok(PolicyDecision::RequireApproval(context));
+        }
+
         if matches!(rbac, PolicyDecision::Allow(_))
             && context.reason.contains("requires a resource grant")
         {
@@ -1173,7 +1323,10 @@ fn authorized_resource_from_evaluation(
             let grant_id = if matches!(evaluation.decision, GrantDecision::Allow)
                 && matches!(
                     evaluation.matched_resource,
-                    Some(crate::safety::grant::GrantResource::Mcp { .. })
+                    Some(
+                        crate::safety::grant::GrantResource::Mcp { .. }
+                            | crate::safety::grant::GrantResource::Any
+                    )
                 ) {
                 evaluation.matched_grant_id.clone()
             } else {
@@ -1199,6 +1352,11 @@ fn authorized_resource_from_evaluation(
                 Some(crate::safety::grant::GrantResource::Network { zone, .. }) => {
                     (*zone, evaluation.matched_grant_id.clone(), false)
                 }
+                Some(crate::safety::grant::GrantResource::Any) => (
+                    default_network_zone(&target.host),
+                    evaluation.matched_grant_id.clone(),
+                    false,
+                ),
                 _ => (default_network_zone(&target.host), None, grant_enforced),
             };
             Some(AuthorizedResource::Network {
@@ -1240,7 +1398,7 @@ mod tests {
         SecurityGatewayError,
     };
     use crate::agent::verifier::{DefaultVerifier, VerificationResult, Verifier};
-    use crate::config::types::{SandboxConfig, SandboxProfile};
+    use crate::config::types::{AppConfig, PermissionMode, SandboxConfig, SandboxProfile};
     use crate::db::{Database, SecurityAuditQuery};
     use crate::safety::grant::{GrantEffect, GrantResource, GrantSource, SecurityGrant};
     use crate::safety::{
@@ -1464,6 +1622,156 @@ mod tests {
                 .map(|path| (*path).to_string())
                 .collect(),
         }
+    }
+
+    struct AccessFileTool;
+    #[async_trait]
+    impl Tool for AccessFileTool {
+        fn name(&self) -> &str {
+            "write_file"
+        }
+        fn description(&self) -> &str {
+            "writes controlled permission test output"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        async fn execute(&self, args: serde_json::Value) -> ToolResult {
+            std::fs::write(
+                args["path"].as_str().unwrap(),
+                args["content"].as_str().unwrap(),
+            )
+            .unwrap();
+            ToolResult::success("written")
+        }
+    }
+    #[tokio::test]
+    async fn access_rules_control_real_side_effect_and_revoke_pending_approval() {
+        use crate::db::access_rules::{AccessMode, AccessRule};
+        let root = std::env::temp_dir().join(format!("access-execution-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = Arc::new(Database::new(&root.join("test.db")).unwrap());
+        db.initialize_access_rules_schema().unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(AccessFileTool));
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            &root,
+            Arc::new(registry),
+        )
+        .with_db(db.clone())
+        .with_grant_enforcement();
+        let output = root.join("actual.txt");
+        let request = request(
+            "write_file",
+            serde_json::json!({"path":output.to_string_lossy(),"content":"full-access-result"}),
+        );
+        let mut rule = AccessRule {
+            id: "write-rule".into(),
+            scope: "default".into(),
+            subject_id: None,
+            permission_id: PermissionId::FilesystemWrite,
+            resource: None,
+            mode: AccessMode::Approve,
+        };
+        db.replace_access_rules(&[rule.clone()]).unwrap();
+        assert!(matches!(
+            gateway
+                .execute_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
+                .await
+                .unwrap(),
+            SecurityExecutionOutcome::RequiresApproval { .. }
+        ));
+        assert!(!output.exists());
+        rule.mode = AccessMode::Deny;
+        db.replace_access_rules(&[rule.clone()]).unwrap();
+        assert!(matches!(
+            gateway
+                .execute_approved_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
+                .await
+                .unwrap(),
+            SecurityExecutionOutcome::Denied { .. }
+        ));
+        assert!(!output.exists());
+        rule.mode = AccessMode::Full;
+        db.replace_access_rules(&[rule.clone()]).unwrap();
+        assert!(matches!(
+            gateway
+                .execute_with_role(&request, BuiltInRole::Owner, RiskLevel::High)
+                .await
+                .unwrap(),
+            SecurityExecutionOutcome::Executed { .. }
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&output).unwrap(),
+            "full-access-result"
+        );
+        std::fs::remove_file(output).unwrap();
+        drop(gateway);
+        drop(db);
+        std::fs::remove_file(root.join("test.db")).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn application_approval_modes_apply_to_low_and_high_risk_without_bypassing_deny() {
+        let root = std::env::temp_dir().join(format!("approval-modes-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = Arc::new(parking_lot::RwLock::new(AppConfig::default()));
+        let db = Arc::new(Database::new(&root.join("mode.db")).unwrap());
+        let gateway = SecurityExecutionGateway::with_sandbox(
+            sandbox_config(SandboxProfile::Open, &[], &[]),
+            &root,
+        )
+        .with_db(db.clone())
+        .with_grant_enforcement()
+        .with_permissions_config(config.clone());
+        let read = request(
+            "read_file",
+            serde_json::json!({"path":root.join("file.txt")}),
+        );
+        config.write().permissions.mode = PermissionMode::FullApproval;
+        assert!(matches!(
+            gateway
+                .evaluate_with_role(&read, BuiltInRole::Owner, RiskLevel::Low)
+                .unwrap(),
+            PolicyDecision::RequireApproval(_)
+        ));
+        config.write().permissions.mode = PermissionMode::PartialApproval;
+        assert!(matches!(
+            gateway
+                .evaluate_with_role(&read, BuiltInRole::Owner, RiskLevel::Low)
+                .unwrap(),
+            PolicyDecision::Allow(_)
+        ));
+        assert!(matches!(
+            gateway
+                .evaluate_with_role(&read, BuiltInRole::Owner, RiskLevel::High)
+                .unwrap(),
+            PolicyDecision::RequireApproval(_)
+        ));
+        config.write().permissions.mode = PermissionMode::FullAccess;
+        assert!(matches!(
+            gateway
+                .evaluate_with_role(&read, BuiltInRole::Owner, RiskLevel::High)
+                .unwrap(),
+            PolicyDecision::Allow(_)
+        ));
+        db.replace_access_rules(&[crate::db::access_rules::AccessRule {
+            id: "deny-read".into(),
+            scope: "default".into(),
+            subject_id: None,
+            permission_id: PermissionId::FilesystemRead,
+            resource: None,
+            mode: crate::db::access_rules::AccessMode::Deny,
+        }])
+        .unwrap();
+        assert!(matches!(
+            gateway
+                .evaluate_with_role(&read, BuiltInRole::Owner, RiskLevel::Low)
+                .unwrap(),
+            PolicyDecision::Deny(_)
+        ));
     }
 
     #[test]

@@ -25,6 +25,7 @@ fn streaming_request_asks_openai_compatible_servers_for_usage() {
     let request = ChatCompletionRequest {
         model: "test-model".into(),
         messages: vec![ChatMessage {
+            reasoning_content: None,
             role: "user".into(),
             content: Some("ping".into()),
             tool_calls: None,

@@ -167,3 +167,164 @@ impl SearchProvider for AnySearchProvider {
         })
     }
 }
+pub fn configured_search_endpoint(
+    provider: &str,
+    base: &str,
+) -> Result<(String, &'static str), SearchError> {
+    let (path, method) = match provider {
+        "anysearch" => ("/v1/search", "POST"),
+        "tavily" => ("/search", "POST"),
+        "brave" => ("/res/v1/web/search", "GET"),
+        "bocha" => ("/v1/web-search", "POST"),
+        _ => {
+            return Err(SearchError {
+                kind: SearchFailureKind::InvalidRequest,
+                status: None,
+            })
+        }
+    };
+    Ok((format!("{}{path}", base.trim_end_matches('/')), method))
+}
+pub async fn search_configured(
+    provider: &str,
+    base: String,
+    store: Arc<dyn SecretStore>,
+    secret_ref: Option<crate::integrations::secret::SecretRef>,
+    request: SearchRequest,
+) -> Result<SearchResponse, SearchError> {
+    if provider == "anysearch" {
+        return AnySearchProvider::new(base, store).search(request).await;
+    }
+    let fail = || SearchError {
+        kind: SearchFailureKind::Provider,
+        status: None,
+    };
+    let key = store
+        .get(&secret_ref.ok_or(SearchError {
+            kind: SearchFailureKind::Authentication,
+            status: None,
+        })?)
+        .await
+        .map_err(|_| fail())?
+        .ok_or(SearchError {
+            kind: SearchFailureKind::Authentication,
+            status: None,
+        })?;
+    let (endpoint, method) = configured_search_endpoint(provider, &base)?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|_| fail())?;
+    let start = std::time::Instant::now();
+    let builder = if method == "GET" {
+        client
+            .get(endpoint)
+            .header("X-Subscription-Token", key.expose_secret())
+            .query(&[
+                ("q", request.query.clone()),
+                ("count", request.max_results.to_string()),
+            ])
+    } else {
+        let body = if provider == "tavily" {
+            serde_json::json!({"query":request.query,"max_results":request.max_results,"search_depth":"basic"})
+        } else {
+            serde_json::json!({"query":request.query,"count":request.max_results,"summary":true})
+        };
+        client
+            .post(endpoint)
+            .bearer_auth(key.expose_secret())
+            .json(&body)
+    };
+    let response = builder.send().await.map_err(|_| SearchError {
+        kind: SearchFailureKind::Unavailable,
+        status: None,
+    })?;
+    let status = response.status().as_u16();
+    if !response.status().is_success() {
+        return Err(SearchError {
+            kind: classify_anysearch_status(status),
+            status: Some(status),
+        });
+    }
+    let value: serde_json::Value = response.json().await.map_err(|_| fail())?;
+    let entries = match provider {
+        "tavily" => value.get("results"),
+        "brave" => value.pointer("/web/results"),
+        "bocha" => value.pointer("/data/webPages/value"),
+        _ => None,
+    }
+    .and_then(serde_json::Value::as_array)
+    .ok_or_else(fail)?;
+    let mut results = Vec::new();
+    for entry in entries.iter().take(request.max_results as usize) {
+        let title = entry
+            .get(if provider == "bocha" { "name" } else { "title" })
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(fail)?;
+        let url = entry
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(fail)?;
+        let snippet = entry
+            .get(match provider {
+                "tavily" => "content",
+                "brave" => "description",
+                _ => "summary",
+            })
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        results.push(SearchResult {
+            title: title.into(),
+            url: url.into(),
+            snippet,
+            content: None,
+        });
+    }
+    Ok(SearchResponse {
+        request_id: value
+            .get("request_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        total_results: results.len() as u64,
+        results,
+        search_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+#[cfg(test)]
+mod configured_tests {
+    use super::*;
+    use crate::integrations::secret::{InMemorySecretStore, SecretRef};
+    use axum::{
+        routing::{get, post},
+        Json, Router,
+    };
+    use serde_json::json;
+    #[tokio::test]
+    async fn configured_search_http_adapters() {
+        for provider in ["tavily", "brave", "bocha"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let app=Router::new().route("/search",post(|Json(v):Json<serde_json::Value>|async move{assert_eq!(v["query"],"fixture");Json(json!({"request_id":"tavily-id","results":[{"title":"title","url":"https://example.invalid","content":"snippet"}]}))})).route("/res/v1/web/search",get(||async{Json(json!({"web":{"results":[{"title":"title","url":"https://example.invalid","description":"snippet"}]}}))})).route("/v1/web-search",post(|Json(v):Json<serde_json::Value>|async move{assert_eq!(v["summary"],true);Json(json!({"code":200,"data":{"webPages":{"value":[{"name":"title","url":"https://example.invalid","summary":"snippet"}]}}}))}));
+            let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let store = Arc::new(InMemorySecretStore::new());
+            let key = SecretRef::new("search.fixture");
+            store
+                .put(&key, secrecy::SecretString::from("fixture"))
+                .await
+                .unwrap();
+            let result = search_configured(
+                provider,
+                base,
+                store,
+                Some(key),
+                SearchRequest::new("fixture", 3).unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.results[0].title, "title");
+            assert_eq!(result.results[0].snippet.as_deref(), Some("snippet"));
+            task.abort();
+        }
+    }
+}

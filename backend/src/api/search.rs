@@ -5,12 +5,12 @@ use std::sync::Arc;
 use crate::app::state::AppServer;
 use crate::integrations::secret::{anysearch_key_ref, SecretStoreError};
 use crate::modules::cloud::search::{
-    AnySearchProvider, SearchError, SearchFailureKind, SearchProvider, SearchRequest,
-    SearchResponse,
+    SearchError, SearchFailureKind, SearchRequest, SearchResponse,
 };
 
 #[derive(serde::Deserialize)]
 pub struct SearchConfigUpdate {
+    provider: Option<String>,
     base_url: Option<String>,
     api_key: Option<String>,
     #[serde(default)]
@@ -48,7 +48,7 @@ pub async fn update_config_handler(
     State(server): State<Arc<AppServer>>,
     Json(update): Json<SearchConfigUpdate>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let (_, current_base_url, current_ref) =
+    let (current_provider, current_base_url, current_ref) =
         server.db.cloud_search_config().map_err(database_error)?;
     let base_url = update
         .base_url
@@ -56,16 +56,32 @@ pub async fn update_config_handler(
         .unwrap_or(&current_base_url)
         .trim_end_matches('/');
     validate_base_url(base_url)?;
-    let mut secret_ref = current_ref;
+    let provider = update.provider.as_deref().unwrap_or(&current_provider);
+    if !matches!(provider, "anysearch" | "tavily" | "brave" | "bocha") {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_provider",
+            "搜索厂商无效",
+        ));
+    }
+    let target = if provider == "anysearch" {
+        anysearch_key_ref()
+    } else {
+        crate::integrations::secret::SecretRef::new(format!("search.{provider}.api_key"))
+    };
+    let mut secret_ref = if provider == current_provider {
+        current_ref
+    } else {
+        Some(target.clone())
+    };
     if update.clear_api_key {
         server
             .secret_store
-            .delete(&anysearch_key_ref())
+            .delete(&target)
             .await
             .map_err(secret_error)?;
         secret_ref = None;
     } else if let Some(api_key) = update.api_key.filter(|value| !value.trim().is_empty()) {
-        let target = anysearch_key_ref();
         server
             .secret_store
             .put(&target, SecretString::from(api_key))
@@ -75,8 +91,14 @@ pub async fn update_config_handler(
     }
     server
         .db
-        .save_cloud_search_config(base_url, secret_ref.as_ref())
-        .map_err(database_error)?;
+        .save_search_provider(provider, base_url, secret_ref.as_ref())
+        .map_err(|_| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "search_config_failed",
+                "搜索配置保存失败",
+            )
+        })?;
     config_handler(State(server)).await
 }
 
@@ -99,13 +121,18 @@ pub async fn search_handler(
             ))
         }
     };
-    let (_, base_url, _) = server.db.cloud_search_config().map_err(database_error)?;
-    let provider = AnySearchProvider::new(base_url, Arc::clone(&server.secret_store));
-    provider
-        .search(request)
-        .await
-        .map(Json)
-        .map_err(search_error)
+    let (provider, base_url, secret_ref) =
+        server.db.cloud_search_config().map_err(database_error)?;
+    crate::modules::cloud::search::search_configured(
+        &provider,
+        base_url,
+        Arc::clone(&server.secret_store),
+        secret_ref,
+        request,
+    )
+    .await
+    .map(Json)
+    .map_err(search_error)
 }
 
 fn validate_base_url(value: &str) -> Result<(), (StatusCode, Json<serde_json::Value>)> {

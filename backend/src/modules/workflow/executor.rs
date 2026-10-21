@@ -94,6 +94,7 @@ impl WorkflowAgentExecutor for LlmWorkflowAgentExecutor {
     async fn generate(&self, prompt: &str) -> Result<String, WorkflowExecutionError> {
         let messages = vec![
             ChatMessage {
+                reasoning_content: None,
                 role: "system".to_string(),
                 content: Some(WORKFLOW_AGENT_SYSTEM_PROMPT.to_string()),
                 tool_calls: None,
@@ -101,6 +102,7 @@ impl WorkflowAgentExecutor for LlmWorkflowAgentExecutor {
                 name: None,
             },
             ChatMessage {
+                reasoning_content: None,
                 role: "user".to_string(),
                 content: Some(prompt.to_string()),
                 tool_calls: None,
@@ -179,7 +181,15 @@ impl SecurityGatewayNodeExecutor {
             subject: SecuritySubject::from_subject_id(context.subject_id.clone()),
         };
 
-        match self.gateway.execute(&request, RiskLevel::Low).await {
+        let outcome = match context.agent_id.as_ref() {
+            Some(agent) => {
+                self.gateway
+                    .execute_for_agent(agent.as_str(), &request, RiskLevel::Low)
+                    .await
+            }
+            None => self.gateway.execute(&request, RiskLevel::Low).await,
+        };
+        match outcome {
             Ok(SecurityExecutionOutcome::Executed { tool_result, .. }) => {
                 if tool_result.ok {
                     // Persist a bounded, safe textual summary — never the raw

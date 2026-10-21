@@ -6,6 +6,16 @@ pub(crate) fn valid_provider_url(value: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn supported_voice_provider(provider: &str) -> bool {
-    provider.eq_ignore_ascii_case("openai-compatible") || provider.eq_ignore_ascii_case("minimax")
+pub(crate) fn supported_voice_tts_provider(provider: &str) -> bool {
+    matches!(
+        provider.to_ascii_lowercase().as_str(),
+        "openai-compatible" | "minimax" | "fish" | "aliyun" | "volcengine"
+    )
+}
+
+pub(crate) fn supported_voice_stt_provider(provider: &str) -> bool {
+    matches!(
+        provider.to_ascii_lowercase().as_str(),
+        "openai-compatible" | "minimax" | "fish" | "aliyun"
+    )
 }

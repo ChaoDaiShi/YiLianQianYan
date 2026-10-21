@@ -17,12 +17,17 @@ use crate::modules::task::{
 };
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateAgentRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
-    pub instructions: String,
+    pub user_prompt: String,
+    #[serde(default)]
+    pub persona_enabled: bool,
+    #[serde(default)]
+    pub persona: persona::Persona,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
     #[serde(default)]
@@ -51,12 +56,14 @@ pub struct CreateTeamRequest {
     pub max_total_iterations: Option<u32>,
 }
 
-fn agent_view(agent: &AgentDefinition) -> serde_json::Value {
+fn agent_view(agent: &AgentDefinition, profile: &persona::AgentProfile) -> serde_json::Value {
     serde_json::json!({
         "id": agent.id.as_str(),
-        "name": agent.name,
+        "name": if profile.persona_enabled && !profile.persona.display_name.trim().is_empty() { &profile.persona.display_name } else { &agent.name },
         "description": agent.description,
-        "instructions": agent.instructions,
+        "user_prompt": profile.user_prompt,
+        "persona_enabled": profile.persona_enabled,
+        "persona": profile.persona,
         "allowed_tools": agent.allowed_tools,
         "model": agent.model,
         "capabilities": agent.capabilities,
@@ -88,7 +95,14 @@ pub async fn list_agents(
         .db
         .list_agent_definitions()
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let views = agents.iter().map(agent_view).collect::<Vec<_>>();
+    let views = agents
+        .iter()
+        .map(|agent| {
+            let profile = persona::profile_for_agent(&server.db, agent.id.as_str())?;
+            Ok(agent_view(agent, &profile))
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(serde_json::json!({ "agents": views })))
 }
 
@@ -103,7 +117,7 @@ pub async fn create_agent(
         id: AgentId::generate(),
         name: body.name.trim().to_string(),
         description: body.description,
-        instructions: body.instructions,
+        instructions: String::new(),
         allowed_tools: body.allowed_tools,
         model: body.model,
         capabilities: body.capabilities,
@@ -115,7 +129,14 @@ pub async fn create_agent(
         .db
         .create_agent_definition(&agent)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    Ok(Json(agent_view(&agent)))
+    let profile = persona::AgentProfile {
+        user_prompt: body.user_prompt,
+        persona_enabled: body.persona_enabled,
+        persona: body.persona,
+    };
+    persona::save_profile(&server.db, agent.id.as_str(), &profile)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    Ok(Json(agent_view(&agent, &profile)))
 }
 
 pub async fn get_agent(
@@ -129,7 +150,9 @@ pub async fn get_agent(
         .get_agent_definition(&agent_id)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Agent 不存在".to_string()))?;
-    Ok(Json(agent_view(&agent)))
+    let profile = persona::profile_for_agent(&server.db, agent.id.as_str())
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(agent_view(&agent, &profile)))
 }
 
 pub async fn list_teams(
@@ -194,4 +217,26 @@ pub async fn get_team(
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Team 不存在".to_string()))?;
     Ok(Json(team_view(&team)))
+}
+
+#[path = "agent_persona.rs"]
+pub mod persona;
+pub async fn get_agent_profile(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<persona::AgentProfile>, (StatusCode, String)> {
+    persona::profile_for_agent(&server.db, &id)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))
+}
+pub async fn update_agent_profile(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Json(profile): Json<persona::AgentProfile>,
+) -> Result<Json<persona::AgentProfile>, (StatusCode, String)> {
+    // Resolve ownership before creating a profile under an arbitrary ID.
+    persona::profile_for_agent(&server.db, &id).map_err(|error| (StatusCode::NOT_FOUND, error))?;
+    persona::save_profile(&server.db, &id, &profile)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    Ok(Json(profile))
 }

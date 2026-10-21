@@ -63,6 +63,9 @@ pub struct ExecutionContext {
     pub execution_id: ExecutionId,
     pub subject_id: String,
     pub agent_name: String,
+    /// Trusted persisted agent identity, assigned by the runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<crate::modules::task::AgentId>,
     pub parent_execution_id: Option<ExecutionId>,
     pub created_at: i64,
     /// Optional task provenance (set when this execution is a task agent step).
@@ -86,6 +89,7 @@ impl ExecutionContext {
             execution_id,
             subject_id: subject_id.into(),
             agent_name: agent_name.into(),
+            agent_id: None,
             parent_execution_id,
             created_at,
             task_id: None,

@@ -10,7 +10,7 @@ use calamine::Reader;
 use quick_xml::events::Event;
 use std::io::Cursor;
 
-use super::archive::zip_entries;
+use super::{archive::zip_entries, LimitedText};
 use crate::modules::resource::limits::MAX_PREVIEW_CHARS;
 
 fn check_cell_reference(raw: &[u8]) -> Result<(), String> {
@@ -37,6 +37,10 @@ fn check_cell_reference(raw: &[u8]) -> Result<(), String> {
 }
 
 pub(crate) fn parse(bytes: &[u8]) -> Result<String, String> {
+    parse_with_limit(bytes, MAX_PREVIEW_CHARS)
+}
+
+pub(crate) fn parse_with_limit(bytes: &[u8], max_chars: usize) -> Result<String, String> {
     let entries = zip_entries(bytes)?;
     for (name, xml) in &entries {
         if !name.starts_with("xl/worksheets/") {
@@ -76,24 +80,30 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<String, String> {
     if sheets.len() > 16 {
         return Err("工作表数量超过限制".into());
     }
-    let mut text = String::new();
+    let mut text = LimitedText::new(max_chars);
     for name in sheets {
-        text.push_str(&format!("[{name}]\n"));
+        text.push(&format!("[{name}]\n"));
+        if text.overflow {
+            return Ok(text.value);
+        }
         let range = workbook
             .worksheet_range(&name)
             .map_err(|_| "无法读取工作表")?;
         for row in range.rows() {
             for (index, cell) in row.iter().enumerate() {
                 if index > 0 {
-                    text.push('\t');
+                    text.push("\t");
                 }
-                text.extend(cell.to_string().chars().take(MAX_PREVIEW_CHARS + 1));
-                if text.chars().count() > MAX_PREVIEW_CHARS {
-                    return Ok(text);
+                text.push(&cell.to_string());
+                if text.overflow {
+                    return Ok(text.value);
                 }
             }
-            text.push('\n');
+            text.push("\n");
+            if text.overflow {
+                return Ok(text.value);
+            }
         }
     }
-    Ok(text)
+    Ok(text.value)
 }

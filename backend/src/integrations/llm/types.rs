@@ -31,6 +31,8 @@ pub struct StreamOptions {
 /// A single chat message in the conversation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -45,6 +47,7 @@ pub struct ChatMessage {
 impl ChatMessage {
     pub fn system(content: impl Into<String>) -> Self {
         Self {
+            reasoning_content: None,
             role: "system".into(),
             content: Some(content.into()),
             tool_calls: None,
@@ -55,6 +58,7 @@ impl ChatMessage {
 
     pub fn user(content: impl Into<String>) -> Self {
         Self {
+            reasoning_content: None,
             role: "user".into(),
             content: Some(content.into()),
             tool_calls: None,
@@ -123,6 +127,8 @@ pub struct StreamChoice {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Delta {
     #[serde(default)]
+    pub reasoning_content: Option<String>,
+    #[serde(default)]
     pub role: Option<String>,
     #[serde(default)]
     pub content: Option<String>,
@@ -154,6 +160,7 @@ pub struct DeltaToolCallFunction {
 /// Accumulates streaming deltas into a coherent assistant message
 #[derive(Debug, Clone, Default)]
 pub struct StreamAccumulator {
+    pub reasoning_content: String,
     pub content: String,
     pub tool_calls: Vec<AccumulatedToolCall>,
     pub usage: Option<Usage>,
@@ -175,6 +182,9 @@ impl StreamAccumulator {
 
     /// Feed a new delta chunk into the accumulator
     pub fn apply_delta(&mut self, delta: &Delta) {
+        if let Some(reasoning) = &delta.reasoning_content {
+            self.reasoning_content.push_str(reasoning);
+        }
         if let Some(content) = &delta.content {
             self.content.push_str(content);
         }

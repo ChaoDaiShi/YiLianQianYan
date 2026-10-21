@@ -11,6 +11,12 @@ use crate::modules::settings::domain::readiness::{
 pub(crate) async fn build_redacted_config(server: &AppServer) -> serde_json::Value {
     let config = server.config.read().clone();
     let mut value = serde_json::to_value(&config).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(agent) = value
+        .get_mut("agent")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        agent.remove("system_prompt");
+    }
 
     let (chat_src, chat_configured) = chat_source(&server.secret_resolver, &config).await;
     let (embed_src, embed_configured) = embedding_source(&server.secret_resolver, &config).await;

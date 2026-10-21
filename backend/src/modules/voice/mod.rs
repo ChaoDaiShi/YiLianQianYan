@@ -5,6 +5,7 @@
 
 pub mod dispatch;
 pub mod provider;
+pub mod providers_extra;
 pub mod runtime;
 
 pub use runtime::{

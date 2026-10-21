@@ -10,9 +10,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing;
 
 use super::trait_def::{Tool, ToolResult};
 
@@ -27,6 +25,14 @@ pub struct DiscoveredSkill {
     pub path: PathBuf,
     /// The skill's root directory (for resolving references/)
     pub root_dir: PathBuf,
+    /// Metadata from the originating read-only directory. `name` remains the
+    /// unique load identifier; display_name preserves SKILL.md's own name.
+    pub display_name: String,
+    pub source_id: String,
+    pub source: String,
+    pub source_kind: String,
+    pub source_root: PathBuf,
+    pub compatibility: SkillCompatibility,
     /// Whether the full content has been loaded
     #[serde(skip)]
     pub loaded_content: Option<String>,
@@ -72,151 +78,32 @@ impl DiscoveredSkill {
     }
 }
 
-/// Skill discovery engine — scans configured directories for SKILL.md files
-pub struct SkillDiscovery {
-    skills: HashMap<String, DiscoveredSkill>,
-}
-
-impl SkillDiscovery {
-    /// Discover skills from configured directories
-    pub fn discover(directories: &[String], workspace_root: &str) -> Self {
-        let mut skills = HashMap::new();
-
-        for dir in directories {
-            let resolved = if Path::new(dir).is_absolute() {
-                PathBuf::from(dir)
-            } else {
-                Path::new(workspace_root).join(dir)
-            };
-
-            if !resolved.exists() {
-                tracing::debug!("Skill directory not found: {}", resolved.display());
-                continue;
-            }
-
-            Self::scan_directory(&resolved, &mut skills);
-        }
-
-        tracing::info!("Discovered {} skills from {:?}", skills.len(), directories);
-        Self { skills }
-    }
-
-    /// Scan a directory for skill subdirectories containing SKILL.md
-    fn scan_directory(dir: &Path, skills: &mut HashMap<String, DiscoveredSkill>) {
-        if !dir.is_dir() {
-            return;
-        }
-
-        // Check if this directory itself has a SKILL.md
-        let skill_md = dir.join("SKILL.md");
-        if skill_md.exists() {
-            let name = dir
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let description = Self::extract_description(&skill_md);
-            skills.insert(
-                name.clone(),
-                DiscoveredSkill {
-                    name,
-                    description,
-                    path: skill_md,
-                    root_dir: dir.to_path_buf(),
-                    loaded_content: None,
-                },
-            );
-            return; // Don't recurse into skill directories
-        }
-
-        // Recursively scan subdirectories (max depth 2)
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    Self::scan_directory(&path, skills);
-                }
-            }
-        }
-    }
-
-    /// Extract description from SKILL.md (first heading content or first paragraph)
-    fn extract_description(path: &Path) -> String {
-        match std::fs::read_to_string(path) {
-            Ok(content) => {
-                // Try to find first paragraph after # heading
-                let mut in_first_heading = false;
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("# ") {
-                        in_first_heading = true;
-                        // The heading itself might describe
-                        let heading = trimmed.trim_start_matches("# ").to_string();
-                        if heading.len() > 3 {
-                            return heading;
-                        }
-                        continue;
-                    }
-                    if in_first_heading && !trimmed.is_empty() {
-                        return trimmed.to_string();
-                    }
-                }
-                "无描述".to_string()
-            }
-            Err(_) => "无法读取".to_string(),
-        }
-    }
-
-    /// Get all discovered skills
-    pub fn all(&self) -> Vec<&DiscoveredSkill> {
-        self.skills.values().collect()
-    }
-
-    /// Get a skill by name
-    pub fn get(&self, name: &str) -> Option<&DiscoveredSkill> {
-        self.skills.get(name)
-    }
-
-    /// Get mutable reference to a skill (for lazy loading content)
-    pub fn get_mut(&mut self, name: &str) -> Option<&mut DiscoveredSkill> {
-        self.skills.get_mut(name)
-    }
-
-    /// Render skills section for system prompt
-    pub fn render_prompt_section(&self) -> String {
-        if self.skills.is_empty() {
-            return String::new();
-        }
-
-        let mut section = String::from("## Available Skills\n\n");
-        section.push_str("你可以使用 `load_skill` 工具按需加载以下技能的完整内容：\n\n");
-
-        for skill in self.skills.values() {
-            section.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
-        }
-
-        section.push_str("\n使用 `load_skill(name=\"<名称>\")` 加载技能的完整指引。");
-        section
-    }
-
-    /// Check if any skills are available
-    pub fn has_skills(&self) -> bool {
-        !self.skills.is_empty()
-    }
-}
+mod discovery;
+pub use discovery::SkillDiscovery;
+mod compatibility;
+pub use compatibility::SkillCompatibility;
+#[cfg(test)]
+mod discovery_tests;
 
 // ── load_skill Tool ──
 
 pub struct LoadSkillTool {
-    skills_dir: PathBuf,
-    workspace_root: String,
+    catalog: SkillCatalog,
+}
+enum SkillCatalog {
+    Workspace(String),
+    Shared(std::sync::Arc<parking_lot::RwLock<SkillDiscovery>>),
 }
 
 impl LoadSkillTool {
     pub fn new(workspace_root: &str) -> Self {
         Self {
-            skills_dir: PathBuf::from(workspace_root).join("skills"),
-            workspace_root: workspace_root.to_string(),
+            catalog: SkillCatalog::Workspace(workspace_root.to_string()),
+        }
+    }
+    pub fn with_discovery(discovery: std::sync::Arc<parking_lot::RwLock<SkillDiscovery>>) -> Self {
+        Self {
+            catalog: SkillCatalog::Shared(discovery),
         }
     }
 }
@@ -256,68 +143,75 @@ impl Tool for LoadSkillTool {
             return ToolResult::error("name不能为空");
         }
 
-        // Search in multiple locations
-        let search_paths = vec![
-            self.skills_dir.join(name).join("SKILL.md"),
-            Path::new(&self.workspace_root)
-                .join("skills")
-                .join(name)
-                .join("SKILL.md"),
-            Path::new(&self.workspace_root)
-                .join(".agents")
-                .join(name)
-                .join("SKILL.md"),
-        ];
-
-        for skill_path in &search_paths {
-            if skill_path.exists() {
-                let root_dir = skill_path.parent().unwrap_or(Path::new("."));
-                let mut skill = DiscoveredSkill {
-                    name: name.to_string(),
-                    description: String::new(),
-                    path: skill_path.clone(),
-                    root_dir: root_dir.to_path_buf(),
-                    loaded_content: None,
-                };
-
-                // If asking for a specific reference part
-                if let Some(part_name) = part {
-                    match skill.load_reference(part_name) {
-                        Ok(Some(content)) => {
-                            return ToolResult::success(format!(
-                                "# {} - {}\n\n{}",
-                                name, part_name, content
-                            ));
-                        }
-                        Ok(None) => {
-                            return ToolResult::error(format!(
-                                "Skill '{}' 没有找到引用文件 '{}'",
-                                name, part_name
-                            ));
-                        }
-                        Err(e) => return ToolResult::error(e),
-                    }
-                }
-
-                // Load full SKILL.md
-                match skill.load_content() {
-                    Ok(content) => {
-                        return ToolResult::success(format!(
-                            "# Skill: {}\n\n{}\n\n---\n技能根目录: {}",
-                            name,
-                            content,
-                            root_dir.display()
-                        ));
-                    }
-                    Err(e) => return ToolResult::error(e),
-                }
+        let (skill, available) = match &self.catalog {
+            SkillCatalog::Shared(discovery) => {
+                let discovery = discovery.read();
+                (
+                    discovery.get(name).cloned(),
+                    discovery.available_tools().clone(),
+                )
             }
+            SkillCatalog::Workspace(root) => {
+                let discovery = SkillDiscovery::discover(&["./skills".to_string()], root);
+                (
+                    discovery.get(name).cloned(),
+                    discovery.available_tools().clone(),
+                )
+            }
+        };
+        let Some(mut skill) = skill else {
+            return ToolResult::error(format!(
+                "未找到skill '{}'。可用的skills请查看系统提示词中的 Available Skills 列表。",
+                name
+            ));
+        };
+        if !skill.compatibility.runtime_ready {
+            return ToolResult::error(skill.compatibility.reason.clone()).with_structured(Some(
+                serde_json::json!({"compatibility":skill.compatibility}),
+            ));
         }
-
-        ToolResult::error(format!(
-            "未找到skill '{}'。可用的skills请查看系统提示词中的 Available Skills 列表。",
-            name
-        ))
+        if let Some(part_name) = part {
+            return match skill.load_reference(part_name) {
+                Ok(Some(content)) => {
+                    let compatibility = SkillCompatibility::inspect(&content, &available);
+                    if !compatibility.runtime_ready {
+                        return ToolResult::error(compatibility.reason.clone()).with_structured(
+                            Some(serde_json::json!({"compatibility":compatibility})),
+                        );
+                    }
+                    ToolResult::success(format!(
+                    "{}\n# {} - {}\n\n{}\n\n技能根目录: {}",
+                    compatibility.execution_notes(),
+                    name,
+                    part_name,
+                    content,
+                    skill.root_dir.display()
+                )).with_structured(Some(serde_json::json!({"name":name,"root_dir":skill.root_dir,"compatibility":compatibility})))
+                }
+                Ok(None) => {
+                    ToolResult::error(format!("Skill '{}' 没有找到引用文件 '{}'", name, part_name))
+                }
+                Err(error) => ToolResult::error(error),
+            };
+        }
+        match skill.load_content() {
+            Ok(content) => {
+                let compatibility = SkillCompatibility::inspect(&content, &available);
+                if !compatibility.runtime_ready {
+                    return ToolResult::error(compatibility.reason.clone())
+                        .with_structured(Some(serde_json::json!({"compatibility":compatibility})));
+                }
+                ToolResult::success(format!(
+                "{}\n# Skill: {}\n来源: {}\n\n{}\n\n---\n技能根目录: {}",
+                compatibility.execution_notes(),
+                name,
+                skill.source,
+                content,
+                skill.root_dir.display()
+            )).with_structured(Some(serde_json::json!({"name":name,"root_dir":skill.root_dir,"compatibility":compatibility})))
+            }
+            Err(error) => ToolResult::error(error),
+        }
     }
 }
 

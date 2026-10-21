@@ -1,35 +1,25 @@
 //! Bounded PDF text extraction.
 //!
 //! Page count and object count are capped, encrypted documents are refused,
-//! and output is bounded *while* it is produced — `BoundedText` aborts the
-//! page walk as soon as the preview budget is exceeded rather than extracting
+//! and output is bounded *while* it is produced — `LimitedText` aborts the
+//! page walk as soon as the requested text budget is exceeded rather than extracting
 //! a whole document and truncating afterwards.
 
+use super::LimitedText;
 use crate::modules::resource::limits::MAX_PREVIEW_CHARS;
 
-struct BoundedText {
-    value: String,
-    overflow: bool,
-}
-impl std::fmt::Write for BoundedText {
-    fn write_str(&mut self, value: &str) -> std::fmt::Result {
-        let remaining = (MAX_PREVIEW_CHARS + 1).saturating_sub(self.value.chars().count());
-        self.value.extend(value.chars().take(remaining));
-        if value.chars().count() > remaining {
-            self.overflow = true;
-            return Err(std::fmt::Error);
-        }
-        Ok(())
-    }
-}
-impl<'a> pdf_extract::ConvertToFmt for &'a mut BoundedText {
-    type Writer = &'a mut BoundedText;
+impl<'a> pdf_extract::ConvertToFmt for &'a mut LimitedText {
+    type Writer = &'a mut LimitedText;
     fn convert(self) -> Self::Writer {
         self
     }
 }
 
 pub(crate) fn parse(bytes: &[u8]) -> Result<String, String> {
+    parse_with_limit(bytes, MAX_PREVIEW_CHARS)
+}
+
+pub(crate) fn parse_with_limit(bytes: &[u8], max_chars: usize) -> Result<String, String> {
     let document = pdf_extract::Document::load_mem(bytes).map_err(|_| "无法解析 PDF")?;
     if document.is_encrypted() {
         return Err("不支持加密 PDF".into());
@@ -38,10 +28,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<String, String> {
     if pages.len() > 128 || document.objects.len() > 50_000 {
         return Err("PDF 页数或对象数量超过限制".into());
     }
-    let mut text = BoundedText {
-        value: String::new(),
-        overflow: false,
-    };
+    let mut text = LimitedText::new(max_chars);
     for page in pages.keys() {
         let result = {
             let mut output = pdf_extract::PlainTextOutput::new(&mut text);

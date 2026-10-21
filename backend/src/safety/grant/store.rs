@@ -31,7 +31,7 @@ impl Database {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT grant_id, subject_id, effect, permission_id, resource_json, source, created_at, expires_at
-             FROM security_grants WHERE subject_id = ?1 ORDER BY created_at",
+             FROM security_grants WHERE subject_id = ?1 AND grant_id NOT IN (SELECT grant_id FROM security_access_rule_scopes) ORDER BY created_at",
         )?;
         let rows = stmt.query_map(rusqlite::params![subject_id], |row| {
             let effect_raw: String = row.get(2)?;

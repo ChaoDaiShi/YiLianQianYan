@@ -115,6 +115,7 @@ fn is_loopback_or_private_literal(host: &str) -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum GrantEffect {
     Allow,
+    Approve,
     Deny,
 }
 
@@ -180,6 +181,8 @@ pub enum ProcessGrantScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum GrantResource {
+    /// Explicit user-configured scope without a resource restriction.
+    Any,
     Mcp {
         server_id: String,
         /// None means all tools on this exact server; never a wildcard string.

@@ -14,6 +14,15 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+#[path = "chat_grounding.rs"]
+pub(crate) mod grounding;
+#[path = "chat_lifecycle.rs"]
+pub(crate) mod lifecycle;
+#[path = "chat_options.rs"]
+pub(crate) mod options;
+#[path = "chat_runtime.rs"]
+pub(crate) mod runtime;
+
 pub use crate::agent::delegation::GoalRef as ChatGoalRef;
 use crate::agent::engine::{self, AgentEvent};
 use crate::agent::state::AgentState;
@@ -21,17 +30,29 @@ use crate::agent::verifier::DefaultVerifier;
 use crate::app::state::{AppServer, CHAT_MEMORY_TOP_K};
 use crate::db::{Database, MessageRow, RetrieveQuery};
 use crate::integrations::llm::client::LlmClient;
-use crate::integrations::llm::usage::DatabaseUsageRecorder;
 use crate::safety::SecurityExecutionGateway;
 use crate::utils::text::truncate_chars;
 
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
+    #[serde(flatten)]
+    pub options: options::ChatRequestOptions,
     pub conversation_id: Option<String>,
     pub message: String,
     pub workflow_id: Option<String>,
     #[serde(default)]
     pub goal_ref: Option<ChatGoalRef>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ChatReadinessQuery {
+    pub conversation_id: Option<String>,
+}
+pub async fn readiness_handler(
+    State(server): State<Arc<AppServer>>,
+    axum::extract::Query(query): axum::extract::Query<ChatReadinessQuery>,
+) -> Json<runtime::ChatReadiness> {
+    Json(runtime::readiness(&server, query.conversation_id.as_deref()).await)
 }
 
 struct GoalBoundChatContext {
@@ -686,18 +707,79 @@ pub async fn chat_handler(
         .transpose()?;
     let goal_bound = goal_run.is_some();
 
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
-    let (stream_tx, mut stream_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
+    let (handoff, mut stream_rx) =
+        lifecycle::ChatTurnEvents::start(db.clone_connection(), event_rx);
 
-    let legacy_config = server.config.read().clone();
-    let active_model = db.get_active_llm_model().ok().flatten();
-    let mut config = legacy_config.clone();
-    config.model = server.effective_model_config();
+    let conv_id = match requested_conversation_id.clone() {
+        Some(id) => id,
+        None => {
+            db.create_conversation("新对话")
+                .map_err(|error| {
+                    chat_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "conversation_create_failed",
+                        error,
+                    )
+                })?
+                .id
+        }
+    };
+    let turn_guard = lifecycle::acquire_turn(&server, &conv_id).await;
+    let mut runtime = runtime::prepare_with_model(
+        &server,
+        Some(&conv_id),
+        Some(&event_tx),
+        req.options.model_profile_id.as_deref(),
+    )
+    .await
+    .map_err(|error| chat_error(StatusCode::BAD_REQUEST, "connector_runtime_invalid", error))?;
+    req.options
+        .apply(&server, &mut runtime)
+        .map_err(|error| chat_error(StatusCode::BAD_REQUEST, "chat_options_invalid", error))?;
+    // Finish fallible model/pool setup before accepting the user message or registering a run.
+    let llm_client = runtime::client(&server, &runtime, &conv_id, &event_tx)
+        .map_err(|error| chat_error(StatusCode::BAD_REQUEST, "connector_model_invalid", error))?;
+    let llm_client = req.options.client(llm_client);
+    db.save_chat_options(&conv_id, &req.options)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "chat_options_save_failed",
+                error,
+            )
+        })?;
+    let config = runtime.config.clone();
     // Build one MCP-aware runtime registry snapshot for this whole chat run.
     // It is used by BOTH the LLM tool definitions and the Security Gateway so
     // the LLM, evaluation, and execution all see the same tool set.
-    let tool_registry = server.build_agent_tool_registry().await;
-    let mut system_prompt = server.build_system_prompt();
+    let tool_registry = runtime.tools.clone();
+    let mode = req
+        .options
+        .workspace_mode
+        .unwrap_or(db.conversation_mode(&conv_id).map_err(|e| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "conversation_mode_read_failed",
+                e,
+            )
+        })?);
+    db.set_conversation_mode(&conv_id, mode).map_err(|e| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "conversation_mode_save_failed",
+            e,
+        )
+    })?;
+    let _ = event_tx
+        .send(crate::api::conversation_modes::event(
+            &conv_id,
+            mode,
+            false,
+            "当前会话模式",
+        ))
+        .await;
+    let mut system_prompt = format!("{}\n\n{}", runtime.prompt, mode.prompt());
 
     // Merge workflow context if workflow_id is provided
     let workflow_prompt = if let Some(ref wf_id) = req.workflow_id {
@@ -771,8 +853,12 @@ pub async fn chat_handler(
         top_k: CHAT_MEMORY_TOP_K,
         category: None,
     };
-    match db.retrieve_memories_hybrid(&retrieval_query, query_embedding.as_deref()) {
-        Ok(scored) => {
+    match db.retrieve_chat_memories(&retrieval_query, query_embedding.as_deref()) {
+        Ok(mut scored) => {
+            scored.retain(|m| {
+                (!runtime.bindings.restrict_memory || m.memory.category == "knowledge")
+                    && (!runtime.bindings.restrict_knowledge || m.memory.category != "knowledge")
+            });
             if !scored.is_empty() {
                 server.append_memory_context(&mut system_prompt, &scored);
                 tracing::info!(
@@ -787,25 +873,19 @@ pub async fn chat_handler(
         }
     }
 
-    // Get or create conversation
-    let conv_id = match requested_conversation_id {
-        Some(id) => id,
-        None => {
-            let summary = db.create_conversation("新对话").unwrap_or_else(|_| {
-                crate::db::ConversationSummary {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    title: "新对话".to_string(),
-                    run_status: crate::db::ConversationRunStatus::Idle,
-                    run_error: None,
-                    run_started_at: None,
-                    run_finished_at: None,
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                    updated_at: chrono::Utc::now().timestamp_millis(),
-                }
-            });
-            summary.id
-        }
-    };
+    grounding::append(
+        &db,
+        &mut system_prompt,
+        &message,
+        runtime.bindings.restrict_knowledge,
+    )
+    .map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "knowledge_retrieval_failed",
+            error,
+        )
+    })?;
 
     if let Some(goal_ref) = conversation_goal_ref.as_ref() {
         persist_conversation_goal_ref(&db, &conv_id, goal_ref)?;
@@ -820,27 +900,14 @@ pub async fn chat_handler(
     // Build agent state from history before persisting the current user message.
     let mut agent_state = AgentState::new(system_prompt);
     agent_state.goal_ref = conversation_goal_ref;
-    if let Ok(conv) = db.get_conversation(&conv_id) {
-        let msgs: Vec<crate::integrations::llm::types::ChatMessage> = conv
-            .messages
-            .iter()
-            .map(|m| crate::integrations::llm::types::ChatMessage {
-                role: m.role.clone(),
-                content: if m.content.is_empty() {
-                    None
-                } else {
-                    Some(m.content.clone())
-                },
-                tool_calls: m
-                    .tool_calls
-                    .as_ref()
-                    .and_then(|tc| serde_json::from_str(tc).ok()),
-                tool_call_id: m.tool_call_id.clone(),
-                name: m.tool_name.clone(),
-            })
-            .collect();
-        agent_state.load_history(msgs);
-    }
+    let history = db.load_chat_messages(&conv_id).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "chat_history_invalid",
+            error,
+        )
+    })?;
+    agent_state.load_history(history);
     let prev_msg_count = agent_state.messages.len();
 
     // Persist the current user message after taking the history snapshot.
@@ -877,26 +944,14 @@ pub async fn chat_handler(
         .push("chat", "api", &format!("收到消息: {}", msg_preview));
 
     // Spawn agent loop
-    let usage_recorder = active_model.as_ref().map(|model| {
-        Arc::new(DatabaseUsageRecorder::new(
-            db.clone_connection(),
-            model.id.clone(),
-            model.provider.clone(),
-            model.model.clone(),
-            "chat",
-        )) as Arc<dyn crate::integrations::llm::client::UsageRecorder>
-    });
-    let llm_client = LlmClient::new_with_usage_recorder(
-        &config.model,
-        Arc::clone(&server.secret_resolver),
-        usage_recorder,
-    );
     let conv_clone = conv_id.clone();
     let config_clone = config.clone();
     let log_buffer = server.log_buffer.clone();
 
     let db_clone = db.clone();
+    let bound_agent = runtime.agent_id.clone();
     tokio::spawn(async move {
+        let _turn_guard = turn_guard;
         log_buffer.push("info", "agent", "Agent 循环开始");
         let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
             config_clone.sandbox.clone(),
@@ -906,6 +961,8 @@ pub async fn chat_handler(
             Arc::new(server.audit_recorder.clone()),
         )
         .with_db(Arc::new(db_clone.clone()))
+        .with_agent_context(bound_agent)
+        .with_permissions_config(server.config.clone())
         .with_grant_enforcement();
 
         let execution = engine::run_react_loop_with_channel(
@@ -943,29 +1000,20 @@ pub async fn chat_handler(
             if msg.role == "user" || msg.role == "system" {
                 continue;
             }
-            let _ = db_clone.add_message(&MessageRow {
-                id: uuid::Uuid::new_v4().to_string(),
-                conversation_id: conv_clone.clone(),
-                role: msg.role.clone(),
-                content: msg.content.clone().unwrap_or_default(),
-                tool_calls: msg
-                    .tool_calls
-                    .as_ref()
-                    .map(|tc| serde_json::to_string(tc).unwrap_or_default()),
-                tool_call_id: msg.tool_call_id.clone(),
-                tool_name: msg.name.clone(),
-                tool_result: None,
-                created_at: now,
-            });
+            if let Err(error) = db_clone.persist_chat_message(&conv_clone, msg, now) {
+                result = Err(error);
+                break;
+            }
         }
 
         match result {
             Err(ref e) => {
-                let _ = db_clone.set_conversation_run_status(
-                    &conv_clone,
-                    crate::db::ConversationRunStatus::Failed,
-                    Some(e),
-                );
+                let status = if cancel_token.is_cancelled() {
+                    crate::db::ConversationRunStatus::Cancelled
+                } else {
+                    crate::db::ConversationRunStatus::Failed
+                };
+                let _ = handoff.set_status(&db_clone, &conv_clone, status, Some(e));
                 log_buffer.push("error", "agent", &format!("Agent 错误: {}", e));
                 let _ = event_tx
                     .send(AgentEvent {
@@ -989,7 +1037,8 @@ pub async fn chat_handler(
                     .await;
             }
             Ok(engine::RunOutcome::Done { .. }) => {
-                let _ = db_clone.set_conversation_run_status(
+                let _ = handoff.set_status(
+                    &db_clone,
                     &conv_clone,
                     crate::db::ConversationRunStatus::Completed,
                     None,
@@ -997,7 +1046,8 @@ pub async fn chat_handler(
                 log_buffer.push("info", "agent", "Agent 完成");
             }
             Ok(engine::RunOutcome::Paused { approval_id }) => {
-                let _ = db_clone.set_conversation_run_status(
+                let _ = handoff.set_status(
+                    &db_clone,
                     &conv_clone,
                     crate::db::ConversationRunStatus::WaitingApproval,
                     None,
@@ -1007,24 +1057,10 @@ pub async fn chat_handler(
                     "agent",
                     &format!("Agent 暂停，等待审批 {}", approval_id),
                 );
-                // Do NOT send "done": the frontend already received approval_required
-                // and will show the approval card. The stream simply ends here.
+                // The handoff publishes approval_required only after history and lifecycle events commit.
             }
         }
-        server.active_tasks.lock().remove(&conv_clone);
-    });
-
-    // Persist tool lifecycle events independently of the browser connection.
-    // This keeps the execution history recoverable even when the page is left
-    // while the agent is still running.
-    let persistence_db = db.clone_connection();
-    tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            if let Err(error) = persistence_db.apply_execution_event(&event) {
-                tracing::warn!(error = %error, "failed to persist conversation execution event");
-            }
-            let _ = stream_tx.send(event).await;
-        }
+        handoff.finish(&server, &conv_clone).await;
     });
 
     // Return SSE stream
@@ -1056,11 +1092,6 @@ pub async fn stop_handler(
     if !conv_id.is_empty() {
         if let Some(token) = server.active_tasks.lock().get(conv_id) {
             token.cancel();
-            let _ = server.db.set_conversation_run_status(
-                conv_id,
-                crate::db::ConversationRunStatus::Cancelled,
-                None,
-            );
             return Json(serde_json::json!({"status": "cancelled"}));
         }
     }
@@ -1202,6 +1233,490 @@ mod tests {
             .iter()
             .filter(|message| message["role"] == "user" && message["content"] == content)
             .count()
+    }
+
+    #[tokio::test]
+    async fn chat_readiness_uses_scoped_or_default_pool_without_global_key_or_provider_calls() {
+        use crate::{
+            db::{
+                connectors::ConnectorBinding,
+                model_pools::{ModelPool, ModelPoolTier},
+                LlmModelInput,
+            },
+            integrations::secret::{
+                llm_model_key_ref, InMemorySecretStore, SecretResolver, SecretStore,
+            },
+            modules::task::{AgentDefinition, AgentId, AgentSource},
+        };
+        let (url, requests, mock) = start_mock_llm().await;
+        let temp = TempDatabase::new();
+        let (mut server, token) = test_server(&temp, &url);
+        let store = Arc::new(InMemorySecretStore::new());
+        let key = llm_model_key_ref("readiness-profile");
+        store
+            .put(
+                &key,
+                secrecy::SecretString::new("controlled-readiness-key".into()),
+            )
+            .await
+            .unwrap();
+        {
+            let server = Arc::get_mut(&mut server).unwrap();
+            server.secret_store = store.clone();
+            server.secret_resolver = Arc::new(SecretResolver::new(store));
+            let mut config = server.config.write();
+            config.model.api_key.clear();
+            config.model.api_key_env.clear();
+            config.model.api_key_ref = None;
+        }
+        server
+            .db
+            .create_llm_model(&LlmModelInput {
+                id: "readiness-profile".into(),
+                provider: "openai".into(),
+                label: "Scoped profile".into(),
+                model: "actual-scoped-model".into(),
+                base_url: url,
+                api_format: "openai".into(),
+                api_key_ref: key.key,
+                api_key_env: String::new(),
+                temperature: 0.,
+                max_tokens: 10,
+                invoke_timeout_ms: 1000,
+            })
+            .unwrap();
+        server
+            .db
+            .conn()
+            .execute("UPDATE llm_models SET active=0", [])
+            .unwrap();
+        let pool = ModelPool {
+            id: "readiness-pool".into(),
+            label: "Actual scoped pool".into(),
+            service_kind: "chat".into(),
+            enabled: true,
+            revision: 1,
+            attempt_timeout_ms: 1000,
+            total_timeout_ms: 1000,
+            tiers: vec![ModelPoolTier {
+                id: "tier-1".into(),
+                label: "Primary".into(),
+                profile_ids: vec!["readiness-profile".into()],
+            }],
+        };
+        server
+            .db
+            .conn()
+            .execute(
+                "INSERT INTO model_pools(id,revision,payload) VALUES(?1,?2,?3)",
+                rusqlite::params![
+                    pool.id,
+                    pool.revision,
+                    serde_json::to_string(&pool).unwrap()
+                ],
+            )
+            .unwrap();
+        let conversation = server.db.create_conversation("Scoped readiness").unwrap();
+        let agent = AgentDefinition {
+            id: AgentId::new("readiness-agent").unwrap(),
+            name: "Scoped".into(),
+            description: String::new(),
+            instructions: String::new(),
+            allowed_tools: vec![],
+            model: None,
+            capabilities: vec![],
+            max_iterations: 10,
+            enabled: true,
+            source: AgentSource::Database,
+        };
+        server.db.create_agent_definition(&agent).unwrap();
+        server
+            .db
+            .save_connector_binding(
+                agent.id.as_str(),
+                &ConnectorBinding {
+                    id: String::new(),
+                    kind: "conversation_agent".into(),
+                    source_id: format!("conversation:{}", conversation.id),
+                    target_id: format!("agent:{}", agent.id),
+                    service_kind: None,
+                    model_source: None,
+                },
+            )
+            .unwrap();
+        server
+            .db
+            .set_model_pool_binding(agent.id.as_str(), Some(&pool.id))
+            .unwrap();
+        for (scoped, expected) in [(false, false), (true, true)] {
+            let path = if scoped {
+                format!("/api/chat/readiness?conversation_id={}", conversation.id)
+            } else {
+                "/api/chat/readiness".into()
+            };
+            let response = build_router(server.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri(path)
+                        .header(CONTROL_SESSION_HEADER, &token)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["available"], expected);
+            if scoped {
+                assert_eq!(body["configured"], true);
+                assert_eq!(body["provider"], "model_pool");
+                assert_eq!(body["model"], pool.label);
+            }
+        }
+        server
+            .db
+            .set_model_pool_binding("default", Some(&pool.id))
+            .unwrap();
+        let default = crate::api::chat::runtime::readiness(&server, None).await;
+        assert!(default.available);
+        assert_eq!(default.model, pool.label);
+        server
+            .db
+            .conn()
+            .execute("DELETE FROM llm_models WHERE id='readiness-profile'", [])
+            .unwrap();
+        assert!(
+            !crate::api::chat::runtime::readiness(&server, Some(&conversation.id))
+                .await
+                .available
+        );
+        assert!(requests.lock().await.is_empty());
+        assert!(server.active_tasks.lock().is_empty());
+        mock.abort();
+    }
+
+    #[tokio::test]
+    async fn disabled_pool_rejects_chat_before_registering_or_saving_user_message() {
+        use crate::{
+            db::{connectors::ConnectorBinding, model_pools::ModelPool},
+            modules::task::{AgentDefinition, AgentId, AgentSource},
+        };
+        let (url, requests, mock) = start_mock_llm().await;
+        for bound in [false, true] {
+            let temp = TempDatabase::new();
+            let (server, token) = test_server(&temp, &url);
+            let conversation = server.db.create_conversation("Preserve draft").unwrap();
+            let pool = ModelPool {
+                id: "disabled-startup-pool".into(),
+                label: "Disabled".into(),
+                service_kind: "chat".into(),
+                enabled: false,
+                revision: 2,
+                attempt_timeout_ms: 100,
+                total_timeout_ms: 100,
+                tiers: vec![],
+            };
+            server
+                .db
+                .conn()
+                .execute(
+                    "INSERT INTO model_pools(id,revision,payload) VALUES(?1,?2,?3)",
+                    rusqlite::params![
+                        pool.id,
+                        pool.revision,
+                        serde_json::to_string(&pool).unwrap()
+                    ],
+                )
+                .unwrap();
+            let subject = if bound { "startup-agent" } else { "default" };
+            if bound {
+                server
+                    .db
+                    .create_agent_definition(&AgentDefinition {
+                        id: AgentId::new(subject).unwrap(),
+                        name: "Startup".into(),
+                        description: String::new(),
+                        instructions: String::new(),
+                        allowed_tools: vec![],
+                        model: None,
+                        capabilities: vec![],
+                        max_iterations: 10,
+                        enabled: true,
+                        source: AgentSource::Database,
+                    })
+                    .unwrap();
+                server
+                    .db
+                    .save_connector_binding(
+                        subject,
+                        &ConnectorBinding {
+                            id: String::new(),
+                            kind: "conversation_agent".into(),
+                            source_id: format!("conversation:{}", conversation.id),
+                            target_id: format!("agent:{subject}"),
+                            service_kind: None,
+                            model_source: None,
+                        },
+                    )
+                    .unwrap();
+            }
+            // An enabled selection may subsequently be disabled; the request must reject that snapshot.
+            server
+                .db
+                .conn()
+                .execute(
+                    "INSERT INTO model_pool_bindings(subject_id,pool_id) VALUES(?1,?2)",
+                    rusqlite::params![subject, pool.id],
+                )
+                .unwrap();
+            let response=build_router(server.clone()).oneshot(Request::builder().method("POST").uri("/api/chat").header(CONTROL_SESSION_HEADER,&token).header(CONTENT_TYPE,"application/json").body(Body::from(json!({"conversation_id":conversation.id,"message":"UNACCEPTED USER DRAFT"}).to_string())).unwrap()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let _ = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            assert!(server.active_tasks.lock().is_empty());
+            let persisted = server.db.get_conversation(&conversation.id).unwrap();
+            let status: String = server
+                .db
+                .conn()
+                .query_row(
+                    "SELECT run_status FROM conversations WHERE id=?1",
+                    [&conversation.id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(status, "idle");
+            assert!(persisted.messages.is_empty());
+            assert_eq!(persisted.title, "Preserve draft");
+        }
+        assert!(requests.lock().await.is_empty());
+        mock.abort();
+    }
+
+    #[tokio::test]
+    async fn connector_chat_uses_bound_tools_memory_and_next_turn_persona() {
+        use crate::{
+            api::agents::persona::{save_profile, AgentProfile, Persona},
+            db::{connectors::ConnectorBinding, CreateMemoryRequest},
+            modules::task::{AgentDefinition, AgentId, AgentSource},
+        };
+        let (url, requests, mock) = start_mock_llm().await;
+        let temp = TempDatabase::new();
+        let (mut server, token) = test_server(&temp, &url);
+        use crate::integrations::secret::{
+            llm_model_key_ref, InMemorySecretStore, SecretResolver, SecretStore,
+        };
+        let store = Arc::new(InMemorySecretStore::new());
+        let key = llm_model_key_ref("bound-profile");
+        store
+            .put(
+                &key,
+                secrecy::SecretString::new("controlled-mock-key".into()),
+            )
+            .await
+            .unwrap();
+        {
+            let server = Arc::get_mut(&mut server).unwrap();
+            server.secret_store = store.clone();
+            server.secret_resolver = Arc::new(SecretResolver::new(store));
+        }
+        server
+            .db
+            .create_llm_model(&crate::db::LlmModelInput {
+                id: "bound-profile".into(),
+                provider: "openai".into(),
+                label: "Bound profile".into(),
+                model: "bound-request-model".into(),
+                base_url: url.clone(),
+                api_format: "openai".into(),
+                api_key_ref: key.key,
+                api_key_env: String::new(),
+                temperature: 0.2,
+                max_tokens: 100,
+                invoke_timeout_ms: 5000,
+            })
+            .unwrap();
+        let agent = AgentDefinition {
+            id: AgentId::new("bound-chat-agent").unwrap(),
+            name: "Bound".into(),
+            description: String::new(),
+            instructions: String::new(),
+            allowed_tools: vec!["read_file".into()],
+            model: None,
+            capabilities: vec![],
+            max_iterations: 10,
+            enabled: true,
+            source: AgentSource::Database,
+        };
+        server.db.create_agent_definition(&agent).unwrap();
+        let conversation = server.db.create_conversation("Bound").unwrap();
+        server
+            .db
+            .save_connector_binding(
+                agent.id.as_str(),
+                &ConnectorBinding {
+                    id: String::new(),
+                    kind: "conversation_agent".into(),
+                    source_id: format!("conversation:{}", conversation.id),
+                    target_id: format!("agent:{}", agent.id),
+                    service_kind: None,
+                    model_source: None,
+                },
+            )
+            .unwrap();
+        server
+            .db
+            .save_connector_binding(
+                agent.id.as_str(),
+                &ConnectorBinding {
+                    id: String::new(),
+                    kind: "agent_model".into(),
+                    source_id: format!("agent:{}", agent.id),
+                    target_id: "model:bound-profile".into(),
+                    service_kind: Some("chat".into()),
+                    model_source: Some("profile".into()),
+                },
+            )
+            .unwrap();
+        let memory = server
+            .db
+            .create_memory(&CreateMemoryRequest {
+                content: "BOUND BACKGROUND ONLY".into(),
+                category: "fact".into(),
+                source: "manual".into(),
+                source_conversation_id: None,
+                metadata: None,
+            })
+            .unwrap();
+        server
+            .db
+            .create_memory(&CreateMemoryRequest {
+                content: "remember star UNBOUND MEMORY MUST NOT APPEAR".into(),
+                category: "fact".into(),
+                source: "manual".into(),
+                source_conversation_id: None,
+                metadata: None,
+            })
+            .unwrap();
+        server
+            .db
+            .save_connector_binding(
+                agent.id.as_str(),
+                &ConnectorBinding {
+                    id: String::new(),
+                    kind: "agent_memory".into(),
+                    source_id: format!("agent:{}", agent.id),
+                    target_id: format!("memory:{}", memory.id),
+                    service_kind: None,
+                    model_source: None,
+                },
+            )
+            .unwrap();
+        let knowledge = server
+            .db
+            .create_memory(&CreateMemoryRequest {
+                content: "BOUND KNOWLEDGE ONLY".into(),
+                category: "knowledge".into(),
+                source: "manual".into(),
+                source_conversation_id: None,
+                metadata: None,
+            })
+            .unwrap();
+        server
+            .db
+            .create_memory(&CreateMemoryRequest {
+                content: "remember star UNBOUND KNOWLEDGE MUST NOT APPEAR".into(),
+                category: "knowledge".into(),
+                source: "manual".into(),
+                source_conversation_id: None,
+                metadata: None,
+            })
+            .unwrap();
+        server
+            .db
+            .save_connector_binding(
+                agent.id.as_str(),
+                &ConnectorBinding {
+                    id: String::new(),
+                    kind: "agent_knowledge".into(),
+                    source_id: format!("agent:{}", agent.id),
+                    target_id: format!("knowledge:{}", knowledge.id),
+                    service_kind: None,
+                    model_source: None,
+                },
+            )
+            .unwrap();
+        let mut profile = AgentProfile {
+            user_prompt: "SELECTED USER INSTRUCTION".into(),
+            persona_enabled: true,
+            persona: Persona {
+                tone: "CALM FIRST TURN".into(),
+                ..Default::default()
+            },
+        };
+        save_profile(&server.db, agent.id.as_str(), &profile).unwrap();
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":conversation.id,"message":"remember star"}),
+        )
+        .await;
+        profile.persona.tone = "PRECISE NEXT TURN".into();
+        save_profile(&server.db, agent.id.as_str(), &profile).unwrap();
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":conversation.id,"message":"remember star again"}),
+        )
+        .await;
+        let memory_binding = server
+            .db
+            .resolve_connector_bindings(agent.id.as_str())
+            .unwrap()
+            .into_iter()
+            .find(|b| b.kind == "agent_memory")
+            .unwrap();
+        server
+            .db
+            .delete_connector_binding(agent.id.as_str(), &memory_binding.id)
+            .unwrap();
+        server.db.delete_memory(&knowledge.id).unwrap();
+        send_chat(server.clone(),&token,json!({"conversation_id":conversation.id,"message":"remember star after removing last memory and knowledge"})).await;
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        for request in requests.iter().take(2) {
+            assert_eq!(request["model"], "bound-request-model");
+            let text = request["messages"][0]["content"].as_str().unwrap();
+            assert!(text.contains("BOUND BACKGROUND ONLY"));
+            assert!(text.contains("BOUND KNOWLEDGE ONLY"));
+            assert!(!text.contains("UNBOUND KNOWLEDGE MUST NOT APPEAR"));
+            assert!(!text.contains("UNBOUND MEMORY MUST NOT APPEAR"));
+            assert!(text.contains("SELECTED USER INSTRUCTION"));
+            assert_eq!(request["tools"].as_array().unwrap().len(), 1);
+            assert_eq!(request["tools"][0]["function"]["name"], "read_file");
+        }
+        let last_prompt = requests[2]["messages"][0]["content"].as_str().unwrap();
+        for forbidden in [
+            "BOUND BACKGROUND ONLY",
+            "BOUND KNOWLEDGE ONLY",
+            "UNBOUND MEMORY MUST NOT APPEAR",
+            "UNBOUND KNOWLEDGE MUST NOT APPEAR",
+        ] {
+            assert!(
+                !last_prompt.contains(forbidden),
+                "last unbind/delete exposed context: {forbidden}"
+            );
+        }
+        assert!(requests[0]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("CALM FIRST TURN"));
+        assert!(requests[1]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("PRECISE NEXT TURN"));
+        mock.abort();
     }
 
     #[test]

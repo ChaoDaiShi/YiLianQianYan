@@ -266,12 +266,19 @@ impl Database {
     }
 
     pub fn delete_workflow_graph(&self, id: &str) -> Result<(), String> {
-        let conn = self.conn();
-        conn.execute(
-            "DELETE FROM workflow_graphs WHERE id = ?1",
-            rusqlite::params![id],
-        )
-        .map_err(|error| error.to_string())?;
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let deleted = tx
+            .execute(
+                "DELETE FROM workflow_graphs WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|error| error.to_string())?;
+        if deleted > 0 {
+            super::connectors::remove_connector_entity_on(&tx, "workflow", id)
+                .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 

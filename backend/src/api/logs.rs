@@ -9,6 +9,12 @@ use axum::{
 use std::sync::Arc;
 
 use crate::app::state::{AppServer, LogEntry};
+use crate::safety::redact_error;
+use std::collections::BTreeSet;
+
+#[path = "tool_logs.rs"]
+mod tool_logs;
+pub use tool_logs::get_tool_logs;
 
 #[derive(serde::Deserialize)]
 pub struct LogsQuery {
@@ -26,6 +32,8 @@ pub struct LogsQuery {
 pub struct LogsResponse {
     pub entries: Vec<LogEntry>,
     pub total: usize,
+    pub sources: Vec<String>,
+    pub levels: Vec<String>,
 }
 
 /// GET /api/logs — return recent application log entries
@@ -36,11 +44,27 @@ pub async fn get_logs(
     let raw = if params.drain.unwrap_or(false) {
         server.log_buffer.drain()
     } else {
-        let count = params.count.unwrap_or(200);
-        server.log_buffer.recent(count)
+        server.log_buffer.recent(usize::MAX)
     };
 
-    let filtered: Vec<LogEntry> = raw
+    Json(filter_logs(raw, &params))
+}
+
+fn filter_logs(raw: Vec<LogEntry>, params: &LogsQuery) -> LogsResponse {
+    let sources = raw
+        .iter()
+        .map(|entry| entry.source.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let levels = raw
+        .iter()
+        .map(|entry| entry.level.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut filtered: Vec<LogEntry> = raw
         .into_iter()
         .filter(|e| {
             if let Some(ref level) = params.level {
@@ -58,10 +82,68 @@ pub async fn get_logs(
         .collect();
 
     let total = filtered.len();
-    Json(LogsResponse {
+    let start = total.saturating_sub(params.count.unwrap_or(200));
+    filtered.drain(..start);
+    for entry in &mut filtered {
+        entry.message = redact_error(&entry.message);
+    }
+    LogsResponse {
         entries: filtered,
         total,
-    })
+        sources,
+        levels,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_before_limiting_and_keeps_source_facets() {
+        let entries = ["tool", "api", "api"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, source)| LogEntry {
+                timestamp: index as i64,
+                level: "error".into(),
+                source: source.into(),
+                message: "failure".into(),
+            })
+            .collect();
+        let result = filter_logs(
+            entries,
+            &LogsQuery {
+                count: Some(1),
+                level: None,
+                source: Some("tool".into()),
+                drain: None,
+            },
+        );
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].source, "tool");
+        assert_eq!(result.total, 1);
+        assert_eq!(result.sources, vec!["api", "tool"]);
+    }
+
+    #[test]
+    fn redacts_sensitive_log_messages() {
+        let result = filter_logs(
+            vec![LogEntry {
+                timestamp: 0,
+                level: "error".into(),
+                source: "tool".into(),
+                message: "Authorization: Bearer fixture-secret".into(),
+            }],
+            &LogsQuery {
+                count: None,
+                level: None,
+                source: None,
+                drain: None,
+            },
+        );
+        assert!(!result.entries[0].message.contains("fixture-secret"));
+    }
 }
 
 /// POST /api/logs — push a log entry from the frontend or subsystem

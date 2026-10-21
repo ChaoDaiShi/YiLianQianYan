@@ -53,6 +53,35 @@ pub async fn list_handler(
 pub struct CreateRequest {
     pub title: Option<String>,
 }
+#[derive(Deserialize)]
+pub struct RenameRequest {
+    pub title: String,
+}
+pub async fn rename_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Json(req): Json<RenameRequest>,
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    if req.title.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"对话标题不能为空"})),
+        ));
+    }
+    if server
+        .db
+        .find_conversation(&id)
+        .map_err(storage_error)?
+        .is_none()
+    {
+        return Err(not_found_error("对话"));
+    }
+    server
+        .db
+        .update_conversation_title(&id, req.title.trim())
+        .map_err(storage_error)?;
+    Ok(Json(serde_json::json!({"id":id,"title":req.title.trim()})))
+}
 
 pub async fn create_handler(
     State(server): State<Arc<AppServer>>,

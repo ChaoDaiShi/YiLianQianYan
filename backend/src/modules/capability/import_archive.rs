@@ -85,9 +85,6 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
             return Err("zip_expansion_limit".into());
         }
         if !file.is_dir() {
-            if !(path.ends_with(".md") || path.ends_with(".json") || path.ends_with(".txt")) {
-                return Err("declarative_text_files_only".into());
-            }
             entries.push((index, path, file.size()));
         }
     }
@@ -100,17 +97,47 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
         }
     }
     let mut files = BTreeMap::new();
+    let mut file_encodings = BTreeMap::new();
     for (index, path, size) in entries {
-        let mut text = String::new();
+        let mut bytes = Vec::new();
         zip.by_index(index)
             .map_err(|_| "invalid_zip_entry")?
             .take(size + 1)
-            .read_to_string(&mut text)
-            .map_err(|_| "invalid_package_text")?;
-        if text.len() as u64 != size {
+            .read_to_end(&mut bytes)
+            .map_err(|_| "invalid_package_resource")?;
+        if bytes.len() as u64 != size {
             return Err("zip_size_mismatch".into());
         }
-        files.insert(path, text);
+        let (content, encoding) = super::import_store::encode_resource(&bytes);
+        if let Some(encoding) = encoding {
+            file_encodings.insert(path.clone(), encoding);
+        }
+        files.insert(path, content);
+    }
+    // Ordinary Skill archives may contain a single enclosing Skill folder.
+    if !files.contains_key("SKILL.md")
+        && !files.contains_key("plugin.json")
+        && !files.contains_key("skill.json")
+    {
+        let roots: HashSet<_> = files
+            .keys()
+            .filter_map(|path| path.split_once('/').map(|(root, _)| root.to_owned()))
+            .collect();
+        if roots.len() == 1 {
+            let prefix = format!("{}/", roots.iter().next().unwrap());
+            if files.contains_key(&format!("{prefix}SKILL.md"))
+                && files.keys().all(|path| path.starts_with(&prefix))
+            {
+                files = files
+                    .into_iter()
+                    .map(|(path, value)| (path[prefix.len()..].to_owned(), value))
+                    .collect();
+                file_encodings = file_encodings
+                    .into_iter()
+                    .map(|(path, value)| (path[prefix.len()..].to_owned(), value))
+                    .collect();
+            }
+        }
     }
     let mut package = if let Some(manifest) = files.get("plugin.json") {
         let manifest = crate::plugin::manifest::parse_manifest(manifest)
@@ -126,6 +153,9 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
             if !files.contains_key(path) {
                 return Err("missing_plugin_contribution".into());
             }
+            if file_encodings.contains_key(path) {
+                return Err("plugin_contribution_requires_utf8".into());
+            }
         }
         Package {
             id: manifest.id,
@@ -136,6 +166,7 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
             permissions: manifest.permissions,
             content_hash: String::new(),
             files,
+            file_encodings,
         }
     } else {
         #[derive(serde::Deserialize)]
@@ -145,9 +176,45 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
             name: String,
             version: String,
         }
-        let manifest: SkillManifest =
-            serde_json::from_str(files.get("skill.json").ok_or("package_manifest_required")?)
-                .map_err(|_| "invalid_skill_manifest")?;
+        let manifest: SkillManifest = if let Some(raw) = files.get("skill.json") {
+            serde_json::from_str(raw).map_err(|_| "invalid_skill_manifest")?
+        } else {
+            let markdown = files.get("SKILL.md").ok_or("missing_skill_markdown")?;
+            let mut lines = markdown.lines();
+            if lines.next().map(str::trim) != Some("---") {
+                return Err("skill_frontmatter_or_skill_json_required".into());
+            }
+            let mut fields = Vec::new();
+            let mut closed = false;
+            for line in lines {
+                if line.trim() == "---" {
+                    closed = true;
+                    break;
+                }
+                fields.push(line);
+            }
+            if !closed {
+                return Err("skill_frontmatter_unclosed".into());
+            }
+            let field = |key: &str| {
+                fields
+                    .iter()
+                    .find_map(|line| {
+                        line.trim()
+                            .strip_prefix(key)
+                            .map(|value| value.trim().trim_matches(['\'', '"']).to_owned())
+                    })
+                    .filter(|value| !value.is_empty())
+            };
+            let name = field("name:").ok_or("skill_name_required_in_frontmatter_or_skill_json")?;
+            let version = field("version:").unwrap_or_else(|| "unversioned".into());
+            crate::plugin::PluginId::new(&name).map_err(|_| "invalid_skill_frontmatter_name")?;
+            SkillManifest {
+                id: name.clone(),
+                name,
+                version,
+            }
+        };
         Package {
             id: manifest.id,
             name: manifest.name,
@@ -157,6 +224,7 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
             permissions: vec!["skill.instructions.read".into()],
             content_hash: String::new(),
             files,
+            file_encodings,
         }
     };
     validate_package(&mut package)?;
@@ -314,5 +382,40 @@ mod tests {
             .map(|name| (name.as_str(), "x"))
             .collect::<Vec<_>>();
         assert!(inspect_zip(&archive(&entries, zip::CompressionMethod::Stored), "zip").is_err());
+    }
+    #[test]
+    fn skill_zip_preserves_wrapped_script_and_binary_image_without_running_them() {
+        use base64::Engine;
+        let script = b"throw new Error('do not execute during import');\n";
+        let image=base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lZYAAAAASUVORK5CYII=").unwrap();
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (path, bytes) in [
+            (
+                "ordinary-skill/SKILL.md",
+                b"---\nname: ordinary-skill\n---\n# Complete package".as_slice(),
+            ),
+            ("ordinary-skill/scripts/task.js", script.as_slice()),
+            ("ordinary-skill/assets/pixel.png", image.as_slice()),
+        ] {
+            zip.start_file(
+                path,
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+            )
+            .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        let bytes = zip.finish().unwrap().into_inner();
+        let package = inspect_zip(&bytes, "github:immutable/archive.zip").unwrap();
+        assert_eq!(package.id, "ordinary-skill");
+        assert_eq!(package.files.len(), 3);
+        assert_eq!(
+            super::super::import_store::resource_bytes(&package, "scripts/task.js").unwrap(),
+            script
+        );
+        assert_eq!(
+            super::super::import_store::resource_bytes(&package, "assets/pixel.png").unwrap(),
+            image
+        );
+        assert_eq!(package.file_encodings["assets/pixel.png"], "base64");
     }
 }

@@ -3,19 +3,17 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 const KEY: &str = "v1.system_preferences.v1";
 const NAV: &[&str] = &[
-    "tasks",
+    "connectors",
     "chat",
-    "workflows",
     "workspaces",
-    "skills",
-    "plugins",
-    "agents",
     "capabilities",
+    "agents",
     "memory",
     "knowledge",
     "system",
     "logs",
     "settings",
+    "account",
 ];
 const MODULES: &[&str] = &[
     "gateway",
@@ -110,7 +108,8 @@ impl Preferences {
                 != NAV.len()
             || self.navigation.iter().any(|item| {
                 !NAV.contains(&item.id.as_str())
-                    || (["tasks", "chat", "settings"].contains(&item.id.as_str()) && !item.visible)
+                    || (["connectors", "chat", "settings"].contains(&item.id.as_str())
+                        && !item.visible)
             })
             || self.enabled_modules.len() > MODULES.len()
             || self.enabled_modules.iter().collect::<HashSet<_>>().len()
@@ -156,6 +155,29 @@ fn read(conn: &rusqlite::Connection) -> Result<Preferences, String> {
         .map_err(|_| "preferences_unavailable")?;
     Ok(raw
         .and_then(|value| serde_json::from_str::<Preferences>(&value).ok())
+        .map(|mut value| {
+            if value.navigation.iter().any(|item| item.id == "tasks") {
+                value.navigation = value
+                    .navigation
+                    .into_iter()
+                    .filter_map(|mut item| {
+                        if item.id == "tasks" {
+                            item.id = "connectors".into();
+                        }
+                        NAV.contains(&item.id.as_str()).then_some(item)
+                    })
+                    .collect();
+                for id in NAV {
+                    if !value.navigation.iter().any(|item| item.id == *id) {
+                        value.navigation.push(NavigationItem {
+                            id: (*id).into(),
+                            visible: true,
+                        });
+                    }
+                }
+            }
+            value
+        })
         .filter(|value| value.validate().is_ok())
         .unwrap_or_default())
 }

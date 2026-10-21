@@ -82,8 +82,11 @@ pub async fn resolve_task_agent_approval(
             arguments: consumed.arguments.clone(),
             subject: SecuritySubject::from_subject_id(subject_id),
         };
-        match gateway
-            .execute_approved(&request, consumed.risk_level)
+        match crate::safety::execution_gateway::CURRENT_AGENT_ID
+            .scope(
+                agent_execution.agent_id.to_string(),
+                gateway.execute_approved(&request, consumed.risk_level),
+            )
             .await
         {
             Ok(crate::safety::execution_gateway::SecurityExecutionOutcome::Executed {

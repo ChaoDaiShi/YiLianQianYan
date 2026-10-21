@@ -14,6 +14,7 @@ use crate::app::state::AppServer;
 
 /// GET /api/skills — list all discovered skills
 pub async fn list_skills(State(server): State<Arc<AppServer>>) -> Json<Vec<serde_json::Value>> {
+    let _runtime = server.build_agent_tool_registry().await;
     let managed = server.managed_skill_store();
     let sd = server.skill_discovery.read();
     let skills: Vec<serde_json::Value> = sd
@@ -24,6 +25,13 @@ pub async fn list_skills(State(server): State<Arc<AppServer>>) -> Json<Vec<serde
                 "name": s.name,
                 "description": s.description,
                 "path": s.path.to_string_lossy(),
+                "root_dir": s.root_dir.to_string_lossy(),
+                "display_name": s.display_name,
+                "source_id": s.source_id,
+                "source": s.source,
+                "source_kind": s.source_kind,
+                "source_root": s.source_root.to_string_lossy(),
+                "compatibility":s.compatibility,
                 "editable": managed.as_ref().is_some_and(|store| store.is_editable(&s.path)),
             })
         })
@@ -45,6 +53,13 @@ pub async fn load_skill(
                 return Json(serde_json::json!({
                     "name": skill.name, "description": skill.description,
                     "content": content, "root_dir": skill.root_dir.to_string_lossy(),
+                    "path": skill.path.to_string_lossy(),
+                    "display_name": skill.display_name,
+                    "source_id": skill.source_id,
+                    "source": skill.source,
+                    "source_kind": skill.source_kind,
+                    "source_root": skill.source_root.to_string_lossy(),
+                    "compatibility":skill.compatibility,
                     "editable": managed.as_ref().is_some_and(|store| store.is_editable(&skill.path)),
                 }))
             }
@@ -52,24 +67,23 @@ pub async fn load_skill(
         }
     }
 
-    // Fallback: check filesystem directly
-    for dir in &["./skills", "../skills", "skills"] {
-        let path = std::path::Path::new(dir).join(&name).join("SKILL.md");
-        if path.exists() {
-            match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    return Json(serde_json::json!({
-                        "name": name, "description": "",
-                        "content": content, "root_dir": path.parent().unwrap_or(std::path::Path::new(".")).to_string_lossy(),
-                        "editable": managed.as_ref().is_some_and(|store| store.is_editable(&path)),
-                    }))
-                }
-                Err(e) => return Json(serde_json::json!({"error": format!("Read error: {}", e)})),
-            }
-        }
-    }
-
     Json(serde_json::json!({"error": format!("Skill '{}' not found", name)}))
+}
+
+pub async fn skill_discovery_status(
+    State(server): State<Arc<AppServer>>,
+) -> Json<serde_json::Value> {
+    let discovery = server.skill_discovery.read();
+    Json(serde_json::json!({"sources":discovery.sources(),"skill_count":discovery.all().len()}))
+}
+pub async fn refresh_skill_discovery(
+    State(server): State<Arc<AppServer>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let refreshed = Arc::clone(&server);
+    tokio::task::spawn_blocking(move || refreshed.refresh_skill_discovery())
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(skill_discovery_status(State(server)).await)
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,6 +152,12 @@ pub async fn update_skill(
     let path = store
         .update(&current_name, &body.name, &body.content)
         .map_err(management_error)?;
+    if current_name != body.name {
+        server
+            .db
+            .remove_connector_entity("skill", &current_name)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    }
     server.refresh_skill_discovery();
     Ok(Json(serde_json::json!({
         "name": body.name,
@@ -152,6 +172,10 @@ pub async fn delete_skill(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let store = managed_store(&server)?;
     store.delete(&name).map_err(management_error)?;
+    server
+        .db
+        .remove_connector_entity("skill", &name)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     server.refresh_skill_discovery();
     Ok(Json(serde_json::json!({ "status": "deleted" })))
 }
@@ -200,9 +224,9 @@ mod tests {
         .unwrap();
 
         let Json(listed) = list_skills(State(server.clone())).await;
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0]["name"], "demo");
-        assert_eq!(listed[0]["editable"], true);
+        let demo = listed.iter().find(|skill| skill["name"] == "demo").unwrap();
+        assert_eq!(demo["editable"], true);
+        assert_eq!(demo["source_kind"], "configured");
 
         let _ = update_skill(
             State(server.clone()),
@@ -222,4 +246,11 @@ mod tests {
             .unwrap();
         assert!(server.skill_discovery.read().get("demo-renamed").is_none());
     }
+}
+
+pub fn discovery_router() -> axum::Router<Arc<AppServer>> {
+    axum::Router::new().route(
+        "/api/skills/discovery",
+        axum::routing::get(skill_discovery_status).post(refresh_skill_discovery),
+    )
 }

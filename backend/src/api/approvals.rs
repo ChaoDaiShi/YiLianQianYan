@@ -1,3 +1,4 @@
+use crate::api::chat::lifecycle::{acquire_turn, set_turn_status, ChatTurnEvents};
 // ============================================================
 // Approval API — approve / reject / cancel pending tool approvals
 //
@@ -30,8 +31,6 @@ use crate::agent::verifier::DefaultVerifier;
 use crate::app::state::{AppServer, LogBuffer};
 use crate::config::types::AppConfig;
 use crate::db::{Database, MessageRow};
-use crate::integrations::llm::client::LlmClient;
-use crate::integrations::llm::types::ChatMessage;
 use crate::modules::workflow::{
     cancel_workflow_approval, resolve_workflow_approval, WorkflowRunId,
 };
@@ -181,6 +180,7 @@ async fn execute_approved_tool(
         Arc::new(server.audit_recorder.clone()),
     )
     .with_db(Arc::new(server.db.clone_connection()))
+    .with_permissions_config(server.config.clone())
     .with_grant_enforcement();
     let request = SecurityExecutionRequest {
         conversation_id: approval.conversation_id.clone(),
@@ -283,6 +283,7 @@ async fn build_workflow_gateway(server: &AppServer) -> Arc<SecurityExecutionGate
             Arc::new(server.audit_recorder.clone()),
         )
         .with_db(Arc::new(server.db.clone_connection()))
+        .with_permissions_config(server.config.clone())
         .with_grant_enforcement(),
     )
 }
@@ -547,14 +548,29 @@ pub async fn approve_handler(
             "语音审批暂仅支持当前对话中的工具审批".to_string(),
         ));
     }
+    let turn_guard = if matches!(classify_approval(&lookup), ApprovalTarget::Agent) {
+        Some(acquire_turn(&server, &lookup.conversation_id).await)
+    } else {
+        None
+    };
     if let Some(approval) = consume_spoken_attested(&server, &lookup, &body, true)? {
-        return Ok(Sse::new(resume_stream(server, approval, true)));
+        return Ok(Sse::new(resume_stream(
+            server,
+            approval,
+            true,
+            turn_guard.expect("agent approval owns conversation turn"),
+        )));
     }
     match classify_approval(&lookup) {
         ApprovalTarget::Agent => {
             let approval =
                 resolve_and_consume(&server, &approval_id, body.conversation_id.as_deref(), true)?;
-            Ok(Sse::new(resume_stream(server, approval, true)))
+            Ok(Sse::new(resume_stream(
+                server,
+                approval,
+                true,
+                turn_guard.expect("agent approval owns conversation turn"),
+            )))
         }
         ApprovalTarget::Workflow => {
             // Fail fast on a consumed approval: a surface-normal SSE that only
@@ -623,8 +639,18 @@ pub async fn reject_handler(
             "语音审批暂仅支持当前对话中的工具审批".to_string(),
         ));
     }
+    let turn_guard = if matches!(classify_approval(&lookup), ApprovalTarget::Agent) {
+        Some(acquire_turn(&server, &lookup.conversation_id).await)
+    } else {
+        None
+    };
     if let Some(approval) = consume_spoken_attested(&server, &lookup, &body, false)? {
-        return Ok(Sse::new(resume_stream(server, approval, false)));
+        return Ok(Sse::new(resume_stream(
+            server,
+            approval,
+            false,
+            turn_guard.expect("agent approval owns conversation turn"),
+        )));
     }
     match classify_approval(&lookup) {
         ApprovalTarget::Agent => {
@@ -634,7 +660,12 @@ pub async fn reject_handler(
                 body.conversation_id.as_deref(),
                 false,
             )?;
-            Ok(Sse::new(resume_stream(server, approval, false)))
+            Ok(Sse::new(resume_stream(
+                server,
+                approval,
+                false,
+                turn_guard.expect("agent approval owns conversation turn"),
+            )))
         }
         ApprovalTarget::Workflow => {
             if lookup.status != crate::safety::ApprovalStatus::Pending {
@@ -739,6 +770,7 @@ pub async fn cancel_handler(
             }
         }
         ApprovalTarget::Agent => {
+            let _turn_guard = acquire_turn(&server, &lookup.conversation_id).await;
             let conv_id = body
                 .conversation_id
                 .clone()
@@ -746,11 +778,6 @@ pub async fn cancel_handler(
             match server.approval_store.cancel(&approval_id, &conv_id) {
                 Ok(a) => {
                     record_approval_resolved(&server, &a);
-                    let _ = server.db.set_conversation_run_status(
-                        &a.conversation_id,
-                        crate::db::ConversationRunStatus::Cancelled,
-                        None,
-                    );
                     // Keep the conversation chain valid: record the op never ran.
                     let db = server.db.clone_connection();
                     let now = chrono::Utc::now().timestamp_millis();
@@ -765,6 +792,26 @@ pub async fn cancel_handler(
                         tool_result: None,
                         created_at: now,
                     });
+                    let mut event = AgentEvent::error_event(&a.conversation_id, String::new());
+                    event.event_type = "approval_resolved".into();
+                    event.error = None;
+                    event.tool_call_id = Some(a.tool_call_id.clone());
+                    event.tool_name = Some(a.tool_name.clone());
+                    event.approval_id = Some(a.approval_id.clone());
+                    event.status = Some("cancelled".into());
+                    if let Err(error) = db.apply_execution_event(&event) {
+                        let _ = db.set_conversation_run_status(
+                            &a.conversation_id,
+                            crate::db::ConversationRunStatus::Failed,
+                            Some(&error),
+                        );
+                        return Json(serde_json::json!({"ok":false,"error":error}));
+                    }
+                    let _ = db.set_conversation_run_status(
+                        &a.conversation_id,
+                        crate::db::ConversationRunStatus::Cancelled,
+                        None,
+                    );
                     Json(serde_json::json!({
                         "ok": true,
                         "approval_id": a.approval_id,
@@ -800,19 +847,74 @@ fn resume_stream(
     server: Arc<AppServer>,
     approval: PendingApproval,
     approve: bool,
+    turn_guard: tokio::sync::OwnedMutexGuard<()>,
 ) -> ApprovalStream {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
+    let (tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
+    let (handoff, mut rx) = ChatTurnEvents::start(server.db.clone_connection(), event_rx);
 
     tokio::spawn(async move {
+        let _turn_guard = turn_guard;
+        async {
         let db = server.db.clone_connection();
         // Build ONE MCP-aware runtime registry snapshot for the whole resume.
         // The same registry is used to (1) execute the approved original tool
         // and (2) resume the ReAct loop, so evaluation and execution agree and
         // stale binding approvals fail closed.
-        let tool_registry = server.build_agent_tool_registry().await;
-        let config = server.config.read().clone();
+        let options = match db.load_chat_options(&approval.conversation_id) {
+            Ok(options) => options,
+            Err(error) => {
+                let _ = handoff.set_status(&db,
+                    &approval.conversation_id,
+                    crate::db::ConversationRunStatus::Failed,
+                    Some(&error),
+                );
+                let _ = tx
+                    .send(AgentEvent::error_event(&approval.conversation_id, error))
+                    .await;
+                return;
+            }
+        };
+        let mut runtime = match crate::api::chat::runtime::prepare_with_model(
+            &server,
+            Some(&approval.conversation_id),
+            Some(&tx),
+            options.model_profile_id.as_deref(),
+        )
+        .await
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let _ = handoff.set_status(&db,
+                    &approval.conversation_id,
+                    crate::db::ConversationRunStatus::Failed,
+                    Some(&error),
+                );
+                let _ = tx
+                    .send(AgentEvent::error_event(&approval.conversation_id, error))
+                    .await;
+                return;
+            }
+        };
+        if let Err(error) = options.apply(&server, &mut runtime) {
+            let _ = handoff.set_status(&db,
+                &approval.conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&error),
+            );
+            let _ = tx
+                .send(AgentEvent::error_event(&approval.conversation_id, error))
+                .await;
+            return;
+        }
+        let _ = handoff.set_status(&db,
+            &approval.conversation_id,
+            crate::db::ConversationRunStatus::Running,
+            None,
+        );
+        let tool_registry = runtime.tools.clone();
+        let config = runtime.config.clone();
         let log_buffer = server.log_buffer.clone();
-        let system_prompt = server.build_system_prompt();
+        let system_prompt = runtime.prompt.clone();
         let goal_cancel = CancellationToken::new();
         let goal_run = match load_conversation_goal_ref(&db, &approval.conversation_id) {
             Ok(Some(goal_ref)) => {
@@ -863,7 +965,7 @@ fn resume_stream(
                     tool_result,
                     chrono::Utc::now().timestamp_millis(),
                 );
-                let _ = db.set_conversation_run_status(
+                let _ = handoff.set_status(&db,
                     &approval.conversation_id,
                     crate::db::ConversationRunStatus::Failed,
                     Some(&reason),
@@ -952,7 +1054,7 @@ fn resume_stream(
                     outcome = approved_execution => Some(outcome),
                 }
             }).await;
-            server.active_tasks.lock().remove(&approval.conversation_id);
+
             let Some(gateway_outcome) = gateway_outcome else {
                 let reason = "审批后的工具执行已停止，执行结果需核实；不会自动重试。".to_string();
                 add_tool_message(
@@ -964,7 +1066,7 @@ fn resume_stream(
                 if let Some(run) = goal_run {
                     let _ = run.finish();
                 }
-                let _ = db.set_conversation_run_status(
+                let _ = handoff.set_status(&db,
                     &approval.conversation_id,
                     crate::db::ConversationRunStatus::Failed,
                     Some(&reason),
@@ -1028,7 +1130,7 @@ fn resume_stream(
                         if let Some(run) = goal_run {
                             let _ = run.finish();
                         }
-                        let _ = db.set_conversation_run_status(
+                        let _ = handoff.set_status(&db,
                             &approval.conversation_id,
                             crate::db::ConversationRunStatus::Failed,
                             Some(&reason),
@@ -1239,8 +1341,12 @@ fn resume_stream(
             &approval,
             &tx,
             goal_run,
+            &runtime,
+            Some(&handoff),
         )
         .await;
+        }.await;
+        handoff.finish(&server, &approval.conversation_id).await;
     });
 
     let stream = async_stream::stream! {
@@ -1279,34 +1385,102 @@ async fn resume_agent(
     approval: &PendingApproval,
     tx: &Sender<AgentEvent>,
     goal_run: Option<GoalChatRun>,
+    runtime: &crate::api::chat::runtime::ChatRuntime,
+    handoff: Option<&ChatTurnEvents>,
 ) {
-    let _ = db.set_conversation_run_status(
+    let llm_client =
+        match crate::api::chat::runtime::client(server, runtime, &approval.conversation_id, tx) {
+            Ok(client) => client,
+            Err(error) => {
+                let _ = set_turn_status(
+                    handoff,
+                    db,
+                    &approval.conversation_id,
+                    crate::db::ConversationRunStatus::Failed,
+                    Some(&error),
+                );
+                let _ = tx
+                    .send(AgentEvent::error_event(&approval.conversation_id, error))
+                    .await;
+                return;
+            }
+        };
+    let llm_client = match db.load_chat_options(&approval.conversation_id) {
+        Ok(options) => options.client(llm_client),
+        Err(error) => {
+            let _ = set_turn_status(
+                handoff,
+                db,
+                &approval.conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&error),
+            );
+            let _ = tx
+                .send(AgentEvent::error_event(&approval.conversation_id, error))
+                .await;
+            return;
+        }
+    };
+    let _ = set_turn_status(
+        handoff,
+        db,
         &approval.conversation_id,
         crate::db::ConversationRunStatus::Running,
         None,
     );
-    let mut agent_state = AgentState::new(system_prompt.to_string());
-    if let Ok(conv) = db.get_conversation(&approval.conversation_id) {
-        let msgs: Vec<ChatMessage> = conv
-            .messages
-            .iter()
-            .map(|m| ChatMessage {
-                role: m.role.clone(),
-                content: if m.content.is_empty() {
-                    None
-                } else {
-                    Some(m.content.clone())
-                },
-                tool_calls: m
-                    .tool_calls
-                    .as_ref()
-                    .and_then(|tc| serde_json::from_str(tc).ok()),
-                tool_call_id: m.tool_call_id.clone(),
-                name: m.tool_name.clone(),
-            })
-            .collect();
-        agent_state.load_history(msgs);
+    let mode = match db.conversation_mode(&approval.conversation_id) {
+        Ok(mode) => mode,
+        Err(error) => {
+            let _ = set_turn_status(
+                handoff,
+                db,
+                &approval.conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&error),
+            );
+            let _ = tx
+                .send(AgentEvent::error_event(&approval.conversation_id, error))
+                .await;
+            return;
+        }
+    };
+    let history = match db.load_chat_messages(&approval.conversation_id) {
+        Ok(messages) => messages,
+        Err(error) => {
+            let _ = set_turn_status(
+                handoff,
+                db,
+                &approval.conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&error),
+            );
+            let _ = tx
+                .send(AgentEvent::error_event(&approval.conversation_id, error))
+                .await;
+            return;
+        }
+    };
+    let mut grounded_prompt = format!("{}\n\n{}", system_prompt, mode.prompt());
+    if let Err(error) = crate::api::chat::grounding::append_for_resume(
+        db,
+        &mut grounded_prompt,
+        &history,
+        runtime.bindings.restrict_knowledge,
+    ) {
+        let _ = set_turn_status(
+            handoff,
+            db,
+            &approval.conversation_id,
+            crate::db::ConversationRunStatus::Failed,
+            Some(&error),
+        );
+        let _ = tx
+            .send(AgentEvent::error_event(&approval.conversation_id, error))
+            .await;
+        return;
     }
+    let mut agent_state = AgentState::new(grounded_prompt);
+    agent_state.load_history(history);
     if let Some(run) = goal_run.as_ref() {
         agent_state.goal_ref = Some(run.goal_ref.clone());
         agent_state.add_user_message(run.goal_summary.clone());
@@ -1322,7 +1496,6 @@ async fn resume_agent(
         .lock()
         .insert(approval.conversation_id.clone(), cancel_token.clone());
 
-    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
     let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
         config.sandbox.clone(),
         server.workspace_root.clone(),
@@ -1331,6 +1504,8 @@ async fn resume_agent(
         Arc::new(server.audit_recorder.clone()),
     )
     .with_db(Arc::new(server.db.clone_connection()))
+    .with_agent_context(runtime.agent_id.clone())
+    .with_permissions_config(server.config.clone())
     .with_grant_enforcement();
 
     let execution = engine::run_react_loop_with_channel(
@@ -1366,27 +1541,21 @@ async fn resume_agent(
         if msg.role == "user" || msg.role == "system" {
             continue;
         }
-        let _ = db.add_message(&MessageRow {
-            id: uuid::Uuid::new_v4().to_string(),
-            conversation_id: approval.conversation_id.clone(),
-            role: msg.role.clone(),
-            content: msg.content.clone().unwrap_or_default(),
-            tool_calls: msg
-                .tool_calls
-                .as_ref()
-                .map(|tc| serde_json::to_string(tc).unwrap_or_default()),
-            tool_call_id: msg.tool_call_id.clone(),
-            tool_name: msg.name.clone(),
-            tool_result: None,
-            created_at: now,
-        });
+        if let Err(error) = db.persist_chat_message(&approval.conversation_id, msg, now) {
+            result = Err(error);
+            break;
+        }
     }
 
-    server.active_tasks.lock().remove(&approval.conversation_id);
+    if handoff.is_none() {
+        server.active_tasks.lock().remove(&approval.conversation_id);
+    }
 
     match result {
         Ok(RunOutcome::Done { .. }) => {
-            let _ = db.set_conversation_run_status(
+            let _ = set_turn_status(
+                handoff,
+                db,
                 &approval.conversation_id,
                 crate::db::ConversationRunStatus::Completed,
                 None,
@@ -1394,7 +1563,9 @@ async fn resume_agent(
             log_buffer.push("info", "agent", "审批后 Agent 完成");
         }
         Ok(RunOutcome::Paused { approval_id }) => {
-            let _ = db.set_conversation_run_status(
+            let _ = set_turn_status(
+                handoff,
+                db,
                 &approval.conversation_id,
                 crate::db::ConversationRunStatus::WaitingApproval,
                 None,
@@ -1406,7 +1577,9 @@ async fn resume_agent(
             );
         }
         Err(e) => {
-            let _ = db.set_conversation_run_status(
+            let _ = set_turn_status(
+                handoff,
+                db,
                 &approval.conversation_id,
                 crate::db::ConversationRunStatus::Failed,
                 Some(&e),
@@ -1440,8 +1613,8 @@ async fn resume_agent(
 mod tests {
     use super::{
         approve_handler, cancel_handler, classify_approval, consume_spoken_attested,
-        execute_approved_tool, reject_handler, resolve_and_consume, workflow_approval_stream,
-        ApprovalDecisionRequest, ApprovalTarget,
+        execute_approved_tool, reject_handler, resolve_and_consume, resume_agent,
+        workflow_approval_stream, ApprovalDecisionRequest, ApprovalTarget,
     };
     use async_trait::async_trait;
     use axum::{
@@ -1553,6 +1726,128 @@ mod tests {
             AppServer::new_with_control_session(&temp.0, ".", ControlSession::generate()).unwrap();
         server.tool_registry = Arc::clone(&registry);
         (temp, Arc::new(server), registry, executions, arguments)
+    }
+
+    #[tokio::test]
+    async fn disabled_pool_resume_fails_without_registering_active_run() {
+        let (_temp, server) = test_server("disabled-pool-resume");
+        let conversation = server.db.create_conversation("Resume").unwrap();
+        let pool = crate::db::model_pools::ModelPool {
+            id: "disabled-resume-pool".into(),
+            label: "Disabled".into(),
+            service_kind: "chat".into(),
+            enabled: true,
+            revision: 2,
+            attempt_timeout_ms: 100,
+            total_timeout_ms: 100,
+            tiers: vec![crate::db::model_pools::ModelPoolTier {
+                id: "tier-1".into(),
+                label: "Primary".into(),
+                profile_ids: vec!["resume-profile".into()],
+            }],
+        };
+        server
+            .db
+            .create_llm_model(&crate::db::LlmModelInput {
+                id: "resume-profile".into(),
+                provider: "openai".into(),
+                label: "Resume profile".into(),
+                model: "mock-model".into(),
+                base_url: "http://127.0.0.1:1".into(),
+                api_format: "openai".into(),
+                api_key_ref: "controlled-mock-reference".into(),
+                api_key_env: String::new(),
+                temperature: 0.,
+                max_tokens: 10,
+                invoke_timeout_ms: 1000,
+            })
+            .unwrap();
+        server
+            .db
+            .conn()
+            .execute(
+                "INSERT INTO model_pools(id,revision,payload) VALUES(?1,?2,?3)",
+                rusqlite::params![
+                    pool.id,
+                    pool.revision,
+                    serde_json::to_string(&pool).unwrap()
+                ],
+            )
+            .unwrap();
+        server
+            .db
+            .conn()
+            .execute(
+                "INSERT INTO model_pool_bindings(subject_id,pool_id) VALUES('default',?1)",
+                [&pool.id],
+            )
+            .unwrap();
+        server
+            .db
+            .set_conversation_run_status(
+                &conversation.id,
+                crate::db::ConversationRunStatus::WaitingApproval,
+                None,
+            )
+            .unwrap();
+        let approval = server.approval_store.create(
+            conversation.id.clone(),
+            "resume-call".into(),
+            "read_file".into(),
+            serde_json::json!({"path":"README.md"}),
+            RiskLevel::Low,
+            "resume".into(),
+            "local-user".into(),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let runtime =
+            crate::api::chat::runtime::prepare(&server, Some(&conversation.id), Some(&tx))
+                .await
+                .unwrap();
+        let mut disabled = pool.clone();
+        disabled.enabled = false;
+        server
+            .db
+            .conn()
+            .execute(
+                "UPDATE model_pools SET payload=?2 WHERE id=?1",
+                rusqlite::params![pool.id, serde_json::to_string(&disabled).unwrap()],
+            )
+            .unwrap();
+        resume_agent(
+            &server,
+            &server.db,
+            &runtime.tools,
+            &runtime.config,
+            &server.log_buffer,
+            &runtime.prompt,
+            &approval,
+            &tx,
+            None,
+            &runtime,
+            None,
+        )
+        .await;
+        assert!(server.active_tasks.lock().is_empty());
+        let status: String = server
+            .db
+            .conn()
+            .query_row(
+                "SELECT run_status FROM conversations WHERE id=?1",
+                [&conversation.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "failed");
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.event_type, "error");
+        assert!(event.error.is_some());
+        assert!(server
+            .db
+            .get_conversation(&conversation.id)
+            .unwrap()
+            .messages
+            .is_empty());
     }
 
     #[tokio::test]
@@ -1840,6 +2135,12 @@ mod tests {
     #[tokio::test]
     async fn cancel_records_cancelled_resolution_once() {
         let (_temp, server) = test_server("cancel");
+        // Cancellation persists the paused conversation's tool history and lifecycle.
+        // An audit-only in-memory approval without its conversation cannot satisfy that contract.
+        server.db.conn().execute(
+            "INSERT INTO conversations(id,title,run_status,created_at,updated_at) VALUES('conversation-1','cancel','waiting_approval',1,1)",
+            [],
+        ).unwrap();
         let pending = create_pending(&server);
 
         let Json(response) = cancel_handler(
@@ -1857,6 +2158,23 @@ mod tests {
         let events = resolution_events(&server);
         assert_eq!(events.len(), 1);
         assert_resolution(&events[0], &pending.approval_id, "cancelled");
+        let conversation = server
+            .db
+            .get_conversation(&pending.conversation_id)
+            .unwrap();
+        assert_eq!(
+            conversation.run_status,
+            crate::db::ConversationRunStatus::Cancelled
+        );
+        assert_eq!(conversation.messages.len(), 1);
+        assert_eq!(
+            conversation.execution_history[0].approval_status,
+            "cancelled"
+        );
+        assert_eq!(
+            conversation.execution_history[0].execution_status,
+            "cancelled"
+        );
     }
 
     #[test]

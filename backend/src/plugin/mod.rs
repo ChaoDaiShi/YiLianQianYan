@@ -13,6 +13,7 @@
 pub mod manifest;
 pub mod path;
 pub mod registry;
+pub mod settings;
 
 #[cfg(test)]
 mod tests;

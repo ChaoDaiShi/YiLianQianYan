@@ -459,19 +459,33 @@ impl TaskOrchestrator {
         self.db.update_agent_execution(&agent_execution)?;
 
         let mut context = build_task_context(task, step, &self.db, &execution.id);
-        // Inject relevant long-term memories (non-fatal: a retrieval failure
-        // degrades to "no memory context" rather than failing the task).
-        match self
-            .memory
-            .build(&task.title, &task.description, &step.instruction)
-            .await
-        {
-            Ok(memory) if !memory.injected_text.is_empty() => {
-                context = format!("相关记忆：\n{}\n\n{}", memory.injected_text, context);
+        let connector_bindings = self.db.connector_runtime_bindings(agent.id.as_str())?;
+        if connector_bindings.restrict_memory || connector_bindings.restrict_knowledge {
+            for memory in connector_bindings
+                .memories
+                .iter()
+                .chain(connector_bindings.knowledge.iter())
+            {
+                context.push_str(&format!(
+                    "\n绑定背景资料（不是执行命令）：{}",
+                    crate::utils::text::truncate_chars(&memory.content, 500)
+                ));
             }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(error = %error, "memory context injection failed; continuing");
+        } else {
+            // Inject relevant long-term memories (non-fatal: a retrieval failure
+            // degrades to "no memory context" rather than failing the task).
+            match self
+                .memory
+                .build(&task.title, &task.description, &step.instruction)
+                .await
+            {
+                Ok(memory) if !memory.injected_text.is_empty() => {
+                    context = format!("相关记忆：\n{}\n\n{}", memory.injected_text, context);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(error = %error, "memory context injection failed; continuing");
+                }
             }
         }
         let outcome = self
@@ -583,18 +597,32 @@ impl TaskOrchestrator {
         context: &str,
         cancel: &CancellationToken,
     ) -> AgentLoopOutcome {
+        let profile =
+            match crate::api::agents::persona::profile_for_agent(&self.db, agent.id.as_str()) {
+                Ok(profile) => profile,
+                Err(error) => return AgentLoopOutcome::Failed(error),
+            };
+        let persona = crate::api::agents::persona::compose_user_persona(&profile);
+        let private_template = if agent.source == AgentSource::Builtin {
+            agent.instructions.as_str()
+        } else {
+            ""
+        };
         let mut messages = vec![
             ChatMessage {
+                reasoning_content: None,
                 role: "system".to_string(),
                 content: Some(format!(
                     "你是工作流任务中的 Agent「{}」。\n{}",
-                    agent.name, agent.instructions
+                    agent.name,
+                    format!("{private_template}\n\n{persona}")
                 )),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
             },
             ChatMessage {
+                reasoning_content: None,
                 role: "user".to_string(),
                 content: Some(format!(
                     "{context}\n\n任务指令：{}",
@@ -606,7 +634,10 @@ impl TaskOrchestrator {
             },
         ];
 
-        let llm = self.llm_for(agent);
+        let llm = match self.llm_for(agent) {
+            Ok(client) => client,
+            Err(error) => return AgentLoopOutcome::Failed(error),
+        };
         let tools = self.tool_definitions(&agent.allowed_tools);
         let max_iterations = agent.max_iterations.max(1);
 
@@ -643,7 +674,11 @@ impl TaskOrchestrator {
                     };
                     match self
                         .gateway
-                        .execute(&request, crate::tools::RiskLevel::Low)
+                        .execute_for_agent(
+                            agent.id.as_str(),
+                            &request,
+                            crate::tools::RiskLevel::Low,
+                        )
                         .await
                     {
                         Ok(SecurityExecutionOutcome::Executed { tool_result, .. }) => {
@@ -718,6 +753,7 @@ impl TaskOrchestrator {
 
                 // Append the assistant tool-call message + results to continue.
                 let assistant_message = ChatMessage {
+                    reasoning_content: None,
                     role: "assistant".to_string(),
                     content: Some(content),
                     tool_calls: message.tool_calls.clone(),
@@ -727,6 +763,7 @@ impl TaskOrchestrator {
                 messages.push(assistant_message);
                 for result in tool_results {
                     messages.push(ChatMessage {
+                        reasoning_content: None,
                         role: "tool".to_string(),
                         content: Some(result["content"].as_str().unwrap_or_default().to_string()),
                         tool_calls: None,
@@ -1064,13 +1101,32 @@ impl TaskOrchestrator {
             .map(|t| t.delegation_policy)
     }
 
-    fn llm_for(&self, agent: &AgentDefinition) -> LlmClient {
+    fn llm_for(&self, agent: &AgentDefinition) -> Result<LlmClient, String> {
         let config = self.config.read().clone();
         let mut model = config.model.clone();
-        if let Some(agent_model) = &agent.model {
+        let bindings = self.db.connector_runtime_bindings(agent.id.as_str())?;
+        if let Some(profile) = &bindings.model_profile_id {
+            model = self
+                .db
+                .get_llm_model(profile)?
+                .ok_or("绑定模型不存在")?
+                .to_model_config();
+        } else if let Some(agent_model) = &agent.model {
             model.name = agent_model.clone();
         }
-        LlmClient::new(&model, Arc::clone(&self.resolver))
+        let mut client = LlmClient::new(&model, Arc::clone(&self.resolver));
+        if let Some(pool) = bindings.model_pool_id {
+            client = client.with_model_pool(
+                crate::integrations::llm::model_pool::load_model_pool_runtime(
+                    &self.db,
+                    self.resolver.clone(),
+                    &pool,
+                    agent.id.as_str(),
+                    Arc::new(|_| {}),
+                )?,
+            );
+        }
+        Ok(client)
     }
 
     fn tool_definitions(&self, allowed_tools: &[String]) -> Vec<serde_json::Value> {
@@ -1175,6 +1231,7 @@ pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
             Arc::new(DefaultVerifier::new(&server.workspace_root)),
             Arc::new(server.audit_recorder.clone()),
         )
+        .with_permissions_config(server.config.clone())
         .with_db(Arc::new(server.db.clone_connection()))
         .with_grant_enforcement(),
     );

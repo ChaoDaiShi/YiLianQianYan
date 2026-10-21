@@ -81,6 +81,7 @@ impl GrantEvaluator {
             };
         }
         let mut allowed = false;
+        let mut approved = None;
         for grant in &self.grants {
             if grant.permission != permission {
                 continue;
@@ -126,7 +127,17 @@ impl GrantEvaluator {
                     };
                 }
                 super::model::GrantEffect::Allow => allowed = true,
+                super::model::GrantEffect::Approve => approved = Some(grant),
             }
+        }
+        if let Some(grant) = approved {
+            return GrantEvaluation {
+                decision: GrantDecision::RequireApproval {
+                    reason: "resource requires explicit approval".into(),
+                },
+                matched_grant_id: Some(grant.id.clone()),
+                matched_resource: Some(grant.resource.clone()),
+            };
         }
         if allowed {
             let matched = self.grants.iter().rev().find(|grant| {
@@ -176,6 +187,7 @@ fn resource_matches(
     registry: Option<&Arc<crate::isolation::ManagedProcessRegistry>>,
 ) -> bool {
     match (resource, desc) {
+        (GrantResource::Any, _) => true,
         (
             GrantResource::Mcp {
                 server_id,

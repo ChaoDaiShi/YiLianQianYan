@@ -161,7 +161,25 @@ impl SubagentExecutor for LocalSubagentExecutor {
         };
         let child_registry = build_child_tool_registry(&self.source_tool_registry, &child_tools);
 
-        let system_prompt = build_child_system_prompt(&spec.name, &spec.instructions, handoff);
+        let mut system_prompt = build_child_system_prompt(&spec.name, &spec.instructions, handoff);
+        let is_profiled = self.db.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_definitions WHERE id=?1)",
+            [&spec.name],
+            |r| r.get::<_, bool>(0),
+        );
+        match is_profiled {
+            Ok(true) => {
+                match crate::api::agents::persona::profile_for_agent(&self.db, &spec.name) {
+                    Ok(profile) => system_prompt.push_str(&format!(
+                        "\n\n{}",
+                        crate::api::agents::persona::compose_user_persona(&profile)
+                    )),
+                    Err(error) => return ToolResult::error(error),
+                }
+            }
+            Ok(false) => {}
+            Err(error) => return ToolResult::error(error.to_string()),
+        }
         let mut state = AgentState::new(system_prompt);
         state.add_user_message(build_child_task(task, handoff));
 
@@ -175,6 +193,7 @@ impl SubagentExecutor for LocalSubagentExecutor {
             Arc::new(DefaultVerifier::new(&self.workspace_root)),
             Arc::new(self.audit_recorder.clone()),
         )
+        .with_permissions_config(Arc::new(parking_lot::RwLock::new(child_config.clone())))
         .with_db(Arc::new(self.db.clone_connection()))
         .with_grant_enforcement();
 

@@ -20,6 +20,8 @@ pub struct Package {
     pub permissions: Vec<String>,
     pub content_hash: String,
     pub files: BTreeMap<String, String>,
+    #[serde(default)]
+    pub file_encodings: BTreeMap<String, String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InstalledPackage {
@@ -28,6 +30,12 @@ pub struct InstalledPackage {
     pub enabled: bool,
     pub installed: bool,
     pub history: Vec<Package>,
+    #[serde(default)]
+    pub resources: BTreeMap<String, String>,
+    /// Retained across updates and rollbacks so removed contributions cannot
+    /// become unowned executable resources when the short version history expires.
+    #[serde(default)]
+    pub owned_resource_ids: std::collections::BTreeSet<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportPreview {
@@ -63,6 +71,7 @@ pub fn markdown_package(
         permissions: vec!["skill.instructions.read".into()],
         content_hash: String::new(),
         files: BTreeMap::from([("SKILL.md".into(), content.into())]),
+        file_encodings: BTreeMap::new(),
     };
     validate_package(&mut package)?;
     Ok(package)
@@ -88,21 +97,35 @@ pub fn validate_package(package: &mut Package) -> Result<(), String> {
     }
     let mut seen = std::collections::HashSet::new();
     let mut total = 0usize;
-    for (path, content) in &package.files {
+    for path in package.files.keys() {
         super::imports::normalize_package_path(path)?;
-        if !seen.insert(path.to_ascii_lowercase())
-            || !(path.ends_with(".md") || path.ends_with(".json") || path.ends_with(".txt"))
-            || content.len() > 512 * 1024
-            || content.contains('\0')
-        {
-            return Err("unsupported_or_duplicate_package_file".into());
+        if path.eq_ignore_ascii_case(".yilian-import-owner.json") {
+            return Err("reserved_package_owner_path".into());
         }
-        total = total
-            .checked_add(content.len())
-            .ok_or("package_too_large")?;
+        let bytes = resource_bytes(package, path)?;
+        if !seen.insert(path.to_ascii_lowercase()) || bytes.len() > 512 * 1024 {
+            return Err("oversized_or_duplicate_package_file".into());
+        }
+        total = total.checked_add(bytes.len()).ok_or("package_too_large")?;
+    }
+    if package
+        .file_encodings
+        .keys()
+        .any(|path| !package.files.contains_key(path))
+    {
+        return Err("invalid_package_file_encoding".into());
     }
     if total == 0 || total > MAX_PACKAGE_BYTES {
         return Err("package_too_large".into());
+    }
+    if package.kind == "skill"
+        && (package.file_encodings.contains_key("SKILL.md")
+            || package
+                .files
+                .get("SKILL.md")
+                .is_some_and(|text| text.contains('\0')))
+    {
+        return Err("skill_markdown_requires_utf8".into());
     }
     if package.kind == "skill"
         && package
@@ -112,14 +135,26 @@ pub fn validate_package(package: &mut Package) -> Result<(), String> {
     {
         return Err("missing_skill_markdown".into());
     }
-    let content = serde_json::to_vec(&(
-        &package.id,
-        &package.name,
-        &package.version,
-        &package.kind,
-        &package.permissions,
-        &package.files,
-    ))
+    let content = if package.file_encodings.is_empty() {
+        serde_json::to_vec(&(
+            &package.id,
+            &package.name,
+            &package.version,
+            &package.kind,
+            &package.permissions,
+            &package.files,
+        ))
+    } else {
+        serde_json::to_vec(&(
+            &package.id,
+            &package.name,
+            &package.version,
+            &package.kind,
+            &package.permissions,
+            &package.files,
+            &package.file_encodings,
+        ))
+    }
     .map_err(|_| "invalid_package")?;
     package.content_hash = format!("{:x}", Sha256::digest(content));
     Ok(())
@@ -183,7 +218,13 @@ pub fn inspect(db: &Database, mut package: Package, now: i64) -> Result<ImportPr
                 .filter(|(path, value)| {
                     before
                         .and_then(|files| files.get(*path))
-                        .is_some_and(|old| old != *value)
+                        .is_some_and(|old| {
+                            old != *value
+                                || current.is_some_and(|record| {
+                                    record.package.file_encodings.get(*path)
+                                        != package.file_encodings.get(*path)
+                                })
+                        })
                 })
                 .map(|(path, _)| path.clone())
                 .collect(),
@@ -238,6 +279,15 @@ pub fn confirm(db: &Database, preview_id: &str, now: i64) -> Result<InstalledPac
                 history.remove(0);
             }
             InstalledPackage {
+                owned_resource_ids: {
+                    let mut owned = current
+                        .map(owned_resource_ids)
+                        .transpose()?
+                        .unwrap_or_default();
+                    owned.extend(plugin_resource_ids(&preview.package)?.into_values());
+                    owned
+                },
+                resources: plugin_resource_ids(&preview.package)?,
                 package: preview.package,
                 revision: current.map_or(1, |record| record.revision + 1),
                 enabled: false,
@@ -264,6 +314,7 @@ pub fn change(
         if record.revision != revision {
             return Err("stale_package_revision".into());
         }
+        record.owned_resource_ids = owned_resource_ids(record)?;
         match action {
             "enable" if record.installed => record.enabled = true,
             "disable" if record.installed => record.enabled = false,
@@ -283,6 +334,7 @@ pub fn change(
             }
             _ => return Err("invalid_import_action".into()),
         }
+        record.resources = plugin_resource_ids(&record.package)?;
         record.revision = record.revision.checked_add(1).ok_or("revision_overflow")?;
         Ok(record.clone())
     })
@@ -290,6 +342,48 @@ pub fn change(
 
 pub fn list(db: &Database) -> Result<Vec<InstalledPackage>, String> {
     Ok(read_state(&db.conn())?.records.into_values().collect())
+}
+
+fn owned_resource_ids(
+    record: &InstalledPackage,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let mut owned = record.owned_resource_ids.clone();
+    owned.extend(record.resources.values().cloned());
+    for package in &record.history {
+        owned.extend(plugin_resource_ids(package)?.into_values());
+    }
+    Ok(owned)
+}
+
+/// Removed contributions remain owned and unavailable even after their plugin
+/// is enabled again. Existing workflow runs keep their audit snapshots.
+pub fn inactive_plugin_resource_ids(
+    db: &Database,
+) -> Result<std::collections::HashSet<String>, String> {
+    let mut inactive = std::collections::HashSet::new();
+    for record in list(db)?
+        .into_iter()
+        .filter(|record| record.package.kind == "plugin")
+    {
+        let current = record
+            .resources
+            .values()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        for id in owned_resource_ids(&record)? {
+            if !record.installed || !record.enabled || !current.contains(&id) {
+                inactive.insert(id);
+            }
+        }
+    }
+    Ok(inactive)
+}
+
+pub fn require_active_plugin_resource(db: &Database, id: &str) -> Result<(), String> {
+    if inactive_plugin_resource_ids(db)?.contains(id) {
+        return Err("所属插件已停用、卸载或移除了该贡献".into());
+    }
+    Ok(())
 }
 pub fn get(db: &Database, id: &str) -> Result<Option<InstalledPackage>, String> {
     Ok(read_state(&db.conn())?.records.get(id).cloned())
@@ -363,5 +457,64 @@ mod tests {
         db.conn().execute_batch("CREATE TRIGGER fail_import_write BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
         assert!(change(&db, "demo", installed.revision, "enable").is_err());
         assert_eq!(serde_json::to_value(list(&db).unwrap()).unwrap(), before);
+    }
+}
+
+pub fn plugin_resource_ids(package: &Package) -> Result<BTreeMap<String, String>, String> {
+    if package.kind != "plugin" {
+        return Ok(BTreeMap::new());
+    }
+    let manifest = crate::plugin::parse_manifest(
+        package
+            .files
+            .get("plugin.json")
+            .ok_or("plugin_manifest_missing")?,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut resources = BTreeMap::new();
+    for (kind, paths) in [
+        ("skill", manifest.contributes.skills),
+        ("workflow", manifest.contributes.workflows),
+        ("agent", manifest.contributes.agents),
+    ] {
+        for path in paths {
+            let digest = format!(
+                "{:x}",
+                Sha256::digest(format!("{}:{path}", package.id).as_bytes())
+            );
+            let id = format!("plugin-{}", &digest[..24]);
+            let runtime_id = if kind == "skill" {
+                let digest = format!("{:x}", Sha256::digest(id.as_bytes()));
+                format!("managed-import-{}", &digest[..20])
+            } else {
+                id
+            };
+            resources.insert(path, runtime_id);
+        }
+    }
+    Ok(resources)
+}
+
+/// Resource payloads are stored as UTF-8 or explicitly labelled base64. Importing
+/// a script only preserves its bytes; execution remains a normal tool action.
+pub fn encode_resource(bytes: &[u8]) -> (String, Option<String>) {
+    use base64::Engine;
+    match std::str::from_utf8(bytes) {
+        Ok(text) if !text.contains('\0') => (text.to_owned(), None),
+        _ => (
+            base64::engine::general_purpose::STANDARD.encode(bytes),
+            Some("base64".into()),
+        ),
+    }
+}
+pub fn resource_bytes(package: &Package, path: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    let content = package.files.get(path).ok_or("package_resource_missing")?;
+    match package.file_encodings.get(path).map(String::as_str) {
+        None => Ok(content.as_bytes().to_vec()),
+        Some("base64") => base64::engine::general_purpose::STANDARD
+            .decode(content)
+            .map_err(|_| "invalid_package_resource_base64".into()),
+        _ => Err("invalid_package_file_encoding".into()),
     }
 }

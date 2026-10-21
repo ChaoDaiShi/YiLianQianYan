@@ -20,6 +20,7 @@ use crate::modules::settings::application::secret_lifecycle::delete_secret_or_fa
 
 pub(crate) async fn apply(server: &AppServer, mut incoming: AppConfig) -> Json<serde_json::Value> {
     let existing = server.config.read().clone();
+    incoming.agent.system_prompt = existing.agent.system_prompt.clone();
 
     // ── Chat API key: clear → delete; non-empty → rotate; empty → preserve. ──
     if incoming.model.clear_api_key {
