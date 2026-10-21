@@ -1,0 +1,42 @@
+[
+  {
+    "file": "01-message-branches-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T02-58-06-448Z\\screenshots\\revision2-message-branches.png",
+    "sha256": "e078f0ea61cfeea0b03438f47119288743ea5d0f9134d438b9f72734ef18f54e"
+  },
+  {
+    "file": "02-chat-transparent-light-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T02-58-06-448Z\\screenshots\\revision2-chat-白天.png",
+    "sha256": "df48028dd8ffc53928e373e12dfcb0e5a7102309466d0823c1010983f17e2e51"
+  },
+  {
+    "file": "03-chat-transparent-dark-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T02-58-06-448Z\\screenshots\\revision2-chat-夜间.png",
+    "sha256": "7f7c5dd8c92b3cb0666776b76743545cfbcdee18f917912def638e14e875ed05"
+  },
+  {
+    "file": "04-toast-top-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T02-58-06-448Z\\screenshots\\revision2-toast-top.png",
+    "sha256": "eaa44b6591bc8c7f6ba6e9910b1d2ba2e124470695d32b14f2b3307bd3e333b4"
+  },
+  {
+    "file": "05-last-canvas-deleted-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T02-58-06-448Z\\screenshots\\revision2-all-deleted.png",
+    "sha256": "1820563d87807a4845e3f6cbc49921ae4de05bc8ae80a7a4431de51f61021805"
+  },
+  {
+    "file": "06-message-branches-browser.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T02-57-56-101Z\\revision2-message-branches.png",
+    "sha256": "cec584139d050986f41a94cd66d04f54fedb9ede55ba452e71f484c917016cca"
+  },
+  {
+    "file": "07-task-graph-workflow.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\connector-delete-real-r2-1792549147961\\task-graph-workflow-open.png",
+    "sha256": "c5821f42b4311ef29f629bb16005db28ccf3f1a873b2ebc5059c085895eb9d34"
+  },
+  {
+    "file": "08-task-graph-deleted.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\connector-delete-real-r2-1792549147961\\task-graph-workflow-deleted.png",
+    "sha256": "95ac906177b2d0a860f760a57f83e256f141160a898b94ffcac2b0fa844a1b4e"
+  }
+]

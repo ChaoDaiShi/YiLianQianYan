@@ -1,0 +1,319 @@
+Branch: codex/connector-workbench
+Baseline: 4399a43
+Revision 3 included; no commit/push.
+
+ M .gitignore
+ M backend/src/agent/engine.rs
+ M backend/src/agent/subagent_runtime.rs
+ M backend/src/api/agents.rs
+ M backend/src/api/approvals.rs
+ M backend/src/api/capabilities.rs
+ M backend/src/api/chat.rs
+ M backend/src/api/conversations.rs
+ M backend/src/api/llm_models.rs
+ M backend/src/api/mod.rs
+ M backend/src/api/search.rs
+ M backend/src/api/skills_route.rs
+ M backend/src/app/router.rs
+ M backend/src/app/state.rs
+ M backend/src/db/conversations.rs
+ M backend/src/db/llm_models.rs
+ M backend/src/db/mcp.rs
+ M backend/src/db/memories.rs
+ M backend/src/db/mod.rs
+ M backend/src/db/task_world.rs
+ M backend/src/db/workflow_runtime.rs
+ M backend/src/db/workflows.rs
+ M backend/src/execution/context.rs
+ M backend/src/integrations/llm/client.rs
+ M backend/src/integrations/llm/mod.rs
+ M backend/src/integrations/llm/usage.rs
+ M backend/src/modules/capability/import_archive.rs
+ M backend/src/modules/capability/import_owner.rs
+ M backend/src/modules/capability/import_store.rs
+ M backend/src/modules/capability/system_preferences.rs
+ M backend/src/modules/cloud/search.rs
+ M backend/src/modules/settings/application/mod.rs
+ M backend/src/modules/settings/application/provider_test.rs
+ M backend/src/modules/settings/application/service.rs
+ M backend/src/modules/settings/application/update.rs
+ M backend/src/modules/settings/domain/policy.rs
+ M backend/src/modules/settings/domain/readiness.rs
+ M backend/src/modules/task/api/graph_routes.rs
+ M backend/src/modules/task/approval.rs
+ M backend/src/modules/task/orchestrator.rs
+ M backend/src/modules/task/runtime.rs
+ M backend/src/modules/voice/mod.rs
+ M backend/src/modules/workflow/application/approval_service.rs
+ M backend/src/modules/workflow/application/run_service.rs
+ M backend/src/modules/workflow/executor.rs
+ M backend/src/plugin/manifest.rs
+ M backend/src/safety/descriptor.rs
+ M backend/src/safety/execution_gateway.rs
+ M backend/src/safety/grant/evaluator.rs
+ M backend/src/safety/grant/model.rs
+ M backend/src/safety/grant/store.rs
+ M backend/src/tools/ai_search.rs
+ M backend/src/tools/mod.rs
+ M frontend/e2e/core-paths.mjs
+ M frontend/package.json
+ M frontend/public/favicon.png
+ M frontend/src/api/chat.ts
+ M frontend/src/api/plugins.ts
+ M frontend/src/api/providerConnection.test.ts
+ M frontend/src/api/providerConnection.ts
+ M frontend/src/api/taskWorld/calls.ts
+ M frontend/src/api/tasks.ts
+ M frontend/src/components/chat/ChatView.tsx
+ M frontend/src/components/chat/WorkbenchHome.tsx
+ M frontend/src/components/chat/currentTaskEntry.test.ts
+ M frontend/src/components/chat/currentTaskEntry.ts
+ M frontend/src/components/chat/workbenchHome.test.ts
+ M frontend/src/components/layout/NavRail.tsx
+ M frontend/src/components/layout/navGroups.test.ts
+ M frontend/src/components/layout/navGroups.ts
+ M frontend/src/components/layout/navRegistry.ts
+ M frontend/src/components/layout/pageShellContract.test.ts
+ M frontend/src/components/layout/taskCenterRouting.test.ts
+ M frontend/src/components/system/ModuleSetup.tsx
+ M frontend/src/components/system/productPreferences.ts
+ M frontend/src/components/ui/CommandPalette.tsx
+ M frontend/src/components/ui/CyreneToast.tsx
+ M frontend/src/components/ui/useDialogFocusLifecycle.ts
+ M frontend/src/features/capabilities/ManagedImports.tsx
+ M frontend/src/features/capabilities/capabilityManagement.test.ts
+ M frontend/src/features/capabilities/capabilityManagement.ts
+ M frontend/src/features/execution/reducer.test.ts
+ M frontend/src/features/execution/reducer.ts
+ M frontend/src/features/llm/llmModelUtils.ts
+ M frontend/src/features/settings/model/config.ts
+ M frontend/src/features/settings/model/settingsNavigation.ts
+ M frontend/src/features/settings/sections/AgentSettings.tsx
+ M frontend/src/features/settings/sections/AppearanceSettings.tsx
+ M frontend/src/features/settings/sections/ModelSettings.tsx
+ M frontend/src/features/settings/sections/PermissionSettings.tsx
+ M frontend/src/features/settings/sections/ProviderReadinessCard.tsx
+ M frontend/src/features/settings/sections/VoiceSettings.tsx
+ M frontend/src/features/task-world/StudioHeader.tsx
+ M frontend/src/features/task-world/TaskWorldPage.tsx
+ M frontend/src/features/voice/ChatVoiceInput.test.tsx
+ M frontend/src/features/voice/ChatVoiceInput.tsx
+ M frontend/src/features/voice/GlobalVoiceHost.test.tsx
+ M frontend/src/features/voice/GlobalVoiceHost.tsx
+ M frontend/src/features/voice/GlobalVoiceLeaf.tsx
+ M frontend/src/features/voice/context/VoiceContext.ts
+ M frontend/src/features/voice/speechMonitor.test.ts
+ M frontend/src/features/voice/speechMonitor.ts
+ M frontend/src/features/voice/useHandsFree.ts
+ M frontend/src/features/voice/voiceContinuation.test.ts
+ M frontend/src/features/voice/voiceContinuation.ts
+ M frontend/src/index.css
+ M frontend/src/pages/AgentsPage.tsx
+ M frontend/src/pages/CapabilitiesPage.tsx
+ M frontend/src/pages/PluginsPage.tsx
+ M frontend/src/pages/SettingsPage.tsx
+ M frontend/src/pages/SkillsPage.tsx
+ M frontend/src/pages/SystemPage.tsx
+ M frontend/src/pages/WorkflowsPage.tsx
+ M frontend/src/pages/capabilityFreezeContract.test.ts
+ M frontend/src/pages/routeLoadingContract.test.ts
+ M frontend/src/pages/skillsCapabilityContract.test.ts
+ M frontend/src/pages/systemCenterFreezeContract.test.ts
+ M frontend/src/pages/systemSettingsContract.test.ts
+ M frontend/src/styles/base.css
+ M frontend/src/styles/contextRail.css
+ M frontend/src/styles/shell.css
+ M frontend/src/styles/stylesheet.ts
+ M frontend/src/styles/workbench.css
+ M frontend/src/surfaces/AppRoot.tsx
+ M frontend/src/surfaces/workspace/WorkspaceSurface.tsx
+ M frontend/src/theme/ThemeProvider.tsx
+ M frontend/src/theme/applyTheme.test.ts
+ M frontend/src/theme/applyTheme.ts
+ M frontend/src/theme/presets.test.ts
+ M frontend/src/theme/presets.ts
+ M frontend/src/theme/surfaceContract.test.ts
+ M frontend/src/theme/tokenContract.test.ts
+ M frontend/src/theme/tokens.ts
+ M frontend/src/types/index.ts
+ M src-tauri/capabilities/default.json
+ M src-tauri/icons/128x128.png
+ M src-tauri/icons/128x128@2x.png
+ M src-tauri/icons/32x32.png
+ M src-tauri/icons/icon.icns
+ M src-tauri/icons/icon.ico
+ M src-tauri/src/main.rs
+?? backend/src/api/access_rules.rs
+?? backend/src/api/agent_persona.rs
+?? backend/src/api/basic_services.rs
+?? backend/src/api/capability_directory_import.rs
+?? backend/src/api/capability_plugins.rs
+?? backend/src/api/chat_runtime.rs
+?? backend/src/api/connector_messages.rs
+?? backend/src/api/connector_messages/tests.rs
+?? backend/src/api/connectors.rs
+?? backend/src/api/model_pools.rs
+?? backend/src/api/settings_canvas.rs
+?? backend/src/api/settings_canvas/tests.rs
+?? backend/src/db/access_rules.rs
+?? backend/src/db/basic_services.rs
+?? backend/src/db/connector_messages.rs
+?? backend/src/db/connector_messages/tests.rs
+?? backend/src/db/connectors.rs
+?? backend/src/db/connectors/resources.rs
+?? backend/src/db/connectors/tests.rs
+?? backend/src/db/model_pools.rs
+?? backend/src/db/settings_canvas.rs
+?? backend/src/db/settings_canvas/tests.rs
+?? backend/src/integrations/llm/model_pool.rs
+?? backend/src/integrations/llm/model_pool_tests.rs
+?? backend/src/modules/settings/application/basic_services.rs
+?? backend/src/modules/settings/application/basic_services_tests.rs
+?? backend/src/modules/settings/application/fixtures/provider-connection-test.txt
+?? backend/src/modules/settings/application/fixtures/provider-connection-test.wav
+?? backend/src/modules/voice/providers_extra.rs
+?? backend/src/tools/basic_services.rs
+?? docs/pid/2026-10-20-connector-workbench/PID.md
+?? docs/pid/2026-10-20-connector-workbench/README.md
+?? docs/pid/2026-10-20-connector-workbench/acceptance.md
+?? docs/pid/2026-10-20-connector-workbench/contracts.md
+?? docs/pid/2026-10-20-connector-workbench/development.md
+?? docs/pid/2026-10-20-connector-workbench/implementation-report.md
+?? docs/pid/2026-10-20-connector-workbench/model-pools.md
+?? docs/pid/2026-10-20-connector-workbench/previews/01-connectors-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/02-call-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/03-capabilities-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/04-settings-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/05-security-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/06-monitor-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/07-connectors-dark.png
+?? docs/pid/2026-10-20-connector-workbench/previews/08-settings-dark.png
+?? docs/pid/2026-10-20-connector-workbench/previews/09-more-menu-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/09-more-navigation-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/10-node-editor-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/11-conversations-only-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/12-canvas-manager-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/13-delete-canvas-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/14-skill-dialog-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/15-model-pool-fallback-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/16-plugin-feature-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/17-provider-account-light.png
+?? docs/pid/2026-10-20-connector-workbench/previews/assets/cyrene-home-background.png
+?? docs/pid/2026-10-20-connector-workbench/previews/assets/favicon.png
+?? docs/pid/2026-10-20-connector-workbench/previews/index.html
+?? docs/pid/2026-10-20-connector-workbench/previews/model-pool-preview.js
+?? docs/pid/2026-10-20-connector-workbench/previews/preview.css
+?? docs/pid/2026-10-20-connector-workbench/previews/preview.js
+?? docs/pid/2026-10-20-connector-workbench/previews/render-check.json
+?? docs/pid/2026-10-20-connector-workbench/previews/render.mjs
+?? docs/pid/2026-10-20-connector-workbench/providers.md
+?? docs/pid/2026-10-20-connector-workbench/revision-2-plan.md
+?? docs/pid/2026-10-20-connector-workbench/revision-2-results.md
+?? docs/pid/2026-10-20-connector-workbench/revision-3-plan.md
+?? docs/pid/2026-10-20-connector-workbench/revision-3-results.md
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/01-message-branches-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/02-chat-transparent-light-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/03-chat-transparent-dark-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/04-toast-top-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/05-last-canvas-deleted-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/06-message-branches-browser.png
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/07-task-graph-workflow.png
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/08-task-graph-deleted.png
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/index.md
+?? docs/pid/2026-10-20-connector-workbench/revision2-previews/manifest.json
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/01-connectors-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/02-settings-collapsed-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/03-settings-manager-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/04-settings-agent-resources-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/05-settings-stt-editor-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/06-settings-dark-manager-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/07-settings-account-editor-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/08-all-canvases-deleted-native.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/09-connectors-light-browser.png
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/index.md
+?? docs/pid/2026-10-20-connector-workbench/revision3-previews/manifest.json
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/01-connectors.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/02-capabilities.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/03-more.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/04-model-pool.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/05-model-downgrade.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/06-agent-permissions.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/07-monitor.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/08-monitor-native.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/09-call-native.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/10-call-orb.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/11-monitor-orb.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/12-capability-dialog.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/13-base-configuration.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/14-last-canvas-deleted.png
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/index.md
+?? docs/pid/2026-10-20-connector-workbench/runtime-previews/manifest.json
+?? docs/pid/2026-10-20-connector-workbench/verification/changed-files.txt
+?? docs/pid/2026-10-20-connector-workbench/verification/revision2-summary.json
+?? docs/pid/2026-10-20-connector-workbench/verification/revision3-summary.json
+?? docs/pid/2026-10-20-connector-workbench/verification/summary.json
+?? frontend/e2e/connector-revision2.mjs
+?? frontend/e2e/connector-workbench.mjs
+?? frontend/e2e/settings-revision3.mjs
+?? frontend/src/api/accessRules.ts
+?? frontend/src/api/connectorMessages.ts
+?? frontend/src/api/connectors.ts
+?? frontend/src/api/settingsCanvas.ts
+?? frontend/src/features/agents/PersonaDialog.tsx
+?? frontend/src/features/agents/persona.test.ts
+?? frontend/src/features/agents/persona.ts
+?? frontend/src/features/capabilities/CapabilityNavigation.test.tsx
+?? frontend/src/features/capabilities/CapabilityNavigation.tsx
+?? frontend/src/features/capabilities/LocalServiceDiscovery.tsx
+?? frontend/src/features/capabilities/ManagementFrame.tsx
+?? frontend/src/features/capabilities/StructuredImport.tsx
+?? frontend/src/features/capabilities/capabilityNavigation.css
+?? frontend/src/features/connectors/CanvasManager.tsx
+?? frontend/src/features/connectors/ConnectorCanvas.tsx
+?? frontend/src/features/connectors/ConnectorNodeEditor.tsx
+?? frontend/src/features/connectors/ConnectorsPage.tsx
+?? frontend/src/features/connectors/connectorActions.test.ts
+?? frontend/src/features/connectors/connectorActions.ts
+?? frontend/src/features/connectors/connectorModel.test.ts
+?? frontend/src/features/connectors/connectorModel.ts
+?? frontend/src/features/connectors/connectorPorts.test.ts
+?? frontend/src/features/connectors/connectorPorts.ts
+?? frontend/src/features/connectors/messages/MessageBranchWorkspace.tsx
+?? frontend/src/features/connectors/messages/messageBranches.css
+?? frontend/src/features/connectors/messages/messageTree.test.ts
+?? frontend/src/features/connectors/messages/messageTree.ts
+?? frontend/src/features/llm/ModelPoolPanel.tsx
+?? frontend/src/features/llm/ModelRouteNotice.tsx
+?? frontend/src/features/llm/modelPools.ts
+?? frontend/src/features/llm/providerCatalog.json
+?? frontend/src/features/monitor/MonitorOverlay.tsx
+?? frontend/src/features/monitor/TokenUsagePanel.tsx
+?? frontend/src/features/monitor/monitorStore.ts
+?? frontend/src/features/monitor/usageRange.test.ts
+?? frontend/src/features/monitor/usageRange.ts
+?? frontend/src/features/plugins/PluginFeaturePage.tsx
+?? frontend/src/features/security/AccessMatrix.tsx
+?? frontend/src/features/security/AccessScopeDialog.tsx
+?? frontend/src/features/settings/basicServices.ts
+?? frontend/src/features/settings/canvas/SettingsCanvasPage.tsx
+?? frontend/src/features/settings/canvas/SettingsNodeManager.tsx
+?? frontend/src/features/settings/canvas/settingPresets.json
+?? frontend/src/features/settings/canvas/settingsCanvas.css
+?? frontend/src/features/settings/canvas/settingsGraph.test.ts
+?? frontend/src/features/settings/canvas/settingsGraph.ts
+?? frontend/src/features/settings/editor/SettingsEditorDialog.tsx
+?? frontend/src/features/settings/sections/BasicConfiguration.test.tsx
+?? frontend/src/features/settings/sections/BasicConfiguration.tsx
+?? frontend/src/features/settings/sections/BasicServicePanel.tsx
+?? frontend/src/features/voice/CallOverlay.tsx
+?? frontend/src/features/voice/callOverlay.css
+?? frontend/src/features/voice/callPresentation.ts
+?? frontend/src/features/voice/floatingSurface.ts
+?? frontend/src/features/voice/model/useVoiceProductState.ts
+?? frontend/src/features/voice/runtime/useCallConnection.ts
+?? frontend/src/features/voice/voiceAnchor.test.ts
+?? frontend/src/features/workflows/TaskGraphWorkflowList.tsx
+?? frontend/src/features/workflows/taskGraphActions.ts
+?? frontend/src/pages/MorePage.tsx
+?? frontend/src/styles/connector-workbench.css
+?? src-tauri/src/floating.rs

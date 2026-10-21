@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-21",
+  "revision": 2,
+  "branch": "codex/connector-workbench",
+  "frontend": {
+    "files": 140,
+    "passed": 666,
+    "failed": 0
+  },
+  "backend": {
+    "unit_passed": 1065,
+    "integration_passed": 22
+  },
+  "browser": {
+    "status": "passed",
+    "real_backend": true,
+    "controlled_provider": true,
+    "checks": {
+      "message_nodes": true,
+      "vertical_chain": true,
+      "sibling_branches": true,
+      "ancestor_isolation": true,
+      "source_unchanged": true,
+      "fork_catalog": true,
+      "reopen": true,
+      "four_ports": true,
+      "bezier": true,
+      "light_dark_transparent": true,
+      "toast_top": true,
+      "direct_current_delete": true,
+      "keyboard_confirmation": true,
+      "noncurrent_delete": true,
+      "last_delete": true
+    },
+    "evidence": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T02-57-56-101Z"
+  },
+  "native": {
+    "status": "PASS",
+    "checks": [
+      {
+        "name": "Actual native IPC and isolated main window",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor is an independent real Tauri window",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor pin toggle changes actual native topmost state",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor collapse and expand resize the real native window",
+        "status": "PASS"
+      },
+      {
+        "name": "Theme change propagates from main to independent overlay",
+        "status": "PASS"
+      },
+      {
+        "name": "Missing credentials produce an actual call error, never a false connected state",
+        "status": "PASS"
+      },
+      {
+        "name": "Call collapse is an actual 64px native window",
+        "status": "PASS"
+      },
+      {
+        "name": "Independent overlays remain visible when owned main window is minimized",
+        "status": "PASS"
+      },
+      {
+        "name": "Closing monitor stops its added usage polling outside monitor page",
+        "status": "PASS"
+      },
+      {
+        "name": "No framework overlays or unhandled JavaScript errors",
+        "status": "PASS"
+      },
+      {
+        "name": "Native revision 2 message branches, transparency, notifications and canvas deletion",
+        "status": "PASS"
+      }
+    ],
+    "revision2_check": {
+      "status": "passed",
+      "real_backend": true,
+      "controlled_provider": true,
+      "checks": {
+        "message_nodes": true,
+        "vertical_chain": true,
+        "sibling_branches": true,
+        "ancestor_isolation": true,
+        "source_unchanged": true,
+        "fork_catalog": true,
+        "reopen": true,
+        "four_ports": true,
+        "bezier": true,
+        "light_dark_transparent": true,
+        "toast_top": true,
+        "direct_current_delete": true,
+        "keyboard_confirmation": true,
+        "noncurrent_delete": true,
+        "last_delete": true
+      },
+      "evidence": "F:\\target\\workbench-desktop\\2026-10-21T02-58-06-448Z\\screenshots"
+    },
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T02-58-06-448Z"
+  },
+  "logo_source_sha256": "a9a100af6ed1441ff42bfb945f8a2cb98c8053f2a58a0b47686327a16fbaa62e",
+  "logo_frontend_sha256": "a9a100af6ed1441ff42bfb945f8a2cb98c8053f2a58a0b47686327a16fbaa62e"
+}

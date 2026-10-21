@@ -1,0 +1,53 @@
+{
+  "revision": 7,
+  "status": "PASS",
+  "checked_at": "2026-10-21T11:42:21.141950+00:00",
+  "branch": "codex/connector-workbench",
+  "frontend": {
+    "files": 156,
+    "passed": 743,
+    "failed": 0,
+    "production_build": "PASS"
+  },
+  "rust": {
+    "unit_passed": 1118,
+    "architecture_passed": 5,
+    "security_passed": 10,
+    "scoped_skill_compatibility_passed": 3,
+    "fmt": "PASS",
+    "check": "PASS",
+    "server_build": "PASS"
+  },
+  "browser_checks": 28,
+  "native_workbench_checks": 28,
+  "native_window_checks": 10,
+  "native_page_errors": 0,
+  "native_unexpected_console_errors": 0,
+  "browser_chat_geometry": {
+    "tracks": "250px 1110px",
+    "rightGap": 0,
+    "width": 1110
+  },
+  "native_chat_geometry": {
+    "tracks": "250px 870px",
+    "rightGap": 0,
+    "width": 870
+  },
+  "browser_setting_focus": {
+    "count": 6,
+    "x": 0,
+    "y": 0.140625
+  },
+  "native_setting_focus": {
+    "count": 6,
+    "x": 0,
+    "y": -0.049999237060546875
+  },
+  "native_binary_sha256": "216B8A9238EAD89CCF2D1FD9CD6F0E6A318702DC1AA2552835CAA9AD89C52871",
+  "screenshots": 22,
+  "evidence": {
+    "native": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\results.json",
+    "browser": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\result.json"
+  },
+  "test_scope": "Local controlled model protocol; real tools, files, SQLite, Git and Tauri. Official paid provider calls and microphone STT/TTS not rerun."
+}

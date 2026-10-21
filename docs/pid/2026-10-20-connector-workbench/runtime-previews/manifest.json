@@ -1,0 +1,72 @@
+[
+  {
+    "file": "01-connectors.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\connectors-with-model-pool.png",
+    "sha256": "b9d2c6b328668ffb123f76d9bc56d8be3c0917f9cd85a4ce891c426f451bb1c8"
+  },
+  {
+    "file": "02-capabilities.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\capability-navigation.png",
+    "sha256": "a1ba82a7c7880767f4c51ed727442fc9cad1c133dbe7be1802f92e17c4d33874"
+  },
+  {
+    "file": "03-more.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\more.png",
+    "sha256": "c56921e396863e6f9fa6f46346d0086270de4b7df641ce812f777a4b4a4dd050"
+  },
+  {
+    "file": "04-model-pool.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\model-pool-editor.png",
+    "sha256": "25f017ec21cfac13730a851ebedf283644275d0777231f62fabee961e78525fd"
+  },
+  {
+    "file": "05-model-downgrade.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\model-pool-chat.png",
+    "sha256": "71ef697c9b979951c0e8af183215985dde825104966c91f3c393f06f1bd40548"
+  },
+  {
+    "file": "06-agent-permissions.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\agent-permissions.png",
+    "sha256": "4f0950317b8dc5683fb24a0baecb496c251eaf8311257af712e7d2a7abb646ae"
+  },
+  {
+    "file": "07-monitor.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\monitor.png",
+    "sha256": "c78b0177b8270af6c2d5473a3e4805aa8635bec2c04b2cf4c3448f69a1919804"
+  },
+  {
+    "file": "08-monitor-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T01-10-14-108Z\\screenshots\\02-monitor-expanded.png",
+    "sha256": "92dde561ac1569dda01e10b908b3147ede597a5dae88ac8f30619e7391c4e2e8"
+  },
+  {
+    "file": "09-call-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T01-10-14-108Z\\screenshots\\05-call-missing-credentials.png",
+    "sha256": "3dfec5cd0e16581a1f2aadcea1fcc0b012672012b9da95871e05818f33ef6037"
+  },
+  {
+    "file": "10-call-orb.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T01-10-14-108Z\\screenshots\\06-call-64px.png",
+    "sha256": "876a544fca47513ae78ae5892bf7fb1ca86c9ac5b89ad70f3574e2620900487a"
+  },
+  {
+    "file": "11-monitor-orb.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T01-10-14-108Z\\screenshots\\03-monitor-64px.png",
+    "sha256": "849462c1b6ced53578a270d8a6ff77eb1aa1a3ed218a88f3efea9336b8501f4a"
+  },
+  {
+    "file": "12-capability-dialog.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\capabilities.png",
+    "sha256": "4c0885e2edb74a4c0d0ba2b0f59b0680ee1e6e0b86f25c5c3a05051ba54db7da"
+  },
+  {
+    "file": "13-base-configuration.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\model-pools-empty.png",
+    "sha256": "8ce3e4a4cc167fdfe6e7f040f4b8d7cc26c95373c24865a5e822ff76e17c0d06"
+  },
+  {
+    "file": "14-last-canvas-deleted.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z\\last-canvas-deleted.png",
+    "sha256": "8c66717c06be372795b375090fc8705fcdc7ce872e7b72c658109598e6ad8800"
+  }
+]

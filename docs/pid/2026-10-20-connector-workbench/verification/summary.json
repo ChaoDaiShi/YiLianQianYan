@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-21",
+  "branch": "codex/connector-workbench",
+  "baseline": "4399a43",
+  "frontend": {
+    "files": 138,
+    "passed": 657,
+    "failed": 0
+  },
+  "backend": {
+    "unit_passed": 1059,
+    "layout_regression_passed": 2,
+    "integration_passed": 26
+  },
+  "browser": {
+    "real_backend": true,
+    "browser_ui": true,
+    "controlled_provider": true,
+    "checks": {
+      "row_major_navigation": true,
+      "capability_dialog": true,
+      "connector_persistence": true,
+      "node_hide_preserves_binding": true,
+      "edge_delete_unbinds": true,
+      "new_node_placement": true,
+      "icon_voice_controls": true,
+      "targeted_delete": true,
+      "last_canvas_empty": true,
+      "agent_scoped_permissions": true,
+      "knowledge_node_editor": true,
+      "model_pool_downgrade": true,
+      "usage": true
+    },
+    "evidence": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T01-16-21-807Z"
+  },
+  "native": {
+    "status": "PASS",
+    "checks": [
+      {
+        "name": "Actual native IPC and isolated main window",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor is an independent real Tauri window",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor pin toggle changes actual native topmost state",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor collapse and expand resize the real native window",
+        "status": "PASS"
+      },
+      {
+        "name": "Theme change propagates from main to independent overlay",
+        "status": "PASS"
+      },
+      {
+        "name": "Missing credentials produce an actual call error, never a false connected state",
+        "status": "PASS"
+      },
+      {
+        "name": "Call collapse is an actual 64px native window",
+        "status": "PASS"
+      },
+      {
+        "name": "Independent overlays remain visible when owned main window is minimized",
+        "status": "PASS"
+      },
+      {
+        "name": "Closing monitor stops its added usage polling outside monitor page",
+        "status": "PASS"
+      },
+      {
+        "name": "No framework overlays or unhandled JavaScript errors",
+        "status": "PASS"
+      }
+    ],
+    "binary_sha256": "DB9A298C29A0EC47AC319BD3551CC8C733DF778365D0A14814BA9B347246C424",
+    "evidence": "F:\\target\\workbench-desktop\\2026-10-21T01-10-14-108Z"
+  },
+  "live_vendor_and_acoustic_acceptance": "not executed",
+  "screenshots": "../runtime-previews/manifest.json"
+}

@@ -1,0 +1,84 @@
+{
+  "status": "PASS",
+  "real_backend": true,
+  "real_tool_execution": true,
+  "controlled_provider": true,
+  "checks": [
+    "homepage_first_canvas_renamed",
+    "pending_approval_survives_navigation",
+    "approval_resume_background_completion_real_file",
+    "selected_model_thinking_and_reasoning_roundtrip",
+    "hard_reload_recovers_approval_and_running_completion",
+    "partial_approval_low_risk_runs",
+    "persistent_tool_error_diagnostics",
+    "three_permission_modes_persist",
+    "homepage_canvas_two_way_links",
+    "canvas_delete_preserves_conversation",
+    "capability_dialog_has_no_category_tabs_narrow_width",
+    "theme_font_size_persisted_narrow_settings_dialog",
+    "all_system_settings_default_nodes",
+    "plugin_settings_discovered_connected_edited_persisted",
+    "light_dark_transparent_composer"
+  ],
+  "requests": [
+    {
+      "model": "deepseek-chat",
+      "thinking": {
+        "type": "enabled"
+      },
+      "reasoning": false,
+      "question": "切换页面验证",
+      "tool": false
+    },
+    {
+      "model": "deepseek-chat",
+      "thinking": {
+        "type": "enabled"
+      },
+      "reasoning": true,
+      "question": "切换页面验证",
+      "tool": true
+    },
+    {
+      "model": "deepseek-v4-flash",
+      "thinking": {
+        "type": "disabled"
+      },
+      "reasoning": false,
+      "question": "刷新页面验证",
+      "tool": false
+    },
+    {
+      "model": "deepseek-v4-flash",
+      "thinking": {
+        "type": "disabled"
+      },
+      "reasoning": true,
+      "question": "刷新页面验证",
+      "tool": true
+    },
+    {
+      "model": "deepseek-v4-flash",
+      "thinking": {
+        "type": "disabled"
+      },
+      "reasoning": false,
+      "question": "错误日志验证",
+      "tool": false
+    },
+    {
+      "model": "deepseek-v4-flash",
+      "thinking": {
+        "type": "disabled"
+      },
+      "reasoning": true,
+      "question": "错误日志验证",
+      "tool": true
+    }
+  ],
+  "modelSelection": {
+    "default": "deepseek-v4-flash",
+    "selected": "deepseek-chat",
+    "globalDefaultPreserved": true
+  }
+}

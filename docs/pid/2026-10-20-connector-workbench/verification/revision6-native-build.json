@@ -1,0 +1,18 @@
+{
+  "binary": "F:\\target\\workbench-desktop\\YiLian-Workbench-QA.exe",
+  "source_hashes": [
+    {
+      "sha256": "38F1B55B073E76AC47EFC3CA76E5A185C335E2ED2204B55207DF9BA0A386257D",
+      "path": "src\\floating.rs"
+    },
+    {
+      "sha256": "7C122BD54A21222C43F7187E79F5C962B25124765B629ED4D03C9B09B64D75DB",
+      "path": "src\\main.rs"
+    }
+  ],
+  "main_title": "YiLian Workbench QA",
+  "sha256": "79403EF414B0B8EB352237D46FC3C34980794359BF3FCD4EF235D6D618B339E1",
+  "repository": "F:\\项目开发\\忆涟千言\\YiLianQianYan",
+  "dev_url": "http://127.0.0.1:11422",
+  "built_at": "2026-10-21T10:25:35.8728848Z"
+}

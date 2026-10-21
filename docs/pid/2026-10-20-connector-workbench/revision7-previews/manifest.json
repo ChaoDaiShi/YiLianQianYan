@@ -1,0 +1,156 @@
+[
+  {
+    "title": "主页：Git默认收起，右侧没有保留空槽",
+    "file": "chat-no-right-gap.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-chat-no-right-gap.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "91e5a2ef9c2ce4eb501450b289833daecf17df11a8f97fbd6e4b3ceb6f4c97ec"
+  },
+  {
+    "title": "画布：只有输入输出，分支相连",
+    "file": "message-forest-alternative-path.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-message-forest-alternative-path.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "4f31b28a6fd09a4fdb4b2832b0c211ad4e22b5d3adf40638506e786cf7f4582f"
+  },
+  {
+    "title": "设置：展开的类别与子节点居中",
+    "file": "settings-inline-expanded.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-settings-inline-expanded.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "be0ada9734ddf2346f371266e450ff72a36a4c8f94360723498a123657beda65"
+  },
+  {
+    "title": "设置：对称默认布局与整理操作",
+    "file": "settings-inline-collapsed.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-settings-inline-collapsed.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "6e04c964605498c533ba13b322a9fc6d67d1a3e70c4582b450c7b3811a16e570"
+  },
+  {
+    "title": "工具：独立紧凑列表",
+    "file": "compact-tool-list.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-compact-tool-list.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "2f2e2e2a302add314b754bf9d19eb2067435da9a9072719ec9cf1b6b1451a632"
+  },
+  {
+    "title": "工具：单项详情",
+    "file": "compact-tool-detail.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-compact-tool-detail.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "c08bd665b660c19a993bb7641a7fd7432ae33e930dff505af68413c8970e815e"
+  },
+  {
+    "title": "Skill：加载后调用本项目工具完成文件操作",
+    "file": "actual-discovered-skill-tool.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-actual-discovered-skill-tool.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "155ed782df6e6933345e765eab001c5e52fde13fcab67829afb6196824c1d1fb"
+  },
+  {
+    "title": "Skill：默认隐藏的宿主专用项与依赖说明",
+    "file": "host-skill-dependencies.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-host-skill-dependencies.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "04a9a0e78d9ca8b07263975c4e6b42f15be99e38a4f909e5f92d26ec3aa4765a"
+  },
+  {
+    "title": "Skill：Codex来源全文与适配状态",
+    "file": "skill-codex-full-text.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-skill-codex-full-text.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "504bb7e3c210d515322079049c933f2ccb3112f05a70478b2b7dd7449019f280"
+  },
+  {
+    "title": "Skill：Claude Code来源全文",
+    "file": "skill-claude-full-text.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-skill-claude-full-text.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "4b53b13b1a5292d37f24a0545a4477a9d82d76dfbae06b579bff159e32df18b2"
+  },
+  {
+    "title": "对话：刷新后保留过程，不生成工具画布节点",
+    "file": "actual-process-after-refresh.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-actual-process-after-refresh.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "91e5a2ef9c2ce4eb501450b289833daecf17df11a8f97fbd6e4b3ceb6f4c97ec"
+  },
+  {
+    "title": "Git：显式选择工作空间后查看实际差异",
+    "file": "git-diff.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-git-diff.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "8046b961182cfe888918a10d2f1ff1c3280eb6df9109856acb4afddede6550ca"
+  },
+  {
+    "title": "对话：同一会话的路径选择",
+    "file": "family-path-selector.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-family-path-selector.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "b105b14887e8576325b303e799752c79351f24e36a7bf4f94cb7a5817e47b694"
+  },
+  {
+    "title": "知识库：导入文档全文",
+    "file": "knowledge-full-tail.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-knowledge-full-tail.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "8fcbe6df9aa32a95c512e794c69b1f45f77b103167144c62aea03880fde36dfa"
+  },
+  {
+    "title": "知识库：全文检索",
+    "file": "knowledge-search-tail.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-knowledge-search-tail.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "f0bd430cffe4bb9240c6f7abca86b6bb877b980878edb142e79ad4c2a9ca3a72"
+  },
+  {
+    "title": "知识库：资料用于聊天",
+    "file": "knowledge-grounded-turn.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-knowledge-grounded-turn.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "6aabf8db6b0c502b8eb0f15edeee90b3e514d4b7e06b14d445280021da042e72"
+  },
+  {
+    "title": "监控收起圆形状态",
+    "file": "monitor-orb-status.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-monitor-orb-status.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "150acd1be836cb240592d366331046664885c8002f864934ec138f44db1a872d"
+  },
+  {
+    "title": "通话收起圆形状态",
+    "file": "call-orb-status.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-call-orb-status.png",
+    "surface": "actual Tauri WebView2",
+    "sha256": "9c356c19bbbf14ed55765bd1a17f45721044880d44fe43ab5689c2f4a40360fe"
+  },
+  {
+    "title": "主页：Git默认收起，右侧没有保留空槽（浅色浏览器对照）",
+    "file": "chat-no-right-gap-light-browser.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-chat-no-right-gap.png",
+    "surface": "actual Edge browser",
+    "sha256": "56f6a19ddba366fa7c55dd2e7be8589945ca46f4fff6321d32bdd1c0f252bf2a"
+  },
+  {
+    "title": "画布：只有输入输出，分支相连（浅色浏览器对照）",
+    "file": "message-forest-alternative-path-light-browser.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-message-forest-alternative-path.png",
+    "surface": "actual Edge browser",
+    "sha256": "e63dbe1bb1ad519bc7519739ee2a044c608cbb8e27f37f295fd9a7bc9830f0a7"
+  },
+  {
+    "title": "设置：展开的类别与子节点居中（浅色浏览器对照）",
+    "file": "settings-inline-expanded-light-browser.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-settings-inline-expanded.png",
+    "surface": "actual Edge browser",
+    "sha256": "f77694dcb82caf8e4448545a354bfc26c7725d4f9695944767172ddd786665a8"
+  },
+  {
+    "title": "工具：独立紧凑列表（浅色浏览器对照）",
+    "file": "compact-tool-list-light-browser.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-compact-tool-list.png",
+    "surface": "actual Edge browser",
+    "sha256": "907baa7cc45b55114fd2fd8a54de20b9eaa514ae422b169a6ad94480425778f5"
+  }
+]

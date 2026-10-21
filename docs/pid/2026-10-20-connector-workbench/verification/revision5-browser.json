@@ -1,0 +1,109 @@
+{
+  "status": "PASS",
+  "checks": [
+    "single_line_chat_composer_and_collapsed_controls",
+    "chat_to_work_on_actual_tool",
+    "work_composer_compact",
+    "git_actual_change_list",
+    "git_diff_matches_file_and_keeps_index",
+    "manual_create_real_file_and_mode_persistence",
+    "all_homepage_history_visible_without_binding_or_canvas_creation",
+    "curved_branch_connections",
+    "separate_branch_group_connected_to_actual_answer",
+    "branch_keeps_ancestry_excludes_sibling_and_source_unchanged",
+    "conversation_group_state_and_relationships_persist",
+    "six_first_level_settings_groups",
+    "second_level_actual_forms_and_return",
+    "collapsed_grouped_node_manager",
+    "background_approval_recovery_regression"
+  ],
+  "requests": [
+    {
+      "question": "你好",
+      "userHistory": [
+        "你好"
+      ],
+      "hasTool": false,
+      "model": "workbench-model"
+    },
+    {
+      "question": "请整理并保存工作说明",
+      "userHistory": [
+        "你好",
+        "请整理并保存工作说明"
+      ],
+      "hasTool": false,
+      "model": "workbench-model"
+    },
+    {
+      "question": "请整理并保存工作说明",
+      "userHistory": [
+        "你好",
+        "请整理并保存工作说明"
+      ],
+      "hasTool": true,
+      "model": "workbench-model"
+    },
+    {
+      "question": "创作一段短文并保存",
+      "userHistory": [
+        "你好",
+        "请整理并保存工作说明",
+        "创作一段短文并保存"
+      ],
+      "hasTool": false,
+      "model": "workbench-model"
+    },
+    {
+      "question": "创作一段短文并保存",
+      "userHistory": [
+        "你好",
+        "请整理并保存工作说明",
+        "创作一段短文并保存"
+      ],
+      "hasTool": true,
+      "model": "workbench-model"
+    },
+    {
+      "question": "从这里展开一个新问题",
+      "userHistory": [
+        "你好",
+        "从这里展开一个新问题"
+      ],
+      "hasTool": false,
+      "model": "workbench-model"
+    },
+    {
+      "question": "审批后后台写入",
+      "userHistory": [
+        "你好",
+        "请整理并保存工作说明",
+        "创作一段短文并保存",
+        "审批后后台写入"
+      ],
+      "hasTool": false,
+      "model": "workbench-model"
+    },
+    {
+      "question": "审批后后台写入",
+      "userHistory": [
+        "你好",
+        "请整理并保存工作说明",
+        "创作一段短文并保存",
+        "审批后后台写入"
+      ],
+      "hasTool": true,
+      "model": "workbench-model"
+    }
+  ],
+  "composer": {
+    "chat": {
+      "height": 58,
+      "width": 712
+    },
+    "work": {
+      "height": 122,
+      "width": 715
+    }
+  }
+}

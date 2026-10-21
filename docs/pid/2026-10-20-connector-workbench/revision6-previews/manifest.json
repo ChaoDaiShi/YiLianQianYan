@@ -1,0 +1,114 @@
+[
+  {
+    "title": "对话过程：刷新后的实际工具记录与思考、顶栏切换",
+    "file": "actual-process-after-refresh.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-actual-process-after-refresh.png",
+    "sha256": "ab8643978b366ec0935f8df3fbaa71b52fa8aee942642744654c491463f25835",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "Git：实际工作区文件差异",
+    "file": "git-diff.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-git-diff.png",
+    "sha256": "8bbc8c053e1c9156a4129de0c5690b257d94284e4984d970bf657db9a4a6d56f",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "消息画布：主线、另一条路径及独立对话，无组底板",
+    "file": "message-forest-alternative-path.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-message-forest-alternative-path.png",
+    "sha256": "cc2c1caa310b3b7f5ee3d357e8b02f0e2d3524362556e69dce65fbcb67f66bd5",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "主页：同一会话族内切换路径",
+    "file": "family-path-selector.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-family-path-selector.png",
+    "sha256": "7765263e980bc12edb0d591da3126f441157902da11a54f80abfc46b19fef353",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "二级设置：分类展开为相连子节点",
+    "file": "settings-inline-expanded.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-settings-inline-expanded.png",
+    "sha256": "ff9b1ae99ea53e9d9f02cbe7e34b87c71cd3b4affa4f52d6de3bb5b91126225b",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "二级设置：收起后仅保留分类节点",
+    "file": "settings-inline-collapsed.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-settings-inline-collapsed.png",
+    "sha256": "d366d1cb056f92d8fe1392bbd8fdaa6e99d422bd0a8118d333045efecbc6266f",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "知识库：导入文档全文与尾部",
+    "file": "knowledge-full-tail.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-knowledge-full-tail.png",
+    "sha256": "8b48d5ef1ba4f5dd8a07db688255dbe4347c54012be9a6790ab71e9a47050b5d",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "知识库：全文尾部检索摘录",
+    "file": "knowledge-search-tail.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-knowledge-search-tail.png",
+    "sha256": "725c16a83bd0c4aee33670830894e0545cb0ad64d5d0f75c209821738c660c21",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "知识库：资料进入真实聊天请求",
+    "file": "knowledge-grounded-turn.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-knowledge-grounded-turn.png",
+    "sha256": "3e448eeb9d62fae12760b575e03e7a7662108477a8d3b55b31ba7d72538bf5bb",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "Skill：实际发现的Codex技能全文",
+    "file": "skill-codex-full-text.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-skill-codex-full-text.png",
+    "sha256": "9c3092c9fe73b90030233710e1af2a902dee6daa64fc639d2a20b332e9affed2",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "Skill：实际发现的Claude Code技能全文",
+    "file": "skill-claude-full-text.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-skill-claude-full-text.png",
+    "sha256": "435efd642d3b0da21c001186b380bb4bd08ff2e99777b33e968cf794943282b5",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "Skill：真实load_skill执行与返回内容",
+    "file": "actual-discovered-skill-tool.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-actual-discovered-skill-tool.png",
+    "sha256": "126c53c00be7e7ac346e8f6d69f7a5b73955ea94fb034ac2f942897137b0b03a",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "监控：收起圆形与状态",
+    "file": "monitor-orb-status.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-monitor-orb-status.png",
+    "sha256": "150acd1be836cb240592d366331046664885c8002f864934ec138f44db1a872d",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "通话：收起圆形与状态",
+    "file": "call-orb-status.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\screenshots\\revision6-call-orb-status.png",
+    "sha256": "9c356c19bbbf14ed55765bd1a17f45721044880d44fe43ab5689c2f4a40360fe",
+    "surface": "actual Tauri WebView2"
+  },
+  {
+    "title": "消息画布：主线、另一条路径及独立对话，无组底板（浅色浏览器对照）",
+    "file": "message-forest-alternative-path-light-browser.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T10-30-29-558Z\\revision6-message-forest-alternative-path.png",
+    "sha256": "b479c9036174418230580eb5638dee4848100bfa02a1b761f1f8f7876ac52551",
+    "surface": "actual Edge browser frontend"
+  },
+  {
+    "title": "二级设置：分类展开为相连子节点（浅色浏览器对照）",
+    "file": "settings-inline-expanded-light-browser.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T10-30-29-558Z\\revision6-settings-inline-expanded.png",
+    "sha256": "10e72cb3a4bee735172d512309848b611b31f6841cc7cb93d0cdc4a09a176398",
+    "surface": "actual Edge browser frontend"
+  }
+]

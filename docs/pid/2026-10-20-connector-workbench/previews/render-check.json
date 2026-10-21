@@ -1,0 +1,162 @@
+{
+  "scope": "Document preview visuals and local interaction controls; no production API or database execution",
+  "reference": {
+    "railWidth": 80,
+    "more": "centered navigation page with plugin feature",
+    "capabilities": "centered 3 columns x 2 rows",
+    "compactGap": 56,
+    "models": "multiple provider accounts and ordered tiers"
+  },
+  "screenshots": [
+    {
+      "file": "01-connectors-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "02-call-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "03-capabilities-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "04-settings-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "05-security-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "06-monitor-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "07-connectors-dark.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "08-settings-dark.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "09-more-navigation-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "15-model-pool-fallback-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "16-plugin-feature-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "17-provider-account-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "10-node-editor-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "11-conversations-only-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "12-canvas-manager-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "13-delete-canvas-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    },
+    {
+      "file": "14-skill-dialog-light.png",
+      "width": 1440,
+      "height": 900,
+      "railWidth": 80,
+      "overflow": []
+    }
+  ],
+  "previewControls": {
+    "poolSwitchNotice": true,
+    "actualModelDesign": true,
+    "providersCoexist": true,
+    "poolOrderEditable": true,
+    "poolTierAdded": true,
+    "compactGap": true,
+    "allNodeEditors": true,
+    "nodeEditUpdatesSummary": true,
+    "conversationFilter": true,
+    "displayEditor": true,
+    "filterRestoresNodes": true,
+    "deleteTargetIsClickedRow": true,
+    "nonCurrentDeleteKeepsCurrent": true,
+    "currentDeleteSelectsNext": true,
+    "lastDeleteShowsEmpty": true,
+    "historyDeleteTarget": true,
+    "historyDeleteRowRemoved": true,
+    "moreIsNavigation": true,
+    "moreGridCentered": true,
+    "pluginFeatureEntry": true,
+    "moreOpensMonitor": true,
+    "returnToMore": true,
+    "capabilityGridWithoutDialog": true,
+    "capabilityGridCentered": true,
+    "readingDialogOpened": true,
+    "categoryDialogMatches": true,
+    "callCollapsed": true,
+    "callExpanded": true
+  },
+  "errors": []
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "file": "01-connectors-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z\\screenshots\\revision3-connectors.png",
+    "sha256": "76abcec8cca2429d428818a6a3f5491a3e4a6e2f7b9344cdb165e901ea4b6cbc"
+  },
+  {
+    "file": "02-settings-collapsed-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z\\screenshots\\revision3-settings-collapsed.png",
+    "sha256": "642b523bcbff9544b58780204c4ea65b7e7eab5fde8b2bc1844d855d98320927"
+  },
+  {
+    "file": "03-settings-manager-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z\\screenshots\\revision3-settings-light-manager.png",
+    "sha256": "8e1c3cb050193e4581b9b3a9b18ca9a8d70a7dab48f793b0685e0345f180939e"
+  },
+  {
+    "file": "04-settings-agent-resources-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z\\screenshots\\revision3-settings-agent-resources.png",
+    "sha256": "9caf63e1a1b1dfebc2fc2f15e2dc22f1c524103d4fabefd47b494a8e412ba57e"
+  },
+  {
+    "file": "05-settings-stt-editor-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z\\screenshots\\revision3-settings-stt-dialog.png",
+    "sha256": "4cb7323a4cd77fc92d3062cbe66802965de15b4340857bf8ec723128cb439c62"
+  },
+  {
+    "file": "06-settings-dark-manager-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z\\screenshots\\revision3-settings-dark-manager.png",
+    "sha256": "1dfaaf1da0039bdbfd1308c43e8121c3ef03be830cde93d682f561f6ef1f6808"
+  },
+  {
+    "file": "07-settings-account-editor-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z\\screenshots\\revision3-settings-nested-account-dialog.png",
+    "sha256": "9aa6f6eaf277313961f19c488cd73e88135b45ecd8cf3866ffbc854c2faee5e8"
+  },
+  {
+    "file": "08-all-canvases-deleted-native.png",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z\\screenshots\\revision3-all-deleted.png",
+    "sha256": "1464d12f112e1936de8c1e07292ed65f58b3249d56fec7607c8f517c7d589e68"
+  },
+  {
+    "file": "09-connectors-light-browser.png",
+    "source": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T04-59-30-274Z\\revision3-connectors.png",
+    "sha256": "d263bcd8f303dc2098092c4e0cce769a217395e9bac3182c99463241513169ef"
+  }
+]

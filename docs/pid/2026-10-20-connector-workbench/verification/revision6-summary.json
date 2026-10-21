@@ -1,0 +1,37 @@
+{
+  "revision": 6,
+  "status": "PASS",
+  "checked_at": "2026-10-21T10:37:58.569281+00:00",
+  "branch": "codex/connector-workbench",
+  "frontend": {
+    "passed": 741,
+    "failed": 0,
+    "files": 156,
+    "production_build": "PASS"
+  },
+  "rust": {
+    "unit_passed": 1112,
+    "architecture_passed": 5,
+    "security_passed": 10,
+    "final_grounding_regression_passed": 1,
+    "fmt": "PASS",
+    "check": "PASS",
+    "server_build": "PASS"
+  },
+  "browser_checks": 20,
+  "native_workbench_checks": 20,
+  "native_window_checks": 10,
+  "native_page_errors": 0,
+  "physical_monitor_drag": true,
+  "physical_call_drag": true,
+  "screenshots": 16,
+  "native_binary_sha256": "79403EF414B0B8EB352237D46FC3C34980794359BF3FCD4EF235D6D618B339E1",
+  "limitations": [
+    "Official paid provider calls and live microphone STT/TTS were not run.",
+    "PDF requires a text layer; imported document text limit is 2000000 characters."
+  ],
+  "evidence": {
+    "native": "F:\\target\\workbench-desktop\\2026-10-21T10-36-04-446Z\\results.json",
+    "browser": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T10-30-29-558Z\\result.json"
+  }
+}

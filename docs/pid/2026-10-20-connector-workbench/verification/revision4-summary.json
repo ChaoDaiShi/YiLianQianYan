@@ -1,0 +1,51 @@
+{
+  "status": "PASS",
+  "date": "2026-10-21",
+  "branch": "codex/connector-workbench",
+  "frontend": {
+    "files": 146,
+    "tests": 700,
+    "passed": 700,
+    "production_build": "PASS",
+    "final_small_ui_check": "capability dialog 2 tests PASS"
+  },
+  "backend": {
+    "unit_tests": 1078,
+    "architecture_tests": 5,
+    "security_tests": 10,
+    "fmt": "PASS",
+    "check": "PASS"
+  },
+  "browser": {
+    "checks": 15,
+    "result": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T06-57-32-438Z\\result.json"
+  },
+  "native": {
+    "checks": 11,
+    "workbench_checks": 15,
+    "result": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\results.json",
+    "unhandled_errors": 0,
+    "unexpected_console_errors": 0
+  },
+  "actual_output_files": {
+    "qa-background-route.txt": {
+      "sha256": "333505667128c05250762a8c26974c52f7ab04d2c7179ed744e367f85e257768",
+      "bytes": 23
+    },
+    "qa-background-refresh.txt": {
+      "sha256": "333505667128c05250762a8c26974c52f7ab04d2c7179ed744e367f85e257768",
+      "bytes": 23
+    }
+  },
+  "screenshots": 9,
+  "model_selection": {
+    "default": "deepseek-v4-flash",
+    "selected": "deepseek-chat",
+    "globalDefaultPreserved": true
+  },
+  "limitations": [
+    "Online paid vendor acceptance is not included in these controlled-provider execution checks.",
+    "Live token fragments before a full page reload are not replayed; backend state and persisted completion are recovered.",
+    "No installer publication, Git commit or push was requested or performed."
+  ]
+}

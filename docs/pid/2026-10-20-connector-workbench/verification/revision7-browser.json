@@ -1,0 +1,233 @@
+{
+  "status": "PASS",
+  "real_backend": true,
+  "controlled_provider": true,
+  "checks": [
+    "git_requires_explicit_registered_workspace_no_cwd_fallback",
+    "real_tool_file_and_provider_reasoning_survive_refresh",
+    "assistant_has_no_avatar",
+    "work_mode_keeps_git_collapsed_and_no_right_reserved_gap",
+    "git_only_reads_explicit_workspace_and_starts_without_selection",
+    "topbar_execution_git_toggles_control_actual_panels",
+    "git_diff_matches_actual_file_and_preserves_index",
+    "message_forest_contains_only_input_output_without_tool_or_backdrop",
+    "alternative_path_uses_actual_ancestor_and_excludes_later_siblings",
+    "independent_conversation_tree_has_no_cross_family_edge",
+    "absolute_message_drag_coordinates_survive_reload",
+    "sidebar_groups_real_alternatives_into_one_family",
+    "path_selector_opens_correct_full_history",
+    "expanded_settings_camera_centers_selected_category_and_children",
+    "explicit_relayout_and_center_controls_keep_default_geometry",
+    "settings_categories_expand_actual_leaf_nodes_without_parent_modal",
+    "settings_leaf_opens_existing_form",
+    "settings_expand_and_collapse_survive_reload",
+    "knowledge_import_preserves_full_tail_beyond_preview_budget",
+    "knowledge_tail_search_returns_canonical_excerpt",
+    "knowledge_query_injects_full_tail_into_actual_provider_system_prompt",
+    "knowledge_removal_deletes_document_and_search_chunks",
+    "host_only_skills_are_hidden_by_default_and_show_actual_missing_tools",
+    "real_codex_and_claude_workspace_skills_are_discovered_readonly",
+    "discovered_skill_full_text_matches_actual_files",
+    "actual_load_skill_returns_discovered_file_tail_and_root_to_provider",
+    "external_skill_procedure_runs_real_project_write_file",
+    "tools_use_dedicated_compact_list_and_single_item_detail"
+  ],
+  "requests": [
+    {
+      "hostSkillAdvertised": false,
+      "question": "R7 根对话你好",
+      "model": "deepseek-chat",
+      "hasTool": false,
+      "userHistory": [
+        "R7 根对话你好"
+      ],
+      "reasoningRoundTrip": false,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": false,
+      "skillToolHasRoot": false
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "R7 请执行实际文件写入",
+      "model": "deepseek-chat",
+      "hasTool": false,
+      "userHistory": [
+        "R7 根对话你好",
+        "R7 请执行实际文件写入"
+      ],
+      "reasoningRoundTrip": false,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": false,
+      "skillToolHasRoot": false
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "R7 请执行实际文件写入",
+      "model": "deepseek-chat",
+      "hasTool": true,
+      "userHistory": [
+        "R7 根对话你好",
+        "R7 请执行实际文件写入"
+      ],
+      "reasoningRoundTrip": true,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": false,
+      "skillToolHasRoot": false
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "R7 原路径后续问题",
+      "model": "deepseek-chat",
+      "hasTool": false,
+      "userHistory": [
+        "R7 根对话你好",
+        "R7 请执行实际文件写入",
+        "R7 原路径后续问题"
+      ],
+      "reasoningRoundTrip": true,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": false,
+      "skillToolHasRoot": false
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "R7 独立问题",
+      "model": "deepseek-chat",
+      "hasTool": false,
+      "userHistory": [
+        "R7 独立问题"
+      ],
+      "reasoningRoundTrip": false,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": false,
+      "skillToolHasRoot": false
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "R7 从问候回答展开另一条路径",
+      "model": "deepseek-chat",
+      "hasTool": false,
+      "userHistory": [
+        "R7 根对话你好",
+        "R7 从问候回答展开另一条路径"
+      ],
+      "reasoningRoundTrip": false,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": false,
+      "skillToolHasRoot": false
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "请查询 R7_KNOWLEDGE_TAIL_MARKER",
+      "model": "deepseek-chat",
+      "hasTool": false,
+      "userHistory": [
+        "R7 根对话你好",
+        "R7 请执行实际文件写入",
+        "R7 原路径后续问题",
+        "请查询 R7_KNOWLEDGE_TAIL_MARKER"
+      ],
+      "reasoningRoundTrip": true,
+      "knowledgeGrounded": true,
+      "skillToolHasMarker": false,
+      "skillToolHasRoot": false
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "按发现的 Codex 技能执行并保存结果",
+      "model": "deepseek-chat",
+      "hasTool": false,
+      "userHistory": [
+        "R7 根对话你好",
+        "R7 请执行实际文件写入",
+        "R7 原路径后续问题",
+        "请查询 R7_KNOWLEDGE_TAIL_MARKER",
+        "按发现的 Codex 技能执行并保存结果"
+      ],
+      "reasoningRoundTrip": true,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": false,
+      "skillToolHasRoot": false
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "按发现的 Codex 技能执行并保存结果",
+      "model": "deepseek-chat",
+      "hasTool": true,
+      "userHistory": [
+        "R7 根对话你好",
+        "R7 请执行实际文件写入",
+        "R7 原路径后续问题",
+        "请查询 R7_KNOWLEDGE_TAIL_MARKER",
+        "按发现的 Codex 技能执行并保存结果"
+      ],
+      "reasoningRoundTrip": true,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": true,
+      "skillToolHasRoot": true
+    },
+    {
+      "hostSkillAdvertised": false,
+      "question": "按发现的 Codex 技能执行并保存结果",
+      "model": "deepseek-chat",
+      "hasTool": true,
+      "userHistory": [
+        "R7 根对话你好",
+        "R7 请执行实际文件写入",
+        "R7 原路径后续问题",
+        "请查询 R7_KNOWLEDGE_TAIL_MARKER",
+        "按发现的 Codex 技能执行并保存结果"
+      ],
+      "reasoningRoundTrip": true,
+      "knowledgeGrounded": false,
+      "skillToolHasMarker": true,
+      "skillToolHasRoot": true
+    }
+  ],
+  "screenshots": [
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-actual-process-after-refresh.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-chat-no-right-gap.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-git-diff.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-message-forest-alternative-path.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-family-path-selector.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-settings-inline-expanded.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-settings-inline-collapsed.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-knowledge-full-tail.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-knowledge-search-tail.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-knowledge-grounded-turn.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-host-skill-dependencies.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-skill-codex-full-text.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-skill-claude-full-text.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-actual-discovered-skill-tool.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-compact-tool-detail.png",
+    "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T11-37-46-548Z\\revision7-compact-tool-list.png"
+  ],
+  "layout": {
+    "tracks": "250px 1110px",
+    "rightGap": 0,
+    "width": 1110
+  },
+  "conversations": {
+    "rootId": "dbb5d699-4c3e-42c0-8f7a-d1b541f6729c",
+    "branchId": "a88c30ea-d0bd-4ab5-8344-3e2c35d0c320",
+    "independentId": "ac5508bd-0a5c-4d2b-bd1e-38af6e63da16",
+    "sourceAnswerId": "0be43993-ffbc-4cd0-8527-35edb04df87f"
+  },
+  "settingsFocus": {
+    "count": 6,
+    "x": 0,
+    "y": 0.140625
+  },
+  "skills": [
+    {
+      "name": "revision7-codex-real",
+      "sourceId": "workspace-codex",
+      "path": "F:\\target\\workbench-e2e-temp\\yilian-v1-e2e-YptOq0\\workspace\\.codex\\skills\\revision7-codex-real\\SKILL.md"
+    },
+    {
+      "name": "revision7-claude-real",
+      "sourceId": "workspace-claude",
+      "path": "F:\\target\\workbench-e2e-temp\\yilian-v1-e2e-YptOq0\\workspace\\.claude\\skills\\revision7-claude-real\\SKILL.md"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+[
+  {
+    "file": "compact-chat.png",
+    "label": "单行聊天输入区",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-compact-chat.png",
+    "sha256": "3b743a25d42ab8dd6f7b6ba7c1b2a6e5f15f8fa8f0f4e55428ca99f89fe13205",
+    "native": true
+  },
+  {
+    "file": "work-git.png",
+    "label": "工作模式与Git变更",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-work-git.png",
+    "sha256": "14f16f46bcd9926fae29dd04189f77588309922603aaa5e9af35ba3ccc9dfc25",
+    "native": true
+  },
+  {
+    "file": "create-mode.png",
+    "label": "创造模式与实际文件",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-create-mode.png",
+    "sha256": "8d440b749e7a3e29dc5bc330efcb752f44341b7e35e2c5deb85a82db83e0afdb",
+    "native": true
+  },
+  {
+    "file": "git-diff.png",
+    "label": "文件差异查看",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-git-diff.png",
+    "sha256": "9e399da61cd62a664907996a67500740410b413031d5f2f100250d98b0de4df9",
+    "native": true
+  },
+  {
+    "file": "conversation-groups-branch.png",
+    "label": "真实对话分组与曲线分支",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-conversation-groups-branch.png",
+    "sha256": "c830ee7ae8de5f3680d9879e22877274160bb61c6e60b7d94d52e15086412bb0",
+    "native": true
+  },
+  {
+    "file": "settings-groups.png",
+    "label": "六组一级设置",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-settings-groups.png",
+    "sha256": "b28313a259d357ef1622deb039ed7c13bfa76b988f377058cea4ac00f4ec92d6",
+    "native": true
+  },
+  {
+    "file": "settings-second-level.png",
+    "label": "紧凑二级设置",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-settings-second-level.png",
+    "sha256": "210c2985a05d54126fa5d3e7e42d42b561adfbd617a1fd82a451d56e29f829ff",
+    "native": true
+  },
+  {
+    "file": "settings-group-manager.png",
+    "label": "分组节点管理器",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-settings-group-manager.png",
+    "sha256": "44d0081a54a06269dcc88c5927e21c89adf6e368f3eae90e9303d83b16268877",
+    "native": true
+  },
+  {
+    "file": "monitor-orb-status.png",
+    "label": "可拖动监控收起态",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-monitor-orb-status.png",
+    "sha256": "150acd1be836cb240592d366331046664885c8002f864934ec138f44db1a872d",
+    "native": true
+  },
+  {
+    "file": "call-orb-status.png",
+    "label": "可拖动通话收起态",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T08-48-11-571Z\\screenshots\\revision5-call-orb-status.png",
+    "sha256": "9c356c19bbbf14ed55765bd1a17f45721044880d44fe43ab5689c2f4a40360fe",
+    "native": true
+  }
+]

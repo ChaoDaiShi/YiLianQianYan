@@ -1,0 +1,4379 @@
+{
+  "status": "PASS",
+  "started_at": "2026-10-21T11:39:40.425Z",
+  "browser": "Browser plugin not available; existing Playwright CDP against actual WebView2.",
+  "isolation": {
+    "backend": 19422,
+    "vite": 11422,
+    "cdp": 19423,
+    "run_root": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z",
+    "native_binary_sha256": "216B8A9238EAD89CCF2D1FD9CD6F0E6A318702DC1AA2552835CAA9AD89C52871",
+    "native_pid": 22512,
+    "vite_pid": 18168
+  },
+  "checks": [
+    {
+      "name": "Actual native IPC and isolated main window",
+      "status": "PASS",
+      "evidence": {
+        "facts": {
+          "native": true,
+          "label": "main",
+          "title": "YiLian Workbench QA",
+          "visible": true,
+          "minimized": false,
+          "topmost": false,
+          "inner": {
+            "width": 1500,
+            "height": 1000
+          },
+          "outer": {
+            "width": 1518,
+            "height": 1047
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 1200,
+            "height": 800
+          },
+          "viewport": {
+            "width": 1200,
+            "height": 800
+          }
+        },
+        "screenshot": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\01-main-native.png"
+      }
+    },
+    {
+      "name": "Monitor is an independent real Tauri window",
+      "status": "PASS",
+      "evidence": {
+        "facts": {
+          "native": true,
+          "label": "monitor-overlay",
+          "title": "系统监控",
+          "visible": true,
+          "minimized": false,
+          "topmost": true,
+          "inner": {
+            "width": 450,
+            "height": 375
+          },
+          "outer": {
+            "width": 468,
+            "height": 385
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 360,
+            "height": 300
+          },
+          "viewport": {
+            "width": 360,
+            "height": 300
+          }
+        },
+        "screenshot": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\02-monitor-expanded.png",
+        "windows": [
+          {
+            "Hwnd": 5116338,
+            "Title": "系统监控",
+            "X": 154,
+            "Y": 154,
+            "Width": 374,
+            "Height": 308,
+            "Visible": true,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 9176286,
+            "Title": "YiLian Workbench QA",
+            "X": 77,
+            "Y": 26,
+            "Width": 1214,
+            "Height": 838,
+            "Visible": true,
+            "Minimized": false,
+            "Topmost": false
+          },
+          {
+            "Hwnd": 10424848,
+            "Title": "MSCTFIME UI",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 3081022,
+            "Title": "HintWnd",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 4134968,
+            "Title": "Sogou_TSF_UI",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 10159688,
+            "Title": "Default IME",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "Monitor pin toggle changes actual native topmost state",
+      "status": "PASS",
+      "evidence": {
+        "unpinned": {
+          "native": true,
+          "label": "monitor-overlay",
+          "title": "系统监控",
+          "visible": true,
+          "minimized": false,
+          "topmost": false,
+          "inner": {
+            "width": 450,
+            "height": 375
+          },
+          "outer": {
+            "width": 468,
+            "height": 385
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 360,
+            "height": 300
+          },
+          "viewport": {
+            "width": 360,
+            "height": 300
+          }
+        },
+        "pinned": {
+          "native": true,
+          "label": "monitor-overlay",
+          "title": "系统监控",
+          "visible": true,
+          "minimized": false,
+          "topmost": true,
+          "inner": {
+            "width": 450,
+            "height": 375
+          },
+          "outer": {
+            "width": 468,
+            "height": 385
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 360,
+            "height": 300
+          },
+          "viewport": {
+            "width": 360,
+            "height": 300
+          }
+        },
+        "windows": [
+          {
+            "Hwnd": 5116338,
+            "Title": "系统监控",
+            "X": 154,
+            "Y": 154,
+            "Width": 374,
+            "Height": 308,
+            "Visible": true,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 9176286,
+            "Title": "YiLian Workbench QA",
+            "X": 77,
+            "Y": 26,
+            "Width": 1214,
+            "Height": 838,
+            "Visible": true,
+            "Minimized": false,
+            "Topmost": false
+          },
+          {
+            "Hwnd": 3081022,
+            "Title": "HintWnd",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 4134968,
+            "Title": "Sogou_TSF_UI",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 10159688,
+            "Title": "Default IME",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 10424848,
+            "Title": "MSCTFIME UI",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "Monitor collapse and expand resize the real native window",
+      "status": "PASS",
+      "evidence": {
+        "collapsed": {
+          "native": true,
+          "label": "monitor-overlay",
+          "title": "系统监控",
+          "visible": true,
+          "minimized": false,
+          "topmost": true,
+          "inner": {
+            "width": 80,
+            "height": 80
+          },
+          "outer": {
+            "width": 98,
+            "height": 90
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 64,
+            "height": 64
+          },
+          "viewport": {
+            "width": 64,
+            "height": 64
+          }
+        },
+        "expanded": {
+          "native": true,
+          "label": "monitor-overlay",
+          "title": "系统监控",
+          "visible": true,
+          "minimized": false,
+          "topmost": true,
+          "inner": {
+            "width": 450,
+            "height": 375
+          },
+          "outer": {
+            "width": 468,
+            "height": 385
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 360,
+            "height": 300
+          },
+          "viewport": {
+            "width": 360,
+            "height": 300
+          }
+        },
+        "windows": [
+          {
+            "Hwnd": 5116338,
+            "Title": "系统监控",
+            "X": 184,
+            "Y": 184,
+            "Width": 374,
+            "Height": 308,
+            "Visible": true,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 9176286,
+            "Title": "YiLian Workbench QA",
+            "X": 77,
+            "Y": 26,
+            "Width": 1214,
+            "Height": 838,
+            "Visible": true,
+            "Minimized": false,
+            "Topmost": false
+          },
+          {
+            "Hwnd": 3081022,
+            "Title": "HintWnd",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 4134968,
+            "Title": "Sogou_TSF_UI",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 10159688,
+            "Title": "Default IME",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 10424848,
+            "Title": "MSCTFIME UI",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "Theme change propagates from main to independent overlay",
+      "status": "PASS",
+      "evidence": {
+        "light": {
+          "surface": "#FFFDFF",
+          "text": "#292536"
+        },
+        "dark": {
+          "surface": "#252032",
+          "text": "#F3EFF8"
+        },
+        "screenshot": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\04-monitor-theme-dark.png"
+      }
+    },
+    {
+      "name": "Missing credentials produce an actual call error, never a false connected state",
+      "status": "PASS",
+      "evidence": {
+        "facts": {
+          "native": true,
+          "label": "call-overlay",
+          "title": "小涟通话",
+          "visible": true,
+          "minimized": false,
+          "topmost": true,
+          "inner": {
+            "width": 450,
+            "height": 525
+          },
+          "outer": {
+            "width": 468,
+            "height": 535
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 360,
+            "height": 420
+          },
+          "viewport": {
+            "width": 360,
+            "height": 420
+          }
+        },
+        "visible_text": "与小涟通话\n通话暂不可用\n\n当前对话：尚未绑定对话\n\n语音识别连接失败：暂时无法连接语音服务，请检查基础配置",
+        "screenshot": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\05-call-missing-credentials.png"
+      }
+    },
+    {
+      "name": "Call collapse is an actual 64px native window",
+      "status": "PASS",
+      "evidence": {
+        "collapsed": {
+          "native": true,
+          "label": "call-overlay",
+          "title": "小涟通话",
+          "visible": true,
+          "minimized": false,
+          "topmost": true,
+          "inner": {
+            "width": 80,
+            "height": 80
+          },
+          "outer": {
+            "width": 98,
+            "height": 90
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 64,
+            "height": 64
+          },
+          "viewport": {
+            "width": 64,
+            "height": 64
+          }
+        },
+        "ended": {
+          "native": true,
+          "label": "call-overlay",
+          "title": "小涟通话",
+          "visible": true,
+          "minimized": false,
+          "topmost": true,
+          "inner": {
+            "width": 450,
+            "height": 525
+          },
+          "outer": {
+            "width": 468,
+            "height": 535
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 360,
+            "height": 420
+          },
+          "viewport": {
+            "width": 360,
+            "height": 420
+          }
+        }
+      }
+    },
+    {
+      "name": "Independent overlays remain visible when owned main window is minimized",
+      "status": "PASS",
+      "evidence": {
+        "main": {
+          "native": true,
+          "label": "main",
+          "title": "YiLian Workbench QA",
+          "visible": true,
+          "minimized": true,
+          "topmost": false,
+          "inner": {
+            "width": 0,
+            "height": 0
+          },
+          "outer": {
+            "width": 199,
+            "height": 34
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 0,
+            "height": 0
+          },
+          "viewport": {
+            "width": 1200,
+            "height": 800
+          }
+        },
+        "monitor": {
+          "native": true,
+          "label": "monitor-overlay",
+          "title": "系统监控",
+          "visible": true,
+          "minimized": false,
+          "topmost": true,
+          "inner": {
+            "width": 450,
+            "height": 375
+          },
+          "outer": {
+            "width": 468,
+            "height": 385
+          },
+          "scale": 1.25,
+          "logical": {
+            "width": 360,
+            "height": 300
+          },
+          "viewport": {
+            "width": 360,
+            "height": 300
+          }
+        },
+        "windows": [
+          {
+            "Hwnd": 2949742,
+            "Title": "小涟通话",
+            "X": 235,
+            "Y": 235,
+            "Width": 374,
+            "Height": 428,
+            "Visible": true,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 5116338,
+            "Title": "系统监控",
+            "X": 184,
+            "Y": 184,
+            "Width": 374,
+            "Height": 308,
+            "Visible": true,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 9176286,
+            "Title": "YiLian Workbench QA",
+            "X": -25600,
+            "Y": -25600,
+            "Width": 159,
+            "Height": 27,
+            "Visible": true,
+            "Minimized": true,
+            "Topmost": false
+          },
+          {
+            "Hwnd": 3081022,
+            "Title": "HintWnd",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 4134968,
+            "Title": "Sogou_TSF_UI",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 10159688,
+            "Title": "Default IME",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          },
+          {
+            "Hwnd": 10424848,
+            "Title": "MSCTFIME UI",
+            "X": 0,
+            "Y": 0,
+            "Width": 0,
+            "Height": 0,
+            "Visible": false,
+            "Minimized": false,
+            "Topmost": true
+          }
+        ],
+        "screenshot": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\07-monitor-main-minimized.png"
+      }
+    },
+    {
+      "name": "Closing monitor stops its added usage polling outside monitor page",
+      "status": "PASS",
+      "evidence": {
+        "before": 3,
+        "after": 3,
+        "elapsed_ms": 6500,
+        "main_route": "http://127.0.0.1:11422/chat"
+      }
+    },
+    {
+      "name": "No framework overlays or unhandled JavaScript errors",
+      "status": "PASS",
+      "evidence": {
+        "page_error_count": 0,
+        "console_messages_recorded": 8
+      }
+    },
+    {
+      "name": "Native revision 7 IO-only canvas collapsed Git balanced settings usable skills compact tools",
+      "status": "PASS",
+      "evidence": {
+        "status": "PASS",
+        "real_backend": true,
+        "controlled_provider": true,
+        "checks": [
+          "git_requires_explicit_registered_workspace_no_cwd_fallback",
+          "real_tool_file_and_provider_reasoning_survive_refresh",
+          "assistant_has_no_avatar",
+          "work_mode_keeps_git_collapsed_and_no_right_reserved_gap",
+          "git_only_reads_explicit_workspace_and_starts_without_selection",
+          "topbar_execution_git_toggles_control_actual_panels",
+          "git_diff_matches_actual_file_and_preserves_index",
+          "message_forest_contains_only_input_output_without_tool_or_backdrop",
+          "alternative_path_uses_actual_ancestor_and_excludes_later_siblings",
+          "independent_conversation_tree_has_no_cross_family_edge",
+          "absolute_message_drag_coordinates_survive_reload",
+          "sidebar_groups_real_alternatives_into_one_family",
+          "path_selector_opens_correct_full_history",
+          "expanded_settings_camera_centers_selected_category_and_children",
+          "explicit_relayout_and_center_controls_keep_default_geometry",
+          "settings_categories_expand_actual_leaf_nodes_without_parent_modal",
+          "settings_leaf_opens_existing_form",
+          "settings_expand_and_collapse_survive_reload",
+          "knowledge_import_preserves_full_tail_beyond_preview_budget",
+          "knowledge_tail_search_returns_canonical_excerpt",
+          "knowledge_query_injects_full_tail_into_actual_provider_system_prompt",
+          "knowledge_removal_deletes_document_and_search_chunks",
+          "host_only_skills_are_hidden_by_default_and_show_actual_missing_tools",
+          "real_codex_and_claude_workspace_skills_are_discovered_readonly",
+          "discovered_skill_full_text_matches_actual_files",
+          "actual_load_skill_returns_discovered_file_tail_and_root_to_provider",
+          "external_skill_procedure_runs_real_project_write_file",
+          "tools_use_dedicated_compact_list_and_single_item_detail"
+        ],
+        "requests": [
+          {
+            "hostSkillAdvertised": false,
+            "question": "R7 根对话你好",
+            "model": "deepseek-chat",
+            "hasTool": false,
+            "userHistory": [
+              "R7 根对话你好"
+            ],
+            "reasoningRoundTrip": false,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": false,
+            "skillToolHasRoot": false
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "R7 请执行实际文件写入",
+            "model": "deepseek-chat",
+            "hasTool": false,
+            "userHistory": [
+              "R7 根对话你好",
+              "R7 请执行实际文件写入"
+            ],
+            "reasoningRoundTrip": false,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": false,
+            "skillToolHasRoot": false
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "R7 请执行实际文件写入",
+            "model": "deepseek-chat",
+            "hasTool": true,
+            "userHistory": [
+              "R7 根对话你好",
+              "R7 请执行实际文件写入"
+            ],
+            "reasoningRoundTrip": true,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": false,
+            "skillToolHasRoot": false
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "R7 原路径后续问题",
+            "model": "deepseek-chat",
+            "hasTool": false,
+            "userHistory": [
+              "R7 根对话你好",
+              "R7 请执行实际文件写入",
+              "R7 原路径后续问题"
+            ],
+            "reasoningRoundTrip": true,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": false,
+            "skillToolHasRoot": false
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "R7 独立问题",
+            "model": "deepseek-chat",
+            "hasTool": false,
+            "userHistory": [
+              "R7 独立问题"
+            ],
+            "reasoningRoundTrip": false,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": false,
+            "skillToolHasRoot": false
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "R7 从问候回答展开另一条路径",
+            "model": "deepseek-chat",
+            "hasTool": false,
+            "userHistory": [
+              "R7 根对话你好",
+              "R7 从问候回答展开另一条路径"
+            ],
+            "reasoningRoundTrip": false,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": false,
+            "skillToolHasRoot": false
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "请查询 R7_KNOWLEDGE_TAIL_MARKER",
+            "model": "deepseek-chat",
+            "hasTool": false,
+            "userHistory": [
+              "R7 根对话你好",
+              "R7 请执行实际文件写入",
+              "R7 原路径后续问题",
+              "请查询 R7_KNOWLEDGE_TAIL_MARKER"
+            ],
+            "reasoningRoundTrip": true,
+            "knowledgeGrounded": true,
+            "skillToolHasMarker": false,
+            "skillToolHasRoot": false
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "按发现的 Codex 技能执行并保存结果",
+            "model": "deepseek-chat",
+            "hasTool": false,
+            "userHistory": [
+              "R7 根对话你好",
+              "R7 请执行实际文件写入",
+              "R7 原路径后续问题",
+              "请查询 R7_KNOWLEDGE_TAIL_MARKER",
+              "按发现的 Codex 技能执行并保存结果"
+            ],
+            "reasoningRoundTrip": true,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": false,
+            "skillToolHasRoot": false
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "按发现的 Codex 技能执行并保存结果",
+            "model": "deepseek-chat",
+            "hasTool": true,
+            "userHistory": [
+              "R7 根对话你好",
+              "R7 请执行实际文件写入",
+              "R7 原路径后续问题",
+              "请查询 R7_KNOWLEDGE_TAIL_MARKER",
+              "按发现的 Codex 技能执行并保存结果"
+            ],
+            "reasoningRoundTrip": true,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": true,
+            "skillToolHasRoot": true
+          },
+          {
+            "hostSkillAdvertised": false,
+            "question": "按发现的 Codex 技能执行并保存结果",
+            "model": "deepseek-chat",
+            "hasTool": true,
+            "userHistory": [
+              "R7 根对话你好",
+              "R7 请执行实际文件写入",
+              "R7 原路径后续问题",
+              "请查询 R7_KNOWLEDGE_TAIL_MARKER",
+              "按发现的 Codex 技能执行并保存结果"
+            ],
+            "reasoningRoundTrip": true,
+            "knowledgeGrounded": false,
+            "skillToolHasMarker": true,
+            "skillToolHasRoot": true
+          }
+        ],
+        "screenshots": [
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-actual-process-after-refresh.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-chat-no-right-gap.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-git-diff.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-message-forest-alternative-path.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-family-path-selector.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-settings-inline-expanded.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-settings-inline-collapsed.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-knowledge-full-tail.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-knowledge-search-tail.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-knowledge-grounded-turn.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-host-skill-dependencies.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-skill-codex-full-text.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-skill-claude-full-text.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-actual-discovered-skill-tool.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-compact-tool-detail.png",
+          "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-compact-tool-list.png"
+        ],
+        "layout": {
+          "tracks": "250px 870px",
+          "rightGap": 0,
+          "width": 870
+        },
+        "conversations": {
+          "rootId": "55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+          "branchId": "158692bf-aa74-41bf-92ad-88b866fb6348",
+          "independentId": "15974816-1faf-46cb-a226-29da03676d5b",
+          "sourceAnswerId": "609088c5-730d-4a18-9e9c-8f0b3e19669f"
+        },
+        "settingsFocus": {
+          "count": 6,
+          "x": 0,
+          "y": -0.049999237060546875
+        },
+        "skills": [
+          {
+            "name": "revision7-codex-real",
+            "sourceId": "workspace-codex",
+            "path": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\workspace\\.codex\\skills\\revision7-codex-real\\SKILL.md"
+          },
+          {
+            "name": "revision7-claude-real",
+            "sourceId": "workspace-claude",
+            "path": "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\workspace\\.claude\\skills\\revision7-claude-real\\SKILL.md"
+          }
+        ]
+      }
+    }
+  ],
+  "screenshots": [
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\01-main-native.png",
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\02-monitor-expanded.png",
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\03-monitor-64px.png",
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-monitor-orb-status.png",
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\04-monitor-theme-dark.png",
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\05-call-missing-credentials.png",
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\06-call-64px.png",
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\revision7-call-orb-status.png",
+    "F:\\target\\workbench-desktop\\2026-10-21T11-39-40-419Z\\screenshots\\07-monitor-main-minimized.png"
+  ],
+  "page_errors": [],
+  "console": [
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+      "url": "http://127.0.0.1:19422/api/providers/stt/verify"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+      "url": "http://127.0.0.1:19422/api/providers/tts/verify"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:11422/node_modules/.vite/deps/chunk-G7S6KQDI.js?v=0fba8cdf:109:37)\n    at Module.emitTo (http://127.0.0.1:11422/node_modules/.vite/deps/chunk-7FCLUC5I.js?v=0fba8cdf:58:9)\n    at emitNative (http://127.0.0.1:11422/src/features/voice/floatingSurface.ts:8:89)",
+      "url": ""
+    },
+    {
+      "type": "warning",
+      "text": "[TAURI] Couldn't find callback id 1224290770. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+      "url": ""
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "React Flow: It seems like you are hiding the attribution. Please only do this when you are subscribed to React Flow Pro: https://reactflow.dev/remove-attr\n%cYou can ignore this warning if you are subscribed. font-style: italic;",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/@xyflow_react.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    },
+    {
+      "type": "warning",
+      "text": "⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.",
+      "url": "http://127.0.0.1:11422/node_modules/.vite/deps/react-router-dom.js?v=0fba8cdf"
+    }
+  ],
+  "requests": [
+    {
+      "at": 1792582787855,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582787856,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582787857,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582787858,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582787929,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582787930,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582787945,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582787945,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582787945,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582787946,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582787954,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582787954,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582787960,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582787960,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582787961,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582787961,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582787961,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582787962,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582787962,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582787962,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582787962,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582787963,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582787982,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582787992,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582787993,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582787993,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582789070,
+      "path": "/api/llm/usage",
+      "status": 200
+    },
+    {
+      "at": 1792582789261,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582789262,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582789262,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582789263,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582789263,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582789263,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582789264,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582789264,
+      "path": "/api/security/isolation/status",
+      "status": 200
+    },
+    {
+      "at": 1792582789264,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582789265,
+      "path": "/api/security/isolation/status",
+      "status": 200
+    },
+    {
+      "at": 1792582791023,
+      "path": "/api/system",
+      "status": 200
+    },
+    {
+      "at": 1792582791024,
+      "path": "/api/system",
+      "status": 200
+    },
+    {
+      "at": 1792582794580,
+      "path": "/api/llm/usage",
+      "status": 200
+    },
+    {
+      "at": 1792582796474,
+      "path": "/api/security/isolation/status",
+      "status": 200
+    },
+    {
+      "at": 1792582796474,
+      "path": "/api/security/grants",
+      "status": 200
+    },
+    {
+      "at": 1792582796474,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582796475,
+      "path": "/api/security/isolation/status",
+      "status": 200
+    },
+    {
+      "at": 1792582796476,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582796476,
+      "path": "/api/security/grants",
+      "status": 200
+    },
+    {
+      "at": 1792582796476,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582796477,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582796477,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582796479,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582796554,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582797292,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582797292,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582797293,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582797293,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582797296,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582797296,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582797298,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582797298,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582797299,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582797299,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582797299,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582797300,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582797300,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582797300,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582797303,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582797304,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582797306,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582797306,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582797308,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582797308,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582797728,
+      "path": "/api/providers/stt/verify",
+      "status": 400
+    },
+    {
+      "at": 1792582797729,
+      "path": "/api/providers/tts/verify",
+      "status": 400
+    },
+    {
+      "at": 1792582799061,
+      "path": "/api/llm/usage",
+      "status": 200
+    },
+    {
+      "at": 1792582802373,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582802373,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582807263,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582807265,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582811343,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582811343,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582811343,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582811344,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582811344,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582811345,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582811352,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582811361,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582811361,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582811362,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582811362,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582811362,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582811363,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582811363,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582811364,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582811364,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582811364,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582811365,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582811366,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582811367,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582811367,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582811368,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582811392,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811393,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811394,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811395,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811581,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811595,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582811620,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582811621,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582811634,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582811635,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582811646,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811658,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811669,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811705,
+      "path": "/api/chat",
+      "status": 200
+    },
+    {
+      "at": 1792582811767,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582811767,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582811897,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582811946,
+      "path": "/api/chat",
+      "status": 200
+    },
+    {
+      "at": 1792582812480,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582812480,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582812480,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582812480,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582812481,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582812481,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582812481,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582812494,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582812495,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582812499,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582812501,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582812502,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582812502,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582812503,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582812503,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582812503,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582812506,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582812507,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582812514,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582812515,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582812515,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582812515,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582812515,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582812516,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582812526,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582812527,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582812528,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582812528,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582812530,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582812531,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582812591,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582812591,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582812592,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582812593,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582812608,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582812616,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582814061,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582814062,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582815398,
+      "path": "/api/workspaces",
+      "status": 200
+    },
+    {
+      "at": 1792582815400,
+      "path": "/api/workspaces",
+      "status": 200
+    },
+    {
+      "at": 1792582815960,
+      "path": "/api/workspace-git",
+      "status": 200
+    },
+    {
+      "at": 1792582816906,
+      "path": "/api/workspace-git/diff",
+      "status": 200
+    },
+    {
+      "at": 1792582817465,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582817470,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582817790,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582817844,
+      "path": "/api/chat",
+      "status": 200
+    },
+    {
+      "at": 1792582817895,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582817896,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582818260,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582818261,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582818267,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582818267,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582818268,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582818268,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582818268,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582818268,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582818268,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582818269,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582818275,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582818276,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582818276,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582818276,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582818276,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582818276,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582818277,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582818277,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582818277,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582818278,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582818278,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582818278,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582818290,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582818307,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582818315,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582818315,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582818449,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582818462,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582818540,
+      "path": "/api/chat",
+      "status": 200
+    },
+    {
+      "at": 1792582818541,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582818541,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582818541,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582818541,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582818543,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582818554,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582818568,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582818586,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582818590,
+      "path": "/api/conversations/15974816-1faf-46cb-a226-29da03676d5b",
+      "status": 200
+    },
+    {
+      "at": 1792582818906,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582818906,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582818906,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582818906,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582818906,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582818907,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582819162,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582819189,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582819190,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582819191,
+      "path": "/api/agents",
+      "status": 200
+    },
+    {
+      "at": 1792582819191,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582819191,
+      "path": "/api/agents",
+      "status": 200
+    },
+    {
+      "at": 1792582819199,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582819206,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582819222,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582819333,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582819551,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582819791,
+      "path": "/api/message-canvas/branches",
+      "status": 200
+    },
+    {
+      "at": 1792582819809,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582819851,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582820050,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582820087,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582820796,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582821071,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582821414,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582821414,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582821416,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582821416,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582821417,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582821417,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582821516,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582821522,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582821523,
+      "path": "/api/agents",
+      "status": 200
+    },
+    {
+      "at": 1792582821524,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582821524,
+      "path": "/api/agents",
+      "status": 200
+    },
+    {
+      "at": 1792582821524,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582821543,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582821585,
+      "path": "/api/message-canvas/layout",
+      "status": 200
+    },
+    {
+      "at": 1792582822039,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582822039,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582822039,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582822040,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822040,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582822041,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582822041,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582822042,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582822042,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582822042,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822048,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582822048,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582822049,
+      "path": "/api/conversations/158692bf-aa74-41bf-92ad-88b866fb6348",
+      "status": 200
+    },
+    {
+      "at": 1792582822049,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582822049,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582822052,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582822052,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822052,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582822053,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582822056,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822061,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582822061,
+      "path": "/api/conversations/158692bf-aa74-41bf-92ad-88b866fb6348",
+      "status": 200
+    },
+    {
+      "at": 1792582822062,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582822062,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582822062,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582822064,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582822074,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822083,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822083,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822098,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822127,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582822127,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822130,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582822130,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822164,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822165,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822261,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582822261,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822264,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582822265,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582822265,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582822265,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822287,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822295,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822296,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822298,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582822298,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822300,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582822301,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582822310,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582822315,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582823076,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582823076,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582823076,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582823077,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582823077,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582823077,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582823342,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582823342,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582823344,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582823344,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582823347,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582823349,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582823457,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582823702,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582824262,
+      "path": "/api/security/isolation/status",
+      "status": 200
+    },
+    {
+      "at": 1792582824269,
+      "path": "/api/security/grants",
+      "status": 200
+    },
+    {
+      "at": 1792582824270,
+      "path": "/api/settings",
+      "status": 200
+    },
+    {
+      "at": 1792582824270,
+      "path": "/api/security/isolation/status",
+      "status": 200
+    },
+    {
+      "at": 1792582824270,
+      "path": "/api/security/grants",
+      "status": 200
+    },
+    {
+      "at": 1792582824272,
+      "path": "/api/settings",
+      "status": 200
+    },
+    {
+      "at": 1792582824301,
+      "path": "/api/model-pools",
+      "status": 200
+    },
+    {
+      "at": 1792582824302,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582824303,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582824303,
+      "path": "/api/model-pool-bindings/default",
+      "status": 200
+    },
+    {
+      "at": 1792582824303,
+      "path": "/api/model-pools",
+      "status": 200
+    },
+    {
+      "at": 1792582824304,
+      "path": "/api/agents",
+      "status": 200
+    },
+    {
+      "at": 1792582824305,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582824306,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582824306,
+      "path": "/api/model-pool-bindings/default",
+      "status": 200
+    },
+    {
+      "at": 1792582824306,
+      "path": "/api/agents",
+      "status": 200
+    },
+    {
+      "at": 1792582824625,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582824979,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582824983,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582824984,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582824984,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582824984,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582824985,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582825260,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582825261,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582825261,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582825262,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582825265,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582825266,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582825827,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582826133,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582826133,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582826137,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582826138,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582826138,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582826138,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582826385,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582826387,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582826387,
+      "path": "/api/connectors",
+      "status": 200
+    },
+    {
+      "at": 1792582826387,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582826390,
+      "path": "/api/connectors/resources",
+      "status": 200
+    },
+    {
+      "at": 1792582826391,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582826478,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582826567,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582826780,
+      "path": "/api/settings/canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582827350,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582827351,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582827351,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582827352,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582827352,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582827352,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582827444,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582827444,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582827511,
+      "path": "/api/resources/ingest",
+      "status": 201
+    },
+    {
+      "at": 1792582827531,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582827538,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582827635,
+      "path": "/api/knowledge/documents/fb34dc26-36c9-44a6-9f85-1127b5796928",
+      "status": 200
+    },
+    {
+      "at": 1792582828362,
+      "path": "/api/knowledge/search",
+      "status": 200
+    },
+    {
+      "at": 1792582829242,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582829243,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582829243,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582829243,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582829246,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582829246,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582829246,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582829247,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582829247,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582829248,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582829248,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582829260,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582829260,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582829261,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582829261,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582829261,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582829262,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582829262,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582829262,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582829263,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582829264,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582829264,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582829264,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582829273,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582829274,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582829274,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582829301,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582829302,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582829312,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582829314,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582829323,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582829325,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582829326,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582829326,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582829357,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582829358,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582829469,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582829531,
+      "path": "/api/chat",
+      "status": 200
+    },
+    {
+      "at": 1792582829577,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582829580,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582830339,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582830340,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582830342,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582830342,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582830342,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582830342,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582830416,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582830417,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582830830,
+      "path": "/api/knowledge/documents/fb34dc26-36c9-44a6-9f85-1127b5796928",
+      "status": 200
+    },
+    {
+      "at": 1792582830837,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582831141,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582831141,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582831146,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582831146,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582831146,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582831146,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582831220,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582831220,
+      "path": "/api/knowledge/documents",
+      "status": 200
+    },
+    {
+      "at": 1792582831553,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582831554,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582831557,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582831557,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582831558,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582831558,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582831844,
+      "path": "/api/skills",
+      "status": 200
+    },
+    {
+      "at": 1792582831856,
+      "path": "/api/skills",
+      "status": 200
+    },
+    {
+      "at": 1792582831870,
+      "path": "/api/skills",
+      "status": 200
+    },
+    {
+      "at": 1792582831892,
+      "path": "/api/skills",
+      "status": 200
+    },
+    {
+      "at": 1792582833045,
+      "path": "/api/skills/discovery",
+      "status": 200
+    },
+    {
+      "at": 1792582833066,
+      "path": "/api/skills",
+      "status": 200
+    },
+    {
+      "at": 1792582833228,
+      "path": "/api/skills/revision7-native-figma-host-only",
+      "status": 200
+    },
+    {
+      "at": 1792582833663,
+      "path": "/api/skills/revision7-codex-real",
+      "status": 200
+    },
+    {
+      "at": 1792582834127,
+      "path": "/api/skills/revision7-claude-real",
+      "status": 200
+    },
+    {
+      "at": 1792582834891,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582834892,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582834892,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582834893,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582834898,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582834898,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582834899,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582834901,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582834905,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582834905,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582834905,
+      "path": "/api/conversations",
+      "status": 200
+    },
+    {
+      "at": 1792582834906,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582834906,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582834906,
+      "path": "/api/service-profiles",
+      "status": 200
+    },
+    {
+      "at": 1792582834906,
+      "path": "/api/provider-accounts",
+      "status": 200
+    },
+    {
+      "at": 1792582834906,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582834907,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582834907,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582834907,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582834908,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582834908,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582834909,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582834909,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582834909,
+      "path": "/api/workflows",
+      "status": 200
+    },
+    {
+      "at": 1792582834913,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582834921,
+      "path": "/api/message-canvas",
+      "status": 200
+    },
+    {
+      "at": 1792582834928,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582834928,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582834963,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582834973,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582834990,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582834991,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582834991,
+      "path": "/api/security/approval-mode",
+      "status": 200
+    },
+    {
+      "at": 1792582834991,
+      "path": "/api/llm/models",
+      "status": 200
+    },
+    {
+      "at": 1792582835023,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582835023,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582835117,
+      "path": "/api/chat/readiness",
+      "status": 200
+    },
+    {
+      "at": 1792582835171,
+      "path": "/api/chat",
+      "status": 200
+    },
+    {
+      "at": 1792582838662,
+      "path": "/api/conversations/55c85277-28ff-4da6-a4f7-6e2107a66f0c",
+      "status": 200
+    },
+    {
+      "at": 1792582838663,
+      "path": "/api/approvals/pending",
+      "status": 200
+    },
+    {
+      "at": 1792582839500,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582839502,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582839506,
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "at": 1792582839506,
+      "path": "/api/system/preferences",
+      "status": 200
+    },
+    {
+      "at": 1792582839507,
+      "path": "/api/voice/session",
+      "status": 200
+    },
+    {
+      "at": 1792582839507,
+      "path": "/api/presence",
+      "status": 200
+    },
+    {
+      "at": 1792582839751,
+      "path": "/api/tools",
+      "status": 200
+    },
+    {
+      "at": 1792582839758,
+      "path": "/api/tools",
+      "status": 200
+    },
+    {
+      "at": 1792582839760,
+      "path": "/api/tools",
+      "status": 200
+    },
+    {
+      "at": 1792582839762,
+      "path": "/api/tools",
+      "status": 200
+    }
+  ],
+  "native_windows": [
+    {
+      "at": "2026-10-21T11:39:48.752Z",
+      "action": "snapshot",
+      "pid": 22512,
+      "windows": [
+        {
+          "Hwnd": 9176286,
+          "Title": "YiLian Workbench QA",
+          "X": 77,
+          "Y": 26,
+          "Width": 1214,
+          "Height": 838,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 10424848,
+          "Title": "MSCTFIME UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 3081022,
+          "Title": "HintWnd",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 4134968,
+          "Title": "Sogou_TSF_UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 10159688,
+          "Title": "Default IME",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        }
+      ]
+    },
+    {
+      "at": "2026-10-21T11:39:51.021Z",
+      "action": "snapshot",
+      "pid": 22512,
+      "windows": [
+        {
+          "Hwnd": 5116338,
+          "Title": "系统监控",
+          "X": 154,
+          "Y": 154,
+          "Width": 374,
+          "Height": 308,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 9176286,
+          "Title": "YiLian Workbench QA",
+          "X": 77,
+          "Y": 26,
+          "Width": 1214,
+          "Height": 838,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 10424848,
+          "Title": "MSCTFIME UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 3081022,
+          "Title": "HintWnd",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 4134968,
+          "Title": "Sogou_TSF_UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10159688,
+          "Title": "Default IME",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        }
+      ]
+    },
+    {
+      "at": "2026-10-21T11:39:51.804Z",
+      "action": "snapshot",
+      "pid": 22512,
+      "windows": [
+        {
+          "Hwnd": 5116338,
+          "Title": "系统监控",
+          "X": 154,
+          "Y": 154,
+          "Width": 374,
+          "Height": 308,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 9176286,
+          "Title": "YiLian Workbench QA",
+          "X": 77,
+          "Y": 26,
+          "Width": 1214,
+          "Height": 838,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 3081022,
+          "Title": "HintWnd",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 4134968,
+          "Title": "Sogou_TSF_UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10159688,
+          "Title": "Default IME",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10424848,
+          "Title": "MSCTFIME UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        }
+      ]
+    },
+    {
+      "at": "2026-10-21T11:39:54.575Z",
+      "action": "snapshot",
+      "pid": 22512,
+      "windows": [
+        {
+          "Hwnd": 5116338,
+          "Title": "系统监控",
+          "X": 184,
+          "Y": 184,
+          "Width": 374,
+          "Height": 308,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 9176286,
+          "Title": "YiLian Workbench QA",
+          "X": 77,
+          "Y": 26,
+          "Width": 1214,
+          "Height": 838,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 3081022,
+          "Title": "HintWnd",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 4134968,
+          "Title": "Sogou_TSF_UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10159688,
+          "Title": "Default IME",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10424848,
+          "Title": "MSCTFIME UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        }
+      ]
+    },
+    {
+      "at": "2026-10-21T11:40:01.123Z",
+      "action": "minimize-main",
+      "pid": 22512,
+      "windows": [
+        {
+          "Hwnd": 2949742,
+          "Title": "小涟通话",
+          "X": 235,
+          "Y": 235,
+          "Width": 374,
+          "Height": 428,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 5116338,
+          "Title": "系统监控",
+          "X": 184,
+          "Y": 184,
+          "Width": 374,
+          "Height": 308,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 9176286,
+          "Title": "YiLian Workbench QA",
+          "X": -25600,
+          "Y": -25600,
+          "Width": 159,
+          "Height": 27,
+          "Visible": true,
+          "Minimized": true,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 3081022,
+          "Title": "HintWnd",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 4134968,
+          "Title": "Sogou_TSF_UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10159688,
+          "Title": "Default IME",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10424848,
+          "Title": "MSCTFIME UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        }
+      ]
+    },
+    {
+      "at": "2026-10-21T11:40:01.690Z",
+      "action": "snapshot",
+      "pid": 22512,
+      "windows": [
+        {
+          "Hwnd": 2949742,
+          "Title": "小涟通话",
+          "X": 235,
+          "Y": 235,
+          "Width": 374,
+          "Height": 428,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 5116338,
+          "Title": "系统监控",
+          "X": 184,
+          "Y": 184,
+          "Width": 374,
+          "Height": 308,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 9176286,
+          "Title": "YiLian Workbench QA",
+          "X": -25600,
+          "Y": -25600,
+          "Width": 159,
+          "Height": 27,
+          "Visible": true,
+          "Minimized": true,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 3081022,
+          "Title": "HintWnd",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 4134968,
+          "Title": "Sogou_TSF_UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10159688,
+          "Title": "Default IME",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 10424848,
+          "Title": "MSCTFIME UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": true
+        }
+      ]
+    },
+    {
+      "at": "2026-10-21T11:40:02.370Z",
+      "action": "restore-main",
+      "pid": 22512,
+      "windows": [
+        {
+          "Hwnd": 2949742,
+          "Title": "小涟通话",
+          "X": 235,
+          "Y": 235,
+          "Width": 374,
+          "Height": 428,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 5116338,
+          "Title": "系统监控",
+          "X": 184,
+          "Y": 184,
+          "Width": 374,
+          "Height": 308,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 9176286,
+          "Title": "YiLian Workbench QA",
+          "X": 77,
+          "Y": 26,
+          "Width": 1214,
+          "Height": 838,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 3081022,
+          "Title": "HintWnd",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 4134968,
+          "Title": "Sogou_TSF_UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 10159688,
+          "Title": "Default IME",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 10424848,
+          "Title": "MSCTFIME UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        }
+      ]
+    },
+    {
+      "at": "2026-10-21T11:40:41.351Z",
+      "action": "close-main",
+      "pid": 22512,
+      "windows": [
+        {
+          "Hwnd": 2949742,
+          "Title": "小涟通话",
+          "X": 235,
+          "Y": 235,
+          "Width": 374,
+          "Height": 428,
+          "Visible": true,
+          "Minimized": false,
+          "Topmost": true
+        },
+        {
+          "Hwnd": 9176286,
+          "Title": "YiLian Workbench QA",
+          "X": 77,
+          "Y": 26,
+          "Width": 1214,
+          "Height": 838,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 3081022,
+          "Title": "HintWnd",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 4134968,
+          "Title": "Sogou_TSF_UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 10159688,
+          "Title": "Default IME",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        },
+        {
+          "Hwnd": 10424848,
+          "Title": "MSCTFIME UI",
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0,
+          "Visible": false,
+          "Minimized": false,
+          "Topmost": false
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "No user credentials are read, copied, or logged.",
+    "Missing-credential call path is tested; real microphone, STT, TTS playback, AEC and vendor acceptance remain NOT TESTED."
+  ],
+  "monitor_drag": {
+    "before": {
+      "label": "monitor-overlay",
+      "title": "系统监控",
+      "visible": true,
+      "minimized": false,
+      "scale": 1.25,
+      "inner": {
+        "width": 80,
+        "height": 80
+      },
+      "outer": {
+        "width": 98,
+        "height": 90
+      },
+      "logical": {
+        "width": 64,
+        "height": 64
+      },
+      "position": {
+        "x": 192,
+        "y": 192
+      },
+      "viewport": {
+        "width": 64,
+        "height": 64
+      }
+    },
+    "after": {
+      "label": "monitor-overlay",
+      "title": "系统监控",
+      "visible": true,
+      "minimized": false,
+      "scale": 1.25,
+      "inner": {
+        "width": 80,
+        "height": 80
+      },
+      "outer": {
+        "width": 98,
+        "height": 90
+      },
+      "logical": {
+        "width": 64,
+        "height": 64
+      },
+      "position": {
+        "x": 230,
+        "y": 230
+      },
+      "viewport": {
+        "width": 64,
+        "height": 64
+      }
+    },
+    "windowsDrag": {
+      "ProcessId": 22512,
+      "Kind": "monitor",
+      "Before": {
+        "Hwnd": 5116338,
+        "Title": "系统监控",
+        "X": 192,
+        "Y": 192,
+        "Width": 98,
+        "Height": 90,
+        "ClientX": 201,
+        "ClientY": 193,
+        "ClientWidth": 80,
+        "ClientHeight": 80,
+        "Visible": true,
+        "Minimized": false
+      },
+      "After": {
+        "Hwnd": 5116338,
+        "Title": "系统监控",
+        "X": 230,
+        "Y": 230,
+        "Width": 98,
+        "Height": 90,
+        "ClientX": 239,
+        "ClientY": 231,
+        "ClientWidth": 80,
+        "ClientHeight": 80,
+        "Visible": true,
+        "Minimized": false
+      },
+      "CursorBeforeX": 1535,
+      "CursorBeforeY": 190,
+      "CursorAfterX": 1535,
+      "CursorAfterY": 190,
+      "CursorRestored": true,
+      "Moved": true,
+      "LogicalSize": 64,
+      "StartX": 241,
+      "StartY": 233,
+      "EndX": 289,
+      "EndY": 281,
+      "Input": "Win32 SendInput mouse down/move/up"
+    },
+    "cursorRestored": true,
+    "moved": true
+  },
+  "call_drag": {
+    "before": {
+      "label": "call-overlay",
+      "title": "小涟通话",
+      "visible": true,
+      "minimized": false,
+      "scale": 1.25,
+      "inner": {
+        "width": 80,
+        "height": 80
+      },
+      "outer": {
+        "width": 98,
+        "height": 90
+      },
+      "logical": {
+        "width": 64,
+        "height": 64
+      },
+      "position": {
+        "x": 256,
+        "y": 256
+      },
+      "viewport": {
+        "width": 64,
+        "height": 64
+      }
+    },
+    "after": {
+      "label": "call-overlay",
+      "title": "小涟通话",
+      "visible": true,
+      "minimized": false,
+      "scale": 1.25,
+      "inner": {
+        "width": 80,
+        "height": 80
+      },
+      "outer": {
+        "width": 98,
+        "height": 90
+      },
+      "logical": {
+        "width": 64,
+        "height": 64
+      },
+      "position": {
+        "x": 294,
+        "y": 294
+      },
+      "viewport": {
+        "width": 64,
+        "height": 64
+      }
+    },
+    "windowsDrag": {
+      "ProcessId": 22512,
+      "Kind": "call",
+      "Before": {
+        "Hwnd": 2949742,
+        "Title": "小涟通话",
+        "X": 256,
+        "Y": 256,
+        "Width": 98,
+        "Height": 90,
+        "ClientX": 265,
+        "ClientY": 257,
+        "ClientWidth": 80,
+        "ClientHeight": 80,
+        "Visible": true,
+        "Minimized": false
+      },
+      "After": {
+        "Hwnd": 2949742,
+        "Title": "小涟通话",
+        "X": 294,
+        "Y": 294,
+        "Width": 98,
+        "Height": 90,
+        "ClientX": 303,
+        "ClientY": 295,
+        "ClientWidth": 80,
+        "ClientHeight": 80,
+        "Visible": true,
+        "Minimized": false
+      },
+      "CursorBeforeX": 1535,
+      "CursorBeforeY": 190,
+      "CursorAfterX": 1535,
+      "CursorAfterY": 190,
+      "CursorRestored": true,
+      "Moved": true,
+      "LogicalSize": 64,
+      "StartX": 305,
+      "StartY": 297,
+      "EndX": 353,
+      "EndY": 345,
+      "Input": "Win32 SendInput mouse down/move/up"
+    },
+    "cursorRestored": true,
+    "moved": true
+  },
+  "ended_at": "2026-10-21T11:40:41.772Z"
+}

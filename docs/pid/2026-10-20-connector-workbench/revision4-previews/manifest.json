@@ -1,0 +1,65 @@
+[
+  {
+    "file": "home-completed.png",
+    "label": "主页与透明输入区",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-home-completed.png",
+    "sha256": "2f63dd6038caf8a8d0f53d0dab3b528907e634857e6d6fdad6ea3f3e0d0ca92f",
+    "native": true
+  },
+  {
+    "file": "approval-restored.png",
+    "label": "切换页面后恢复待审批操作",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-approval-restored.png",
+    "sha256": "027a809243b74254e4cc21a9bd2e1fd230fd2ef89f1dd37e5fec4e5fb07c07e9",
+    "native": true
+  },
+  {
+    "file": "appearance-font.png",
+    "label": "较窄外观弹窗与字号控制",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-appearance-font.png",
+    "sha256": "05bed83999afbe106a46c29d5f884ebb577e0ea7d5bb476117d6c297716eb61f",
+    "native": true
+  },
+  {
+    "file": "capability-dialog.png",
+    "label": "移除分类切换的较窄能力弹窗",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-capability-dialog.png",
+    "sha256": "686aa6460ce82fe8cad7d435dd8984f3280147862a20c3e773b17acec2bc319b",
+    "native": true
+  },
+  {
+    "file": "linked-message-canvas.png",
+    "label": "与主页连通的消息画布",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-linked-message-canvas.png",
+    "sha256": "2b0e9820be6a091a9dc52e196c1248add875ad954ad6a2a0f7e96517873164b2",
+    "native": true
+  },
+  {
+    "file": "tool-error-log.png",
+    "label": "工具报错与执行记录",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-tool-error-log.png",
+    "sha256": "322af3e365c225f1b05d64fecf4a4e4ad8ed04dba53422bd7eaf46f2b4cea341",
+    "native": true
+  },
+  {
+    "file": "system-plugin-node-manager.png",
+    "label": "系统与插件设置节点管理器",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-system-plugin-node-manager.png",
+    "sha256": "969a957585ded31eac4f18a54716f80723b2f8e98acd6d8e4ce6cfef20e9807a",
+    "native": true
+  },
+  {
+    "file": "plugin-settings.png",
+    "label": "插件声明的实际设置表单",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-plugin-settings.png",
+    "sha256": "7d664c463a270ca3e951ef671273f7354fe1b3ef76b6ebcece2d192e31b27e7c",
+    "native": true
+  },
+  {
+    "file": "home-dark.png",
+    "label": "深色主题主页",
+    "source": "F:\\target\\workbench-desktop\\2026-10-21T06-57-31-898Z\\screenshots\\revision4-home-dark.png",
+    "sha256": "3c97f1a7b0f622a9ae9957e11d6232e0cf73241243128656e2d21f9302e1cd5c",
+    "native": true
+  }
+]

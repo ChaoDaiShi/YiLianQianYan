@@ -1,0 +1,228 @@
+{
+  "date": "2026-10-21",
+  "revision": 3,
+  "branch": "codex/connector-workbench",
+  "frontend": {
+    "files": 141,
+    "passed": 671,
+    "failed": 0
+  },
+  "backend": {
+    "unit_passed": 1069,
+    "integration_passed": 15
+  },
+  "browser": {
+    "status": "passed",
+    "real_backend": true,
+    "controlled_provider": true,
+    "checks": {
+      "full_width_messages": true,
+      "no_connector_resource_pane": true,
+      "message_composer_transparent": true,
+      "message_nodes": true,
+      "vertical_chain": true,
+      "sibling_branches": true,
+      "ancestor_isolation": true,
+      "source_unchanged": true,
+      "fork_catalog": true,
+      "reopen": true,
+      "settings_graph": true,
+      "manager_collapsed": true,
+      "fourteen_presets": true,
+      "settings_connect_persistence": true,
+      "real_stt_editor": true,
+      "settings_disconnect_preserves_value": true,
+      "nested_keyboard": true,
+      "scope_isolation": true,
+      "bound_resources_preserved": true,
+      "four_ports": true,
+      "bezier": true,
+      "light_dark_transparent": true,
+      "toast_top": true,
+      "direct_current_delete": true,
+      "keyboard_confirmation": true,
+      "noncurrent_delete": true,
+      "last_delete": true
+    },
+    "evidence": "F:\\项目开发\\忆涟千言\\YiLianQianYan\\target\\canvas-e2e\\2026-10-21T04-59-30-274Z"
+  },
+  "native": {
+    "status": "PASS",
+    "checks": [
+      {
+        "name": "Actual native IPC and isolated main window",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor is an independent real Tauri window",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor pin toggle changes actual native topmost state",
+        "status": "PASS"
+      },
+      {
+        "name": "Monitor collapse and expand resize the real native window",
+        "status": "PASS"
+      },
+      {
+        "name": "Theme change propagates from main to independent overlay",
+        "status": "PASS"
+      },
+      {
+        "name": "Missing credentials produce an actual call error, never a false connected state",
+        "status": "PASS"
+      },
+      {
+        "name": "Call collapse is an actual 64px native window",
+        "status": "PASS"
+      },
+      {
+        "name": "Independent overlays remain visible when owned main window is minimized",
+        "status": "PASS"
+      },
+      {
+        "name": "Closing monitor stops its added usage polling outside monitor page",
+        "status": "PASS"
+      },
+      {
+        "name": "No framework overlays or unhandled JavaScript errors",
+        "status": "PASS"
+      },
+      {
+        "name": "Native revision 3 full message canvas and node settings",
+        "status": "PASS"
+      }
+    ],
+    "revision_checks": {
+      "full_width_messages": true,
+      "no_connector_resource_pane": true,
+      "message_composer_transparent": true,
+      "message_nodes": true,
+      "vertical_chain": true,
+      "sibling_branches": true,
+      "ancestor_isolation": true,
+      "source_unchanged": true,
+      "fork_catalog": true,
+      "reopen": true,
+      "settings_graph": true,
+      "manager_collapsed": true,
+      "fourteen_presets": true,
+      "settings_connect_persistence": true,
+      "real_stt_editor": true,
+      "settings_disconnect_preserves_value": true,
+      "nested_keyboard": true,
+      "scope_isolation": true,
+      "bound_resources_preserved": true,
+      "four_ports": true,
+      "bezier": true,
+      "light_dark_transparent": true,
+      "toast_top": true,
+      "direct_current_delete": true,
+      "keyboard_confirmation": true,
+      "noncurrent_delete": true,
+      "last_delete": true
+    },
+    "evidence": "F:\\target\\workbench-desktop\\2026-10-21T05-02-38-834Z"
+  },
+  "presets": [
+    {
+      "id": "model",
+      "label": "对话模型",
+      "description": "管理对话模型、厂商账户与模型池",
+      "group": "services",
+      "side": "right"
+    },
+    {
+      "id": "stt",
+      "label": "语音识别",
+      "description": "配置语音输入使用的识别服务",
+      "group": "services",
+      "side": "right"
+    },
+    {
+      "id": "tts",
+      "label": "语音合成",
+      "description": "配置朗读声音与语音合成服务",
+      "group": "services",
+      "side": "right"
+    },
+    {
+      "id": "search",
+      "label": "联网搜索",
+      "description": "管理搜索服务与检索设置",
+      "group": "services",
+      "side": "right"
+    },
+    {
+      "id": "vision",
+      "label": "图像理解",
+      "description": "配置识图模型与图像分析服务",
+      "group": "services",
+      "side": "right"
+    },
+    {
+      "id": "image",
+      "label": "图像生成",
+      "description": "配置生图模型与图像生成服务",
+      "group": "services",
+      "side": "right"
+    },
+    {
+      "id": "embedding",
+      "label": "向量模型",
+      "description": "配置文本向量与语义检索服务",
+      "group": "services",
+      "side": "right"
+    },
+    {
+      "id": "agent",
+      "label": "智能体行为",
+      "description": "调整执行过程与智能体行为偏好",
+      "group": "experience",
+      "side": "left"
+    },
+    {
+      "id": "compaction",
+      "label": "上下文管理",
+      "description": "配置长对话压缩阈值与保留轮次",
+      "group": "context",
+      "side": "bottom"
+    },
+    {
+      "id": "permissions",
+      "label": "权限审批",
+      "description": "管理工具权限与操作审批策略",
+      "group": "safety",
+      "side": "top"
+    },
+    {
+      "id": "sandbox",
+      "label": "执行沙箱",
+      "description": "查看和配置执行环境的隔离边界",
+      "group": "safety",
+      "side": "top"
+    },
+    {
+      "id": "extensions",
+      "label": "扩展目录",
+      "description": "管理技能与子智能体的本地发现目录",
+      "group": "extensions",
+      "side": "right"
+    },
+    {
+      "id": "appearance",
+      "label": "界面外观",
+      "description": "调整主题、色彩与界面呈现",
+      "group": "experience",
+      "side": "left"
+    },
+    {
+      "id": "navigation",
+      "label": "导航布局",
+      "description": "调整导航入口与工作区布局",
+      "group": "experience",
+      "side": "left"
+    }
+  ]
+}
