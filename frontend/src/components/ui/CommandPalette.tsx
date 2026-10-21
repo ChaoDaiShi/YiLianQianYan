@@ -121,13 +121,13 @@ export default function CommandPalette() {
         action: () => navigate("/chat"),
       },
       {
-        id: "action-new-task",
-        title: "规划新任务",
+        id: "action-connectors",
+        title: "打开连接器",
         category: "高频动作",
-        description: "在任务中心开始新目标规划与执行",
+        description: "查看对话、智能体和能力资源的连接",
         icon: <ListTodo className="h-4 w-4 text-[var(--accent-purple)]" />,
         keywords: ["新任务", "新建任务", "task"],
-        action: () => navigate("/tasks"),
+        action: () => navigate("/connectors"),
       },
       {
         id: "action-approvals",

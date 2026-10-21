@@ -1,0 +1,2 @@
+export type CallPhase="idle"|"connecting"|"listening"|"thinking"|"speaking"|"muted"|"ended"|"error";
+export interface CallPresentation {conversation_title:string|null;browsing_conversation_title:string|null;can_switch_conversation:boolean;session_id:string|null;phase:CallPhase;conversation_id:string|null;muted:boolean;speaker_enabled:boolean;connected_at:string|null;caption:string;notice:string|null;checks:{session:boolean;microphone:boolean;stt:boolean;tts:boolean;output:boolean}}

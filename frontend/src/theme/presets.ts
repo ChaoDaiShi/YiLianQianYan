@@ -59,7 +59,7 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
     blur: 0,
     brightness: 1,
     panelOpacity: 0.52,
-    fontSize: Number.parseFloat(typography["--font-size-body"]),
+    fontSize: 14,
     monoTitles: false,
     customVars: {},
   },
@@ -200,6 +200,8 @@ export const PRESETS: Record<BuiltInPresetId, ThemeConfig> = {
 export const DEFAULT_THEME = PRESETS["cyrene-ripple"];
 
 const CYRENE_SHARED_TOKENS = {
+  "--surface-blur": "0px",
+  "--surface-alpha": "0.52",
   "--radius-xs": "6px",
   "--radius-sm": "10px",
   "--radius-md": "12px",

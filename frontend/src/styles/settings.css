@@ -12,7 +12,7 @@
 }
 
 .system-settings-page .page-header .page-title {
-  font-size: 22px;
+  font-size: 1.375rem;
   line-height: 30px;
 }
 
@@ -31,7 +31,7 @@
 }
 
 .settings-header-actions .ui-button { min-height: 42px; }
-.settings-save-error { margin: 10px clamp(20px, 2vw, 32px) 0; color: var(--danger); font-size: 13px; line-height: 20px; }
+.settings-save-error { margin: 10px clamp(20px, 2vw, 32px) 0; color: var(--danger); font-size: 0.8125rem; line-height: 20px; }
 
 .system-settings-layout {
   display: grid;
@@ -155,7 +155,7 @@
   text-transform: uppercase;
 }
 
-.settings-section-intro h2 { margin: 0; color: var(--text-primary); font-size: 24px; line-height: 32px; font-weight: 700; }
+.settings-section-intro h2 { margin: 0; color: var(--text-primary); font-size: 1.5rem; line-height: 32px; font-weight: 700; }
 .settings-section-intro p:last-child { margin: 4px 0 0; color: var(--text-secondary); font-size: var(--font-size-secondary); line-height: 22px; }
 
 .settings-card-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
@@ -184,10 +184,10 @@
 
 .settings-card-header h3,
 .settings-inline-heading h3,
-.settings-status-card h3 { margin: 0; color: var(--text-primary); font-size: 16px; line-height: 23px; font-weight: 650; }
+.settings-status-card h3 { margin: 0; color: var(--text-primary); font-size: 1rem; line-height: 23px; font-weight: 650; }
 .settings-card-header p,
 .settings-inline-heading p,
-.settings-status-card > p { margin: 3px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 20px; }
+.settings-status-card > p { margin: 3px 0 0; color: var(--text-secondary); font-size: 0.8125rem; line-height: 20px; }
 .settings-card-body { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
 .settings-inline-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 
@@ -225,8 +225,8 @@
 .settings-textarea:focus { border-color: var(--accent-primary); box-shadow: 0 0 0 2px var(--focus-ring-soft); }
 
 .settings-two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.settings-help { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 20px; }
-.settings-form-error { margin: 0; color: var(--danger); font-size: 13px; line-height: 20px; }
+.settings-help { margin: 0; color: var(--text-secondary); font-size: 0.8125rem; line-height: 20px; }
+.settings-form-error { margin: 0; color: var(--danger); font-size: 0.8125rem; line-height: 20px; }
 
 .settings-toggle-row {
   display: flex;
@@ -247,17 +247,17 @@
 .settings-checkbox-row input { width: 18px; height: 18px; accent-color: var(--accent-primary); }
 
 .settings-status-list { display: flex; flex-direction: column; gap: 8px; }
-.settings-status-row { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text-secondary); }
+.settings-status-row { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.8125rem; color: var(--text-secondary); }
 
 .settings-grant-editor { display: flex; flex-direction: column; gap: 18px; }
 .settings-inline-heading { margin-bottom: 12px; }
-.settings-inline-heading h4 { margin: 0; color: var(--text-primary); font-size: 15px; line-height: 22px; font-weight: 650; }
+.settings-inline-heading h4 { margin: 0; color: var(--text-primary); font-size: 0.9375rem; line-height: 22px; font-weight: 650; }
 .settings-inline-heading p { margin-top: 2px; }
 .settings-grant-list { display: flex; flex-direction: column; gap: 8px; }
-.settings-empty-copy { margin: 0; border: 1px dashed var(--border-soft); border-radius: 11px; padding: 18px; color: var(--text-secondary); font-size: 13px; text-align: center; }
+.settings-empty-copy { margin: 0; border: 1px dashed var(--border-soft); border-radius: 11px; padding: 18px; color: var(--text-secondary); font-size: 0.8125rem; text-align: center; }
 .settings-grant-row { display: flex; min-height: 64px; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--border-soft); border-radius: 11px; background: var(--surface-muted); padding: 11px 12px; }
-.settings-grant-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-primary); font-size: 13px; font-weight: 600; }
-.settings-grant-row p { margin: 5px 0 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 13px; line-height: 19px; }
+.settings-grant-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-primary); font-size: 0.8125rem; font-weight: 600; }
+.settings-grant-row p { margin: 5px 0 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 0.8125rem; line-height: 19px; }
 
 .settings-disclosure { border-top: 1px solid var(--border-soft); padding-top: 14px; }
 .settings-disclosure > summary { min-height: 40px; cursor: pointer; color: var(--text-primary); font-size: var(--font-size-control); list-style-position: outside; }
@@ -265,7 +265,7 @@
 .settings-disclosure > summary strong { font-weight: 650; }
 .settings-disclosure > summary small { color: var(--text-secondary); font-size: var(--font-size-caption); }
 .settings-grant-form { display: flex; flex-direction: column; gap: 15px; padding: 14px 2px 2px; }
-.settings-notice { margin: 0; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface-muted); padding: 10px 12px; color: var(--text-secondary); font-size: 13px; line-height: 20px; }
+.settings-notice { margin: 0; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface-muted); padding: 10px 12px; color: var(--text-secondary); font-size: 0.8125rem; line-height: 20px; }
 .settings-notice--warning { border-color: color-mix(in srgb, var(--warning) 32%, var(--border-soft)); background: color-mix(in srgb, var(--warning) 8%, var(--surface-solid)); color: var(--warning); }
 
 .settings-theme-option { min-height: 120px; border-radius: 12px; border: 1px solid var(--border-soft); padding: 16px; text-align: left; transition: border-color var(--motion-fast), background-color var(--motion-fast); }
@@ -275,9 +275,9 @@
 .system-settings-page .ui-input { min-height: 42px; }
 .system-settings-page .ui-label { font-size: var(--font-size-control); }
 .system-settings-page .ui-hint { font-size: var(--font-size-caption); line-height: 18px; }
-.system-settings-content .text-xs { font-size: 13px; line-height: 20px; }
+.system-settings-content .text-xs { font-size: 0.8125rem; line-height: 20px; }
 .system-settings-page .u2-disclosure > summary { min-height: 40px; font-size: var(--font-size-control); }
-.system-settings-page .u2-config-note { font-size: 13px; }
+.system-settings-page .u2-config-note { font-size: 0.8125rem; }
 .system-settings-page .u2-profile-management { border: 1px solid var(--border-soft); border-radius: 14px; background: var(--surface-solid); padding: 18px 20px; }
 .system-settings-page .u2-model-basic [aria-label="Provider 就绪状态"] { padding: 16px; border: 1px solid var(--border-soft); background: color-mix(in srgb, var(--accent-soft) 52%, var(--surface-solid)); }
 .system-settings-page .u2-model-basic [aria-label="Provider 就绪状态"] > div { margin-top: 12px; }
@@ -312,7 +312,7 @@
   .settings-nav-icon { width: 30px; height: 30px; }
   .settings-nav-description { display: none; }
   .settings-section-icon { width: 42px; height: 42px; border-radius: 12px; }
-  .settings-section-intro h2 { font-size: 21px; line-height: 28px; }
+  .settings-section-intro h2 { font-size: 1.3125rem; line-height: 28px; }
   .settings-card, .settings-subcard { padding: 16px; }
   .settings-two-column { grid-template-columns: minmax(0, 1fr); }
   .settings-grant-row { align-items: flex-start; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import pageSource from "./SettingsPage.tsx?raw";
+import pageSource from "../features/settings/editor/SettingsEditorDialog.tsx?raw";
 import configSource from "../features/settings/model/config.ts?raw";
 import mappingSource from "../features/settings/model/mapping.ts?raw";
 import agentSettingsSource from "../features/settings/sections/AgentSettings.tsx?raw";
@@ -18,7 +18,7 @@ import settingsNavigationSource from "../features/settings/model/settingsNavigat
 import settingsStyleSource from "../styles/settings.css?raw";
 import typesSource from "../types/index.ts?raw";
 
-// Settings is one surface split across a composition page, its model and its
+// Settings is one surface split across a node editor, its model and its
 // sections. These assertions are about that surface, so they read all of it —
 // each string below is still required to exist somewhere on the surface.
 const source = [
@@ -49,7 +49,7 @@ describe("Settings contract", () => {
   it("preserves secure voice provider settings and write-only credentials", () => {
     expect(typesSource).toContain("export interface VoiceConfig");
     expect(typesSource).toContain("voice: VoiceConfig");
-    expect(settingsNavigationSource).toContain('label: "语音能力"');
+    expect(settingsNavigationSource).toContain('label: "基础配置"');
     expect(typesSource).toContain("export interface VoiceSttConfig");
     expect(typesSource).toContain("export interface VoiceTtsConfig");
     expect(source).toContain("语音识别（STT）");
@@ -62,10 +62,35 @@ describe("Settings contract", () => {
   });
 
   it("provides section semantics and save feedback", () => {
-    expect(source).toContain("aria-current");
+    expect(pageSource).toContain("switch (nodeKey)");
+    expect(pageSource).toContain("<Modal open onClose={onClose}");
     expect(source).toContain("保存设置");
     expect(source).toContain("未保存");
     expect(source).toContain("保存失败");
+  });
+
+  it("opens the selected settings node directly in a single editor", () => {
+    for (const key of ["model", "stt", "tts", "search", "vision", "image", "embedding", "agent", "compaction", "permissions", "sandbox", "extensions", "appearance", "navigation"]) {
+      expect(pageSource).toContain(`case "${key}":`);
+    }
+    expect(pageSource.match(/<Modal\s/g)).toHaveLength(1);
+    expect(pageSource).not.toContain("<BasicConfiguration");
+    expect(pageSource).not.toContain("<PageShell");
+    expect(pageSource).not.toContain("<SettingsSectionFrame");
+    expect(pageSource).toContain("<ModuleSettingsEditor");
+    expect(pageSource).toContain("<AppearanceSettings theme={theme}");
+    expect(pageSource).toContain("usesSettingsDraft && !loaded");
+    expect(pageSource).toContain("disabled={!loaded || !isUnsaved");
+    expect(pageSource).toContain("if (!loaded) return;");
+  });
+
+  it("retains explicit secret clearing and discard semantics", () => {
+    expect(pageSource).toContain('window.confirm("确定清除已保存的 API 密钥？');
+    expect(pageSource).toContain('[side]: { ...config.voice[side], clear_api_key: true, api_key: "" }');
+    expect(pageSource).toContain('const result = await updateSettings(config)');
+    expect(pageSource).toContain('clear_embedding_api_key: undefined');
+    expect(pageSource).toContain('setReplaceVoiceKey({ stt: false, tts: false })');
+    expect(pageSource).toContain('setSavedSnapshot(comparableConfig(nextConfig))');
   });
 
   it("integrates legacy model controls into the model manager", () => {

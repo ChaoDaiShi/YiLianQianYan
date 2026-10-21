@@ -1,0 +1,18 @@
+.tool-diagnostics{display:flex;flex:1;flex-direction:column;min-height:0;padding:16px;gap:12px}
+.tool-diagnostics-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tool-diagnostics-toolbar>.w-full{flex:1;min-width:200px;max-width:400px}
+.tool-diagnostics-hint,.tool-diagnostics-footer{font-size:.8125rem;color:var(--text-secondary);line-height:1.6}
+.tool-diagnostics-table-scroll{min-height:0;overflow:auto;border:1px solid var(--border-soft);border-radius:12px;background:var(--surface)}
+.tool-diagnostics-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:.8125rem}
+.tool-diagnostics-table th,.tool-diagnostics-table td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tool-diagnostics-table th{font-weight:500;color:var(--text-secondary);background:var(--surface-muted)}
+.tool-diagnostics-table th:nth-child(1){width:160px}.tool-diagnostics-table th:nth-child(2){width:140px}.tool-diagnostics-table th:nth-child(3){width:110px}.tool-diagnostics-table th:nth-child(4){width:150px}
+.tool-diagnostics-table td button{color:var(--accent-soft-fg);text-align:left;max-width:100%;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;vertical-align:middle}
+.tool-diagnostics-table tr:hover{background:var(--surface-hover)}
+.tool-diagnostics-table .tool-diagnostic-summary{color:var(--text-secondary)}
+.tool-diagnostics-footer{margin-top:auto;padding-top:8px}
+.tool-diagnostic-detail{height:100%;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:18px;font-size:.875rem}
+.tool-diagnostic-detail>section h3{font-size:.875rem;font-weight:600;margin-bottom:8px}.tool-diagnostic-detail>section p{white-space:pre-wrap;overflow-wrap:anywhere}
+.tool-diagnostic-metadata{border:1px solid var(--border-soft);border-radius:10px;padding:4px 12px}
+.tool-diagnostic-conversation{color:var(--accent-soft-fg);font-size:.875rem}
+@media(max-width:850px){.tool-diagnostics-table{min-width:720px}.tool-diagnostics-table th:nth-child(1){width:140px}.tool-diagnostics-table th:nth-child(4){width:120px}}

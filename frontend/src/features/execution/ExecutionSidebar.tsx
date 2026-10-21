@@ -1,6 +1,7 @@
 import { PanelRightClose, X } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
 import CurrentActionCard from "./CurrentActionCard";
+import ApprovalCard from "../../components/approval/ApprovalCard";
 import ExecutionHistory from "./ExecutionHistory";
 import type { AgentRunState } from "./model";
 import { selectCurrentAction, selectExecutionHistory } from "./selectors";
@@ -25,14 +26,9 @@ export default function ExecutionSidebar({
   onToggleCollapse,
 }: ExecutionSidebarProps) {
   const history = selectExecutionHistory(state);
-  const current = selectCurrentAction(history);
-  const currentApproval = current
-    ? pendingApprovals.find(
-        (approval) =>
-          approval.tool_call_id === current.toolCallId ||
-          approval.approval_id === current.approvalId
-      )
-    : undefined;
+  const conversationApprovals = pendingApprovals.filter((approval) => approval.conversation_id === state.conversationId);
+  const current = state.terminal ? null : selectCurrentAction(history.filter((record) => record.approvalStatus !== "pending"));
+  const past = history.filter((record) => record.toolCallId !== current?.toolCallId && !conversationApprovals.some((approval) => approval.tool_call_id === record.toolCallId));
   const completed = history.filter(
     (record) => record.executionStatus === "succeeded"
   ).length;
@@ -87,6 +83,12 @@ export default function ExecutionSidebar({
       </header>
 
       <div className="execution-sidebar-content scrollbar-thin min-h-0 flex-1 overflow-y-auto px-3 py-4">
+        {conversationApprovals.length > 0 && (
+          <section className="mb-4 space-y-2" aria-label="待确认操作">
+            <h3 className="text-xs font-medium text-[var(--text-secondary)]">等待你的确认 · {conversationApprovals.length}</h3>
+            {conversationApprovals.map((approval) => <ApprovalCard key={approval.approval_id} approval={approval} resolving={resolving[approval.approval_id]} onApprove={onApprove} onReject={onReject} />)}
+          </section>
+        )}
         <section aria-labelledby="current-action-heading">
           <h3
             id="current-action-heading"
@@ -97,10 +99,6 @@ export default function ExecutionSidebar({
           <CurrentActionCard
             record={current}
             connection={state.connection}
-            approval={currentApproval}
-            resolving={
-              currentApproval ? resolving[currentApproval.approval_id] : false
-            }
             onApprove={onApprove}
             onReject={onReject}
           />
@@ -113,7 +111,7 @@ export default function ExecutionSidebar({
           >
             历史记录
           </h3>
-          <ExecutionHistory records={history} />
+          <ExecutionHistory records={past} />
         </section>
       </div>
     </aside>

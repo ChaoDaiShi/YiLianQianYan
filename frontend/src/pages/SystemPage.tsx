@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import TokenUsagePanel from "../features/monitor/TokenUsagePanel";
 import MonitoringToolbox from "../components/system/MonitoringToolbox";
 import { useVisibleRefresh } from "../components/system/useVisibleRefresh";
 import { Activity, Cpu, Database, Disc, FileText, HardDrive, Monitor, RefreshCw, Server } from "lucide-react";
@@ -102,6 +103,7 @@ export default function SystemPage() {
     >
 
       <div className="system-center-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 scrollbar-thin">
+        <TokenUsagePanel />
         <MonitoringToolbox data={data as unknown as Record<string, unknown> | null} health={health as unknown as Record<string, unknown> | null} />
         {error && !data ? (
           <ErrorState

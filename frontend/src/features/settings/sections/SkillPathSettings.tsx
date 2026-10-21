@@ -1,4 +1,5 @@
 import type { AppConfig } from "../../../types";
+import SkillDiscoverySources from "./SkillDiscoverySources";
 
 interface SkillPathSettingsProps {
   config: AppConfig;
@@ -9,6 +10,7 @@ interface SkillPathSettingsProps {
 export default function SkillPathSettings({ config, updateField }: SkillPathSettingsProps) {
   return (
     <>
+    <SkillDiscoverySources />
     <section className="settings-card">
       <header className="settings-card-header"><div><h3>技能目录</h3><p>扫描可复用过程与工具说明，按需载入上下文。</p></div></header>
       <div className="settings-card-body">

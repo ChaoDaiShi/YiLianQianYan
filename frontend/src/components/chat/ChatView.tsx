@@ -3,7 +3,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
-  useReducer,
+  useSyncExternalStore,
   useRef,
   useState,
   type ReactNode,
@@ -13,38 +13,17 @@ import {
   activateWorkflow,
   createConversation,
   listWorkflows,
-  loadConversation,
-  sendMessage,
-  stopGeneration,
-  type AgentEvent,
   type Workflow,
 } from "../../api/client";
 import { ArrowDown, ShieldAlert } from "lucide-react";
 import { bindResources } from "../../api/resources";
-import { getProviderReadiness } from "../../api/providerConnection";
+import { getChatModelReadiness } from "../../api/providerConnection";
 import type { ConversationalAnchor } from "../../api/voice";
 import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
-import {
-  approveAction,
-  getApproval,
-  listPendingApprovals,
-  rejectAction,
-} from "../../api/approvals";
-import {
-  createInitialAgentWorkspaceState,
-  hydratePersistedExecutionRecords,
-  reduceExecutionWorkspace,
-  selectActiveRun,
-  toToolCallRecords,
-} from "../../features/execution/reducer";
-import { createDecisionGate } from "../../features/execution/decisionGate";
-import { reconcilePersistedApproval } from "../../features/execution/approvalReconciliation";
-import {
-  selectPendingApprovals,
-  useApprovalStore,
-} from "../../stores/approvalStore";
-import type { Message } from "../../types";
-import type { PendingApproval, RiskLevel } from "../../types/approval";
+import { chatRuntime } from "../../features/execution/chatRuntime";
+import { toToolCallRecords } from "../../features/execution/reducer";
+import { workspaceModes, type ChatRequestOptions, type WorkspaceMode } from "./chatRequestOptions";
+import type { PendingApproval } from "../../types/approval";
 import type { AgentRunState } from "../../features/execution/model";
 import {
   CHAT_COLUMN_VIEWPORT_CLASS_NAME,
@@ -56,6 +35,8 @@ import ChatInput from "./ChatInput";
 import ChatHeader from "./ChatHeader";
 import MessageList, { type StreamingState } from "./MessageList";
 import WorkbenchHome from "./WorkbenchHome";
+import ModelRouteNotice, { modelRouteReasonLabel } from "../../features/llm/ModelRouteNotice";
+import { showToast } from "../ui";
 
 interface ChatViewProps {
   conversationId: string | null;
@@ -76,6 +57,8 @@ interface ChatViewProps {
   onManualSpeech?: (text: string) => void;
   onOpenModelSettings?: () => void;
   initialSuggestedText?: string;
+  onWorkspaceModeChange?: (mode: WorkspaceMode) => void;
+  headerActions?: ReactNode;
 }
 
 export interface ExecutionController {
@@ -84,28 +67,6 @@ export interface ExecutionController {
   resolving: Record<string, boolean>;
   onApprove: (approval: PendingApproval) => void;
   onReject: (approval: PendingApproval) => void;
-}
-
-const KNOWN_EVENT_TYPES = new Set([
-  "connected",
-  "token",
-  "tool_start",
-  "tool_end",
-  "approval_required",
-  "approval_resolved",
-  "verification",
-  "done",
-  "error",
-  "stream_end",
-]);
-
-function riskLevel(value: string | undefined): RiskLevel {
-  return value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "critical"
-    ? value
-    : "unknown";
 }
 
 export default function ChatView({
@@ -126,54 +87,62 @@ export default function ChatView({
   onManualSpeech,
   onOpenModelSettings,
   initialSuggestedText,
+  onWorkspaceModeChange,
+  headerActions,
 }: ChatViewProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [currentConvId, setCurrentConvId] = useState<string | null>(
-    conversationId
-  );
-  const [error, setError] = useState<string | null>(null);
+  const [currentConvId, setCurrentConvId] = useState<string | null>(conversationId);
+  const runtimeId = currentConvId || "__draft__";
+  const subscribe = useCallback((listener: () => void) => chatRuntime.subscribe(runtimeId, listener), [runtimeId]);
+  const getSnapshot = useCallback(() => chatRuntime.snapshot(runtimeId), [runtimeId]);
+  const runtime = useSyncExternalStore(subscribe, getSnapshot);
+  const { messages, modelRoute, loading: isLoading, run: runState, pendingApprovals, resolving } = runtime;
+  const [localError, setLocalError] = useState<string | null>(null);
+  const error = localError || runtime.error;
   const [finished, setFinished] = useState(false);
-  const [lastSubmittedText, setLastSubmittedText] = useState("");
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [allWorkflows, setAllWorkflows] = useState<Workflow[]>([]);
   const [suggestedText, setSuggestedText] = useState("");
   const [modelUnavailable, setModelUnavailable] = useState(false);
-  const [execution, dispatchExecution] = useReducer(
-    reduceExecutionWorkspace,
-    conversationId,
-    createInitialAgentWorkspaceState
-  );
-  const runState = selectActiveRun(execution);
-  const pendingApprovals = useApprovalStore(selectPendingApprovals);
-  const resolving = useApprovalStore((state) => state.resolving);
-  const abortRef = useRef<AbortController | null>(null);
-  const finishedTimerRef = useRef<number | null>(null);
+  const routeNotices = useRef(new Set<string>());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowMessagesRef = useRef(true);
-  const unknownEventTypes = useRef(new Set<string>());
   const ownership = useRef(createConversationOwnership(conversationId)).current;
+  useEffect(() => { onWorkspaceModeChange?.(runtime.workspaceMode); }, [runtime.workspaceMode, onWorkspaceModeChange]);
+  useEffect(() => {
+    if (!runtime.modeNotice?.automatic) return;
+    showToast(`已切换到${workspaceModes.find(mode => mode.value === runtime.modeNotice?.mode)?.label}模式${runtime.modeNotice.reason ? `：${runtime.modeNotice.reason}` : ""}`, "info");
+  }, [runtime.modeNotice]);
   useEffect(() => {
     if (initialSuggestedText?.trim()) setSuggestedText(initialSuggestedText);
   }, [initialSuggestedText]);
   useLayoutEffect(() => {
     if (ownership.id !== conversationId) {
       ownership.activate(conversationId);
-      setMessages([]);
-      setError(null);
-      setIsLoading(false);
+      setCurrentConvId(conversationId);
+      setLocalError(null);
+      routeNotices.current.clear();
       onVoiceAnchorChange?.(null);
     }
   }, [conversationId, ownership, onVoiceAnchorChange]);
 
+  useEffect(() => () => ownership.invalidate(), [ownership]);
+
   useEffect(() => {
-    return () => {
-      ownership.invalidate();
-      if (finishedTimerRef.current !== null) {
-        window.clearTimeout(finishedTimerRef.current);
-      }
-    };
-  }, []);
+    if (!runtime.finished) { setFinished(false); return; }
+    setFinished(true);
+    const timer = window.setTimeout(() => setFinished(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [runtime.finished, runtimeId]);
+
+  useEffect(() => {
+    if (!modelRoute) return;
+    const key = `${modelRoute.attempt_id ?? modelRoute.request_id}:${modelRoute.phase}`;
+    if (modelRoute.phase === "selected" || routeNotices.current.has(key)) return;
+    routeNotices.current.add(key);
+    if (modelRoute.phase === "switched" && modelRoute.from_tier === modelRoute.to_tier) return;
+    showToast(modelRoute.phase === "switched" ? `模型已切换到第 ${modelRoute.to_tier} 级，原因：${modelRouteReasonLabel(modelRoute.reason ?? "")}`
+      : modelRoute.phase === "recovered" ? "已恢复优先模型" : "本轮模型池所有候选均不可用", modelRoute.phase === "exhausted" ? "error" : "info");
+  }, [modelRoute]);
 
   const loadWorkflows = useCallback(() => {
     listWorkflows().then((result) => {
@@ -192,266 +161,28 @@ export default function ChatView({
 
   useEffect(() => {
     let active = true;
-    void getProviderReadiness().then((readiness) => {
-      if (active) setModelUnavailable(!readiness?.model.available);
+    void getChatModelReadiness(currentConvId).then((readiness) => {
+      if (active) setModelUnavailable(!readiness?.available);
     });
     return () => { active = false; };
-  }, []);
+  }, [currentConvId]);
 
   useEffect(() => {
     shouldFollowMessagesRef.current = true;
-    let cancelled = false;
-    setFinished(false);
-    if (finishedTimerRef.current !== null) {
-      window.clearTimeout(finishedTimerRef.current);
-      finishedTimerRef.current = null;
-    }
-    dispatchExecution({ type: "activate_conversation", conversationId });
-
-    if (!conversationId) {
-      setMessages([]);
-      setCurrentConvId(null);
-      return;
-    }
-
-    setCurrentConvId(conversationId);
-    const request = ownership.hydration();
-    loadConversation(conversationId).then(async (conversation) => {
-      if (cancelled || !ownership.ownsRequest(request)) return;
-      const anchor = conversation
-        && typeof conversation.id === "string"
-        && typeof conversation.title === "string"
-        && typeof conversation.updated_at === "number"
-        ? {
-            conversation_id: conversation.id,
-            title: conversation.title,
-            updated_at: conversation.updated_at,
-          }
-        : null;
-      onVoiceAnchorChange?.(anchor);
-      if (!conversation?.messages) return;
-      const loadedMessages = (conversation.messages as unknown[]).filter(
-        (message): message is Message => {
-          if (!message || typeof message !== "object") return false;
-          const candidate = message as Partial<Message>;
-          return (
-            typeof candidate.id === "string" &&
-            typeof candidate.role === "string" &&
-            typeof candidate.content === "string" &&
-            candidate.content.trim().length > 0
-          );
-        }
-      );
-      if (!ownership.admits(request)) return;
-      setMessages((current) => ownership.admits(request) ? loadedMessages : current);
-      dispatchExecution({
-        type: "hydrate_history",
-        conversationId,
-        toolCalls: loadedMessages.flatMap((message) => message.tool_calls || []),
-        executionHistory: conversation.execution_history,
-      });
-
-      const persistedRecords = hydratePersistedExecutionRecords(
-        conversation.execution_history,
-        conversationId
-      );
-      const approvalRecords = persistedRecords.filter(
-        (record) => record.approvalStatus === "pending" && record.approvalId
-      );
-      const [listedApprovals, ...lookups] = await Promise.all([
-        listPendingApprovals(),
-        ...approvalRecords.map((record) =>
-          getApproval(record.approvalId!).then(
-            (approval) => ({ approval, unavailable: false }),
-            () => ({ approval: null, unavailable: true })
-          )
-        ),
-      ]);
-      if (cancelled || !ownership.ownsRequest(request)) return;
-
-      if (!ownership.admits(request)) return;
-      const store = useApprovalStore.getState();
-      (listedApprovals || [])
-        .filter((approval) => approval.conversation_id === conversationId)
-        .forEach((approval) => store.add(approval));
-
-      approvalRecords.forEach((record, index) => {
-        const lookup = lookups[index] as
-          | { approval: PendingApproval | null; unavailable: boolean }
-          | undefined;
-        if (!lookup || lookup.unavailable) return;
-
-        const reconciliation = reconcilePersistedApproval(
-          record,
-          lookup.approval
-        );
-        if (reconciliation.kind === "pending") {
-          store.add(reconciliation.approval);
-        } else if (reconciliation.kind === "resolved") {
-          store.remove(record.approvalId!);
-          dispatchExecution({ type: "agent_event", event: reconciliation.event });
-        }
-      });
-    }).catch((error) => {
-      console.error("加载任务详情失败:", error);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId, conversationRefreshRevision, onVoiceAnchorChange]);
-
-  const clearResolvingForConversation = useCallback((targetId: string) => {
-    const store = useApprovalStore.getState();
-    selectPendingApprovals(store)
-      .filter((approval) => approval.conversation_id === targetId)
-      .forEach((approval) =>
-        store.markResolving(approval.approval_id, false)
-      );
-  }, []);
-
-  const handleAgentEvent = useCallback(
-    (event: AgentEvent) => {
-      if (!KNOWN_EVENT_TYPES.has(event.type)) {
-        if (!unknownEventTypes.current.has(event.type)) {
-          unknownEventTypes.current.add(event.type);
-          console.debug("Ignoring unknown agent event:", event.type);
-        }
-        return;
-      }
-
-      ownership.mutate();
-      if (event.type === "done" || event.type === "error" || event.type === "stream_end") ownership.finish();
-      dispatchExecution({ type: "agent_event", event });
-
-      switch (event.type) {
-        case "connected":
-          if (event.conversation_id) {
-            setCurrentConvId(event.conversation_id);
-            if (!conversationId) onConversationChange(event.conversation_id);
-          }
-          break;
-        case "approval_required":
-          if (event.approval_id) {
-            useApprovalStore.getState().add({
-              approval_id: event.approval_id,
-              conversation_id: event.conversation_id,
-              tool_call_id: event.tool_call_id || "",
-              tool_name: event.tool_name || "",
-              arguments: event.args || {},
-              risk_level: riskLevel(event.risk_level),
-              reason: event.reason || "",
-              status: "pending",
-              created_at: new Date().toISOString(),
-              expires_at: "",
-            });
-          }
-          break;
-        case "approval_resolved":
-          if (event.approval_id) {
-            useApprovalStore.getState().remove(event.approval_id);
-          }
-          break;
-        case "stream_end":
-          setIsLoading(false);
-          abortRef.current = null;
-          clearResolvingForConversation(event.conversation_id);
-          break;
-        case "done":
-          setIsLoading(false);
-          abortRef.current = null;
-          setFinished(true);
-          if (finishedTimerRef.current !== null) {
-            window.clearTimeout(finishedTimerRef.current);
-          }
-          finishedTimerRef.current = window.setTimeout(() => {
-            finishedTimerRef.current = null;
-            setFinished(false);
-          }, 1800);
-          break;
-        case "error":
-          setIsLoading(false);
-          abortRef.current = null;
-          setFinished(false);
-          setError(event.error || "生成失败，请重试");
-          clearResolvingForConversation(event.conversation_id);
-          break;
-      }
-    },
-    [clearResolvingForConversation, conversationId, onConversationChange]
-  );
-
-  const decisionContextRef = useRef({ currentConvId, handleAgentEvent });
-  useEffect(() => {
-    decisionContextRef.current = { currentConvId, handleAgentEvent };
-  }, [currentConvId, handleAgentEvent]);
-
-  const decisionGateRef = useRef<ReturnType<typeof createDecisionGate> | null>(
-    null
-  );
-  if (!decisionGateRef.current) {
-    decisionGateRef.current = createDecisionGate(async (approvalId, decision) => {
-      const store = useApprovalStore.getState();
-      ownership.start();
-      store.markResolving(approvalId, true);
-      setError(null);
-      setIsLoading(true);
-      const ticket = ownership.capture();
-      try {
-        const context = decisionContextRef.current;
-        const submit = decision === "approve" ? approveAction : rejectAction;
-        await submit(
-          approvalId,
-          context.currentConvId,
-          (event) => { if (ownership.current(ticket)) context.handleAgentEvent(event); }
-        );
-      } catch (requestError) {
-        if (!ownership.current(ticket)) throw requestError;
-        ownership.finish();
-        store.markResolving(approvalId, false);
-        setIsLoading(false);
-        setError(
-          requestError instanceof Error
-            ? requestError.message
-            : "审批请求失败，请重试"
-        );
-        throw requestError;
-      }
-    });
-  }
+    if (currentConvId) void chatRuntime.refresh(currentConvId);
+  }, [currentConvId, conversationRefreshRevision]);
 
   useEffect(() => {
-    const completed = execution.completed;
-    if (!completed) return;
-
-    if (completed.conversationId === ownership.id && completed.conversationId === currentConvId
-      && ownership.claimCompletion(completed.messageId)) {
-      ownership.mutate();
-      const assistantMessage: Message = {
-        id: completed.messageId,
-        role: "assistant",
-        content: completed.content,
-        created_at: Date.now(),
-        tool_calls:
-          completed.records.length > 0
-            ? toToolCallRecords(completed.records)
-            : undefined,
-      };
-      setMessages((current) =>
-        current.some((message) => message.id === assistantMessage.id)
-          ? current
-          : [...current, assistantMessage]
-      );
-    }
-    dispatchExecution({ type: "consume_completed" });
-  }, [currentConvId, execution.completed]);
+    const conversation = runtime.conversation;
+    if (conversation) onVoiceAnchorChange?.({ conversation_id: conversation.id, title: conversation.title, updated_at: conversation.updated_at });
+  }, [runtime.conversation, onVoiceAnchorChange]);
 
   const [isNearBottomState, setIsNearBottomState] = useState(true);
 
   useEffect(() => {
     if (!shouldFollowMessagesRef.current) return;
     scrollMessageListToBottom(messagesScrollRef.current);
-  }, [messages, runState.content, runState.order.length]);
+  }, [messages, runState.content, runState.reasoning, runState.order.length]);
 
   const handleMessageScroll = useCallback(
     (event: React.UIEvent<HTMLDivElement>) => {
@@ -469,119 +200,62 @@ export default function ChatView({
   }, []);
 
   const streaming = useMemo<StreamingState | null>(() => {
-    const hasLiveOutput = runState.content.length > 0 || runState.order.length > 0;
-    const visible =
-      isLoading ||
-      (hasLiveOutput && !runState.terminal && runState.connection !== "idle");
+    const visible = isLoading || (runtime.live && !runState.terminal);
     if (!visible) return null;
     return {
-      content: runState.content,
-      toolCalls: toToolCallRecords(runState),
+      content: runtime.live ? runState.content : "",
+      reasoning: runtime.live ? runState.reasoning : "",
+      toolCalls: runtime.live ? toToolCallRecords(runState) : [],
     };
-  }, [isLoading, runState]);
+  }, [isLoading, runState, runtime.live]);
 
   const handleApprove = useCallback((approval: PendingApproval) => {
-    void decisionGateRef.current
-      ?.submit(approval.approval_id, "approve")
-      .catch(() => undefined);
+    void chatRuntime.decide(approval, "approve").catch(() => undefined);
   }, []);
-
   const handleReject = useCallback((approval: PendingApproval) => {
-    void decisionGateRef.current
-      ?.submit(approval.approval_id, "reject")
-      .catch(() => undefined);
+    void chatRuntime.decide(approval, "reject").catch(() => undefined);
   }, []);
 
   const handleSend = useCallback(
-    async (text: string, resourceIds: string[] = []) => {
-      if (!text.trim() || isLoading) return false;
+    async (text: string, resourceIds: string[] = [], options?: ChatRequestOptions) => {
+      if (!text.trim() || isLoading || pendingApprovals.length > 0) return false;
       let ticket = ownership.capture();
-      const readiness = await getProviderReadiness();
-      if (!ownership.current(ticket)) return false;
-      if (!readiness?.model.available) {
-        setModelUnavailable(true);
-        return false;
+      if (!options?.model_profile_id) {
+        const readiness = await getChatModelReadiness(currentConvId);
+        if (!ownership.current(ticket)) return false;
+        if (!readiness?.available) { setModelUnavailable(true); return false; }
       }
       setModelUnavailable(false);
-      let targetConversationId = currentConvId;
+      let targetId = currentConvId;
+      if (!targetId) {
+        const created = await createConversation(text.trim().slice(0, 80));
+        if (!ownership.current(ticket)) return false;
+        targetId = created.id;
+        ownership.promote(targetId);
+        ticket = ownership.capture();
+        setCurrentConvId(targetId);
+        onConversationChange(targetId);
+      }
       if (resourceIds.length > 0) {
-        if (!targetConversationId) {
-          const created = await createConversation(text.trim().slice(0, 80));
-          if (!ownership.current(ticket)) return false;
-          if (!created || typeof created.id !== "string" || !created.id.trim()) {
-            throw new Error("创建附件会话失败");
-          }
-          targetConversationId = created.id;
-          ownership.promote(created.id);
-          ticket = ownership.capture();
-          setCurrentConvId(created.id);
-          onConversationChange(created.id);
-        }
-        const boundConversationId = targetConversationId;
-        if (!boundConversationId) throw new Error("附件会话标识不可用");
-        await bindResources(
-          { kind: "conversation", conversation_id: boundConversationId },
-          resourceIds,
-        );
+        await bindResources({ kind: "conversation", conversation_id: targetId }, resourceIds);
       }
       if (!ownership.current(ticket)) return false;
-      ownership.start();
       shouldFollowMessagesRef.current = true;
-      setError(null);
-      setFinished(false);
-      setLastSubmittedText(text);
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "user",
-          content: text,
-          created_at: Date.now(),
-        },
-      ]);
-      dispatchExecution({ type: "start_run", conversationId: targetConversationId });
-      setIsLoading(true);
-      abortRef.current = sendMessage(
-        text,
-        targetConversationId,
-        (event) => {
-          if (!ownership.current(ticket)) return;
-          if (event.type === "connected" && event.conversation_id && ownership.id === null) {
-            ownership.promote(event.conversation_id);
-            ticket = ownership.capture();
-          }
-          handleAgentEvent(event);
-        },
-        activeWorkflow?.id
-      );
-      return true;
-    },
-    [activeWorkflow, currentConvId, handleAgentEvent, isLoading, onConversationChange]
+      setLocalError(null);
+      return chatRuntime.send(targetId, text, activeWorkflow?.id, options);
+    }, [activeWorkflow, currentConvId, isLoading, pendingApprovals.length, onConversationChange, ownership]
   );
 
   const handleRetry = useCallback(() => {
-    const retryText = lastSubmittedText.trim();
-    if (!retryText || isLoading) return;
-    ownership.mutate();
-    setMessages((current) => {
-      const last = current[current.length - 1];
-      return last?.role === "user" && last.content === retryText
-        ? current.slice(0, -1)
-        : current;
-    });
-    void handleSend(retryText);
-  }, [handleSend, isLoading, lastSubmittedText]);
+    if (runtime.lastSubmittedText.trim() && !isLoading) void handleSend(runtime.lastSubmittedText);
+  }, [handleSend, isLoading, runtime.lastSubmittedText]);
 
   const handleStop = useCallback(async () => {
-    const ticket = ownership.capture();
-    abortRef.current?.abort();
-    if (currentConvId) await stopGeneration(currentConvId);
-    if (!ownership.current(ticket)) return;
-    handleAgentEvent({
-      type: "stream_end",
-      conversation_id: currentConvId || "",
-    });
-  }, [currentConvId, handleAgentEvent]);
+    if (currentConvId) await chatRuntime.stop(currentConvId);
+  }, [currentConvId]);
+  const handleWorkspaceMode = useCallback(async (mode: WorkspaceMode) => {
+    await chatRuntime.changeWorkspaceMode(runtimeId, mode);
+  }, [runtimeId]);
 
   const handleSelectWorkflow = useCallback((workflow: Workflow | null) => {
     if (!workflow) {
@@ -600,8 +274,9 @@ export default function ChatView({
 
   return (
     <>
-      <div className={`${CHAT_COLUMN_VIEWPORT_CLASS_NAME} ${chatModeClass}`}>
+      <div className={`chat-region ${CHAT_COLUMN_VIEWPORT_CLASS_NAME} ${chatModeClass}`} data-workspace-mode={runtime.workspaceMode}>
         <ChatHeader
+          panelControls={headerActions}
           title="智能工作台"
           connection={runState.connection}
           activeWorkflow={activeWorkflow}
@@ -625,6 +300,7 @@ export default function ChatView({
             </button>
           </section>
         ) : null}
+        <ModelRouteNotice route={modelRoute}/>
 
         {pendingApprovals.length > 0 && (
           <div
@@ -647,6 +323,10 @@ export default function ChatView({
 
       {messages.length === 0 && !streaming && !error ? (
         <WorkbenchHome
+          workspaceMode={runtime.workspaceMode}
+          onWorkspaceModeChange={handleWorkspaceMode}
+          modeChanging={runtime.modeChanging}
+          modeError={runtime.modeError}
           connection={runState.connection}
           pendingApprovals={pendingApprovals}
           isLoading={isLoading}
@@ -690,6 +370,10 @@ export default function ChatView({
 
           <footer className="conversation-composer shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
             <ChatInput
+              workspaceMode={runtime.workspaceMode}
+              onWorkspaceModeChange={handleWorkspaceMode}
+              modeChanging={runtime.modeChanging}
+              modeError={runtime.modeError}
               onSend={handleSend}
               conversationId={currentConvId}
               isLoading={isLoading}

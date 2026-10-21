@@ -6,12 +6,26 @@ import { request } from "../core/api/http";
 import { requestResult } from "../core/api/http";
 
 // ── Skills ──
+export interface SkillCompatibility {
+  status: "portable" | "adapted" | "external_host";
+  runtime_ready: boolean;
+  required_tools: string[];
+  missing_tools: string[];
+  tool_mappings: { from: string; to: string; instructions: string }[];
+  reason: string;
+}
 
 export interface SkillSummary {
   name: string;
   description: string;
   path: string;
   editable: boolean;
+  display_name?: string;
+  source_id?: string;
+  source?: string;
+  source_kind?: string;
+  source_root?: string;
+  compatibility?: SkillCompatibility;
 }
 
 export interface SkillDetail extends SkillSummary {
@@ -113,4 +127,20 @@ export interface SubagentMetadata {
 
 export async function listSubagents() {
   return request<SubagentMetadata[]>("GET", "/api/subagents");
+}
+
+export interface PluginFeatureEntry {
+  plugin_id: string;
+  plugin_name: string;
+  id: string;
+  title: string;
+  description: string;
+  resource_id: string | null;
+  target: { kind: "skill" | "workflow" | "agent"; contribution: string };
+  content: string;
+}
+export async function listPluginFeatures(): Promise<PluginFeatureEntry[]> {
+  const result = await requestResult<{ features: PluginFeatureEntry[] }>("GET", "/api/plugins/features");
+  if (!result.ok) throw new Error(result.error);
+  return result.data.features;
 }

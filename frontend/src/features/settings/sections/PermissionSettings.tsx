@@ -2,6 +2,8 @@ import type { IsolationStatus, SecurityGrant } from "../../../api/client";
 import { Badge } from "../../../components/ui";
 import type { AppConfig } from "../../../types";
 import { GrantEditor } from "../../security/GrantEditor";
+import { AccessMatrix } from "../../security/AccessMatrix";
+import { approvalModes } from "../../../components/chat/chatRequestOptions";
 import { isolationRows } from "../../security/grantEditorModel";
 
 interface PermissionSettingsProps {
@@ -21,33 +23,17 @@ export default function PermissionSettings({
 }: PermissionSettingsProps) {
   return (
     <>
-      <section className="settings-card">
-      <header className="settings-card-header"><div><h3>操作确认</h3><p>决定哪些操作直接运行，哪些操作需要用户确认。</p></div></header>
-      <div className="settings-card-body">
-      <div>
-        <label className="settings-control-label">执行模式</label>
-        <select
-          value={config.permissions.mode}
-          onChange={(e) => updateField("permissions", "mode", e.target.value)}
-          className="settings-select"
-        >
-          <option value="yolo">YOLO — 自动执行所有操作</option>
-          <option value="ask">Ask — 每次操作前确认</option>
-          <option value="plan">Plan — 仅执行已批准的计划</option>
-        </select>
-      </div>
-      <div>
-        <label className="settings-control-label">需确认的工具</label>
-        <input
-          type="text"
-          value={config.permissions.interrupt_on.join(", ")}
-          onChange={(e) => updateField("permissions", "interrupt_on", e.target.value.split(",").map((s) => s.trim()).filter(Boolean))}
-          placeholder="bash, write_file, edit_file"
-          className="settings-text-input"
-        />
-        <p className="settings-help">使用英文逗号分隔工具名称。高风险工具仍受安全网关约束。</p>
-      </div>
-      </div>
+      <section className="settings-card settings-card--wide">
+        <header className="settings-card-header"><div><h3>操作权限</h3><p>选择小昔涟执行操作时需要向你请求批准的时机。</p></div></header>
+        <div className="settings-card-body">
+          <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="审批模式">
+            {approvalModes.map(mode => <label key={mode.value} className={`cursor-pointer rounded-xl border p-4 ${config.permissions.mode === mode.value ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border-soft)]"}`}>
+              <span className="flex items-center gap-2 font-semibold"><input type="radio" name="approval-mode" value={mode.value} checked={config.permissions.mode === mode.value} onChange={() => updateField("permissions", "mode", mode.value)} />{mode.label}</span>
+              <p className="settings-help mt-2">{mode.description}</p>
+            </label>)}
+          </div>
+          <details className="mt-4"><summary className="cursor-pointer text-sm text-[var(--text-muted)]">高级范围约束</summary><div className="mt-3"><AccessMatrix /></div></details>
+        </div>
       </section>
 
       <section className="settings-card">
@@ -63,7 +49,7 @@ export default function PermissionSettings({
       </section>
 
       <section className="settings-card settings-card--wide">
-        <header className="settings-card-header"><div><h3>资源授权</h3><p>查看持久化授权；新增授权是显式操作，不会由一次审批自动创建。</p></div></header>
+        <header className="settings-card-header"><div><h3>已有资源授权</h3><p>查看原有资源授权；显式禁止仍会阻止匹配操作。新权限范围在上方设置。</p></div></header>
         <div className="settings-card-body">
       <GrantEditor grants={grants} onChanged={onGrantsChanged} />
         </div>

@@ -2,12 +2,12 @@ import { ArrowLeft } from "lucide-react";
 import Identifier from "../../components/Identifier";
 import { formatIdentifier } from "../../utils/identifiers";
 
-export default function StudioHeader({graphId,revision,pending,error,onRetry,onBack}: {
+export default function StudioHeader({graphId,revision,pending,error,onRetry,onBack,backLabel="任务中心"}: {
   graphId:string; revision:number|null; pending:boolean; error:string|null;
-  onRetry:()=>void; onBack:()=>void;
+  onRetry:()=>void; onBack:()=>void; backLabel?:string;
 }) {
   return <header className="studio-header">
-    <button type="button" className="studio-back" aria-label="任务中心" title="返回任务中心" onClick={onBack}><ArrowLeft size={18}/></button>
+    <button type="button" className="studio-back" aria-label={backLabel} title={`返回${backLabel}`} onClick={onBack}><ArrowLeft size={18}/></button>
     <div className="studio-identity"><span className="studio-eyebrow">忆涟 · Studio</span><h1 aria-label={`任务图 ${formatIdentifier("graph", graphId)}`}><Identifier kind="graph" value={graphId} /></h1></div>
     <div className="studio-save" role="status" data-save-state={error?"failed":pending?"saving":revision===null?"loading":"synced"}>
       <span className="studio-save-dot" aria-hidden="true"/>

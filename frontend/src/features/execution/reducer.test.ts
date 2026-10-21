@@ -10,6 +10,23 @@ import {
 } from "./reducer";
 
 describe("reduceAgentEvent", () => {
+  it("reconciles a partial live thought with the complete persisted provider snapshot", () => {
+    let state = createInitialAgentRunState("c");
+    state = reduceAgentEvent(state, { type: "reasoning", conversation_id: "c", token: "first " });
+    state = reduceAgentEvent(state, { type: "reasoning_snapshot", conversation_id: "c", token: "prior approval. first second third" });
+    expect(state.reasoning).toBe("prior approval. first second third");
+  });
+  it("replaces interrupted model text while preserving completed tool records", () => {
+    let state = createInitialAgentRunState("conv-pool");
+    state = reduceAgentEvent(state,{type:"token",conversation_id:"conv-pool",token:"中断片段"});
+    state = reduceAgentEvent(state,{type:"tool_start",conversation_id:"conv-pool",tool_call_id:"written",tool_name:"write_file"});
+    state = reduceAgentEvent(state,{type:"tool_end",conversation_id:"conv-pool",tool_call_id:"written",status:"success",result:"saved"});
+    state = reduceAgentEvent(state,{type:"model_route",conversation_id:"conv-pool",phase:"switched",replace_content:true,interrupted_content:"中断片段"});
+    expect(state.content).toBe("");
+    expect(state.records.written.result).toBe("saved");
+    state = reduceAgentEvent(state,{type:"token",conversation_id:"conv-pool",token:"新回答"});
+    expect(state.content).toBe("新回答");
+  });
   it("records real tool start and end times for elapsed display", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-17T12:00:00.000Z"));

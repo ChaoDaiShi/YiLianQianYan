@@ -18,6 +18,15 @@ export default function AppearanceSettings({ theme, onBackgroundUpload }: Appear
   return (
     <>
       <section className="settings-card settings-card--wide">
+        <header className="settings-card-header"><div><h3>字体大小</h3><p>调整界面文字，页面与弹窗立即生效，并自动保存。</p></div></header>
+        <div className="settings-card-body">
+          <label className="settings-control-label" htmlFor="interface-font-size">界面字号 {theme.theme.fontSize}px</label>
+          <input id="interface-font-size" aria-label="界面字号" type="range" min="12" max="20" step="1" value={theme.theme.fontSize} onChange={event => theme.updateTheme({ fontSize: Number(event.target.value) })} className="mt-3 block w-full" />
+          <p className="settings-help mt-2">12px 小 · 14px 默认 · 20px 大</p>
+        </div>
+      </section>
+      <section className="settings-card settings-card--wide"><header className="settings-card-header"><div><h3>表面透明度</h3><p>调整容器背景，文字与图标保持清晰。</p></div></header><div className="settings-card-body"><label className="settings-control-label">面板不透明度 {Math.round(theme.theme.panelOpacity*100)}%<input aria-label="面板不透明度" type="range" min="35" max="100" value={Math.round(theme.theme.panelOpacity*100)} onChange={event=>theme.updateTheme({panelOpacity:Number(event.target.value)/100})} className="mt-3 block w-full"/></label><label className="settings-control-label">背景模糊 {theme.theme.blur}px<input aria-label="背景模糊" type="range" min="0" max="24" value={theme.theme.blur} onChange={event=>theme.updateTheme({blur:Number(event.target.value)})} className="mt-3 block w-full"/></label></div></section>
+      <section className="settings-card settings-card--wide">
       <header className="settings-card-header"><div><h3>界面模式</h3><p>切换适合当前环境的明暗层级，状态颜色保持一致。</p></div></header>
       <div className="settings-card-body">
       <div

@@ -63,12 +63,13 @@ type StudioPanel = "trail" | "inspector" | "tools" | "proofloop" | null;
  * behaviour lives in `hooks/` and all the presentation in `inspector/` and
  * `TaskWorldCanvas`.
  */
-export default function TaskWorldPage() {
-  const { graphId = "" } = useParams();
-  return <TaskWorldSession key={graphId} graphId={graphId} />;
+export default function TaskWorldPage({ graphId: selectedGraphId, onBack }: { graphId?: string; onBack?: () => void } = {}) {
+  const { graphId: routeGraphId = "" } = useParams();
+  const graphId = selectedGraphId ?? routeGraphId;
+  return <TaskWorldSession key={graphId} graphId={graphId} onBack={onBack} />;
 }
 
-function TaskWorldSession({ graphId }: { graphId: string }) {
+function TaskWorldSession({ graphId, onBack }: { graphId: string; onBack?: () => void }) {
   const navigate = useNavigate();
   const capabilities = useCanvasCapabilities();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -331,7 +332,7 @@ function TaskWorldSession({ graphId }: { graphId: string }) {
   return (
     <div className="canvas-studio page-canvas">
       <CapabilityPicker open={pickerOpen} onClose={()=>setPickerOpen(false)} items={capabilities.items} onSelect={tool=>void addCapability(tool)} onRefresh={()=>void capabilities.refresh(true)} loading={capabilities.loading} error={capabilities.error}/>
-      <StudioHeader graphId={projection.graphId} revision={view?.view_revision ?? null} pending={canvasSavePending} error={canvasSaveError?.message ?? null} onRetry={retrySave} onBack={()=>navigate("/tasks")}/>
+      <StudioHeader graphId={projection.graphId} revision={view?.view_revision ?? null} pending={canvasSavePending} error={canvasSaveError?.message ?? null} onRetry={retrySave} onBack={onBack ?? (()=>navigate("/tasks"))} backLabel={onBack ? "工作流列表" : "任务中心"}/>
       <div className="studio-view-switch" role="group" aria-label="任务工作台视图">
         <Button type="button" size="sm" variant={viewMode === "goal" ? "secondary" : "ghost"} aria-pressed={viewMode === "goal"} onClick={() => setViewMode("goal")}><Eye size={14}/>目标视图</Button>
         <Button type="button" size="sm" variant={viewMode === "expert" ? "secondary" : "ghost"} aria-pressed={viewMode === "expert"} onClick={() => setViewMode("expert")}><Settings2 size={14}/>专家视图</Button>

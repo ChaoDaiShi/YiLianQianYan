@@ -113,7 +113,9 @@ export interface AgentDefinition {
   id: string;
   name: string;
   description: string;
-  instructions: string;
+  user_prompt: string;
+  persona_enabled: boolean;
+  persona: import("../features/agents/persona").Persona;
   allowed_tools: string[];
   model?: string | null;
   capabilities: string[];
@@ -243,7 +245,9 @@ export async function listAgents() {
 export async function createAgent(data: {
   name: string;
   description?: string;
-  instructions?: string;
+  user_prompt?: string;
+  persona_enabled?: boolean;
+  persona?: import("../features/agents/persona").Persona;
   allowed_tools?: string[];
   model?: string;
   capabilities?: string[];

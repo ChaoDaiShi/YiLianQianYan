@@ -28,14 +28,14 @@ describe("capability source management", () => {
   it("routes editable providers to their real management surface", () => {
     expect(getCapabilityManagementTarget(capability({ provider: "skill_runtime" }))).toEqual({
       label: "管理技能来源",
-      to: "/skills?skill=organize-files",
+      to: "/capabilities?category=skill&skill=organize-files",
     });
     expect(getCapabilityManagementTarget(capability({ provider: "mcp", metadata: { source_id: "local fs", source_name: null, tags: [], runtime_ready: true, extra: {} } }))).toEqual({
       label: "管理 MCP 服务",
-      to: "/plugins?server=local%20fs",
+      to: "/capabilities?category=mcp&server=local%20fs",
     });
     expect(getCapabilityManagementTarget(capability({ provider: "agent_runtime", metadata: { source_id: "agent-1", source_name: null, tags: [], runtime_ready: true, extra: {} } }))).toEqual({ label: "管理智能体来源", to: "/agents?agent=agent-1" });
-    expect(getCapabilityManagementTarget(capability({ provider: "workflow_runtime", metadata: { source_id: "flow-1", source_name: null, tags: [], runtime_ready: true, extra: {} } }))).toEqual({ label: "管理工作流来源", to: "/workflows?workflow=flow-1" });
+    expect(getCapabilityManagementTarget(capability({ provider: "workflow_runtime", metadata: { source_id: "flow-1", source_name: null, tags: [], runtime_ready: true, extra: {} } }))).toEqual({ label: "管理工作流来源", to: "/capabilities?category=workflow&workflow=flow-1" });
   });
 
   it("does not pretend builtin capabilities are directly editable", () => {

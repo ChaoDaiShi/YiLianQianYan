@@ -1,12 +1,13 @@
 import type { Message, ToolCallRecord } from "../../types";
 import { MESSAGE_LIST_VIEWPORT_CLASS_NAME } from "../layout/workspaceLayout";
 import { presentExecutionError } from "./errorDisplay";
-import AgentProgressCard from "./AgentProgressCard";
+import MessageProcess from "./MessageProcess";
 import MessageBubble from "./MessageBubble";
 import StreamingText from "./StreamingText";
 
 export interface StreamingState {
   content: string;
+  reasoning?: string;
   toolCalls: ToolCallRecord[];
 }
 
@@ -83,21 +84,17 @@ export default function MessageList({
       className={`${MESSAGE_LIST_VIEWPORT_CLASS_NAME} conversation-message-list`}
     >
       <div className="message-column conversation-message-list-inner">
-        {messages.map((message, index) => (
+        {messages.map((message) => (
           <MessageBubble
             key={message.id}
             message={message}
-            showAssistantAvatar={
-              message.role === "assistant" &&
-              messages[index - 1]?.role !== "assistant"
-            }
             onSpeak={onSpeak}
           />
         ))}
 
         {streaming && (
           <div className="conversation-streaming-state mb-4 animate-msg-in">
-            <AgentProgressCard toolCalls={streaming.toolCalls} />
+            <MessageProcess process={{ reasoning: streaming.reasoning, tools: streaming.toolCalls.map(record => ({ ...record, execution: record })) }}/>
 
             {streaming.content && (
               <div className="conversation-streaming-message conversation-message-assistant min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
@@ -105,7 +102,7 @@ export default function MessageList({
               </div>
             )}
 
-            {!streaming.content && streaming.toolCalls.length === 0 && (
+            {!streaming.content && !streaming.reasoning && streaming.toolCalls.length === 0 && (
               <div className="conversation-streaming-wait flex items-center gap-3 px-1 py-3" aria-label="正在生成">
                 <span className="text-xs text-[var(--text-secondary)]">
                   正在接收小昔涟的回复…

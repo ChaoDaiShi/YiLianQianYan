@@ -1,3 +1,5 @@
+import { useCallConnection } from "./runtime/useCallConnection";
+import { useVoiceProductState } from "./model/useVoiceProductState";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   dispatchVoiceTurn,
@@ -10,7 +12,7 @@ import {
   type PresenceSnapshot,
   type VoiceRuntimeSnapshot,
 } from "../../api/voice";
-import { GlobalVoiceContextBridge, mergeVoiceContext } from "./context/VoiceContext";
+import { GlobalVoiceContextBridge, projectVoiceContextPatch, selectBrowsingCallContext } from "./context/VoiceContext";
 import {
   EMPTY_PRESENCE,
   contextFromSession,
@@ -34,9 +36,11 @@ import { runFinalTranscriptFlow, type TurnFlowRuntime } from "./turnFlow";
 import { useHandsFree } from "./useHandsFree";
 import { synchronizeVoiceContext } from "./voiceContextSync";
 import { type ChatVoiceControls } from "./ChatVoiceInput";
-import { GlobalVoiceLeaf, type GlobalVoiceProductState } from "./GlobalVoiceLeaf";
+import { GlobalVoiceLeaf } from "./GlobalVoiceLeaf";
 import { useGlobalVoiceRuntime } from "./runtime/useGlobalVoiceRuntime";
 import "./globalVoice.css";
+import { desktopFloatingAvailable, useFloatingPublisher } from "./floatingSurface";
+import type { CallPresentation } from "./callPresentation";
 
 // `./GlobalVoiceHost` stays the module's public entry. The context bridge,
 // the pure projections and the route policy now live in `context/` and
@@ -70,9 +74,16 @@ export default function GlobalVoiceHost({
   );
   const [expanded, setExpanded] = useState(initialExpanded);
   const [notice, setNotice] = useState<string | null>(null);
+  const [routeNotice,setRouteNotice]=useState<string|null>(null);
   const [targetDescription, setTargetDescription] = useState("尚未解析");
   const [intentDescription, setIntentDescription] = useState("会话对话");
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
+  const [connecting,setConnecting]=useState(false);
+  const [microphoneMuted,setMicrophoneMuted]=useState(false);
+  const [connectedAt,setConnectedAt]=useState<string|null>(null);
+  const [callChecks,setCallChecks]=useState({session:false,microphone:false,stt:false,tts:false,output:false});
+  const callStartEpoch=useRef(0);
+
   const [globalConversationEnabled, setGlobalConversationEnabled] = useState(
     Boolean(initialSnapshot?.session && initialSnapshot.session.state !== "ended"),
   );
@@ -93,11 +104,20 @@ export default function GlobalVoiceHost({
     contextFromSession(initialSnapshot?.session ?? null),
   );
   runtime.commitContext(voiceContext);
+  const [browsingContext,setBrowsingContext]=useState(voiceContext);
+  const browsingContextRef=useRef(voiceContext);
+  const callPinnedRef=useRef(Boolean(initialSnapshot?.session&&initialSnapshot.session.state!=="ended"));
+  const pendingAnchorSwitchRef=useRef<string|null>(null);
+  const microphoneMutedRef=useRef(microphoneMuted);microphoneMutedRef.current=microphoneMuted;
+
 
   const updateContext = useCallback((patch: GlobalVoiceContextPatch) => {
     localContextTouchedRef.current = true;
-    const previous = runtime.readContext();
-    const next = mergeVoiceContext(previous, patch);
+    const previous=runtime.readContext();
+    const projection=projectVoiceContextPatch(previous,browsingContextRef.current,patch,callPinnedRef.current);
+    browsingContextRef.current=projection.browsing;setBrowsingContext(projection.browsing);
+    if(projection.active===previous)return;
+    const next=projection.active;
     if (next.conversational_anchor?.conversation_id !== previous.conversational_anchor?.conversation_id) {
       runtime.bumpIdentityEpoch();
       invalidateContextRef.current();
@@ -183,6 +203,7 @@ export default function GlobalVoiceHost({
         }
         return { ...previous, session: updated };
       });
+      if(pendingAnchorSwitchRef.current===updated.conversational_anchor?.conversation_id && contextMatchesSession(runtime.readContext(),updated)){pendingAnchorSwitchRef.current=null;setHandsFreeEnabled(!microphoneMutedRef.current);if(microphoneMutedRef.current)setConnecting(false);}
     }).catch((error) => {
       if (controller.signal.aborted || runtime.readEpoch() !== epoch) return;
       setNotice(error instanceof Error ? error.message : "语音上下文同步失败。");
@@ -245,7 +266,7 @@ export default function GlobalVoiceHost({
     beginContinuation: runtime.beginContinuation,
     endContinuation: runtime.endContinuation,
     dispatchVoiceTurn,
-    runContinuation: runVoiceContinuation,
+    runContinuation:(continuation,options)=>runVoiceContinuation(continuation,{...options,onEvent:event=>{options.onEvent?.(event);if(event.type==="model_route"){const route=event as unknown as {phase:string;from_tier:number|null;to_tier:number|null};if(route.phase==="switched"&&route.to_tier!==route.from_tier)setRouteNotice(`已切换到第 ${route.to_tier} 级模型`);else if(route.phase==="recovered")setRouteNotice("已恢复使用一级模型");}}}),
     speak: (text) => playbackRef.current.speak(text),
   }), [finishChatOwnedSession, runtime]);
 
@@ -310,7 +331,8 @@ export default function GlobalVoiceHost({
         return handle;
       },
     },
-    onError: (message) => { setHandsFreeEnabled(false); capture.cancel(); setNotice(message); },
+    onReady:()=>{setCallChecks(value=>({...value,microphone:true}));setConnecting(false);setConnectedAt(value=>value??new Date().toISOString());},
+    onError: (message) => { setConnecting(false);setHandsFreeEnabled(false); capture.cancel(); setNotice(message); },
   });
 
   const startSession = useCallback(async (showGlobalConversation = true): Promise<GlobalVoiceSession | null> => {
@@ -333,7 +355,11 @@ export default function GlobalVoiceHost({
   }, [playback, runtime, voiceContext.focused_surface]);
 
   const endSession = useCallback(async () => {
-    if (!session) return;
+    callPinnedRef.current=false;pendingAnchorSwitchRef.current=null;
+    callStartEpoch.current+=1;setConnecting(false);setHandsFreeEnabled(false);setConnectedAt(null);
+    runtime.bumpEpoch();runtime.abortContinuation();capture.cancel();playback.interrupt();
+    runtime.commitContext(browsingContextRef.current);setVoiceContext(browsingContextRef.current);
+    if (!session){setGlobalConversationEnabled(false);return;}
     runtime.beginCaptureOperation();
     setHandsFreeEnabled(false);
     const requestEpoch = runtime.bumpEpoch();
@@ -361,6 +387,7 @@ export default function GlobalVoiceHost({
         }
       },
     });
+    if(runtime.readEpoch()!==requestEpoch)return;
     chatDraftCaptureRef.current = false;
     pendingChatCaptureRef.current = false;
     chatOwnedSessionRef.current = null;
@@ -435,12 +462,20 @@ export default function GlobalVoiceHost({
     subscribeChatFinal,
   ]);
 
-  const requestGlobalVoiceSession = useCallback(() => {
-    setGlobalConversationEnabled(true);
-    setExpanded(true);
-    setHandsFreeEnabled(true);
-    if (!session || session.state === "ended") void startSession(true);
-  }, [session, startSession]);
+  const requestGlobalVoiceSession=useCallConnection({session,epoch:callStartEpoch,startSession:()=>startSession(true),
+    onStart:()=>{callPinnedRef.current=true;setGlobalConversationEnabled(true);setExpanded(true);setConnecting(true);setNotice(null);setMicrophoneMuted(false);setHandsFreeEnabled(false);setConnectedAt(null);setCallChecks({session:false,microphone:false,stt:false,tts:false,output:false});},
+    onOutputReady:()=>setCallChecks(value=>({...value,output:true})),onServicesReady:(stt,tts)=>setCallChecks(value=>({...value,stt,tts})),
+    onSessionReady:()=>{setCallChecks(value=>({...value,session:true}));setHandsFreeEnabled(true);},onFailure:message=>{setConnecting(false);setHandsFreeEnabled(false);setNotice(message);},
+  });
+  const toggleMicrophone=useCallback(()=>{const next=!microphoneMuted;setMicrophoneMuted(next);setHandsFreeEnabled(!next);if(next)capture.cancel();},[capture.cancel,microphoneMuted]);
+
+  const switchToBrowsingConversation=useCallback(()=>{
+    const previous=runtime.readContext();const next=selectBrowsingCallContext(previous,browsingContextRef.current);
+    if(next===previous)return;
+    setHandsFreeEnabled(false);setConnecting(true);pendingAnchorSwitchRef.current=next.conversational_anchor!.conversation_id;
+    runtime.beginCaptureOperation();runtime.bumpEpoch();runtime.bumpIdentityEpoch();runtime.abortContinuation();capture.cancel();playback.interrupt();
+    runtime.commitContext(next);setVoiceContext(next);
+  },[runtime,capture.cancel,playback.interrupt]);
 
   const speakAssistantMessage = useCallback((text: string) => {
     const message = text.trim();
@@ -481,33 +516,7 @@ export default function GlobalVoiceHost({
     }
   }, [capture.state.status, playback.state.status]);
 
-  const productState = useMemo<GlobalVoiceProductState>(() => {
-    if (capture.state.status === "error" || playback.state.status === "error" || notice) {
-      return "error";
-    }
-    if (awaitingConfirmation) return "confirmation";
-    if (
-      playback.state.status === "synthesizing" ||
-      playback.state.status === "playing" ||
-      playback.state.status === "paused"
-    ) {
-      return "speaking";
-    }
-    if (
-      capture.state.status === "acquiring" ||
-      capture.state.status === "transcribing" ||
-      session?.state === "processing"
-    ) {
-      return "understanding";
-    }
-    return "listening";
-  }, [
-    awaitingConfirmation,
-    capture.state.status,
-    notice,
-    playback.state.status,
-    session?.state,
-  ]);
+  const productState=useVoiceProductState({capture:capture.state.status,playback:playback.state.status,notice,connecting,muted:microphoneMuted,awaitingConfirmation,session:session?.state});
 
   const currentContextDescription = [
     voiceContext.active_task ? `当前任务：${voiceContext.active_task}` : "",
@@ -515,9 +524,7 @@ export default function GlobalVoiceHost({
       ? `当前对话：${voiceContext.conversational_anchor.title}`
       : "",
   ].filter(Boolean).join(" · ") || "当前页面";
-  const captureActive = capture.state.status === "acquiring"
-    || capture.state.status === "listening"
-    || capture.state.status === "transcribing";
+
 
   const contextBridge = useMemo<GlobalVoiceContextBridgeValue>(() => ({
     context: voiceContext,
@@ -537,30 +544,23 @@ export default function GlobalVoiceHost({
     voiceContext,
   ]);
 
+  const callPresentation=useMemo<CallPresentation>(()=>({session_id:session?.voice_session_id??null,phase:!globalConversationEnabled?"ended":productState==="understanding"||productState==="confirmation"?"thinking":productState,conversation_id:session?.conversational_anchor?.conversation_id??null,muted:microphoneMuted,speaker_enabled:!playback.state.muted,connected_at:connectedAt,caption:finalTranscript||snapshot?.partial_transcript||"",notice:notice??routeNotice,checks:callChecks,conversation_title:session?.conversational_anchor?.title??null,browsing_conversation_title:browsingContext.conversational_anchor?.title??null,can_switch_conversation:globalConversationEnabled&&!connecting&&browsingContext.focused_surface==="conversation"&&!!browsingContext.conversational_anchor&&browsingContext.conversational_anchor.conversation_id!==session?.conversational_anchor?.conversation_id}),[session,globalConversationEnabled,productState,microphoneMuted,playback.state.muted,connectedAt,finalTranscript,snapshot?.partial_transcript,notice,routeNotice,callChecks,browsingContext,connecting]);
+  useFloatingPublisher("call",callPresentation,action=>{if(action==="end")void endSession();else if(action==="microphone")toggleMicrophone();else if(action==="speaker")playback.toggleMute();else if(action==="start")requestGlobalVoiceSession();else if(action==="switch_conversation")switchToBrowsingConversation();});
   return (
     <GlobalVoiceContextBridge.Provider value={contextBridge}>
       <div className="global-voice-host">
         {children}
-        {globalConversationEnabled ? (
+        {globalConversationEnabled && !desktopFloatingAvailable() ? (
           <GlobalVoiceLeaf
             state={productState}
             expanded={expanded}
             heardText={(finalTranscript || snapshot?.partial_transcript) || undefined}
             currentContext={currentContextDescription}
             interpretedAction={intentDescription || targetDescription}
-            microphoneLabel={capture.state.status === "listening"
-              ? "停止录音"
-              : captureActive
-                ? "取消输入"
-                : "开始说话"}
+            microphoneLabel={microphoneMuted?"取消麦克风静音":"麦克风静音"}
             soundLabel={playback.state.muted ? "打开声音" : "静音"}
             onToggleExpanded={() => setExpanded((value) => !value)}
-            onMicrophone={() => {
-              if (capture.state.status === "listening") capture.stop();
-              else if (captureActive) capture.cancel();
-              else if (session && session.state !== "ended") void startCapture(false);
-              else requestGlobalVoiceSession();
-            }}
+            onMicrophone={toggleMicrophone}
             onSound={playback.toggleMute}
             onEnd={() => void endSession()}
             soundDisabled={!session || session.state === "ended"}

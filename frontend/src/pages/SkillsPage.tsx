@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Brain, Check, Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { Brain, Check, Copy, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { refreshSkillDiscovery } from "../api/skillDiscovery";
 import { useSearchParams } from "react-router-dom";
 import {
   createSkill,
@@ -21,21 +22,24 @@ import {
   Skeleton,
   Textarea,
 } from "../components/ui";
-import PageShell from "../components/layout/PageShell";
+import ManagementFrame from "../features/capabilities/ManagementFrame";
 import { validateSkillDraft } from "../features/skills/skillForm";
 
 type EditorMode = "create" | "edit" | null;
 
-export default function SkillsPage() {
+export default function SkillsPage({ embedded = false, initialSkill }: { embedded?: boolean; initialSkill?: string } = {}) {
   const [searchParams] = useSearchParams();
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [skillContent, setSkillContent] = useState("");
+  const [fullTextOpen, setFullTextOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [search, setSearch] = useState("");
+  const [showHostSkills, setShowHostSkills] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(null);
   const [formName, setFormName] = useState("");
   const [formContent, setFormContent] = useState("");
@@ -44,6 +48,7 @@ export default function SkillsPage() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const requestedSkillRef = useRef<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -58,6 +63,13 @@ export default function SkillsPage() {
     void reload();
   }, [reload]);
 
+  const refreshDiscovery = async () => {
+    setRefreshing(true);
+    const result = await refreshSkillDiscovery();
+    if (result.ok) await reload(); else setError(result.error);
+    setRefreshing(false);
+  };
+
   const openSkill = useCallback(async (skill: SkillSummary) => {
     setSelectedName(skill.name);
     setDetailLoading(true);
@@ -71,21 +83,27 @@ export default function SkillsPage() {
   }, []);
 
   useEffect(() => {
-    const requested = searchParams.get("skill");
-    if (!requested || selectedName === requested) return;
+    const requested = initialSkill ?? searchParams.get("skill");
+    if (!requested) { requestedSkillRef.current = null; return; }
+    if (requestedSkillRef.current === requested) return;
     const skill = skills.find((item) => item.name === requested);
-    if (skill) void openSkill(skill);
-  }, [openSkill, searchParams, selectedName, skills]);
+    if (skill) {
+      requestedSkillRef.current = requested;
+      if (!skill.compatibility?.runtime_ready) setShowHostSkills(true);
+      void openSkill(skill);
+    }
+  }, [initialSkill, openSkill, searchParams, skills]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return skills;
-    return skills.filter((skill) =>
-      [skill.name, skill.description, skill.path].some((value) =>
+    const visible = showHostSkills ? skills : skills.filter((skill) => skill.compatibility?.runtime_ready === true);
+    if (!query) return visible;
+    return visible.filter((skill) =>
+      [skill.name, skill.description, skill.path, skill.source ?? "", skill.display_name ?? ""].some((value) =>
         value.toLowerCase().includes(query)
       )
     );
-  }, [skills, search]);
+  }, [skills, search, showHostSkills]);
 
   const selectedSkill = skills.find((skill) => skill.name === selectedName) ?? null;
 
@@ -168,16 +186,22 @@ export default function SkillsPage() {
   };
 
   return (
-    <PageShell
+    <ManagementFrame embedded={embedded}
       title="技能"
       description="管理小昔涟可以使用的技能能力。"
       className="capability-page skills-page page-canvas ui-opt-capabilities ui-opt-skills"
       contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
       actions={
+        <>
+        <Button variant="secondary" onClick={() => void refreshDiscovery()} disabled={refreshing}>
+          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "正在发现" : "刷新发现"}
+        </Button>
         <Button onClick={openCreate}>
           <Plus className="h-4 w-4" />
           新增技能
         </Button>
+        </>
       }
     >
       <div className="capability-page-body skills-page-body">
@@ -190,6 +214,21 @@ export default function SkillsPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
+            </div>
+            <div className="flex items-center justify-between gap-2 px-4 pb-3 text-[11px] text-[var(--text-muted)]">
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" aria-label="显示宿主专用技能" checked={showHostSkills} onChange={(event) => {
+                  setShowHostSkills(event.target.checked);
+                  if (!event.target.checked && selectedSkill && !selectedSkill.compatibility?.runtime_ready) {
+                    requestIdRef.current++;
+                    setSelectedName(null);
+                    setSkillContent("");
+                    setDetailLoading(false);
+                  }
+                }} className="accent-[var(--accent-primary)]" />
+                显示宿主专用技能
+              </label>
+              <span aria-label="技能可用数量">可用 {skills.filter(skill => skill.compatibility?.runtime_ready === true).length} · 宿主 {skills.filter(skill => skill.compatibility?.runtime_ready === false).length}</span>
             </div>
 
             <div className="capability-list-scroll scrollbar-thin">
@@ -224,12 +263,12 @@ export default function SkillsPage() {
                 />
               ) : filtered.length === 0 ? (
                 <EmptyState
-                  title="没有匹配的技能"
-                  description={`未找到与“${search}”匹配的技能名称或路径。`}
+                  title={search.trim() ? "没有匹配的技能" : "当前没有可用技能流程"}
+                  description={search.trim() ? `未找到与“${search}”匹配的技能名称或路径。` : "可以新建本项目技能流程，或勾选显示宿主专用技能查看其依赖与适配说明。"}
                   action={
-                    <Button size="sm" variant="secondary" onClick={() => setSearch("")}>
+                    search.trim() ? <Button size="sm" variant="secondary" onClick={() => setSearch("")}>
                       清除搜索
-                    </Button>
+                    </Button> : undefined
                   }
                   className="py-12"
                 />
@@ -250,7 +289,8 @@ export default function SkillsPage() {
                       >
                         <span className="capability-list-row-heading">
                           <Brain className="h-4 w-4 shrink-0 text-[var(--accent-purple)]" />
-                          <strong>{skill.name}</strong>
+                          <strong>{skill.display_name ?? skill.name}</strong>
+                          {skill.compatibility && <Badge tone={skill.compatibility.runtime_ready ? "success" : "warning"}>{skill.compatibility.status === "external_host" ? "需外部宿主" : skill.compatibility.status === "adapted" ? "已适配工具" : "可用流程"}</Badge>}
                           {skill.editable ? (
                             <Badge tone="accent">可编辑</Badge>
                           ) : (
@@ -260,6 +300,7 @@ export default function SkillsPage() {
                         <span className="capability-list-row-description">
                           {skill.description || "暂无描述"}
                         </span>
+                        {skill.source && <span className="text-[11px] text-[var(--text-muted)] block">来源：{skill.source}</span>}
                         <span className="text-[11px] text-[var(--text-faint)] font-mono truncate block mt-0.5">
                           {skill.path}
                         </span>
@@ -281,7 +322,7 @@ export default function SkillsPage() {
                   <div>
                     <div className="capability-detail-title-line flex items-center gap-2 flex-wrap">
                       <Brain className="h-5 w-5 text-[var(--accent-primary)]" />
-                      <h2>{selectedSkill.name}</h2>
+                      <h2>{selectedSkill.display_name ?? selectedSkill.name}</h2>
                       <button
                         type="button"
                         className="skill-copy-btn"
@@ -303,9 +344,12 @@ export default function SkillsPage() {
                     <p className="capability-detail-description mt-1">
                       {selectedSkill.description || "暂无描述"}
                     </p>
+                    {selectedSkill.source && <p className="text-xs text-[var(--text-muted)] mt-2">来源：{selectedSkill.source}</p>}
+                    {selectedSkill.compatibility && <div className="mt-3 rounded-xl border border-[var(--border-soft)] p-3 text-xs leading-relaxed" role="status"><strong>{selectedSkill.compatibility.status === "external_host" ? "需要外部宿主能力" : selectedSkill.compatibility.status === "adapted" ? "按本项目工具适配执行" : "本项目可加载的技能流程"}</strong><p className="mt-1">{selectedSkill.compatibility.reason}</p>{selectedSkill.compatibility.missing_tools.length > 0 && <p className="mt-2 break-all">缺少工具：{selectedSkill.compatibility.missing_tools.join("、")}</p>}{selectedSkill.compatibility.tool_mappings.map(mapping => <p key={mapping.from} className="mt-2"><code>{mapping.from} → {mapping.to}</code>：{mapping.instructions}</p>)}</div>}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    {selectedSkill.compatibility?.status === "external_host" && <Button size="sm" variant="secondary" disabled={detailLoading || Boolean(detailError)} onClick={() => {setEditorMode("create");setFormName(`adapted-${selectedSkill.name.split(":").pop()}`);setFormContent(skillContent);setFormError("请将原文的宿主调用改为本项目可用工具，确认脚本与引用的实际路径；直接保存原文不会解除宿主依赖。");}}>适配为工作区技能</Button>}
                     {selectedSkill.editable ? (
                       <>
                         <Button
@@ -374,8 +418,9 @@ export default function SkillsPage() {
                           <span>{copiedKey === `content-${selectedSkill.name}` ? "已复制全文" : "复制全文"}</span>
                         </button>
                       </div>
+                      <Button size="sm" variant="ghost" onClick={() => setFullTextOpen(true)}>更多 · 查看全文</Button>
                       <pre className="skill-reading-content leading-[1.6]">
-                        {skillContent || "（内容为空）"}
+                        {skillContent.slice(0, 1100) || "（内容为空）"}
                       </pre>
                     </div>
                   )}
@@ -383,6 +428,8 @@ export default function SkillsPage() {
 
                 <CapabilityDetailSection title="技术详情" technical>
                   <dl className="capability-meta-list">
+                    {selectedSkill.display_name && <CapabilityMetaRow label="技能原名" value={selectedSkill.display_name} />}
+                    {selectedSkill.source_root && <CapabilityMetaRow label="发现目录" value={selectedSkill.source_root} mono />}
                     <CapabilityMetaRow
                       label="名称"
                       value={
@@ -494,6 +541,7 @@ export default function SkillsPage() {
         onConfirm={() => void confirmRemoveSkill()}
         onCancel={() => setDeleteConfirm(null)}
       />
-    </PageShell>
+      <Modal open={fullTextOpen} onClose={() => setFullTextOpen(false)} title="技能全文" size="xl"><pre className="whitespace-pre-wrap break-words text-sm">{skillContent}</pre></Modal>
+    </ManagementFrame>
   );
 }

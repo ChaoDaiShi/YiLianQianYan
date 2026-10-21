@@ -7,9 +7,9 @@ function priority(record: ExecutionRecord): number {
   if (record.approvalStatus === "pending" && record.riskLevel === "high") {
     return 1;
   }
-  if (record.verificationStatus === "failed") return 2;
+  if (record.approvalStatus === "pending") return 2;
   if (record.executionStatus === "running" || record.executionStatus === "awaiting_approval") return 3;
-  if (record.executionStatus === "failed") return 4;
+  if (record.executionStatus === "queued") return 4;
   return 99;
 }
 

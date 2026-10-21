@@ -15,13 +15,13 @@ export async function openSpeechMonitor(signal: AbortSignal, sample: (rms: numbe
   let context: AudioContext | null = null;
   let source: MediaStreamAudioSourceNode | null = null;
   let analyser: AnalyserNode | null = null;
-  let frame = 0;
+  let sampleTimer:ReturnType<typeof setInterval>|null=null;
   let closed = false;
   const close = () => {
     if (closed) return;
     closed = true;
     signal.removeEventListener("abort", close);
-    cancelAnimationFrame(frame);
+    if(sampleTimer!==null)clearInterval(sampleTimer);
     source?.disconnect();
     analyser?.disconnect();
     stream.getTracks().forEach((track) => track.stop());
@@ -38,14 +38,15 @@ export async function openSpeechMonitor(signal: AbortSignal, sample: (rms: numbe
     await context.resume();
     if (closed) return null;
     const samples = new Float32Array(analyser.fftSize);
-    const tick = (time: number) => {
+    const tick = () => {
+      const time=performance.now();
       if (closed) return;
       analyser!.getFloatTimeDomainData(samples);
       const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
       sample(rms, time);
-      if (!closed) frame = requestAnimationFrame(tick);
+
     };
-    frame = requestAnimationFrame(tick);
+    sampleTimer=setInterval(tick,40);
     return { stream, close };
   } catch (error) {
     close();

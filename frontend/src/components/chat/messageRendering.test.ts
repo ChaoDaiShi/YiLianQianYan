@@ -3,6 +3,9 @@ import { areMessageBubblePropsEqual } from "./MessageBubble";
 import messageBubbleSource from "./MessageBubble.tsx?raw";
 import messageListSource from "./MessageList.tsx?raw";
 import type { Message } from "../../types";
+import { renderToStaticMarkup } from "react-dom/server";
+import MessageBubble from "./MessageBubble";
+import { createElement } from "react";
 
 const message: Message = {
   id: "assistant-1",
@@ -30,23 +33,18 @@ describe("MessageBubble render boundary", () => {
     ).toBe(false);
   });
 
-  it("keeps assistant identity quiet and groups consecutive messages", () => {
-    expect(messageBubbleSource).toContain("showAssistantAvatar");
-    expect(messageBubbleSource).toContain("conversation-assistant-avatar");
-    expect(messageBubbleSource).not.toContain("/favicon.png");
-    expect(messageBubbleSource).not.toContain("ml-11");
-    expect(messageListSource).toContain("showAssistantAvatar");
-    expect(messageListSource).not.toContain("/favicon.png");
-    expect(messageListSource).not.toContain("ml-11");
+  it("renders assistant text without an avatar or reserved avatar space", () => {
+    expect(messageBubbleSource).not.toContain("conversation-assistant-avatar");
+    expect(messageBubbleSource).not.toContain("cyrene-home-character.png");
+    expect(messageListSource).not.toContain("showAssistantAvatar");
+    expect(messageBubbleSource).toContain("MessageProcess");
+    const markup = renderToStaticMarkup(createElement(MessageBubble, { message: { ...message, process: { reasoning: "actual received thinking", tools: [] } } }));
+    expect(markup).toContain("actual received thinking");
+    expect(markup).not.toContain("<img");
   });
 
-  it("rerenders when the assistant avatar group boundary changes", () => {
-    expect(
-      areMessageBubblePropsEqual(
-        { message, showAssistantAvatar: true },
-        { message, showAssistantAvatar: false },
-      ),
-    ).toBe(false);
+  it("rerenders when retained process data changes", () => {
+    expect(areMessageBubblePropsEqual({ message }, { message: { ...message, process: { reasoning: "actual thinking", tools: [] } } })).toBe(false);
   });
 
   it("routes markdown web links through the external browser opener", () => {

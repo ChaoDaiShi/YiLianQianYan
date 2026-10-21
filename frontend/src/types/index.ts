@@ -30,13 +30,24 @@ export interface Message {
   tool_call_id?: string;
   tool_name?: string;
   created_at: number;
+  process?: ConversationProcess;
 }
+export interface ProcessToolCall { toolCallId: string; name: string; args?: Record<string, unknown>; arguments?: string; result?: string; execution?: ToolCallRecord }
+export interface ConversationProcess { reasoning?: string; tools: ProcessToolCall[] }
 
+export type WorkspaceMode = "chat" | "work" | "create";
 export interface Conversation {
   id: string;
   title: string;
   messages: Message[];
   execution_history?: any[];
+  run_status?: ConversationRunStatus;
+  run_error?: string | null;
+  run_started_at?: number | null;
+  run_finished_at?: number | null;
+  workspace_mode?: WorkspaceMode;
+  message_reasoning?: Record<string, string>;
+  turn_reasoning?: Record<string, string>;
   created_at: number;
   updated_at: number;
 }
@@ -209,9 +220,17 @@ export interface LlmUsageDay {
   total_tokens: number;
 }
 
+export interface LlmUsageModel {
+  model_id: string; provider: string; model: string;
+  prompt_tokens: number; completion_tokens: number; total_tokens: number;
+  known_usage_count: number; unknown_usage_count: number; failed_attempt_count: number;
+}
 export interface LlmUsageReport {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   days: LlmUsageDay[];
+  known_usage_count: number; unknown_usage_count: number; failed_attempt_count: number; pending_attempt_count: number;
+  models: LlmUsageModel[];
+  timezone_offset_minutes: number;
 }

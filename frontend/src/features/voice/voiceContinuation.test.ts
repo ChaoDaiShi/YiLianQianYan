@@ -128,3 +128,8 @@ describe("voice continuation evidence", () => {
     ).toEqual({ narration: "已拒绝这项操作。", verified: false });
   });
 });
+
+it("speaks only the replacement answer after a model pool interrupts partial text",()=>{
+ const route={type:"model_route",conversation_id:"conversation-a",replace_content:true} as AgentEvent;
+ expect(reduceConversationEvents([event("token",{token:"中断片段"}),route,event("token",{token:"完整回答"}),event("done")]).assistantText).toBe("完整回答");
+});

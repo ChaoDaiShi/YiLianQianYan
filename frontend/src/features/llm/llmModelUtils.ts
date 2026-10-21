@@ -1,12 +1,7 @@
 import type { LlmModel } from "../../types";
 
-export const PROVIDER_PRESETS = {
-  openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-  qwen: { label: "千问", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
-  glm: { label: "GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
-  custom: { label: "自定义", baseUrl: "http://127.0.0.1:8000/v1", model: "" },
-} as const;
+export { default as PROVIDER_PRESETS } from "./providerCatalog.json";
+import PROVIDER_PRESETS from "./providerCatalog.json";
 
 export type ProviderPresetId = keyof typeof PROVIDER_PRESETS;
 

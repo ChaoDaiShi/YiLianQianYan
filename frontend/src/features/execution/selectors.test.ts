@@ -33,7 +33,7 @@ describe("selectCurrentAction", () => {
     expect(selected?.toolCallId).toBe("critical");
   });
 
-  it("prioritizes verification failure over running work", () => {
+  it("keeps previous verification failures in history while new work is running", () => {
     const selected = selectCurrentAction([
       record({ toolCallId: "running" }),
       record({
@@ -42,6 +42,9 @@ describe("selectCurrentAction", () => {
         verificationStatus: "failed",
       }),
     ]);
-    expect(selected?.toolCallId).toBe("verify");
+    expect(selected?.toolCallId).toBe("running");
+  });
+  it("does not present a finished failure as the current action", () => {
+    expect(selectCurrentAction([record({ executionStatus: "failed" })])).toBeNull();
   });
 });

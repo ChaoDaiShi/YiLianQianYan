@@ -13,9 +13,14 @@ import ResourceAttachments from "../../features/resources/ResourceAttachments";
 import { ChatVoiceInput, type ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 import { appendFinalTranscriptToComposer } from "../../features/voice/chatVoice";
 import { Button } from "../ui";
+import { ApprovalModeControl } from "../../features/security/ApprovalModeControl";
+import { ComposerModelControls } from "./ComposerModelControls";
+import { buildChatRequestOptions, type ChatRequestOptions, type ThinkingMode, type WorkspaceMode } from "./chatRequestOptions";
+import { WorkspaceModeControl } from "./WorkspaceModeControl";
+import "./compactComposer.css";
 
 interface ChatInputProps {
-  onSend: (text: string, resourceIds?: string[]) => void | boolean | Promise<void | boolean>;
+  onSend: (text: string, resourceIds?: string[], options?: ChatRequestOptions) => void | boolean | Promise<void | boolean>;
   conversationId?: string | null;
   isLoading: boolean;
   onStop?: () => void;
@@ -24,6 +29,10 @@ interface ChatInputProps {
   /** Injected by GlobalVoiceHost so chat capture cannot create a second runtime. */
   chatVoiceControls?: ChatVoiceControls | null;
   onRequestGlobalVoiceSession?: () => void;
+  workspaceMode?: WorkspaceMode;
+  onWorkspaceModeChange?: (mode: WorkspaceMode) => Promise<void>;
+  modeChanging?: boolean;
+  modeError?: string | null;
 }
 
 export default function ChatInput({
@@ -35,8 +44,14 @@ export default function ChatInput({
   onTextUsed,
   chatVoiceControls = null,
   onRequestGlobalVoiceSession,
+  workspaceMode = "chat",
+  onWorkspaceModeChange,
+  modeChanging = false,
+  modeError,
 }: ChatInputProps) {
   const [input, setInput] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [thinking, setThinking] = useState<ThinkingMode>("standard");
   const [resourceNotice, setResourceNotice] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
@@ -76,9 +91,9 @@ export default function ChatInput({
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
-    const nextHeight = Math.max(44, Math.min(textarea.scrollHeight, 180));
+    const nextHeight = workspaceMode === "chat" ? Math.max(24, Math.min(textarea.scrollHeight, 120)) : Math.max(52, Math.min(textarea.scrollHeight, 150));
     textarea.style.height = `${nextHeight}px`;
-  }, [input]);
+  }, [input, workspaceMode]);
 
   const pendingAttachments = attachments.some(item => item.state !== "ready" && item.state !== "removed");
   const canSend = Boolean(input.trim() || queue.readyIds().length) && !pendingAttachments && !isLoading && !sending;
@@ -87,7 +102,7 @@ export default function ChatInput({
     const text = input.trim() || "请查看我附加的文件。";
     sendInFlight.current = true; setSending(true); setResourceNotice("");
     try {
-      const accepted = await onSend(text, queue.readyIds());
+      const accepted = await onSend(text, queue.readyIds(), buildChatRequestOptions(modelId, thinking, workspaceMode));
       if (accepted === false) { setResourceNotice("发送未完成，附件已保留"); return; }
       setInput(""); queue.snapshot().forEach(item => queue.remove(item.id));
       if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -117,82 +132,36 @@ export default function ChatInput({
   };
 
   return (
-    <div className="home-composer w-full" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); addFiles(Array.from(event.dataTransfer.files)); }}>
-      <div className="composer-card conversation-composer-inner mx-auto rounded-2xl p-3 w-full">
+    <div className="home-composer compact-composer w-full" data-workspace-mode={workspaceMode} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); addFiles(Array.from(event.dataTransfer.files)); }}>
+      <div className="composer-card conversation-composer-inner">
+        <div className="composer-mode-slot"><WorkspaceModeControl mode={workspaceMode} onChange={onWorkspaceModeChange} disabled={isLoading || sending || modeChanging} /></div>
         <textarea
           ref={textareaRef}
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={event => { const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith("image/")); if (files.length) { event.preventDefault(); addFiles(files); } }}
-          placeholder="告诉小昔涟你想完成什么……"
+          placeholder={workspaceMode === "chat" ? "和小昔涟聊聊…" : workspaceMode === "work" ? "描述你希望完成的工作…" : "写下想法，开始创造…"}
+          aria-label="聊天输入"
           rows={1}
           disabled={isLoading}
-          className="composer-textarea block min-h-[44px] max-h-[180px] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-[var(--text)] outline-none placeholder:text-[var(--text-faint)] disabled:opacity-60"
+          title="Enter 发送 · Shift + Enter 换行"
+          className="composer-textarea"
         />
-        <ResourceAttachments items={attachments} onRemove={id => queue.remove(id)} />
-        {resourceNotice && (
-          <p className="px-2 pb-1 text-caption text-[var(--text-muted)]" role="status">
-            {resourceNotice}
-          </p>
-        )}
-        <div className="composer-footer mt-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(event) => void handleFileSelected(event)}
-            />
-            <button
-              type="button"
-              className="rounded-md p-1.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--text)] disabled:opacity-50"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading || sending}
-              aria-label="导入资源"
-              title="选择、拖入或粘贴文件（最多 8 个，每个 25 MiB）"
-            >
-              <Paperclip className="h-3.5 w-3.5" />
-            </button>
-            <ChatVoiceInput
-              controls={chatVoiceControls}
-              onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
-            />
-            <p className="truncate text-caption text-[var(--text-faint)]">
-              Enter 发送 · Shift + Enter 换行
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {isLoading ? (
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                onClick={onStop}
-                title="停止执行"
-                aria-label="停止执行"
-              >
-                <Square className="h-3.5 w-3.5" />
-                停止
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="sm"
-                loading={sending}
-                loadingLabel="正在提交"
-                onClick={() => void send()}
-                disabled={!canSend || sending}
-                title="发送消息"
-                aria-label="发送消息"
-              >
-                <Send className="h-3.5 w-3.5" />
-                发送
-              </Button>
-            )}
-          </div>
+        <div className="composer-actions">
+          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelected}/>
+          <button type="button" className="composer-control" onClick={() => fileInputRef.current?.click()} disabled={isLoading || sending} aria-label="导入资源" title="选择、拖入或粘贴附件"><Paperclip size={16}/></button>
+          <ChatVoiceInput controls={chatVoiceControls} onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}/>
+          <ComposerModelControls conversationId={conversationId} modelId={modelId} thinking={thinking} disabled={isLoading || sending} onModel={setModelId} onThinking={setThinking}/>
+          <ApprovalModeControl disabled={isLoading || sending}/>
+          {isLoading ? <Button type="button" className="composer-send" iconOnly size="sm" variant="danger" onClick={onStop} title="停止执行" aria-label="停止执行"><Square size={16}/></Button>
+            : <Button type="button" className="composer-send" iconOnly size="sm" loading={sending} loadingLabel="正在提交" onClick={() => void send()} disabled={!canSend || sending} title="发送消息" aria-label="发送消息"><Send size={16}/></Button>}
         </div>
+        {(attachments.some(item => item.state !== "removed") || resourceNotice || modeError) && <div className="composer-feedback">
+          <ResourceAttachments items={attachments} onRemove={id => queue.remove(id)}/>
+          {resourceNotice && <p className="text-caption text-[var(--text-muted)]" role="status">{resourceNotice}</p>}
+          {modeError && <p className="text-caption text-[var(--danger)]" role="alert">{modeError}</p>}
+        </div>}
       </div>
     </div>
   );

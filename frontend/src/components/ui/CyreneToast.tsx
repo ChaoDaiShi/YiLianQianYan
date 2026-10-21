@@ -101,7 +101,7 @@ export default function CyreneToast() {
 
   const content = (
     <div
-      className="pointer-events-none fixed bottom-4 right-4 z-[var(--z-toast-tooltip,90)] flex flex-col gap-2 max-w-sm w-full"
+      className="pointer-events-none fixed top-4 right-4 z-[var(--z-toast-tooltip,90)] flex flex-col gap-2 max-w-sm w-full"
       role="region"
       aria-live="polite"
       aria-atomic="true"

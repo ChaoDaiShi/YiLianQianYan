@@ -1,4 +1,6 @@
 export type GlobalVoiceProductState =
+  | "connecting"
+  | "muted"
   | "listening"
   | "understanding"
   | "speaking"
@@ -24,6 +26,8 @@ export interface GlobalVoiceLeafProps {
 }
 
 const STATE_LABELS: Record<GlobalVoiceProductState, string> = {
+  connecting:"正在连接",
+  muted:"麦克风已静音",
   listening: "正在听取",
   understanding: "正在理解",
   speaking: "正在播报",

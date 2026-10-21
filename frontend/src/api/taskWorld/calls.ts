@@ -269,3 +269,7 @@ export async function restoreTaskCheckpoint(
   );
   return result.ok ? { ok: true, data: result.data.graph } : result;
 }
+
+export async function deleteTaskGraph(graphId: string, expectedRevision: number): Promise<ApiResult<void>> {
+  return requestTaskWorld<void>("DELETE", `/api/task-world/graphs/${encodeURIComponent(graphId)}?expected_revision=${expectedRevision}`);
+}

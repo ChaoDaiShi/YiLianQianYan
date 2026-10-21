@@ -21,7 +21,8 @@ describe("R1B conversation visual contracts", () => {
   it("keeps message identity and content surfaces explicit", () => {
     expect(messageBubbleSource).toContain("conversation-message-user");
     expect(messageBubbleSource).toContain("conversation-message-assistant");
-    expect(messageBubbleSource).toContain("conversation-assistant-avatar");
+    expect(messageBubbleSource).not.toContain("conversation-assistant-avatar");
+    expect(messageBubbleSource).toContain("MessageProcess");
     expect(messageListSource).toContain("conversation-streaming-message");
     expect(messageListSource).toContain("conversation-error-notice");
   });

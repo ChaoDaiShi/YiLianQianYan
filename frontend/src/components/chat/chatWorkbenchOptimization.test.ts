@@ -66,10 +66,10 @@ describe("Work Package B: Chat Workbench Optimization Contracts", () => {
   });
 
   describe("B3 Input Dock & Send/Stop", () => {
-    it("enforces 44px min-height, 180px max-height, and IME guard on Enter", () => {
-      expect(chatInputSource).toContain("min-h-[44px]");
-      expect(chatInputSource).toContain("max-h-[180px]");
-      expect(chatInputSource).toContain("Math.max(44, Math.min(textarea.scrollHeight, 180))");
+    it("keeps compact mode-dependent textarea limits and the IME guard on Enter", () => {
+      expect(chatInputSource).toContain("compact-composer");
+      expect(chatInputSource).toContain('workspaceMode === "chat"');
+      expect(chatInputSource).toContain("Math.min(textarea.scrollHeight, 120)");
       expect(chatInputSource).toContain("event.nativeEvent.isComposing || event.keyCode === 229");
     });
 

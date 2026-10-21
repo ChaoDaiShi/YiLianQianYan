@@ -13,9 +13,11 @@ import {
   Select,
   KeyValueRow,
   CodeBlock,
+  Tabs,
 } from "../components/ui";
 import PageShell from "../components/layout/PageShell";
 import { formatLogLevel, formatLogTimestamp } from "../components/system";
+import ToolDiagnosticsPanel from "../features/logs/ToolDiagnosticsPanel";
 
 function highlightMatch(text: string, query: string) {
   if (!query) return text;
@@ -86,6 +88,7 @@ function LogRow({
 }
 
 export default function LogsPage() {
+  const [activeView, setActiveView] = useState("tools");
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [filterLevel, setFilterLevel] = useState("");
@@ -93,6 +96,8 @@ export default function LogsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
   const [total, setTotal] = useState(0);
+  const [sourceOptions, setSourceOptions] = useState<string[]>([]);
+  const [levelOptions, setLevelOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
@@ -101,8 +106,8 @@ export default function LogsPage() {
   const [activeLogIndex, setActiveLogIndex] = useState<number>(-1);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const fetchLogs = useCallback(async () => {
-    if (paused) return;
+  const fetchLogs = useCallback(async (force = false) => {
+    if (activeView !== "system" || (paused && !force)) return;
     const response = await getLogs({
       count: 500,
       level: filterLevel || undefined,
@@ -115,14 +120,12 @@ export default function LogsPage() {
     }
 
     setLoadError("");
-    setEntries((previous) => {
-      const existingKeys = new Set(previous.map((entry) => `${entry.timestamp}-${entry.level}-${entry.source}-${entry.message}`));
-      const fresh = response.entries.filter((entry) => !existingKeys.has(`${entry.timestamp}-${entry.level}-${entry.source}-${entry.message}`));
-      return [...previous, ...fresh].slice(-500);
-    });
+    setEntries(response.entries);
+    setSourceOptions(response.sources);
+    setLevelOptions(response.levels);
     setTotal(response.total);
     setLoading(false);
-  }, [filterLevel, filterSource, paused]);
+  }, [activeView, filterLevel, filterSource, paused]);
 
   useEffect(() => {
     void fetchLogs();
@@ -137,14 +140,6 @@ export default function LogsPage() {
     if (autoScroll && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [entries, autoScroll]);
 
-  const sourceOptions = useMemo(
-    () => Array.from(new Set(entries.map((entry) => entry.source).filter(Boolean))).sort(),
-    [entries],
-  );
-  const levelOptions = useMemo(
-    () => Array.from(new Set(entries.map((entry) => entry.level).filter(Boolean))).sort(),
-    [entries],
-  );
   const visibleEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return entries;
@@ -225,12 +220,12 @@ export default function LogsPage() {
   return (
     <PageShell
       title="日志"
-      description={`查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（服务端总计约 ${total} 条）`}
+      description={activeView === "tools" ? "排查工具执行错误、查看参数与返回结果" : `查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（符合筛选 ${total} 条）`}
       className="ui-opt-logs system-center-page page-canvas flex h-full min-h-0 flex-col"
       contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
-      actions={(
+      actions={activeView === "system" ? (
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => void fetchLogs()} aria-label="刷新日志">
+          <Button variant="secondary" size="sm" onClick={() => void fetchLogs(true)} aria-label="刷新日志">
             <RefreshCw className="h-3.5 w-3.5" />刷新
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setPaused((value) => !value)} aria-pressed={paused}>
@@ -241,8 +236,10 @@ export default function LogsPage() {
             <Trash2 className="h-3.5 w-3.5" />清空
           </Button>
         </div>
-      )}
+      ) : undefined}
     >
+      <div className="shrink-0 px-4 pt-3"><Tabs tabs={[{ id: "tools", label: "工具执行", panelId: false }, { id: "system", label: "系统日志", panelId: false }]} activeId={activeView} onChange={id => { setActiveView(id); setSelectedEntry(null); }} /></div>
+      {activeView === "tools" ? <ToolDiagnosticsPanel /> : <>
       <div className="system-logs-surface relative min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-3 flex flex-col gap-3">
         {/* Streamlined search and filter bar inside body */}
         <div className="system-logs-toolbar flex flex-wrap items-center gap-2.5 shrink-0 pb-1">
@@ -286,7 +283,7 @@ export default function LogsPage() {
           <ErrorState
             title="日志暂时无法加载"
             description="请稍后重新尝试。"
-            action={<Button variant="secondary" onClick={() => void fetchLogs()}>重试</Button>}
+            action={<Button variant="secondary" onClick={() => void fetchLogs(true)}>重试</Button>}
           />
         ) : null}
         {loading && entries.length === 0 ? (
@@ -340,7 +337,7 @@ export default function LogsPage() {
         </div>
       </div>
 
-      <Drawer open={selectedEntry !== null} side="right" title="日志详情" onClose={() => setSelectedEntry(null)}>
+      <Drawer open={selectedEntry !== null} side="right" title="日志详情" width={400} onClose={() => setSelectedEntry(null)}>
         {selectedEntry ? (
           <div className="system-log-detail space-y-4 p-4">
             <div className="divide-y divide-[var(--border-soft)] rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-1">
@@ -373,6 +370,7 @@ export default function LogsPage() {
         }}
         onCancel={() => setConfirmClearOpen(false)}
       />
+      </>}
     </PageShell>
   );
 }

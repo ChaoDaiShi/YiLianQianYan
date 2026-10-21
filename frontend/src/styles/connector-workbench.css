@@ -1,0 +1,59 @@
+.navigation-page { width: min(100%, 1060px); margin-inline: auto; padding: 30px 28px; }
+.navigation-page-header { text-align: center; margin: 4px 0 28px; }
+.navigation-page-header h2 { font-size: 24px; font-weight: 650; }
+.navigation-page-header p { color: var(--text-secondary); margin-top: 8px; }
+.navigation-card-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; }
+.navigation-entry { position: relative; display: flex; flex-direction: column; align-items: flex-start; min-height: 164px; padding: 24px; text-align: left; border: 1px solid var(--border-soft); border-radius: 18px; background: var(--surface); color: var(--text-primary); transition: background .15s,border-color .15s; }
+.navigation-entry:hover { background: var(--surface-elevated); border-color: var(--accent-primary); }
+.navigation-entry-icon { padding: 10px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-purple); margin-bottom: 16px; }
+.navigation-entry h3 { font-size: 18px; font-weight: 600; }
+.navigation-entry p { font-size: 13px; color: var(--text-secondary); margin-top: 7px; line-height: 1.6; }
+.navigation-entry-arrow { position: absolute; right: 22px; top: 28px; color: var(--text-faint); }
+.connector-page { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 22px; }
+.connector-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.connector-toolbar .connector-display-modes { display: flex; padding: 4px; gap: 4px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 12px; }
+.connector-display-modes button { padding: 7px 13px; border-radius: 8px; font-size: 13px; }
+.connector-display-modes button[aria-pressed=true] { background: var(--accent-soft); color: var(--text-primary); }
+.connector-canvas { flex: 1; min-height: 340px; border: 1px solid var(--border-soft); border-radius: 20px; overflow: hidden; background: var(--surface-muted); }
+.connector-node { width: 220px; min-height: 74px; border: 1px solid var(--border-soft); border-radius: 13px; padding: 14px 16px; background: var(--surface-elevated); color: var(--text-primary); backdrop-filter: blur(var(--surface-blur,10px)); text-align: left; box-shadow: var(--shadow-card); }
+.connector-node:hover,.connector-node[data-selected=true] { border-color: var(--accent-primary); }
+.connector-node-title { display: flex; gap: 9px; align-items: center; font-size: 14px; font-weight: 600; }
+.connector-node-title svg { color: var(--accent-purple); width: 18px; height: 18px; }
+.connector-node p { margin-top: 6px; font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connector-node.agent { text-align: center; border-color: var(--accent-border); padding: 22px; min-height: 142px; }
+.connector-node.agent .connector-node-title { justify-content: center; font-size: 20px; }
+.connector-node .react-flow__handle { border: 1px solid var(--accent-border); background: var(--surface-solid); width: 8px; height: 8px; }
+.connector-editor-fields { display: flex; flex-direction: column; gap: 17px; }
+.connector-editor-fields label { display: flex; flex-direction: column; gap: 8px; color: var(--text-secondary); font-size: 13px; }
+.connector-editor-fields input,.connector-editor-fields select,.connector-editor-fields textarea,.connector-toolbar select { color: var(--text-primary); background: var(--surface-solid); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 12px; }
+.connector-manager-row { display: flex; align-items: center; gap: 12px; padding: 15px; border: 1px solid var(--border-soft); border-radius: 12px; margin-bottom: 10px; }
+.connector-manager-row .grow { flex: 1; min-width: 0; }
+.connector-manager-row h3 { font-size: 15px; font-weight: 600; }
+.connector-manager-row p { color: var(--text-secondary); font-size: 12px; margin-top: 5px; }
+.connector-notice { border: 1px solid var(--border-soft); border-radius: 10px; padding: 12px 15px; font-size: 13px; background: var(--surface); color: var(--text-secondary); }
+.connector-empty { display: flex; flex: 1; align-items: center; justify-content: center; }
+.connector-display-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.connector-display-options label { flex-direction: row; align-items: center; border: 1px solid var(--border-soft); border-radius: 9px; padding: 10px; }
+.connector-model-route { font-size: 12px; padding: 8px 12px; border-radius: 9px; color: var(--text-secondary); background: var(--accent-soft); }
+@media(max-width:960px){ .navigation-card-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .navigation-page{padding:24px 18px;} .connector-page{padding:14px;} }
+@media(max-width:620px){ .navigation-card-grid { grid-template-columns: 1fr; } .navigation-entry{min-height:140px;} }
+
+.chat-voice-entry,.chat-voice-microphone,.chat-voice-cancel { display:inline-flex; width:36px; height:36px; padding:0; flex-shrink:0; align-items:center; justify-content:center; border-radius:50%; }
+
+.connector-node-title svg { flex-shrink:0; }
+.connector-node-title span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.connector-split-workspace { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); height:100%; min-height:0; background:transparent; }
+.connector-split-workspace[data-mode="conversations"],.connector-split-workspace[data-mode="capabilities"] { grid-template-columns:minmax(0,1fr); }
+.connector-message-pane,.connector-resource-pane { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; background:transparent; }
+.connector-resource-pane { border-left:1px solid var(--border-soft); }
+.connector-pane-heading { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-height:48px; padding:10px 14px; border-bottom:1px solid var(--border-soft); }
+.connector-pane-heading strong { font-size:13px; }.connector-pane-heading span { font-size:11px; color:var(--text-muted); }
+.connector-resource-pane .connector-canvas { min-height:0; border:0; border-radius:0; background:transparent; }
+.connector-canvas {
+  --xy-controls-button-background-color: var(--surface-solid);
+  --xy-controls-button-background-color-hover: var(--surface-elevated);
+  --xy-controls-button-color: var(--text-primary);
+  --xy-controls-button-color-hover: var(--text-primary);
+  --xy-controls-button-border-color: var(--border-soft);
+}

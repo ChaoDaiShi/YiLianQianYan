@@ -14,6 +14,9 @@ const DRAFT_KEY = "__draft__";
 const KNOWN_EVENT_TYPES = new Set([
   "connected",
   "token",
+  "reasoning",
+  "reasoning_snapshot",
+  "model_route",
   "tool_start",
   "tool_end",
   "approval_required",
@@ -169,6 +172,7 @@ export function createInitialAgentRunState(
   return {
     conversationId,
     content: "",
+    reasoning: "",
     records: {},
     order: [],
     nextSequence: 1,
@@ -201,6 +205,12 @@ export function reduceAgentEvent(
         terminalError: null,
         terminal: false,
       };
+    case "reasoning":
+      return { ...state, reasoning: state.reasoning + (event.token || ""), connection: "connected", terminal: false };
+    case "reasoning_snapshot":
+      return { ...state, reasoning: event.token || "", connection: "connected", terminal: false };
+    case "model_route":
+      return event.replace_content ? {...state,content:""} : state;
     case "tool_start": {
       const toolCallId = findRecordId(state, event);
       if (!toolCallId) return state;

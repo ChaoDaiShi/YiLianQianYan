@@ -28,9 +28,12 @@
 .u2-model-basic [aria-label="Provider 就绪状态"] h3 { font-size: var(--font-size-control); }
 .u2-profile-management { margin-top: 20px; }
 /* Chat: content first; only the composer and selected conversation are raised. */
-.workbench-grid .conversation-sidebar, .workbench-grid .execution-sidebar,
-.workbench-grid[data-chat-view="conversation"] .execution-sidebar {
+.workbench-grid .conversation-sidebar {
   background: var(--surface); box-shadow: none; backdrop-filter: blur(8px);
+}
+.workbench-grid .execution-sidebar,
+.workbench-grid[data-chat-view="conversation"] .execution-sidebar {
+  background: transparent; box-shadow: none; backdrop-filter: none;
 }
 .workbench-grid .conversation-create-button { background: var(--accent-soft); border-color: var(--accent-border); box-shadow: none; }
 .workbench-grid .conversation-row { border: 1px solid transparent; border-radius: 8px; box-shadow: none; }
@@ -44,13 +47,13 @@
 .workbench-grid .home-quick-action:hover { background: var(--surface-hover); }
 .workbench-grid .composer-card, .workbench-grid .home-composer .composer-card,
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .composer-card {
-  border-radius: 12px; background: var(--surface-solid); border: 1px solid var(--border-soft);
-  box-shadow: 0 3px 12px #00000008; backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-radius: 12px; background: transparent; border: 1px solid var(--border-soft);
+  box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 .workbench-grid .composer-card:focus-within,
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .composer-card:focus-within { border-color: var(--accent-purple); box-shadow: 0 0 0 2px var(--accent-soft); }
 /* The older message theme declares important backgrounds; keep these overrides scoped. */
-.workbench-grid .conversation-composer { background: var(--surface-solid); }
+.workbench-grid .conversation-composer { background: transparent; }
 .workbench-grid .conversation-message-assistant { border: 0; background: transparent !important; box-shadow: none; }
 .workbench-grid .conversation-message-user { background: var(--accent-soft) !important; border-color: transparent !important; box-shadow: none; }
 .workbench-grid .conversation-tool-card { border: 0; border-left: 2px solid var(--border-soft); border-radius: 4px; background: var(--surface-muted); box-shadow: none; }

@@ -282,7 +282,7 @@ describe("GlobalVoiceHost contract", () => {
   });
 
   it("routes trusted continuations before speaking and keeps the dispatch epoch guard", () => {
-    expect(hostSource).toContain("runContinuation: runVoiceContinuation");
+    expect(hostSource).toContain("runVoiceContinuation(continuation");
     expect(turnFlowSource).toContain("routed.continuation");
     expect(turnFlowSource).toContain("runtime.readEpoch() !== dispatchEpoch");
     expect(turnFlowSource).toContain("await runtime.runContinuation");

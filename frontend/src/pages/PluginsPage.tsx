@@ -30,7 +30,7 @@ import {
   type McpPromptGetResponse,
 } from "../api/mcpRuntime";
 import { CapabilityStatusBadge } from "../components/capabilities";
-import PageShell from "../components/layout/PageShell";
+import ManagementFrame from "../features/capabilities/ManagementFrame";
 import { Badge, Button, EmptyState, ErrorState, Input, Modal, Panel, Skeleton, Spinner } from "../components/ui";
 import { validateMcpDraft } from "../features/mcp/mcpForm";
 
@@ -109,9 +109,9 @@ function getMcpPresentation(mcp: McpServer): {
   };
 }
 
-export default function PluginsPage() {
+export default function PluginsPage({ embedded = false, initialServerId }: { embedded?: boolean; initialServerId?: string } = {}) {
   const [searchParams] = useSearchParams();
-  const requestedServerId = searchParams.get("server");
+  const requestedServerId = initialServerId ?? searchParams.get("server");
   const [data, setData] = useState<PluginListResponse | null>(null);
   const [subagents, setSubagents] = useState<SubagentMetadata[]>([]);
   const [subagentError, setSubagentError] = useState("");
@@ -415,7 +415,7 @@ export default function PluginsPage() {
   }
 
   return (
-    <PageShell
+    <ManagementFrame embedded={embedded}
       title="插件管理"
       description="管理内置工具、MCP 服务器与外部工具扩展"
       className="capability-page page-canvas ui-opt-capabilities ui-opt-plugins flex h-full flex-col"
@@ -439,6 +439,7 @@ export default function PluginsPage() {
           </div>
         </Panel>
 
+        {!embedded && <>
         {/* Builtin Tools */}
         <div>
           <h3 className="text-sm font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">
@@ -460,6 +461,7 @@ export default function PluginsPage() {
           </div>
         </div>
 
+        </>}
         {/* Divider */}
         <div className="flex items-center gap-3">
           <div className="flex-1 border-t border-[var(--border)]" />
@@ -591,6 +593,7 @@ export default function PluginsPage() {
           </div>
         )}
 
+        {!embedded && <>
         <div className="flex items-center gap-3">
           <div className="flex-1 border-t border-[var(--border)]" />
           <span className="text-xs text-[var(--text-faint)] font-mono uppercase">Subagents</span>
@@ -644,6 +647,7 @@ export default function PluginsPage() {
             <p>Subagent 调用属于高风险 Agent Delegation，Owner / Standard 需要审批，Restricted 拒绝。</p>
           </div>
         </Panel>
+        </>}
       </div>
 
       {/* Add/Edit MCP Modal */}
@@ -732,7 +736,7 @@ export default function PluginsPage() {
         onSubmit={submitPromptPreview}
         onFormChange={updatePromptFormValue}
       />
-    </PageShell>
+    </ManagementFrame>
   );
 }
 

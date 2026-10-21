@@ -14,13 +14,13 @@ export function getCapabilityManagementTarget(
 
   switch (capability.provider) {
     case "skill_runtime":
-      return { label: "管理技能来源", to: `/skills?skill=${encoded}` };
+      return { label: "管理技能来源", to: `/capabilities?category=skill&skill=${encoded}` };
     case "mcp":
-      return { label: "管理 MCP 服务", to: `/plugins?server=${encoded}` };
+      return { label: "管理 MCP 服务", to: `/capabilities?category=mcp&server=${encoded}` };
     case "agent_runtime":
       return { label: "管理智能体来源", to: `/agents?agent=${encoded}` };
     case "workflow_runtime":
-      return { label: "管理工作流来源", to: `/workflows?workflow=${encoded}` };
+      return { label: "管理工作流来源", to: `/capabilities?category=workflow&workflow=${encoded}` };
     default:
       return null;
   }

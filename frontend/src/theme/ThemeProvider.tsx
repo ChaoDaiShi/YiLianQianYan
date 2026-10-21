@@ -70,6 +70,10 @@ export function normalizeStoredTheme(raw: unknown): ThemeConfig {
     bgImageKey: keepBackgroundImage ? "background" : null,
     colors: { ...DEFAULT_THEME.colors },
     customVars: {},
+    panelOpacity: typeof raw.panelOpacity === "number" ? Math.max(.35,Math.min(1,raw.panelOpacity)) : DEFAULT_THEME.panelOpacity,
+    blur: typeof raw.blur === "number" ? Math.max(0,Math.min(24,raw.blur)) : DEFAULT_THEME.blur,
+    brightness: typeof raw.brightness === "number" ? Math.max(.5,Math.min(1.5,raw.brightness)) : DEFAULT_THEME.brightness,
+    fontSize: typeof raw.fontSize === "number" ? Math.max(12, Math.min(20, raw.fontSize)) : DEFAULT_THEME.fontSize,
   };
 }
 

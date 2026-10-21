@@ -8,7 +8,7 @@ import type { ProofLoopSettingsConfig } from "./types";
  */
 export const defaultConfig: ProofLoopSettingsConfig = {
   ai_repair_enabled: false,
-  agent: { name: "忆涟千言", system_prompt: "你是一个桌面AI助手...", workspace_root: "" },
+  agent: { name: "忆涟千言", system_prompt: "", workspace_root: "" },
   model: {
     provider: "openai",
     name: "deepseek-v4-flash",
@@ -44,7 +44,7 @@ export const defaultConfig: ProofLoopSettingsConfig = {
       timeout_ms: 60000,
     },
   },
-  permissions: { mode: "ask", interrupt_on: ["bash", "write_file", "edit_file", "http_request"] },
+  permissions: { mode: "partial_approval", interrupt_on: ["bash", "write_file", "edit_file", "http_request"] },
   sandbox: { profile: "workspace-write", writable_paths: [], denied_write_paths: [] },
   skills: { directories: [], progressive_loading: true },
   subagents: { directories: [] },

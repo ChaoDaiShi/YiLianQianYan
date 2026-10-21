@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test:e2e": "node e2e/core-paths.mjs",
+    "test:e2e": "node e2e/core-paths.mjs --workbench-revision7",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview"

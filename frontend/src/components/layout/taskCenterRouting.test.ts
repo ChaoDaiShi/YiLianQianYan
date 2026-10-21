@@ -1,14 +1,4 @@
-import { describe, expect, it } from "vitest";
-import workspaceSurfaceSource from "../../surfaces/workspace/WorkspaceSurface.tsx?raw";
-import navGroupsSource from "./navGroups.ts?raw";
-
-describe("task center routing", () => {
-  it("adds a task center route while preserving conversation navigation", () => {
-    expect(workspaceSurfaceSource).toContain('path="tasks"');
-    expect(workspaceSurfaceSource).toContain("TaskCenterPage");
-    expect(workspaceSurfaceSource).toContain('path="task-world/:graphId"');
-    expect(workspaceSurfaceSource).toContain("TaskWorldPage");
-    expect(navGroupsSource).toContain('to: "/tasks"');
-    expect(navGroupsSource).toContain('to: "/chat"');
-  });
-});
+import {describe,expect,it} from "vitest";
+import source from "../../surfaces/workspace/WorkspaceSurface.tsx?raw";
+import {NAV_GROUPS} from "./navGroups";
+describe("workbench routing",()=>{it("replaces removed pages with connectors and more while preserving chat",()=>{expect(source).toContain('path="connectors"');expect(source).toContain('path="more"');expect(source).toContain('path="chat/:id"');expect(source).not.toContain('path="tasks"');expect(source).not.toContain('path="search"');expect(NAV_GROUPS.flatMap(g=>g.items).map(i=>i.to)).toContain("/connectors");});});

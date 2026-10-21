@@ -18,8 +18,8 @@ function environment() {
     close = close;
   });
   const frames: FrameRequestCallback[] = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
-  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("setInterval", (callback:()=>void) => {const tick=()=>{callback();frames.push(tick)};frames.push(tick);return 1;});
+  vi.stubGlobal("clearInterval", vi.fn());
   return { stream, track, getUserMedia, close, frames, source, analyser };
 }
 

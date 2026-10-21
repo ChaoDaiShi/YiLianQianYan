@@ -1,4 +1,5 @@
-import { useState, type RefObject } from "react";
+import { Link, useParams } from "react-router-dom";
+import { useState, type ReactNode, type RefObject } from "react";
 import {
   ChevronDown,
   ListTree,
@@ -25,6 +26,7 @@ interface ChatHeaderProps {
   onToggleExecution: () => void;
   onSelectWorkflow: (workflow: Workflow | null) => void;
   finished?: boolean;
+  panelControls?: ReactNode;
 }
 
 const CONNECTION_META: Record<
@@ -52,7 +54,9 @@ export default function ChatHeader({
   onToggleExecution,
   onSelectWorkflow,
   finished = false,
+  panelControls,
 }: ChatHeaderProps) {
+  const {id: conversationId} = useParams();
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false);
   const connectionMeta = CONNECTION_META[connection];
   const statusMeta = finished
@@ -148,6 +152,8 @@ export default function ChatHeader({
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        {panelControls}
+        {conversationId && <Link className="text-xs text-[var(--text-muted)] hover:text-[var(--text)]" to={`/connectors?conversation=${encodeURIComponent(conversationId)}`}>在画布查看</Link>}
         <div
           className="hidden items-center gap-1.5 text-meta text-[var(--text-muted)] min-[720px]:flex"
           aria-label={`Agent 状态：${statusMeta.label}`}

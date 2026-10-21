@@ -9,6 +9,6 @@ describe("mounted chat voice refresh contract", () => {
     expect(chatPageSource).toContain("conversationRefresh");
     expect(chatPageSource).toContain("conversationRefreshRevision");
     expect(chatViewSource).toContain("conversationRefreshRevision");
-    expect(chatViewSource).toContain("[conversationId, conversationRefreshRevision");
+    expect(chatViewSource).toContain("[currentConvId, conversationRefreshRevision");
   });
 });

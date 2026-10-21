@@ -60,7 +60,7 @@ describe("provider connection API", () => {
 
   it("guides chat, planning and AI review to model settings before invoking an unavailable model", () => {
     for (const source of [chatSource, taskCenterSource, taskWorldSource]) {
-      expect(source).toContain("getProviderReadiness");
+      expect(source).toMatch(/getProviderReadiness|getChatModelReadiness/);
       expect(source).toContain("还没有配置可用的模型服务");
       expect(source).toContain("前往模型设置");
     }

@@ -3,18 +3,18 @@ import { NAV_ENTRIES, getNavEntryById, getNavEntryByPath } from "./navRegistry";
 import pageShellSource from "./PageShell.tsx?raw";
 
 describe("PageShell and Navigation Registry Contracts", () => {
-  it("defines single source of truth for all 15 navigation routes", () => {
-    expect(NAV_ENTRIES.length).toBe(15);
+  it("defines single source of truth for current navigation routes", () => {
+    expect(NAV_ENTRIES.length).toBe(11);
     const routes = NAV_ENTRIES.map((e) => e.to);
-    expect(routes).toContain("/tasks");
+    expect(routes).toContain("/connectors");
     expect(routes).toContain("/chat");
-    expect(routes).toContain("/search");
-    expect(routes).toContain("/workflows");
+    expect(routes).not.toContain("/search");
+    expect(routes).not.toContain("/workflows");
     expect(routes).toContain("/workspaces");
     expect(routes).toContain("/capabilities");
     expect(routes).toContain("/settings");
 
-    expect(getNavEntryById("tasks")?.label).toBe("任务");
+    expect(getNavEntryById("connectors")?.label).toBe("画布");
     expect(getNavEntryByPath("/chat")?.id).toBe("chat");
     expect(getNavEntryByPath("/chat/123")?.id).toBe("chat");
   });

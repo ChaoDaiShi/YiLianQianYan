@@ -1,5 +1,6 @@
 import type { ProviderConnectionKind } from "../../../api/providerConnection";
 import type { AppConfig, ProviderReadinessProjection } from "../../../types";
+import ModelPoolPanel from "../../llm/ModelPoolPanel";
 import { ModelManagerPanel } from "../../llm";
 import { secretSourceLabel } from "../model/mapping";
 import ProviderReadinessCard from "./ProviderReadinessCard";
@@ -29,10 +30,10 @@ export default function ModelSettings({
 }: ModelSettingsProps) {
   return (
     <div className="space-y-4">
-      <ModelManagerPanel
+      <ModelPoolPanel modelManager={<ModelManagerPanel
         actions={<ProviderReadinessCard dirty={dirty} readiness={readiness} kinds={["model"]} testing={testing} results={results} onVerify={onVerify} />}
         legacyModel={{ config, updateField, clearSecret, secretSourceLabel, secretRefreshToken }}
-      />
+      />} />
     </div>
   );
 }

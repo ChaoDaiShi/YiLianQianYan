@@ -6,9 +6,9 @@ import agentsSource from "./AgentsPage.tsx?raw";
 import capabilitiesSource from "./CapabilitiesPage.tsx?raw";
 
 describe("Capability Center freeze and responsive contract", () => {
-  it("keeps all four routes and the frozen compact NavRail", () => {
-    expect(workspaceSurfaceSource).toContain('path="skills"');
-    expect(workspaceSurfaceSource).toContain('path="plugins"');
+  it("keeps capability and agent routes with compact NavRail, removes standalone editors", () => {
+    expect(workspaceSurfaceSource).not.toContain('path="skills"');
+    expect(workspaceSurfaceSource).not.toContain('path="plugins"');
     expect(workspaceSurfaceSource).toContain('path="agents"');
     expect(workspaceSurfaceSource).toContain('path="capabilities"');
     expect(navRailSource).toContain("min-[960px]:w-[80px]");

@@ -1,0 +1,12 @@
+html:has(.floating-orb),body:has(.floating-orb){margin:0;background:transparent;overflow:hidden}
+.floating-orb{width:64px;height:64px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;border:1px solid var(--accent-primary);border-radius:50%;background:var(--surface-solid);color:var(--text-primary);padding:4px;overflow:hidden;cursor:grab;touch-action:none;user-select:none;font-family:inherit}
+.floating-orb:active,.floating-drag-handle:active{cursor:grabbing}
+.floating-orb:focus-visible{outline:2px solid var(--accent-primary);outline-offset:-3px}
+.floating-orb-status{max-width:100%;border-radius:8px;padding:1px 4px;font-size:10px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface-hover);color:var(--text-primary)}
+.floating-orb[data-status=error]{border-color:#cf657f}
+.floating-orb[data-status=error] .floating-orb-status{background:#cf657f;color:white}
+.floating-orb[data-status=listening] .floating-orb-status,.floating-orb[data-status=speaking] .floating-orb-status,.floating-orb[data-status=pending] .floating-orb-status{background:var(--accent-primary);color:var(--text-on-accent,#fff)}
+.floating-drag-handle{touch-action:none;user-select:none;cursor:grab}
+.monitor-orb-total{max-width:100%;font-size:14px;line-height:17px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.monitor-orb-unit{font-size:9px;line-height:10px;color:var(--text-muted)}
+.monitor-drag-handle{display:flex;align-items:center;gap:6px;margin-right:auto;border:0;background:transparent;color:inherit;font:inherit;text-align:left;padding:3px 0}

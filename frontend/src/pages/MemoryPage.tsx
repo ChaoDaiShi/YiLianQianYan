@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Brain, Clock3, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { MemoryRecord } from "../api/client";
 import { useMemoryStore } from "../stores/memoryStore";
 import PageShell from "../components/layout/PageShell";
 import { Badge, Button, EmptyState, ErrorState, Modal, Skeleton, Textarea } from "../components/ui";
+import { knowledgeDocumentForMemory } from "../features/memory/knowledgeMemory";
 import {
   getMemoryCategoryPresentation,
   getMemorySourceLabel,
@@ -134,6 +136,7 @@ export default function MemoryPage() {
   };
 
   const handleOpenEdit = (memory: MemoryRecord) => {
+    if (knowledgeDocumentForMemory(memory)) return;
     setEditingMemory(memory);
     setEditContent(memory.content);
     setEditError(null);
@@ -161,6 +164,7 @@ export default function MemoryPage() {
   };
 
   const handleDelete = async (memory: MemoryRecord) => {
+    if (knowledgeDocumentForMemory(memory)) return;
     if (isDeleting) return;
     if (!window.confirm("删除这条记忆？\n\n删除后，这条记录将从记忆中心移除。")) return;
     setIsDeleting(true);
@@ -474,6 +478,7 @@ function MemoryRow({
   memory: MemoryRecord; selected: boolean; onSelect: () => void; onEdit: () => void; onDelete: () => void;
 }) {
   const category = getMemoryCategoryPresentation(memory.category);
+  const documentId = knowledgeDocumentForMemory(memory);
   return (
     <div
       role="button"
@@ -490,22 +495,23 @@ function MemoryRow({
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge tone={categoryBadgeTone(memory.category)}>{category.label}</Badge>
             <span className="memory-row-source">{getMemorySourceLabel(memory.source)}</span>
+            {documentId && <Badge tone="default">文档片段 · 只读</Badge>}
           </div>
           <p className="memory-row-content">{truncateMemoryContent(memory.content)}</p>
         </div>
         <div className="memory-row-side">
           <Clock3 className="mt-1 h-3.5 w-3.5 shrink-0 text-[var(--text-faint)] memory-row-clock" />
-          <div className="memory-row-actions">
+          {!documentId && <div className="memory-row-actions">
             <button type="button" aria-label="编辑记忆" title="编辑记忆" onClick={(e) => { e.stopPropagation(); onEdit(); }} onKeyDown={(e) => e.stopPropagation()} className="memory-row-action-btn">
               <Pencil className="h-3.5 w-3.5" />
             </button>
             <button type="button" aria-label="删除记忆" title="删除记忆" onClick={(e) => { e.stopPropagation(); onDelete(); }} onKeyDown={(e) => e.stopPropagation()} className="memory-row-action-btn memory-row-action-danger">
               <Trash2 className="h-3.5 w-3.5" />
             </button>
-          </div>
+          </div>}
         </div>
       </div>
       <div className="memory-row-meta">
@@ -521,17 +527,19 @@ function MemoryDetail({
   memory: MemoryRecord; onEdit: () => void; onDelete: () => void; isDeleting?: boolean; deleteError?: string | null;
 }) {
   const category = getMemoryCategoryPresentation(memory.category);
+  const documentId = knowledgeDocumentForMemory(memory);
   return (
     <div className="memory-detail-content">
       <div className="memory-detail-heading">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge tone={categoryBadgeTone(memory.category)}>{category.label}</Badge>
             <span className="text-xs text-[var(--text-secondary)]">{getMemorySourceLabel(memory.source)}</span>
+            {documentId && <Badge tone="default">文档片段 · 只读</Badge>}
           </div>
           <h2>记忆详情</h2>
         </div>
-        <div className="flex items-center gap-1">
+        {!documentId && <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" onClick={onEdit} aria-label="编辑记忆">
             <Pencil className="h-4 w-4" />
             编辑
@@ -540,8 +548,9 @@ function MemoryDetail({
             <Trash2 className="h-4 w-4 text-[var(--danger)]" />
             删除
           </Button>
-        </div>
+        </div>}
       </div>
+      {documentId && <p className="rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-6 text-[var(--text-secondary)]">该片段由知识文档管理，请在知识库中重新导入或移除源文档。 <Link className="text-[var(--accent-primary)] underline" to={`/knowledge?document=${encodeURIComponent(documentId)}`}>管理源文档</Link></p>}
 
       {deleteError && (
         <div className="rounded-[var(--radius-sm)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 p-2.5 text-xs text-[var(--danger)]" role="alert">

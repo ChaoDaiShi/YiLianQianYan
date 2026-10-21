@@ -8,13 +8,10 @@ import workspaceLayoutSource from "../components/layout/workspaceLayout.ts?raw";
 const stylesSource = stylesheetText;
 
 const lazyPages = [
-  "TaskCenterPage",
+  "MorePage",
   "SystemPage",
   "LogsPage",
   "SettingsPage",
-  "SkillsPage",
-  "PluginsPage",
-  "WorkflowsPage",
   "WorkspacesPage",
   "WorkspaceDetailPage",
   "AgentsPage",
@@ -37,11 +34,11 @@ describe("route loading contract", () => {
     for (const path of [
       "chat",
       "chat/:id",
-      "tasks",
+      "connectors",
+      "more",
       "system",
       "logs",
       "settings",
-      "workflows",
       "workspaces",
       "workspaces/:id",
       "memory",

@@ -57,6 +57,7 @@ export interface ExecutionRecord {
 export interface AgentRunState {
   conversationId: string | null;
   content: string;
+  reasoning: string;
   records: Record<string, ExecutionRecord>;
   order: string[];
   nextSequence: number;

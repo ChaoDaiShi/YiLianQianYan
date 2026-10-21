@@ -165,27 +165,27 @@ export default function ToolCallCard({
       className={
         "conversation-tool-card tool-card-status-" + effectiveStatus +
         " overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] " +
-        (compact ? "mb-2" : "mb-3")
+        (compact ? "tool-card-compact !mb-0 !rounded-none !border-0 !bg-transparent !shadow-none" : "mb-3")
       }
       data-status={verificationStatus === "failed" ? "failed" : effectiveStatus}
     >
       <button
         type="button"
         onClick={() => setExpanded((open) => !open)}
-        className="flex w-full items-start gap-3 px-3.5 py-3 text-left transition-colors duration-[var(--motion-fast)] hover:bg-[var(--surface-hover)]"
+        className={"flex w-full items-start text-left transition-colors duration-[var(--motion-fast)] hover:bg-[var(--surface-hover)] " + (compact ? "gap-2 px-1 py-2" : "gap-3 px-3.5 py-3")}
         aria-expanded={expanded}
         aria-controls={"tool-details-" + toolCallId}
         aria-label={(expanded ? "收起" : "查看") + "技术详情：" + label}
       >
-        <span className="tool-card-icon-well shrink-0">
+        {!compact && <span className="tool-card-icon-well shrink-0">
           {TOOL_ICONS[name] || <Terminal className="h-4 w-4" />}
-        </span>
+        </span>}
         <span className={"tool-card-status-icon mt-0.5 shrink-0 " + statusTone(effectiveStatus, verificationStatus)}>
           {statusIcon(effectiveStatus, verificationStatus)}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-sm font-medium text-[var(--text-primary)]">
+            <span className={(compact ? "text-xs font-normal" : "text-sm font-medium") + " text-[var(--text-primary)]"}>
               {verificationStatus === "failed" ? "验证失败" : formatToolStatus(effectiveStatus)}
             </span>
             <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
@@ -198,7 +198,7 @@ export default function ToolCallCard({
               />
             )}
           </span>
-          <span className="tool-card-summary mt-1 block truncate text-xs text-[var(--text-secondary)]">
+          <span className={"tool-card-summary block truncate text-xs text-[var(--text-secondary)] " + (compact ? "mt-0.5" : "mt-1")}>
             {verificationStatus === "failed"
               ? verificationReason
                 ? `验证失败：${verificationReason}`

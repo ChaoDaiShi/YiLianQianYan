@@ -5,10 +5,10 @@ import remarkGfm from "remark-gfm";
 import type { Message } from "../../types";
 import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
 import { isExternalHttpUrl, openExternalUrl } from "./externalLink";
+import MessageProcess from "./MessageProcess";
 
 export interface MessageBubbleProps {
   message: Message;
-  showAssistantAvatar?: boolean;
   /** TTS stays a deliberate user gesture and is supplied by GlobalVoiceHost. */
   onSpeak?: (text: string) => void;
 }
@@ -19,12 +19,11 @@ export function areMessageBubblePropsEqual(
 ) {
   return (
     previous.message === next.message &&
-    previous.showAssistantAvatar === next.showAssistantAvatar &&
     previous.onSpeak === next.onSpeak
   );
 }
 
-function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: MessageBubbleProps) {
+function MessageBubble({ message, onSpeak }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle");
@@ -84,19 +83,6 @@ function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: Message
           (isUser ? "justify-end" : "justify-start")
         }
       >
-        {!isUser && (
-          <span className="conversation-assistant-avatar-wrap" aria-hidden="true">
-            {showAssistantAvatar ? (
-              <img
-                src="/cyrene-home-character.png"
-                alt=""
-                className="conversation-assistant-avatar"
-              />
-            ) : (
-              <span className="conversation-assistant-avatar-placeholder" />
-            )}
-          </span>
-        )}
         <div
           className={
             "conversation-message-content relative min-w-0 text-sm leading-7 " +
@@ -105,6 +91,7 @@ function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: Message
               : "conversation-message-assistant max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-4 py-3 text-[var(--text-primary)] shadow-card-token")
           }
         >
+          {!isUser && <MessageProcess process={message.process}/>}
           {isUser ? (
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
@@ -172,7 +159,7 @@ function MessageBubble({ message, showAssistantAvatar = true, onSpeak }: Message
       {toolCalls.length > 0 && (
         <div className="conversation-tool-calls mt-3 max-w-[900px]">
           {toolCalls.map((toolCall) => (
-            <ToolCallCard key={toolCall.toolCallId} {...toolCall} />
+            <ToolCallCard key={toolCall.toolCallId} {...toolCall} compact />
           ))}
         </div>
       )}

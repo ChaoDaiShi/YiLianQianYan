@@ -7,6 +7,7 @@ import {
   type AgentStatus,
 } from "./agentStatus";
 import ChatInput from "./ChatInput";
+import type { ChatRequestOptions, WorkspaceMode } from "./chatRequestOptions";
 import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 
 interface WorkbenchHomeProps {
@@ -15,7 +16,7 @@ interface WorkbenchHomeProps {
   pendingApprovals: PendingApproval[];
   isLoading: boolean;
   finished?: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, resourceIds?: string[], options?: ChatRequestOptions) => void | boolean | Promise<void | boolean>;
   onStop: () => void;
   suggestedText?: string;
   onTextUsed?: () => void;
@@ -23,6 +24,10 @@ interface WorkbenchHomeProps {
   onOpenCurrentTask: () => void;
   chatVoiceControls?: ChatVoiceControls | null;
   onRequestGlobalVoiceSession?: () => void;
+  workspaceMode?: WorkspaceMode;
+  onWorkspaceModeChange?: (mode: WorkspaceMode) => Promise<void>;
+  modeChanging?: boolean;
+  modeError?: string | null;
 }
 
 interface QuickAction {
@@ -113,6 +118,10 @@ export default function WorkbenchHome({
   onOpenCurrentTask,
   chatVoiceControls,
   onRequestGlobalVoiceSession,
+  workspaceMode,
+  onWorkspaceModeChange,
+  modeChanging,
+  modeError,
 }: WorkbenchHomeProps) {
   const status = resolveAgentStatus({
     connection,
@@ -150,7 +159,7 @@ export default function WorkbenchHome({
           <button
             type="button"
             onClick={onOpenCurrentTask}
-            aria-label="打开当前任务画布"
+            aria-label="打开连接器"
             className="home-character home-character-scene relative border-0 bg-transparent"
           >
             <div className="home-character-glow" aria-hidden="true" />
@@ -177,6 +186,10 @@ export default function WorkbenchHome({
         </div>
 
         <ChatInput
+          workspaceMode={workspaceMode}
+          onWorkspaceModeChange={onWorkspaceModeChange}
+          modeChanging={modeChanging}
+          modeError={modeError}
           conversationId={conversationId}
           onSend={onSend}
           isLoading={isLoading}

@@ -124,7 +124,7 @@ describe("history conversation viewport contract", () => {
     expect(messageListSource).toContain("onScroll?:");
     expect(chatViewSource).toContain("isNearBottom");
     expect(chatViewSource).toContain("onScroll={handleMessageScroll}");
-    expect(messageListSource).toContain("AgentProgressCard");
+    expect(messageListSource).toContain("MessageProcess");
     expect(messageListSource).not.toContain("描述你的目标");
     expect(messageListSource).toContain("任务没有成功完成");
   });
@@ -134,7 +134,8 @@ describe("execution trace collapse contract", () => {
   it("wires an accessible manual collapse control without changing execution state", () => {
     expect(chatPageSource).toContain("data-execution-collapsed");
     expect(executionSidebarSource).toContain("aria-label=\"收起执行轨迹\"");
-    expect(chatPageSource).toContain('label: "展开执行轨迹"');
-    expect(chatPageSource).toContain("<ContextRail");
+    expect(chatPageSource).toContain('aria-label="执行与审批"');
+    expect(chatPageSource).toContain('aria-label="Git 文件变更"');
+    expect(chatPageSource).not.toContain("<ContextRail");
   });
 });

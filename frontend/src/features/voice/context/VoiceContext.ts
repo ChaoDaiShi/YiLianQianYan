@@ -43,3 +43,12 @@ export function mergeVoiceContext(
   }
   return next;
 }
+export function projectVoiceContextPatch(active:GlobalVoiceContextSnapshot,browsing:GlobalVoiceContextSnapshot,patch:GlobalVoiceContextPatch,pinned:boolean){
+ const nextBrowsing=mergeVoiceContext(browsing,patch);
+ const nextActive=pinned?active:mergeVoiceContext(active,patch);
+ return{active:nextActive,browsing:nextBrowsing,anchorChanged:nextActive.conversational_anchor?.conversation_id!==active.conversational_anchor?.conversation_id};
+}
+export function selectBrowsingCallContext(active:GlobalVoiceContextSnapshot,browsing:GlobalVoiceContextSnapshot):GlobalVoiceContextSnapshot{
+ if(browsing.focused_surface!=="conversation"||!browsing.conversational_anchor||browsing.conversational_anchor.conversation_id===active.conversational_anchor?.conversation_id)return active;
+ return browsing;
+}

@@ -89,7 +89,7 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.5;
   color: var(--text-secondary);
   background: var(--surface-muted);
@@ -103,7 +103,7 @@
   display: inline-flex;
   align-items: center;
   padding: 2px 7px;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 600;
   border-radius: var(--radius-xs);
   background: var(--surface-muted);
@@ -123,7 +123,7 @@
 
 .ui-opt-skills .skill-reading-content {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -141,7 +141,7 @@
   gap: 4px;
   padding: 2px 6px;
   border-radius: var(--radius-xs);
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--text-muted);
   border: 1px solid transparent;
   transition: all var(--cap-transition);
@@ -160,7 +160,7 @@
 .ui-opt-plugins .mcp-status-banner {
   border-radius: var(--radius-md);
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: 0.75rem;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -189,7 +189,7 @@
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-muted);
   border-bottom: 1px solid var(--divider);

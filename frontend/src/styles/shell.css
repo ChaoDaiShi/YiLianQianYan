@@ -98,10 +98,7 @@
 
 /* R1B: the active conversation is a quieter workspace surface than the home scene. */
 .workbench-grid[data-chat-view="conversation"] {
-  background:
-    radial-gradient(circle at 12% 0%, var(--cyrene-glow-pink), transparent 34%),
-    radial-gradient(circle at 88% 100%, var(--cyrene-glow-purple), transparent 38%),
-    var(--page-wash);
+  background: transparent;
 }
 
 .conversation-chat {
@@ -341,7 +338,7 @@
 .conversation-composer {
   position: relative;
   z-index: 1;
-  background: linear-gradient(180deg, rgba(245, 242, 251, 0), rgba(245, 242, 251, 0.72) 28%, rgba(245, 242, 251, 0.9));
+  background: transparent;
 }
 
 .conversation-composer .composer-card {

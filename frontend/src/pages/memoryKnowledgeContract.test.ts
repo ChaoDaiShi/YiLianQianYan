@@ -36,17 +36,10 @@ describe("Memory and Knowledge page boundaries", () => {
     expect(memoryPageSource).toContain("stopPropagation");
   });
 
-  it("keeps the Knowledge page honest when no knowledge API exists", () => {
+  it("connects Knowledge to its actual import and retrieval library",()=>{
     expect(knowledgePageSource).toContain("ui-opt-knowledge");
-    expect(knowledgePageSource).toContain("没有独立知识库数据源");
-    expect(knowledgePageSource).toContain("尚未接入");
-    expect(knowledgePageSource).toContain("当前版本提供长期记忆记录；外部文档、文件预览和独立检索索引尚未接入");
-    expect(knowledgePageSource).toContain("当前可用：长期记忆记录");
-    expect(knowledgePageSource).toContain("尚未接入：独立文档知识库");
-    expect(knowledgePageSource).toContain('navigate("/memory")');
-    expect(knowledgePageSource).not.toContain("上传文档");
-    expect(knowledgePageSource).not.toContain("相似度");
-    expect(knowledgePageSource).not.toContain("embedding");
+    expect(knowledgePageSource).toContain("KnowledgeLibrary");
+    expect(knowledgePageSource).not.toContain("尚未接入");
   });
 
   it("keeps both capability entries in the existing nav group", () => {

@@ -46,7 +46,7 @@ function trapTabKey(event: KeyboardEvent, panel: HTMLElement) {
   }
 }
 
-// Module-level stack of open dialogs to ensure Escape only closes the topmost dialog
+// Only the topmost dialog owns Escape and the keyboard focus trap.
 const dialogStack: string[] = [];
 
 interface DialogFocusLifecycleOptions {
@@ -103,6 +103,7 @@ export function useDialogFocusLifecycle({
 
       if (
         event.key === "Tab" &&
+        dialogStack[dialogStack.length - 1] === id &&
         panel?.getAttribute("aria-modal") === "true"
       ) {
         trapTabKey(event, panel);

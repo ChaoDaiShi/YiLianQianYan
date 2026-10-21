@@ -1,4 +1,4 @@
-import { Mic, Radio } from "lucide-react";
+import { Mic, PhoneCall, Square, X, Loader2 } from "lucide-react";
 import type { CaptureStatus } from "./useVoiceCapture";
 
 export interface ChatVoiceControls {
@@ -25,10 +25,10 @@ export function ChatVoiceInput({ controls, onRequestGlobalVoiceSession }: ChatVo
       className="chat-voice-entry"
       onClick={onRequestGlobalVoiceSession}
       disabled={!onRequestGlobalVoiceSession}
-      title={onRequestGlobalVoiceSession ? "与小涟语音对话" : "语音会话正在接线"}
+      aria-label="与小涟语音对话"
+      title={onRequestGlobalVoiceSession ? "与小涟通话" : "语音会话正在连接"}
     >
-      <Radio className="h-3.5 w-3.5" aria-hidden="true" />
-      与小涟语音对话
+      <PhoneCall className="h-4 w-4" aria-hidden="true" />
     </button>
   );
   if (!controls) {
@@ -45,11 +45,10 @@ export function ChatVoiceInput({ controls, onRequestGlobalVoiceSession }: ChatVo
         className="chat-voice-microphone"
         onClick={listening ? controls.stop : controls.start}
         disabled={busy}
-        aria-label="开始语音输入"
-        title="开始语音输入"
+        aria-label={listening ? "停止录音" : busy ? "正在处理语音" : "开始语音输入"}
+        title={listening ? "停止录音" : busy ? "正在处理语音" : "开始语音输入"}
       >
-        <Mic className="h-3.5 w-3.5" aria-hidden="true" />
-        {listening ? "停止录音" : busy ? "正在处理" : "开始语音输入"}
+        {listening ? <Square className="h-4 w-4" aria-hidden="true" /> : busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mic className="h-4 w-4" aria-hidden="true" />}
       </button>
       {listening ? (
         <>
@@ -63,7 +62,7 @@ export function ChatVoiceInput({ controls, onRequestGlobalVoiceSession }: ChatVo
         </>
       ) : null}
       {activeCapture ? (
-        <button type="button" className="chat-voice-cancel" onClick={controls.cancel}>取消语音输入</button>
+        <button type="button" className="chat-voice-cancel" aria-label="取消语音输入" title="取消语音输入" onClick={controls.cancel}><X className="h-4 w-4" aria-hidden="true" /></button>
       ) : null}
       {globalEntry}
     </div>

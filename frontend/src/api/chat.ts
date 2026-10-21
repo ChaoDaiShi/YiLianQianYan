@@ -5,6 +5,8 @@
 import { API_BASE } from "../core/api/http";
 import { request } from "../core/api/http";
 import { controlSessionHeaders } from "./controlSession";
+import type { ChatRequestOptions } from "../components/chat/chatRequestOptions";
+import type { WorkspaceMode } from "../types";
 
 // ============================================================
 // SSE Streaming (for chat)
@@ -23,10 +25,25 @@ export interface AgentEvent {
   message_id?: string;
   risk_level?: string;
   reason?: string;
+  phase?: "selected"|"switched"|"recovered"|"exhausted";
+  pool_id?: string;
+  pool_revision?: number;
+  request_id?: string;
+  attempt_id?: string;
+  from_profile_id?: string|null;
+  to_profile_id?: string|null;
+  from_tier?: number|null;
+  to_tier?: number|null;
+  interrupted_content?: string|null;
+  replace_content?: boolean;
   approval_id?: string;
   verification_success?: boolean;
   verification_reason?: string;
   should_replan?: boolean;
+  /** Frontend transport metadata; HTTP admission failed before an SSE run existed. */
+  request_rejected?: boolean;
+  mode?: WorkspaceMode;
+  automatic?: boolean;
 }
 
 export type EventHandler = (event: AgentEvent) => void;
@@ -35,21 +52,23 @@ export function sendMessage(
   message: string,
   conversationId: string | null,
   onEvent: EventHandler,
-  workflowId?: string | null
+  workflowId?: string | null,
+  options?: ChatRequestOptions,
 ): AbortController {
+  return streamChatRequest("/api/chat", {conversation_id:conversationId,message,workflow_id:workflowId||undefined,...options},onEvent,conversationId);
+}
+
+export function streamChatRequest(path:string,body:unknown,onEvent:EventHandler,conversationId:string|null=null):AbortController {
+  let resolvedConversationId=conversationId??"";
   const controller = new AbortController();
 
-  fetch(`${API_BASE}/api/chat`, {
+  fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...controlSessionHeaders(),
     },
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      message,
-      workflow_id: workflowId || undefined,
-    }),
+    body: JSON.stringify(body),
     signal: controller.signal,
   })
     .then(async (res) => {
@@ -68,7 +87,9 @@ export function sendMessage(
           type: "error",
           conversation_id: conversationId || "",
           error: detail || `HTTP ${res.status}`,
+          request_rejected: true,
         });
+        onEvent({type:"stream_end",conversation_id:resolvedConversationId});
         return;
       }
 
@@ -107,6 +128,7 @@ export function sendMessage(
               const parsed = JSON.parse(data);
 
               if (currentEvent === "connected") {
+                resolvedConversationId=parsed.conversation_id||resolvedConversationId;
                 onEvent({
                   type: "connected",
                   conversation_id: parsed.conversation_id || "",
@@ -123,7 +145,7 @@ export function sendMessage(
 
       // Stream ended without an explicit terminal event (e.g. agent paused
       // for approval). Let the handler clear transient loading state.
-      onEvent({ type: "stream_end", conversation_id: conversationId || "" });
+      onEvent({ type: "stream_end", conversation_id: resolvedConversationId });
     })
     .catch((err) => {
       if (err.name !== "AbortError") {
@@ -133,6 +155,7 @@ export function sendMessage(
           error: String(err),
         });
       }
+      onEvent({type:"stream_end",conversation_id:resolvedConversationId});
     });
 
   return controller;

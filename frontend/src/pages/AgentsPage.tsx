@@ -14,6 +14,7 @@ import {
   listAgents,
   listTeams,
 } from "../api/client";
+import PersonaDialog from "../features/agents/PersonaDialog";
 import PageShell from "../components/layout/PageShell";
 import {
   Button,
@@ -35,6 +36,7 @@ export default function AgentsPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [personaAgentId, setPersonaAgentId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -87,7 +89,7 @@ export default function AgentsPage() {
       const result = await createAgent({
         name: name.trim(),
         description: description.trim() || undefined,
-        instructions: instructions.trim() || undefined,
+        user_prompt: instructions.trim() || undefined,
       });
       if (result.ok) {
         setShowCreate(false);
@@ -114,10 +116,10 @@ export default function AgentsPage() {
       description="管理承担不同角色和任务的智能体配置。"
       className="capability-page page-canvas ui-opt-capabilities ui-opt-agents"
       actions={
-        <Button onClick={handleOpenCreate}>
+        <><Button variant="secondary" onClick={() => setPersonaAgentId("default")}>默认角色</Button><Button onClick={handleOpenCreate}>
           <Plus className="h-4 w-4" />
           新建 Agent
-        </Button>
+        </Button></>
       }
     >
       <div className="capability-page-body capability-page-body-stack">
@@ -212,7 +214,7 @@ export default function AgentsPage() {
                     </div>
 
                     <div className="agent-instructions-inset w-full">
-                      {agent.instructions?.trim() || "未配置专属指令"}
+                      {agent.user_prompt?.trim() || "未配置专属指令"}
                     </div>
 
                     <div className="flex items-center justify-between gap-2 w-full pt-1 border-t border-[var(--border-soft)] text-[11px] text-[var(--text-muted)]">
@@ -249,7 +251,7 @@ export default function AgentsPage() {
 
         <section className="capability-detail-panel" aria-label="智能体详情">
           {selectedAgent ? (
-            <AgentDetail agent={selectedAgent} />
+            <><div className="flex justify-end p-3"><Button variant="secondary" onClick={() => setPersonaAgentId(selectedAgent.id)}>编辑角色与用户提示词</Button></div><AgentDetail agent={selectedAgent} /></>
           ) : (
             <EmptyState
               icon={<Bot className="h-6 w-6" />}
@@ -340,8 +342,8 @@ export default function AgentsPage() {
             </div>
           </Section>
 
-          <Section title="指令">
-            <FormField label="系统指令" hint="该 Agent 的职责与约束（LLM-only，不直接调用工具）">
+          <Section title="用户提示词">
+            <FormField label="用户提示词" hint="你为该智能体设定的职责、偏好与表达方式">
               <Textarea
                 value={instructions}
                 onChange={(event) => setInstructions(event.target.value)}
@@ -371,11 +373,13 @@ export default function AgentsPage() {
           </div>
         </div>
       </Modal>
+      <PersonaDialog open={personaAgentId !== null} agentId={personaAgentId ?? "default"} onClose={() => setPersonaAgentId(null)} onSaved={() => void reload()} />
     </PageShell>
   );
 }
 
 function AgentDetail({ agent }: { agent: AgentDefinition }) {
+  const [full, setFull] = useState(false);
   return (
     <div className="capability-detail-content">
       <div className="capability-detail-heading">
@@ -411,8 +415,8 @@ function AgentDetail({ agent }: { agent: AgentDefinition }) {
         </div>
       </CapabilityDetailSection>
 
-      <CapabilityDetailSection title="指令" technical>
-        <pre className="capability-content-preview">{agent.instructions || "暂无指令"}</pre>
+      <CapabilityDetailSection title="用户提示词" technical>
+        <pre className="capability-content-preview">{agent.user_prompt?.slice(0, 1200) || "暂无用户提示词"}</pre><Button variant="ghost" size="sm" onClick={() => setFull(true)}>查看更多</Button><Modal open={full} onClose={() => setFull(false)} title="用户提示词全文" size="xl"><pre className="whitespace-pre-wrap break-words">{agent.user_prompt}</pre></Modal>
       </CapabilityDetailSection>
 
       <CapabilityDetailSection title="技术详情" technical>

@@ -12,7 +12,7 @@ describe("Skills capability surface", () => {
     expect(skillsPageSource).toContain("createSkill");
     expect(skillsPageSource).toContain("updateSkill");
     expect(skillsPageSource).toContain("deleteSkill");
-    expect(skillsPageSource).toMatch(/PageShell|PageHeader/);
+    expect(skillsPageSource).toMatch(/ManagementFrame/);
     expect(skillsPageSource).toContain("ErrorState");
     expect(skillsPageSource).toContain("Skeleton");
     expect(skillsPageSource).toContain('aria-label="搜索技能"');

@@ -1,5 +1,5 @@
-export const NAV_IDS = ["tasks", "chat", "search", "workflows", "workspaces", "skills", "plugins", "agents", "capabilities", "memory", "knowledge", "system", "logs", "settings", "account"] as const;
-export const MANDATORY_NAV = ["tasks", "chat", "settings"];
+export const NAV_IDS = ["chat", "connectors", "workspaces", "capabilities", "agents", "memory", "knowledge", "system", "logs", "settings", "account"] as const;
+export const MANDATORY_NAV = ["connectors", "chat", "settings"];
 export const MONITOR_CARDS = ["health", "processes", "resources", "approvals", "diagnostics"] as const;
 export interface MonitorCardLayout { id: string; x: number; y: number; width: number; height: number }
 export interface ProductPreferences {
@@ -11,7 +11,7 @@ export interface ProductPreferences {
 export const TRUSTED_MODULES = [
   { id: "gateway", name: "安全与权限", navigation: "settings", permissions: ["security.read"], mandatory: true },
   { id: "approvals", name: "审批", navigation: "chat", permissions: ["approvals.read"], mandatory: true },
-  { id: "recovery", name: "任务恢复", navigation: "tasks", permissions: ["tasks.read"], mandatory: true },
+  { id: "recovery", name: "任务恢复", navigation: "connectors", permissions: ["tasks.read"], mandatory: true },
   { id: "capabilities", name: "能力管理", navigation: "capabilities", permissions: ["capability.manage"], mandatory: false },
   { id: "monitoring", name: "监控工具箱", navigation: "system", permissions: ["system.read"], mandatory: false },
   { id: "workflows", name: "工作流", navigation: "workflows", permissions: ["workflow.read"], mandatory: false },

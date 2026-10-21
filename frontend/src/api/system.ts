@@ -3,8 +3,9 @@
 // Transport is `core/api/http.ts`; this module owns these calls rather than
 // borrowing them from the legacy bundle.
 import { API_BASE } from "../core/api/http";
-import { request } from "../core/api/http";
+import { request, requestResult } from "../core/api/http";
 import type { AppConfig, LlmModel, LlmModelPayload, LlmUsageReport } from "../types";
+import type { ExecutionRecord } from "../features/execution/model";
 
 // ── Settings ──
 
@@ -46,8 +47,16 @@ export async function getLlmUsage(query: string) {
 
 // ── Tools ──
 
+export interface RuntimeTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  risk_level: "low" | "medium" | "high" | "critical";
+  requires_approval: boolean;
+}
+
 export async function listTools() {
-  return request<any[]>("GET", "/api/tools");
+  return requestResult<RuntimeTool[]>("GET", "/api/tools");
 }
 
 // ── System ──
@@ -147,6 +156,23 @@ export interface LogEntry {
 export interface LogsResponse {
   entries: LogEntry[];
   total: number;
+  sources: string[];
+  levels: string[];
+}
+
+export interface ToolDiagnostic extends ExecutionRecord {
+  conversationTitle: string;
+  updatedAt: number;
+}
+
+export interface ToolDiagnosticsResponse {
+  entries: ToolDiagnostic[];
+  total: number;
+}
+
+export async function getToolDiagnostics(params: { status: "error" | "all"; count?: number }): Promise<ToolDiagnosticsResponse | null> {
+  const qs = new URLSearchParams({ status: params.status, count: String(params.count ?? 200) });
+  return request<ToolDiagnosticsResponse>("GET", `/api/logs/tools?${qs}`);
 }
 
 export async function getLogs(params?: {

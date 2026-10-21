@@ -4,12 +4,14 @@ import { deleteConversation, listConversations } from "../../api/client";
 import type { ConversationSummary } from "../../types";
 import { Button, EmptyState } from "../ui";
 import { deriveTaskDisplayTitle, looksLikeCommand } from "./taskTitle";
+import type { ConversationFamily } from "../../features/connectors/messages/messageForest";
 
 interface Props {
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
   onClose?: () => void;
+  families?: ConversationFamily[];
 }
 
 export default function ConversationSidebar({
@@ -17,6 +19,7 @@ export default function ConversationSidebar({
   onSelect,
   onNew,
   onClose,
+  families = [],
 }: Props) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [query, setQuery] = useState("");
@@ -41,12 +44,18 @@ export default function ConversationSidebar({
   }, []);
 
   const filtered = useMemo(() => {
+    const roots = new Map(families.flatMap(family => family.conversationIds.map(id => [id, family.id] as const)));
+    const independent = conversations.filter(conversation => !roots.has(conversation.id) || roots.get(conversation.id) === conversation.id).map(conversation => {
+      const family = families.find(item => item.id === conversation.id);
+      const members = family ? conversations.filter(item => family.conversationIds.includes(item.id)) : [conversation];
+      return { ...conversation, updated_at: Math.max(...members.map(item => item.updated_at || item.created_at)) };
+    }).sort((a, b) => b.updated_at - a.updated_at);
     const keyword = query.trim().toLocaleLowerCase();
-    if (!keyword) return conversations;
-    return conversations.filter((conversation) =>
+    if (!keyword) return independent;
+    return independent.filter((conversation) =>
       (conversation.title || "新任务").toLocaleLowerCase().includes(keyword)
     );
-  }, [conversations, query]);
+  }, [conversations, query, families]);
 
   const selectConversation = (id: string) => {
     onSelect(id);
@@ -104,7 +113,8 @@ export default function ConversationSidebar({
   }, [filtered]);
 
   const renderRow = (conversation: ConversationSummary) => {
-    const active = activeId === conversation.id;
+    const family = families.find(item => item.id === conversation.id);
+    const active = activeId === conversation.id || !!activeId && !!family?.conversationIds.includes(activeId);
     const displayTitle = deriveTaskDisplayTitle(conversation.title);
     const isCommand = looksLikeCommand(conversation.title ?? "");
     return (
@@ -121,7 +131,7 @@ export default function ConversationSidebar({
         )}
         <button
           type="button"
-          onClick={() => selectConversation(conversation.id)}
+          onClick={() => selectConversation(active && activeId ? activeId : conversation.id)}
           className="min-w-0 flex-1 truncate whitespace-nowrap text-left"
           title={
             isCommand

@@ -12,7 +12,8 @@ import {
   formatPermission,
 } from "../components/capabilities";
 import { CapabilityDescriptor, CapabilityKind, CapabilityProviderKind, CapabilityRefreshReport, CapabilityRuntimeStatus, getCapability, listCapabilities, refreshCapabilities } from "../api/client";
-import PageShell from "../components/layout/PageShell";
+import ManagementFrame from "../features/capabilities/ManagementFrame";
+import CapabilityNavigation from "../features/capabilities/CapabilityNavigation";
 import { Button, EmptyState, ErrorState, Input, Modal, Skeleton } from "../components/ui";
 import { getCapabilityManagementTarget } from "../features/capabilities/capabilityManagement";
 import { formatToolDisplayName } from "../components/chat/toolDisplay";
@@ -22,10 +23,10 @@ const KIND_FILTERS: Array<CapabilityKind | "all"> = ["all", "tool", "mcp_tool", 
 const PROVIDER_FILTERS: Array<CapabilityProviderKind | "all"> = ["all", "builtin", "mcp", "subagent", "agent_runtime", "workflow_runtime", "skill_runtime"];
 const STATUS_FILTERS: Array<CapabilityRuntimeStatus | "all"> = ["all", "ready", "unavailable", "disabled", "misconfigured", "degraded", "unknown"];
 
-export default function CapabilitiesPage() {
+export function CapabilityRegistryContent({ initialKind = "all" }: { initialKind?: CapabilityKind | "all" }) {
   const navigate = useNavigate();
   const [capabilities, setCapabilities] = useState<CapabilityDescriptor[] | null>(null);
-  const [kind, setKind] = useState<CapabilityKind | "all">("all");
+  const [kind, setKind] = useState<CapabilityKind | "all">(initialKind);
   const [provider, setProvider] = useState<CapabilityProviderKind | "all">("all");
   const [status, setStatus] = useState<CapabilityRuntimeStatus | "all">("all");
   const [search, setSearch] = useState("");
@@ -117,7 +118,7 @@ export default function CapabilitiesPage() {
   };
 
   return (
-    <PageShell
+    <ManagementFrame embedded
       title="能力"
       description="了解忆涟能做什么，查看可用状态与所需权限。"
       className="capability-page page-canvas ui-opt-capabilities"
@@ -426,12 +427,12 @@ export default function CapabilitiesPage() {
           <SourceChoice
             title="新建技能"
             description="编写一个工作区 SKILL.md。"
-            onClick={() => navigate("/skills")}
+            onClick={() => navigate("/capabilities?category=skill")}
           />
           <SourceChoice
             title="添加 MCP 服务"
             description="连接提供工具的本地或远程 MCP 服务。"
-            onClick={() => navigate("/plugins")}
+            onClick={() => navigate("/capabilities?category=mcp")}
           />
           <SourceChoice
             title="管理智能体"
@@ -441,11 +442,11 @@ export default function CapabilitiesPage() {
           <SourceChoice
             title="管理工作流"
             description="创建或调整可执行工作流。"
-            onClick={() => navigate("/workflows")}
+            onClick={() => navigate("/capabilities?category=workflow")}
           />
         </div>
       </Modal>
-    </PageShell>
+    </ManagementFrame>
   );
 }
 
@@ -590,3 +591,5 @@ function CapabilityDetail({
     </div>
   );
 }
+
+export default CapabilityNavigation;

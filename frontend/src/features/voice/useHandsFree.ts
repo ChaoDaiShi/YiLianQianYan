@@ -12,6 +12,7 @@ interface HandsFreeOptions {
   playing: boolean;
   capture: UseVoiceCaptureResult;
   onError: (message: string) => void;
+  onReady?:()=>void;
 }
 
 /** The only persistent microphone owner; recordings borrow independent cloned tracks. */
@@ -57,7 +58,7 @@ export function useHandsFree(options: HandsFreeOptions): void {
         if (starting) pendingAction = "cancel";
         else activeCapture?.cancel();
       }
-    }).then((opened) => { monitor = opened; }).catch(() => {
+    }).then((opened) => { monitor = opened; if(opened && isOwner())latest.current.onReady?.(); }).catch(() => {
       if (isOwner()) latest.current.onError("免手持麦克风不可用，请检查设备权限后重新开启。");
     });
     return () => {

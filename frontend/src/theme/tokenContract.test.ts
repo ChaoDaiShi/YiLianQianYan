@@ -8,9 +8,9 @@ describe("Theme token contract and single source of truth", () => {
     const lightKeys = Object.keys(CYRENE_SEMANTIC_TOKENS.light).sort();
     const darkKeys = Object.keys(CYRENE_SEMANTIC_TOKENS.dark).sort();
 
-    // 58 semantic keys + 7 shared keys = 65 total keys
-    expect(lightKeys.length).toBe(65);
-    expect(darkKeys.length).toBe(65);
+    // 58 semantic keys + 9 shared keys = 67 total keys
+    expect(lightKeys.length).toBe(67);
+    expect(darkKeys.length).toBe(67);
     expect(lightKeys).toEqual(darkKeys);
   });
 

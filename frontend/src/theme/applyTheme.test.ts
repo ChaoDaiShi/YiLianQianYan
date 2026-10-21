@@ -3,6 +3,21 @@ import { buildThemeVariables } from "./applyTheme";
 import { DEFAULT_THEME } from "./presets";
 
 describe("Cyrene semantic variables", () => {
+  it("scales shared typography with the chosen interface size", () => {
+    const variables = buildThemeVariables({ ...DEFAULT_THEME, fontSize: 20 }, "light");
+    expect(variables["--font-size-base"]).toBe("20px");
+    expect(variables["--font-size-body"]).toBe("20px");
+    expect(variables["--font-size-control"]).toBe("17.5px");
+    expect(variables["--font-size-caption"]).toBe("15px");
+  });
+  it("applies surface opacity and blur without dimming text or status colors", () => {
+    const base = buildThemeVariables(DEFAULT_THEME, "light");
+    const custom = buildThemeVariables({...DEFAULT_THEME,panelOpacity:.9,blur:16}, "light");
+    expect(custom["--surface"]).not.toBe(base["--surface"]);
+    expect(custom["--surface-blur"]).toBe("16px");
+    expect(custom["--text-primary"]).toBe(base["--text-primary"]);
+    expect(custom["--danger-fg"]).toBe(base["--danger-fg"]);
+  });
   it("emits the restrained light palette", () => {
     const light = buildThemeVariables(DEFAULT_THEME, "light");
 

@@ -3,11 +3,11 @@ import {
   Plus, Trash2, Pencil, CheckCircle2, Loader2, AlertTriangle,
 } from "lucide-react";
 import {
-  listWorkflows, createWorkflow, updateWorkflow, deleteWorkflow, activateWorkflow,
+  getWorkflowGraph, listWorkflows, createWorkflow, updateWorkflow, deleteWorkflow, activateWorkflow,
   startWorkflowRun,
   type Workflow,
 } from "../api/client";
-import PageShell from "../components/layout/PageShell";
+import ManagementFrame from "../features/capabilities/ManagementFrame";
 import {
   Badge,
   Button,
@@ -27,6 +27,7 @@ import WorkflowGraphEditor from "../components/workflow/WorkflowGraphEditor";
 import WorkflowRunInspector from "../components/workflow/WorkflowRunInspector";
 import WorkflowRecentRuns from "../components/workflow/WorkflowRecentRuns";
 import type { WorkflowGraphRecord } from "../api/client";
+import TaskGraphWorkflowList from "../features/workflows/TaskGraphWorkflowList";
 
 const BUILTIN_ICONS: Record<string, string> = {
   "react-default": "🔄",
@@ -37,19 +38,21 @@ const BUILTIN_ICONS: Record<string, string> = {
   "hitl-approval": "✋",
 };
 
-type Tab = "templates" | "runtime";
+type Tab = "templates" | "runtime" | "taskgraphs";
 
-export default function WorkflowsPage() {
+export default function WorkflowsPage({ embedded = false, initialGraphId }: { embedded?: boolean; initialGraphId?: string } = {}) {
+  const [graphLoadError, setGraphLoadError] = useState("");
   const [tab, setTab] = useState<Tab>("runtime");
   const [editorGraph, setEditorGraph] = useState<WorkflowGraphRecord | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runtimeRefresh, setRuntimeRefresh] = useState(0);
 
+  useEffect(() => { if (!initialGraphId) return; let current = true; void getWorkflowGraph(initialGraphId).then(result => { if (!current) return; if (result.ok) { setEditorGraph(result.data); setEditorOpen(true); } else setGraphLoadError(result.error); }); return () => { current = false; }; }, [initialGraphId]);
   return (
-    <PageShell
+    <ManagementFrame embedded={embedded}
       title="工作流"
-      description="模板工作流用于对话；运行工作流是可执行的 DAG 运行时"
+      description="管理可执行工作流、已有任务图与对话模板"
       variant={editorOpen ? "workspace" : "standard"}
       className="page-canvas ui-opt-workflows flex h-full flex-col"
       contentClassName={editorOpen ? "overflow-hidden p-0" : undefined}
@@ -61,6 +64,7 @@ export default function WorkflowsPage() {
               // pointing it at a panel id that does not exist in the DOM.
               { id: "runtime", label: "运行工作流", panelId: false },
               { id: "templates", label: "模板工作流", panelId: false },
+              { id: "taskgraphs", label: "任务图工作流", panelId: false },
             ]}
             activeId={tab}
             onChange={(id) => setTab(id as Tab)}
@@ -70,7 +74,8 @@ export default function WorkflowsPage() {
         ) : null
       }
     >
-      {tab === "templates" ? (
+      {graphLoadError && <p role="alert" className="text-[var(--danger)] p-3">{graphLoadError}</p>}
+      {tab === "taskgraphs" ? <div id="panel-taskgraphs" role="tabpanel" aria-labelledby="tab-taskgraphs" className="flex-1 min-h-0"><TaskGraphWorkflowList /></div> : tab === "templates" ? (
         <div id="panel-templates" role="tabpanel" aria-labelledby="tab-templates" className="flex-1 min-h-0 flex flex-col">
           <TemplatesTab />
         </div>
@@ -88,7 +93,7 @@ export default function WorkflowsPage() {
           />
         </div>
       )}
-    </PageShell>
+    </ManagementFrame>
   );
 }
 

@@ -44,4 +44,5 @@ export const stylesheetText = [
   "ui-optimization/capabilities.css",
   "ui-optimization/memory-knowledge.css",
   "ui-optimization/settings-system.css",
+  "connector-workbench.css",
 ].map(styleFile).join("\n");

@@ -20,10 +20,10 @@ export interface ModalProps {
 }
 
 const modalSizes: Record<ModalSize, string> = {
-  sm: "max-w-[480px]",
-  md: "max-w-[640px]",
-  lg: "max-w-[860px]",
-  xl: "max-w-[1040px]",
+  sm: "max-w-[420px]",
+  md: "max-w-[560px]",
+  lg: "max-w-[740px]",
+  xl: "max-w-[920px]",
 };
 
 export default function Modal({
@@ -63,7 +63,7 @@ export default function Modal({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          "shadow-float-token relative flex flex-col w-full max-h-[calc(100dvh-32px)] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] outline-none animate-scale-in",
+          "shared-dialog shadow-float-token relative flex flex-col w-full max-h-[calc(100dvh-32px)] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text)] text-[length:var(--font-size-body)] outline-none animate-scale-in",
           modalSizes[size],
           className
         )}
@@ -80,7 +80,7 @@ export default function Modal({
         />
 
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--border-soft)] px-5 py-4">
-          <h3 id={titleId} className="font-semibold text-[var(--text)]">
+          <h3 id={titleId} className="font-semibold text-[var(--text)] text-[length:var(--font-size-title-sm)]">
             {title}
           </h3>
           <Button

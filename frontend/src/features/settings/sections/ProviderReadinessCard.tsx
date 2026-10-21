@@ -6,7 +6,7 @@ import { connectionPresentation } from "../model/workbench";
 interface ProviderReadinessCardProps {
   dirty?: boolean;
   readiness: ProviderReadinessProjection | null;
-  kinds: ProviderConnectionKind[];
+  kinds: Array<Exclude<ProviderConnectionKind,"embedding">>;
   testing: ProviderConnectionKind | null;
   results: Partial<Record<ProviderConnectionKind, string>>;
   onVerify: (kind: ProviderConnectionKind) => void;

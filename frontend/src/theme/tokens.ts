@@ -26,6 +26,8 @@ export const TOKEN_GROUPS: TokenGroup[] = [
       "--surface-elevated",
       "--surface-solid",
       "--surface-hover",
+      "--surface-blur",
+      "--surface-alpha",
       "--titlebar-bg",
     ],
   },

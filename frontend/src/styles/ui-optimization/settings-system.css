@@ -212,7 +212,7 @@
 }
 
 .ui-opt-settings-savebar-text {
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -250,7 +250,7 @@
   border: 1px solid var(--border-soft);
   background: var(--surface-solid);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 /* Narrow settings layout */
@@ -329,7 +329,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
   padding: 4px 0;
   border-top: 1px solid var(--border-soft);
@@ -348,7 +348,7 @@
   padding: 6px 12px;
   border-radius: 6px;
   border-left: 3px solid transparent;
-  font-size: 13px;
+  font-size: 0.8125rem;
   transition: background-color 120ms ease-out;
   cursor: pointer;
 }
@@ -398,7 +398,7 @@
   border-radius: 999px;
   background: var(--accent-primary);
   color: #ffffff;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
   cursor: pointer;

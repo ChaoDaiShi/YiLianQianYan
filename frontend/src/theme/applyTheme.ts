@@ -1,6 +1,7 @@
 import type { ColorScheme, ThemeConfig } from "./types";
 import { THEME_VAR_WHITELIST } from "./types";
-import { CYRENE_SEMANTIC_TOKENS } from "./presets";
+import { CYRENE_SEMANTIC_TOKENS, DEFAULT_THEME } from "./presets";
+import typography from "./typography.json";
 
 export function applyThemeToDom(
   theme: ThemeConfig,
@@ -32,10 +33,24 @@ export function applyThemeToDom(
 }
 
 export function buildThemeVariables(
-  _theme: ThemeConfig,
+  theme: ThemeConfig,
   scheme: ColorScheme,
 ): Record<string, string> {
-  const semantic = CYRENE_SEMANTIC_TOKENS[scheme];
+  const semantic = { ...CYRENE_SEMANTIC_TOKENS[scheme] };
+  const typographyVariables = Object.fromEntries(
+    Object.entries(typography).filter(([key]) => key.startsWith("--font-size-")).map(([key, value]) => [
+      key,
+      `${Number.parseFloat(value) * theme.fontSize / 16}px`,
+    ]),
+  );
+  const opacityDelta = theme.panelOpacity - DEFAULT_THEME.panelOpacity;
+  if (opacityDelta !== 0) {
+    for (const key of ["--surface", "--surface-muted", "--surface-elevated", "--surface-hover", "--titlebar-bg"]) {
+      semantic[key] = semantic[key].replace(/,\s*([\d.]+)\)$/, (_, alpha: string) => `,${Math.max(.24, Math.min(1, Number(alpha) + opacityDelta)).toFixed(2)})`);
+    }
+  }
+  semantic["--surface-alpha"] = String(theme.panelOpacity);
+  semantic["--surface-blur"] = `${theme.blur}px`;
   const legacyVariables: Record<string, string> = {
     "--bg": semantic["--bg-app"],
     "--bg-2": semantic["--bg-soft"],
@@ -59,12 +74,12 @@ export function buildThemeVariables(
     "--backdrop": scheme === "dark"
       ? "rgba(5,4,10,0.58)"
       : "rgba(41,38,58,0.34)",
-    "--font-size-base": "var(--font-size-body)",
-    "--bg-blur": "0px",
-    "--bg-brightness": "1",
+    "--font-size-base": `${theme.fontSize}px`,
+    "--bg-blur": `${theme.blur}px`,
+    "--bg-brightness": String(theme.brightness),
   };
 
-  return { ...legacyVariables, ...semantic };
+  return { ...legacyVariables, ...semantic, ...typographyVariables };
 }
 
 export function sanitizeCustomVars(raw: unknown): Record<string, string> {

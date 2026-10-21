@@ -1,0 +1,18 @@
+.message-process { min-width: 0; margin: 0 0 12px; color: var(--text-muted); font-size: .75rem; }
+.message-process > summary { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; padding: 6px 0; list-style: none; cursor: pointer; }
+.message-process > summary > span:not(:first-child):not(:nth-child(2)) { font-size: .625rem; color: var(--text-faint); }
+.message-process-content { border-left: 1px solid var(--border-soft); padding: 4px 0 4px 12px; }
+.message-process-content h4 { margin: 2px 0 6px; font-size: .6875rem; font-weight: 500; }
+.message-reasoning { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: .75rem; line-height: 1.7; color: var(--text-secondary); }
+.message-protocol-call { padding: 7px 0; }
+.message-protocol-call summary { cursor: pointer; }
+.message-protocol-call dl { padding: 8px 0; font-size: .6875rem; }
+.message-protocol-call dt { color: var(--text-faint); }
+.message-protocol-call dd { margin: 3px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-chat .conversation-message-content.conversation-message-assistant,
+.conversation-chat .conversation-streaming-message.conversation-message-assistant,
+.ui-opt-chat .conversation-message-content.conversation-message-assistant,
+.ui-opt-chat .conversation-streaming-message.conversation-message-assistant { padding: 0 !important; margin-left: 0; border: 0; background: transparent !important; box-shadow: none; }
+.chat-topbar-panels { display: flex; align-items: center; gap: 3px; }
+.chat-topbar-panels button { display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 6px 8px; font-size: .6875rem; color: var(--text-muted); }
+.chat-topbar-panels button[aria-pressed="true"] { color: var(--accent-primary); background: var(--accent-soft); }

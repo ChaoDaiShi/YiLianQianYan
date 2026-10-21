@@ -32,23 +32,6 @@ const VERIFICATION_LABELS: Record<VerificationStatus, string> = {
   failed: "验证失败",
 };
 
-function executionTone(
-  status: ExecutionStatus
-): "default" | "success" | "warning" | "danger" | "accent" {
-  if (status === "succeeded") return "success";
-  if (status === "failed") return "danger";
-  if (status === "running") return "accent";
-  if (
-    status === "awaiting_approval" ||
-    status === "interrupted" ||
-    status === "rejected" ||
-    status === "cancelled"
-  ) {
-    return "warning";
-  }
-  return "default";
-}
-
 function verificationTone(
   status: VerificationStatus
 ): "default" | "success" | "warning" | "danger" {
@@ -116,14 +99,14 @@ function ExecutionHistoryItem({
 
   return (
     <li
-      className="execution-history-item rounded-xl border border-[var(--border)] bg-[var(--panel)]"
+      className="execution-history-item !rounded-md !border-0 !bg-transparent !shadow-none"
       data-execution-status={record.executionStatus}
       data-verification-status={record.verificationStatus}
     >
       <button
         ref={triggerRef}
         type="button"
-        className="execution-history-action w-full p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring-soft)]"
+        className="execution-history-action w-full px-2 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring-soft)]"
         onClick={onToggle}
         aria-expanded={expanded}
         aria-controls={detailsId}
@@ -131,11 +114,13 @@ function ExecutionHistoryItem({
       >
         <span className="flex items-start justify-between gap-2">
           <span className="min-w-0 flex-1">
-            <span className="block text-xs font-semibold leading-5 text-[var(--text-primary)]">
+            <span className="block truncate text-xs font-normal leading-5 text-[var(--text-primary)]">
               {action}
             </span>
             <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[10px] text-[var(--text-faint)]">
               <span>{formatToolDisplayName(record.name)}</span>
+              <span aria-hidden="true">·</span>
+              <span>{EXECUTION_LABELS[record.executionStatus]}</span>
               {elapsed ? <span aria-hidden="true">·</span> : null}
               {elapsed ? <span>{elapsed}</span> : null}
             </span>
@@ -150,14 +135,11 @@ function ExecutionHistoryItem({
           </span>
         </span>
 
-        <span className="mt-2 flex flex-wrap gap-1.5">
-          <Badge tone={executionTone(record.executionStatus)}>
-            {EXECUTION_LABELS[record.executionStatus]}
-          </Badge>
+        {record.verificationStatus !== "not_requested" && <span className="mt-1 flex flex-wrap gap-1.5">
           <Badge tone={verificationTone(record.verificationStatus)}>
             {VERIFICATION_LABELS[record.verificationStatus]}
           </Badge>
-        </span>
+        </span>}
 
         {failedPresentation ? (
           <span className="mt-2 block text-xs leading-5 text-[var(--danger-fg)]">
@@ -300,7 +282,7 @@ export default function ExecutionHistory({
   }
 
   return (
-    <ol className="space-y-2" aria-label="执行步骤">
+    <ol className="space-y-0.5" aria-label="执行步骤">
       {records.map((record) => (
         <ExecutionHistoryItem
           key={record.toolCallId}

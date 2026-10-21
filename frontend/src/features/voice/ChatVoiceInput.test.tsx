@@ -16,7 +16,7 @@ describe("ChatVoiceInput contract", () => {
     const html = renderToStaticMarkup(
       <ChatVoiceInput controls={controls} onRequestGlobalVoiceSession={vi.fn()} />,
     );
-    expect(html).toContain("开始语音输入");
+    expect(html).toContain('aria-label="停止录音"');
     expect(html).toContain("正在听取");
     expect(html).toContain("47%");
     expect(html).toContain("chat-voice-meter-bar");

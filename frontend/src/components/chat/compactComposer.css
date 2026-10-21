@@ -1,0 +1,84 @@
+.compact-composer .composer-card,
+.workbench-grid .home-composer.compact-composer .composer-card,
+.workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer .composer-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "mode input actions" "feedback feedback feedback";
+  align-items: center;
+  gap: 0 8px;
+  width: 100%;
+  min-height: 54px;
+  margin: 0 auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 28px;
+  background: var(--surface-solid);
+  box-shadow: none;
+}
+.conversation-composer .compact-composer { margin-top: 0 !important; }
+.compact-composer .composer-mode-slot { grid-area: mode; min-width: 0; }
+.compact-composer .composer-textarea,
+.workbench-grid .home-composer.compact-composer textarea {
+  grid-area: input;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  max-height: 120px;
+  margin: 0;
+  padding: 0;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size:0.8125rem;
+  line-height: 24px;
+}
+.compact-composer .composer-textarea::placeholder { color: var(--text-faint); }
+.compact-composer .composer-actions { grid-area: actions; display: flex; align-items: center; gap: 3px; min-width: 0; }
+.composer-control { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 5px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); }
+.composer-control:hover { background: var(--surface-hover); color: var(--text-primary); }
+.composer-control:disabled { opacity: .45; cursor: default; }
+.composer-control:focus-visible { outline: 2px solid var(--focus-ring-soft); outline-offset: 2px; }
+.composer-workspace-mode { width: auto; padding: 0 7px; border-radius: 16px; font-size:0.75rem; color: var(--text-secondary); }
+.composer-model-trigger { width: auto; max-width: 150px; padding: 0 5px; border-radius: 16px; font-size:0.6875rem; }
+.composer-model-label { max-width: 98px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compact-composer .composer-send { width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: 50%; }
+.compact-composer .chat-voice-input { display: inline-flex; position: relative; align-items: center; gap: 0; }
+.compact-composer .chat-voice-entry,.compact-composer .chat-voice-microphone,.compact-composer .chat-voice-cancel { width: 30px; height: 30px; min-height: 30px; }
+.compact-composer .chat-voice-listening,.compact-composer .chat-voice-meter { position: absolute; bottom: 40px; padding: 3px 7px; border-radius: 8px; background: var(--surface-solid); white-space: nowrap; font-size:0.625rem; }
+.compact-composer .chat-voice-listening { right: 60px; }
+.compact-composer .chat-voice-meter { right: 0; }
+.compact-composer .composer-feedback { grid-area: feedback; padding-top: 8px; min-width: 0; }
+.compact-composer[data-workspace-mode="work"] .composer-card,.compact-composer[data-workspace-mode="create"] .composer-card,
+.workbench-grid .home-composer.compact-composer[data-workspace-mode="work"] .composer-card,.workbench-grid .home-composer.compact-composer[data-workspace-mode="create"] .composer-card,
+.workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode="work"] .composer-card,
+.workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode="create"] .composer-card {
+  grid-template-areas: "input input input" "mode . actions" "feedback feedback feedback";
+  min-height: 110px;
+  row-gap: 5px;
+  padding: 10px 12px 8px;
+  border-radius: 18px;
+}
+.compact-composer[data-workspace-mode="work"] .composer-textarea,.compact-composer[data-workspace-mode="create"] .composer-textarea,
+.workbench-grid .home-composer.compact-composer[data-workspace-mode="work"] textarea,.workbench-grid .home-composer.compact-composer[data-workspace-mode="create"] textarea { min-height: 52px; max-height: 150px; }
+.composer-popover-backdrop { position: fixed; inset: 0; z-index: 119; border: 0; padding: 0; background: transparent; cursor: default; }
+.composer-popover { position: fixed; z-index: 120; width: 296px; max-width: calc(100vw - 24px); max-height: 70vh; overflow: auto; padding: 8px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--surface-solid); box-shadow: var(--shadow-float); color: var(--text-primary); }
+.composer-menu-options { display: grid; gap: 3px; }
+.composer-menu-options button { display: flex; width: 100%; align-items: center; gap: 10px; border: 0; border-radius: 10px; padding: 10px; background: transparent; text-align: left; }
+.composer-menu-options button:hover,.composer-menu-options button[aria-pressed="true"] { background: var(--accent-soft); }
+.composer-menu-options button > span:first-of-type { flex: 1; }
+.composer-menu-options strong { display: block; font-size:0.75rem; font-weight: 500; }
+.composer-menu-options small { display: block; margin-top: 3px; font-size:0.6875rem; line-height: 1.5; color: var(--text-muted); }
+.composer-menu-hint { margin: 4px 8px; font-size:0.625rem; line-height: 1.6; color: var(--text-faint); }
+.composer-model-options { display: grid; gap: 12px; padding: 8px; font-size:0.75rem; }
+.composer-model-options label { display: grid; gap: 7px; color: var(--text-secondary); }
+.composer-model-options select { width: 100%; max-width: none; padding: 8px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-muted); color: var(--text-primary); }
+@media(max-width: 640px) {
+  .composer-model-label,.composer-model-trigger > svg:last-child { display: none; }
+  .composer-model-trigger { width: 28px; padding: 0; }
+  .compact-composer .composer-card { column-gap: 3px; padding-right: 6px; padding-left: 6px; }
+  .composer-control { width: 27px; }
+  .compact-composer .chat-voice-entry,.compact-composer .chat-voice-microphone,.compact-composer .chat-voice-cancel { width: 27px; }
+}

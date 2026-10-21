@@ -1,0 +1,604 @@
+{
+  "openai": {
+    "id": "openai",
+    "label": "OpenAI",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "official_docs_url": "https://developers.openai.com/api/reference/resources/chat",
+    "category": "official",
+    "services": [
+      "chat",
+      "vision",
+      "image",
+      "embedding",
+      "stt",
+      "tts"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://api.openai.com/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "image": "openai",
+      "embedding": "openai",
+      "stt": "openai",
+      "tts": "openai"
+    }
+  },
+  "deepseek": {
+    "id": "deepseek",
+    "label": "DeepSeek",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "model": "deepseek-chat",
+    "official_docs_url": "https://api-docs.deepseek.com/",
+    "category": "official",
+    "services": [
+      "chat"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://api.deepseek.com/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai"
+    }
+  },
+  "qwen": {
+    "id": "qwen",
+    "label": "阿里云百炼 / 通义千问",
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "qwen-plus",
+    "official_docs_url": "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",
+    "category": "official",
+    "services": [
+      "chat",
+      "vision",
+      "image",
+      "embedding"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "image": "dashscope",
+      "embedding": "openai"
+    }
+  },
+  "glm": {
+    "id": "glm",
+    "label": "智谱 GLM",
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "model": "glm-4-flash",
+    "official_docs_url": "https://docs.bigmodel.cn/cn/guide/develop/openai/introduction",
+    "category": "official",
+    "services": [
+      "chat",
+      "vision",
+      "embedding"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "embedding": "openai"
+    }
+  },
+  "anthropic": {
+    "id": "anthropic",
+    "label": "Anthropic Claude",
+    "baseUrl": "https://api.anthropic.com/v1",
+    "model": "",
+    "official_docs_url": "https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk",
+    "category": "official",
+    "services": [
+      "chat",
+      "vision"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://api.anthropic.com/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai"
+    }
+  },
+  "google": {
+    "id": "google",
+    "label": "Google Gemini",
+    "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "model": "",
+    "official_docs_url": "https://ai.google.dev/gemini-api/docs/openai",
+    "category": "official",
+    "services": [
+      "chat",
+      "vision",
+      "image",
+      "embedding"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "image": "openai",
+      "embedding": "openai"
+    }
+  },
+  "moonshot": {
+    "id": "moonshot",
+    "label": "Moonshot Kimi",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "model": "",
+    "official_docs_url": "https://platform.moonshot.cn/docs/guide/start-using-kimi-api",
+    "category": "official",
+    "services": [
+      "chat",
+      "vision"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://api.moonshot.cn/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai"
+    }
+  },
+  "volcengine": {
+    "id": "volcengine",
+    "label": "火山方舟 / 豆包",
+    "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+    "model": "",
+    "official_docs_url": "https://docs.volcengine.com/docs/ark/image-generation-api",
+    "category": "official",
+    "services": [
+      "chat",
+      "vision",
+      "image"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "image": "openai"
+    }
+  },
+  "baidu": {
+    "id": "baidu",
+    "label": "百度千帆",
+    "baseUrl": "https://qianfan.baidubce.com/v2",
+    "model": "",
+    "official_docs_url": "https://ai.baidu.com/ai-doc/WENXINWORKSHOP/0m2vwrjws",
+    "category": "official",
+    "services": [
+      "chat"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://qianfan.baidubce.com/v2"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai"
+    }
+  },
+  "hunyuan": {
+    "id": "hunyuan",
+    "label": "腾讯混元",
+    "baseUrl": "https://api.hunyuan.cloud.tencent.com/v1",
+    "model": "",
+    "official_docs_url": "https://cloud.tencent.com/document/product/1729/111007",
+    "category": "official",
+    "services": [
+      "chat"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://api.hunyuan.cloud.tencent.com/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai"
+    }
+  },
+  "spark": {
+    "id": "spark",
+    "label": "讯飞星火",
+    "baseUrl": "https://maas-api.cn-huabei-1.xf-yun.com/v2",
+    "model": "",
+    "official_docs_url": "https://www.xfyun.cn/doc/spark/Spark-X2.5.html",
+    "category": "official",
+    "services": [
+      "chat"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://maas-api.cn-huabei-1.xf-yun.com/v2"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai"
+    }
+  },
+  "minimax": {
+    "id": "minimax",
+    "label": "MiniMax",
+    "baseUrl": "https://api.minimax.io/v1",
+    "model": "",
+    "official_docs_url": "https://platform.minimax.io/docs/api-reference/text-openai-api",
+    "category": "official",
+    "services": [
+      "chat",
+      "image",
+      "stt",
+      "tts"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://api.minimax.io/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "image": "minimax",
+      "stt": "minimax",
+      "tts": "minimax"
+    }
+  },
+  "azure": {
+    "id": "azure",
+    "label": "Azure OpenAI（托管）",
+    "baseUrl": "",
+    "model": "",
+    "official_docs_url": "https://learn.microsoft.com/azure/ai-foundry/openai/how-to/switching-endpoints",
+    "category": "hosted",
+    "services": [
+      "chat",
+      "vision",
+      "image"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": ""
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "image": "openai"
+    }
+  },
+  "siliconflow": {
+    "id": "siliconflow",
+    "label": "SiliconFlow（托管）",
+    "baseUrl": "https://api.siliconflow.cn/v1",
+    "model": "",
+    "official_docs_url": "https://docs.siliconflow.cn/cn/api-reference/chat-completions/chat-completions",
+    "category": "hosted",
+    "services": [
+      "chat",
+      "vision"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://api.siliconflow.cn/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai"
+    }
+  },
+  "openrouter": {
+    "id": "openrouter",
+    "label": "OpenRouter（聚合）",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "model": "",
+    "official_docs_url": "https://openrouter.ai/docs/quickstart",
+    "category": "hosted",
+    "services": [
+      "chat",
+      "vision"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "https://openrouter.ai/api/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai"
+    }
+  },
+  "ollama": {
+    "id": "ollama",
+    "label": "Ollama（本地）",
+    "baseUrl": "http://127.0.0.1:11434/v1",
+    "model": "",
+    "official_docs_url": "https://docs.ollama.com/api/openai-compatibility",
+    "category": "local",
+    "services": [
+      "chat",
+      "vision",
+      "embedding"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "http://127.0.0.1:11434/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": false
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "embedding": "openai"
+    }
+  },
+  "lmstudio": {
+    "id": "lmstudio",
+    "label": "LM Studio（本地）",
+    "baseUrl": "http://127.0.0.1:1234/v1",
+    "model": "",
+    "official_docs_url": "https://lmstudio.ai/docs/developer/openai-compat",
+    "category": "local",
+    "services": [
+      "chat",
+      "vision",
+      "embedding"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "http://127.0.0.1:1234/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": false
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "embedding": "openai"
+    }
+  },
+  "custom": {
+    "id": "custom",
+    "label": "自定义 OpenAI-compatible",
+    "baseUrl": "http://127.0.0.1:8000/v1",
+    "model": "",
+    "official_docs_url": "",
+    "category": "custom",
+    "services": [
+      "chat",
+      "vision",
+      "image",
+      "embedding"
+    ],
+    "last_checked": "2026-10-21",
+    "regions": [
+      {
+        "id": "configured",
+        "label": "账户指定区域",
+        "base_url": "http://127.0.0.1:8000/v1"
+      }
+    ],
+    "auth_fields": [
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true
+      }
+    ],
+    "adapter_by_service": {
+      "chat": "openai",
+      "vision": "openai",
+      "image": "openai",
+      "embedding": "openai"
+    }
+  }
+}

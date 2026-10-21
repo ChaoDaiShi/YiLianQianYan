@@ -6,6 +6,8 @@
   }
 
   :root {
+    --surface-blur: 0px;
+    --surface-alpha: 0.52;
     color-scheme: light;
     --bg-app: #F8F6FD;
     --bg-soft: #F2EEFA;

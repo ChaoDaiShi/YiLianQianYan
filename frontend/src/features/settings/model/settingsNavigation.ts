@@ -1,5 +1,4 @@
 import {
-  AudioLines,
   Bot,
   Boxes,
   BrainCircuit,
@@ -29,21 +28,12 @@ export interface SettingsGroup {
 export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
     key: "model",
-    label: "模型服务",
-    navDescription: "模型、密钥与用量",
-    title: "模型服务",
-    description: "管理当前推理服务、Embedding 配置和多个模型档案。",
+    label: "基础配置",
+    navDescription: "厂商、模型池与服务",
+    title: "基础配置",
+    description: "集中配置模型池、语音、搜索、图像和向量服务。",
     icon: BrainCircuit,
     accent: "violet",
-  },
-  {
-    key: "voice",
-    label: "语音能力",
-    navDescription: "听写、合成与试听",
-    title: "语音能力",
-    description: "分别配置语音识别和语音合成，并检查当前连接状态。",
-    icon: AudioLines,
-    accent: "blue",
   },
   {
     key: "agent",
@@ -85,7 +75,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
 
 const LEGACY_SECTION_GROUPS: Record<string, SettingsGroupKey> = {
   model: "model",
-  voice: "voice",
+  voice: "model",
   agent: "agent",
   compaction: "agent",
   permissions: "security",

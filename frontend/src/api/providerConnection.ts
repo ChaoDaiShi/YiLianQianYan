@@ -2,7 +2,7 @@ import { controlSessionHeaders } from "./controlSession";
 import { API_BASE, getSettings } from "./legacy";
 import type { ProviderReadinessProjection } from "../types";
 
-export type ProviderConnectionKind = "model" | "stt" | "tts";
+export type ProviderConnectionKind = "model" | "stt" | "tts" | "embedding";
 
 const NORMALIZED_ERRORS = new Set([
   "INVALID_CREDENTIAL",
@@ -20,6 +20,10 @@ export type ProviderConnectionResult =
 export async function getProviderReadiness(): Promise<ProviderReadinessProjection | null> {
   const settings = await getSettings();
   return settings?.provider_readiness ?? null;
+}
+export async function getChatModelReadiness(conversationId:string|null):Promise<ProviderReadinessProjection["model"]|null>{
+ const { request } = await import("../core/api/http");
+ return request<ProviderReadinessProjection["model"]>("GET",`/api/chat/readiness${conversationId?`?conversation_id=${encodeURIComponent(conversationId)}`:""}`);
 }
 
 /** Calls the protected leaf route and deliberately discards provider bodies. */

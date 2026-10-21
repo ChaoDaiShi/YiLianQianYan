@@ -8,7 +8,7 @@ import knowledgeSource from "../pages/KnowledgePage.tsx?raw";
 import logsSource from "../pages/LogsPage.tsx?raw";
 import memorySource from "../pages/MemoryPage.tsx?raw";
 import pluginsSource from "../pages/PluginsPage.tsx?raw";
-import settingsSource from "../pages/SettingsPage.tsx?raw";
+import settingsSource from "../features/settings/canvas/SettingsCanvasPage.tsx?raw";
 import skillsSource from "../pages/SkillsPage.tsx?raw";
 import systemSource from "../pages/SystemPage.tsx?raw";
 import tasksSource from "../pages/TaskCenterPage.tsx?raw";
@@ -62,9 +62,9 @@ describe("Cyrene canvas and surface contract", () => {
     expect(body).not.toContain("background-color: var(--bg-app)");
   });
 
-  it("uses a translucent conversation wash", () => {
+  it("keeps the conversation substrate fully transparent", () => {
     const body = rule('.workbench-grid[data-chat-view="conversation"]');
-    expect(body).toContain("var(--page-wash)");
+    expect(body).toContain("background: transparent");
     expect(body).not.toMatch(/rgba\([^)]*,\s*0\.9[2-9]\)/);
   });
 
