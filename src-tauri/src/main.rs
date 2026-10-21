@@ -15,7 +15,9 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tauri::{Emitter, Manager};
 use tracing;
+mod floating;
 
 const BACKEND_START_TIMEOUT: Duration = Duration::from_secs(8);
 const BACKEND_HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -152,8 +154,12 @@ fn main() {
     // Set workspace root to project root (Tauri runs from src-tauri/)
     let exe_dir = std::env::current_dir().unwrap_or_default();
     let project_root = exe_dir.parent().unwrap_or(&exe_dir).to_path_buf();
-    std::env::set_var("YILIAN_WORKSPACE", &project_root);
-    tracing::info!("Workspace root: {}", project_root.display());
+    let workspace_root = match std::env::var_os("YILIAN_WORKSPACE") {
+        Some(path) => std::path::PathBuf::from(path),
+        None => project_root,
+    };
+    std::env::set_var("YILIAN_WORKSPACE", &workspace_root);
+    tracing::info!("Workspace root: {}", workspace_root.display());
 
     let control_session = yilian_backend::safety::ControlSession::generate();
     let control_token = control_session.token().to_string();
@@ -223,8 +229,21 @@ fn main() {
         .manage(ControlSessionState(control_token))
         .invoke_handler(tauri::generate_handler![
             get_control_session_token,
-            restart_application
+            restart_application,
+            floating::open_floating_surface,
+            floating::resize_floating_surface,
+            floating::position_floating_surface,
+            floating::close_floating_surface
         ])
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.app_handle().exit(0);
+            } else if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let _ = window
+                    .app_handle()
+                    .emit_to("main", "floating:closed", window.label());
+            }
+        })
         .setup(|_app| {
             tracing::info!("Tauri desktop window ready, backend on http://127.0.0.1:9420");
             Ok(())
