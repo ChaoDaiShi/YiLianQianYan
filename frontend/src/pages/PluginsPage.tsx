@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Link, Plus, Trash2, Wrench,
-  Loader2, TestTube, RefreshCw, Eye, ChevronDown, ChevronRight,
+  Loader2, TestTube, RefreshCw, Eye,
 } from "lucide-react";
 import {
   listPlugins, createMcpServer, updateMcpServer, deleteMcpServer,
@@ -32,6 +32,7 @@ import {
 import { CapabilityStatusBadge } from "../components/capabilities";
 import ManagementFrame from "../features/capabilities/ManagementFrame";
 import { Badge, Button, EmptyState, ErrorState, Input, Modal, Panel, Skeleton, Spinner } from "../components/ui";
+import "../features/capabilities/capabilityNavigation.css";
 import { validateMcpDraft } from "../features/mcp/mcpForm";
 
 type DetailTab = "tools" | "resources" | "prompts";
@@ -110,7 +111,10 @@ function getMcpPresentation(mcp: McpServer): {
 }
 
 export default function PluginsPage({ embedded = false, initialServerId }: { embedded?: boolean; initialServerId?: string } = {}) {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [transportFilter, setTransportFilter] = useState("all");
   const requestedServerId = initialServerId ?? searchParams.get("server");
   const [data, setData] = useState<PluginListResponse | null>(null);
   const [subagents, setSubagents] = useState<SubagentMetadata[]>([]);
@@ -329,6 +333,7 @@ export default function PluginsPage({ embedded = false, initialServerId }: { emb
 
   useEffect(() => {
     if (!requestedServerId || !data?.mcp.some((server) => server.id === requestedServerId)) return;
+    setQuery(""); setStatusFilter("all"); setTransportFilter("all");
     setExpandedId(requestedServerId);
     setActiveTab("tools");
     if (!detail[requestedServerId]) {
@@ -340,10 +345,7 @@ export default function PluginsPage({ embedded = false, initialServerId }: { emb
   }, [data, requestedServerId]);
 
   const toggleDetail = (id: string) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-      return;
-    }
+    setSearchParams(current => { const next = new URLSearchParams(current); next.set("server", id); return next; }, { replace: true });
     setExpandedId(id);
     setActiveTab("tools");
     if (!detail[id]) {
@@ -414,8 +416,14 @@ export default function PluginsPage({ embedded = false, initialServerId }: { emb
     );
   }
 
+  const filteredServers = (data?.mcp ?? []).filter(server =>
+    `${server.name} ${server.command ?? ""} ${server.url ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()) &&
+    (transportFilter === "all" || server.transport === transportFilter) &&
+    (statusFilter === "all" || (statusFilter === "disabled" ? !server.enabled : server.enabled && server.runtime_status === statusFilter)));
+  const selectedServer = data?.mcp.find(server => server.id === expandedId);
+  const selectedPresentation = selectedServer ? getMcpPresentation(selectedServer) : null;
   return (
-    <ManagementFrame embedded={embedded}
+    <ManagementFrame embedded={embedded} variant="workspace"
       title="插件管理"
       description="管理内置工具、MCP 服务器与外部工具扩展"
       className="capability-page page-canvas ui-opt-capabilities ui-opt-plugins flex h-full flex-col"
@@ -427,18 +435,9 @@ export default function PluginsPage({ embedded = false, initialServerId }: { emb
         </Button>
       }
     >
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
+      <div className="mcp-workspace">
         {actionError && <ErrorState title="MCP 操作未完成" description={actionError} />}
-        <Panel className="flex items-start gap-3">
-          <Wrench className="w-5 h-5 text-[var(--accent)] flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium">MCP 运行时（stdio + Streamable HTTP）</p>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              每个 MCP 服务器按真实运行时状态展示；Tools / Resources / Prompts 可查看，但工具执行始终经过安全审批网关，前端不提供直接执行入口。
-            </p>
-          </div>
-        </Panel>
-
+        <div className="capability-workbench-toolbar"><Input aria-label="搜索 MCP 服务" placeholder="搜索服务名称或连接地址…" value={query} onChange={event=>setQuery(event.target.value)} /><select aria-label="MCP 状态筛选" className="settings-select" value={statusFilter} onChange={event=>setStatusFilter(event.target.value)}><option value="all">全部状态</option><option value="ready">已就绪</option><option value="disabled">已禁用</option><option value="unavailable">不可用</option><option value="misconfigured">配置有误</option><option value="degraded">能力受限</option></select><select aria-label="MCP 连接类型" className="settings-select" value={transportFilter} onChange={event=>setTransportFilter(event.target.value)}><option value="all">全部连接</option><option value="stdio">本地进程</option><option value="streamable_http">远程 HTTP</option></select><Button size="sm" variant="secondary" onClick={()=>void load()}><RefreshCw size={14}/>刷新列表</Button></div>
         {!embedded && <>
         {/* Builtin Tools */}
         <div>
@@ -470,128 +469,22 @@ export default function PluginsPage({ embedded = false, initialServerId }: { emb
         </div>
 
         {/* MCP Servers */}
-        {(!data?.mcp || data.mcp.length === 0) ? (
-          <EmptyState
-            icon={<Link className="w-10 h-10" />}
-            title="暂无 MCP 服务器"
-            description="添加外部 MCP 服务器扩展 AI 能力"
-            action={<Button size="sm" onClick={openAdd}><Plus className="w-4 h-4" />添加 MCP</Button>}
-          />
-        ) : (
-          <div className="space-y-3">
-            {data.mcp.map((mcp) => {
-              const isExpanded = expandedId === mcp.id;
-              const d = detail[mcp.id] ?? EMPTY_DETAIL;
-              const pres = getMcpPresentation(mcp);
-              const countsList: string[] = [];
-              if (mcp.protocol_version) countsList.push(`协议 ${mcp.protocol_version}`);
-              if (mcp.tools_count != null) countsList.push(`Tools ${mcp.tools_count}`);
-              if (mcp.resources_count != null) countsList.push(`Resources ${mcp.resources_count}`);
-              if (mcp.prompts_count != null) countsList.push(`Prompts ${mcp.prompts_count}`);
-              if (mcp.env && Object.keys(mcp.env).length > 0) {
-                countsList.push(`环境变量 ${Object.keys(mcp.env).length} 个（值不展示）`);
-              }
-
-              return (
-                <Panel key={mcp.id} className="group">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Link className="w-5 h-5 text-[var(--accent)] flex-shrink-0" />
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-medium text-sm">{mcp.name}</h4>
-                          <Badge tone={pres.enableTone}>
-                            {mcp.enabled ? "已启用" : "已禁用"}
-                          </Badge>
-                          <CapabilityStatusBadge
-                            tone={pres.statusTone}
-                            label={pres.statusLabel}
-                          />
-                        </div>
-                        <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">
-                          {mcpTransportRuntimeLabel(mcp.transport)}
-                          {mcp.transport === "stdio" ? ` · ${mcp.command || "(未配置)"}` : ` · ${mcp.url || "(未配置)"}`}
-                        </p>
-                        <p className="text-[10px] text-[var(--text-faint)] mt-1">
-                          {countsList.length > 0 ? countsList.join(" · ") : "未提供配置参数"}
-                        </p>
-                        {pres.healthMessage && (
-                          <p className="text-[10px] text-[var(--danger)] mt-0.5 truncate max-w-[420px]" role="alert">
-                            {pres.healthMessage}
-                          </p>
-                        )}
-                        {testResults[mcp.id] && (
-                          <p className={`text-xs mt-2 ${testResults[mcp.id].ok ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
-                            {testResults[mcp.id].ok ? "连接成功" : "连接失败"}：{testResults[mcp.id].message}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-end gap-1.5 flex-shrink-0">
-                      <Button variant="secondary" size="sm"
-                        onClick={() => handleRefresh(mcp.id)}
-                        aria-label={`刷新 ${mcp.name} 运行时`}
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />刷新
-                      </Button>
-                      <Button variant="secondary" size="sm"
-                        onClick={() => toggleDetail(mcp.id)}
-                        aria-label={isExpanded ? `收起 ${mcp.name} 详情` : `查看 ${mcp.name} 详情`}
-                        aria-expanded={isExpanded}
-                      >
-                        {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}详情
-                      </Button>
-                      <Button variant="secondary" size="sm"
-                        onClick={() => handleToggle(mcp.id)}
-                        disabled={togglingId === mcp.id}
-                        loading={togglingId === mcp.id}
-                        loadingLabel="切换中…"
-                        aria-label={mcp.enabled ? `禁用 ${mcp.name}` : `启用 ${mcp.name}`}
-                        aria-pressed={mcp.enabled}
-                      >
-                        {mcp.enabled ? "禁用" : "启用"}
-                      </Button>
-                      <Button variant="secondary" size="sm"
-                        onClick={() => handleTest(mcp.id)}
-                        disabled={testingId === mcp.id}
-                        loading={testingId === mcp.id}
-                        loadingLabel="测试中…"
-                        aria-label={`测试 ${mcp.name} 连接`}
-                      >
-                        {!testingId || testingId !== mcp.id ? <TestTube className="w-3.5 h-3.5" /> : null}
-                        测试
-                      </Button>
-                      <Button variant="secondary" size="sm"
-                        onClick={() => openEdit(mcp)}
-                        aria-label={`编辑 ${mcp.name}`}
-                      >
-                        <Wrench className="w-3.5 h-3.5" />编辑
-                      </Button>
-                      <Button variant="ghost" size="sm"
-                        onClick={() => handleDelete(mcp.id, mcp.name)}
-                        className="text-[var(--danger)]"
-                        aria-label={`删除 ${mcp.name}`}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />删除
-                      </Button>
-                    </div>
-                  </div>
-
-                  {isExpanded && (
-                    <McpDetailPanel
-                      tab={activeTab}
-                      detail={d}
-                      onSwitchTab={(tab) => switchTab(mcp.id, tab)}
-                      onOpenResource={(resource) => openResource(mcp.id, resource)}
-                      onOpenPrompt={(prompt) => openPrompt(mcp.id, prompt)}
-                    />
-                  )}
-                </Panel>
-              );
-            })}
-          </div>
-        )}
+        <div className="capability-resource-split">
+          <div className="capability-resource-list" aria-label="MCP 服务列表"><p className="capability-list-caption">{filteredServers.length} 个服务</p>{filteredServers.length ? filteredServers.map(server => { const presentation=getMcpPresentation(server); return <button type="button" key={server.id} className="capability-resource-row" aria-current={expandedId===server.id?"true":undefined} onClick={()=>toggleDetail(server.id)}><span className="capability-resource-name"><Link size={15}/><strong>{server.name}</strong></span><span>{mcpTransportRuntimeLabel(server.transport)}</span><small>{presentation.statusLabel} · {server.tools_count ?? "—"} 个工具</small></button>; }) : <EmptyState title="没有匹配的 MCP 服务" description="添加服务或调整筛选条件。" />}</div>
+          <section className="capability-resource-detail" aria-label="MCP 服务详情">{selectedServer && selectedPresentation ? <>
+            <h3>{selectedServer.name}</h3><div className="flex gap-2"><Badge tone={selectedServer.enabled?"success":"default"}>{selectedServer.enabled?"已启用":"已禁用"}</Badge><CapabilityStatusBadge tone={selectedPresentation.statusTone} label={selectedPresentation.statusLabel}/></div>
+            <dl className="mt-3 flex flex-wrap gap-4 text-xs text-[var(--text-secondary)]" aria-label="MCP 运行时能力数量">
+              <div className="flex gap-1.5"><dt>工具</dt><dd>{selectedServer.tools_count ?? "未读取"}</dd></div>
+              <div className="flex gap-1.5"><dt>资源</dt><dd>{selectedServer.resources_count ?? "未读取"}</dd></div>
+              <div className="flex gap-1.5"><dt>提示词</dt><dd>{selectedServer.prompts_count ?? "未读取"}</dd></div>
+            </dl>
+            {selectedPresentation.healthMessage&&<p role="status" className="text-[var(--danger)]">{selectedPresentation.healthMessage}</p>}
+            <div className="flex flex-wrap gap-2"><Button size="sm" onClick={()=>void handleToggle(selectedServer.id)} disabled={togglingId===selectedServer.id} loading={togglingId===selectedServer.id} aria-label={`${selectedServer.enabled?"禁用":"启用"} ${selectedServer.name}`}>{selectedServer.enabled?"禁用":"启用"}</Button><Button size="sm" variant="secondary" onClick={()=>void handleTest(selectedServer.id)} disabled={testingId===selectedServer.id} loading={testingId===selectedServer.id} aria-label={`测试 ${selectedServer.name} 连接`}><TestTube size={14}/>测试连接</Button><Button size="sm" variant="secondary" onClick={()=>void handleRefresh(selectedServer.id)} aria-label={`刷新 ${selectedServer.name} 运行时`}><RefreshCw size={14}/>刷新能力</Button><Button size="sm" variant="secondary" onClick={()=>openEdit(selectedServer)} aria-label={`编辑 ${selectedServer.name}`}><Wrench size={14}/>编辑</Button><Button size="sm" variant="ghost" onClick={()=>void handleDelete(selectedServer.id,selectedServer.name)} aria-label={`删除 ${selectedServer.name}`}><Trash2 size={14}/>删除</Button></div>
+            {testResults[selectedServer.id]&&<p role="status">{testResults[selectedServer.id].ok?"连接成功":"连接失败"}：{testResults[selectedServer.id].message}</p>}
+            <details><summary>连接与技术详情</summary><p>{mcpTransportRuntimeLabel(selectedServer.transport)}</p><p>{selectedServer.transport==="stdio"?selectedServer.command:selectedServer.url}</p><p>协议：{selectedServer.protocol_version??"尚未确认"}</p><p>环境变量：{Object.keys(selectedServer.env??{}).join("、")||"无"}</p></details>
+            <McpDetailPanel tab={activeTab} detail={detail[selectedServer.id]??EMPTY_DETAIL} onSwitchTab={tab=>switchTab(selectedServer.id,tab)} onOpenResource={resource=>openResource(selectedServer.id,resource)} onOpenPrompt={prompt=>openPrompt(selectedServer.id,prompt)} />
+          </> : <EmptyState title={requestedServerId?"未找到请求的 MCP 服务":"选择一个 MCP 服务"} description="查看连接状态、工具、资源与提示词。" />}</section>
+        </div>
 
         {!embedded && <>
         <div className="flex items-center gap-3">

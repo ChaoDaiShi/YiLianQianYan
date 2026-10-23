@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FileDiff, GitBranch, RefreshCw, FolderGit2, GitCommitHorizontal } from "lucide-react";
 import { listWorkspaces, type Workspace } from "../../api/workspaces";
 import { getWorkspaceGit, getWorkspaceGitDiff, type GitFileChange, type WorkspaceGitDiff, type WorkspaceGitStatus } from "../../api/workspaceGit";
-import { Modal } from "../../components/ui";
+import { Button, Modal } from "../../components/ui";
 import { Link } from "react-router-dom";
 import { gitChangeLabel, gitTrackingLabel } from "./gitPresentation";
 import "./gitNodeManager.css";
+import CodeActionDialog, { type CodeAction } from "./CodeActionDialog";
 
 export interface GitNodeManagerProps {
   visible: boolean;
@@ -16,6 +17,7 @@ export interface GitNodeManagerProps {
 interface DiffSelection { file: GitFileChange; staged: boolean }
 
 export default function GitNodeManager({ visible, workspaceId, onWorkspaceChange }: GitNodeManagerProps) {
+  const [codeAction, setCodeAction] = useState<{ action: CodeAction; paths: string[] } | null>(null);
   const [localWorkspace, setLocalWorkspace] = useState<string | null>(null);
   const selectedWorkspace = workspaceId === undefined ? localWorkspace : workspaceId;
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -75,6 +77,7 @@ export default function GitNodeManager({ visible, workspaceId, onWorkspaceChange
   }, [selection, selectedWorkspace, visible]);
 
   function selectWorkspace(id: string) {
+    setCodeAction(null);
     const next = id || null;
     if (workspaceId === undefined) setLocalWorkspace(next);
     onWorkspaceChange?.(next);
@@ -86,13 +89,15 @@ export default function GitNodeManager({ visible, workspaceId, onWorkspaceChange
     {workspaceError && <p className="git-node-error" role="alert">工作空间列表加载失败：{workspaceError}</p>}
     {!selectedWorkspace ? <div className="git-node-empty"><FolderGit2 size={24}/><p>选择你要查看的本地工作空间。</p><p>尚未添加目录时，可先<Link to="/workspaces" className="text-[var(--accent-primary)] underline">管理工作空间</Link>。</p></div> : error ? <p className="git-node-error" role="alert">{error}</p> : !status ? <p className="git-node-empty" role="status">正在读取 Git 工作区…</p> : !status.is_repository ? <div className="git-node-empty"><FolderGit2 size={24}/><p>该工作空间不是 Git 仓库</p><span className="git-root-path">{status.root}</span></div> : <>
       <div className="git-repository"><div className="git-branch"><GitBranch size={15}/><strong>{status.branch ?? "分离 HEAD"}</strong></div><p className="git-root-path" title={status.root}>{status.root}</p><p className="git-commit"><GitCommitHorizontal size={13}/>{status.head ? <code title={status.head}>{status.head.slice(0, 10)}</code> : <span>尚无提交</span>}</p><p className="git-tracking">{gitTrackingLabel(status.ahead, status.behind)}</p></div>
+      <div className="git-file-actions"><Button size="sm" variant="secondary" onClick={()=>setCodeAction({action:"commit",paths:[]})}>Git 操作</Button><Button size="sm" variant="ghost" onClick={()=>setCodeAction({action:"lsp",paths:[]})}>语言服务</Button></div>
       <div className="git-files-title"><span>文件变更</span><span>{status.files.length}</span></div>
       <div className="git-file-list">{status.files.length === 0 ? <p className="git-node-empty">工作区干净，没有文件变更</p> : status.files.map(file => <article className="git-file" key={file.path}>
         <div className="git-file-name"><FileDiff size={14}/><span title={file.path}>{file.path}</span></div>
         {file.original_path && <p className="git-rename-path" title={file.original_path}>{file.original_path} → {file.path}</p>}
-        <div className="git-file-actions">{file.staged && <button type="button" data-git-area="staged" onClick={() => setSelection({ file, staged: true })} aria-label={`查看已暂存差异 ${file.path}`}><span className="git-change-code">{file.index_status}</span>已暂存 · {gitChangeLabel(file, true)}</button>}{(file.unstaged || file.untracked) && <button type="button" data-git-area="worktree" onClick={() => setSelection({ file, staged: false })} aria-label={`查看${file.untracked ? "未跟踪内容" : "工作区差异"} ${file.path}`}><span className="git-change-code">{file.worktree_status}</span>{file.untracked ? "未跟踪 · 查看内容" : `工作区 · ${gitChangeLabel(file, false)}`}</button>}</div>
+        <div className="git-file-actions"><button type="button" onClick={()=>setCodeAction({action:file.staged?"unstage":"stage",paths:file.original_path?[file.original_path,file.path]:[file.path]})}>{file.staged?"取消暂存":"暂存"}</button>{file.staged && <button type="button" data-git-area="staged" onClick={() => setSelection({ file, staged: true })} aria-label={`查看已暂存差异 ${file.path}`}><span className="git-change-code">{file.index_status}</span>已暂存 · {gitChangeLabel(file, true)}</button>}{(file.unstaged || file.untracked) && <button type="button" data-git-area="worktree" onClick={() => setSelection({ file, staged: false })} aria-label={`查看${file.untracked ? "未跟踪内容" : "工作区差异"} ${file.path}`}><span className="git-change-code">{file.worktree_status}</span>{file.untracked ? "未跟踪 · 查看内容" : `工作区 · ${gitChangeLabel(file, false)}`}</button>}</div>
       </article>)}</div>
     </>}
+    {codeAction && selectedWorkspace && status && <CodeActionDialog workspaceId={selectedWorkspace} status={status} action={codeAction.action} paths={codeAction.paths} onClose={()=>setCodeAction(null)} onCompleted={refresh} />}
     <p className="git-node-footnote">显示本地 Git 状态，上游计数基于本地引用。</p>
     <Modal open={selection !== null} onClose={() => setSelection(null)} title={selection ? `${selection.file.untracked ? "未跟踪文件" : selection.staged ? "已暂存差异" : "工作区差异"} · ${selection.file.path}` : "文件差异"} size="xl">
       {diffError ? <p className="git-node-error" role="alert">{diffError}</p> : !diff ? <p role="status">正在读取文件差异…</p> : <div className="git-diff-view">{diff.untracked && <p className="git-diff-note">未跟踪文件的当前内容</p>}{diff.truncated && <p className="git-diff-note" role="status">内容超过 1 MiB，当前显示前 1 MiB。</p>}{diff.binary ? <p className="git-diff-note">该文件包含二进制内容或非 UTF-8 文本，无法显示文本预览。</p> : diff.content ? <pre aria-label="文件差异内容">{diff.content}</pre> : <p className="git-diff-note">当前没有文本差异。</p>}</div>}

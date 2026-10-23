@@ -1,0 +1,19 @@
+.knowledge-import-dialog { display: grid; gap: 12px; min-width: 0; }
+.knowledge-import-progress, .knowledge-import-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: .8125rem; }
+.knowledge-import-dialog progress { width: 100%; height: 8px; accent-color: var(--accent-primary); }
+.knowledge-import-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: .75rem; }
+.knowledge-import-summary { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: .8125rem; color: var(--text-secondary); }
+.knowledge-import-summary b { color: var(--text); }
+.knowledge-import-errors { display: flex; align-items: center; gap: 8px; font-size: .75rem; color: var(--text-secondary); }
+.knowledge-import-result-list { min-height: 120px; max-height: min(38vh, 340px); overflow: auto; list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-soft); border-radius: var(--radius-md); }
+.knowledge-import-result-list li { display: grid; gap: 4px; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); font-size: .75rem; }
+.knowledge-import-result-list li:last-child { border-bottom: 0; }
+.knowledge-import-result-list strong { overflow-wrap: anywhere; font-weight: 500; }
+.knowledge-import-result-list span { color: var(--text-secondary); }
+.knowledge-import-result-list [data-status="failed"] span { color: var(--danger); }
+.knowledge-collection-filter { min-width: 140px; max-width: 260px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface-solid); color: var(--text); padding: 8px 10px; font-size: .8125rem; }
+.knowledge-document-folders { display: block; color: var(--text-secondary); font-size: .75rem; overflow-wrap: anywhere; margin-top: 4px; }
+.knowledge-import-dialog progress { appearance: none; border: 0; border-radius: 8px; overflow: hidden; background: var(--surface-muted); }
+.knowledge-import-dialog progress::-webkit-progress-bar { background: var(--surface-muted); border-radius: 8px; }
+.knowledge-import-dialog progress::-webkit-progress-value { background: var(--accent-primary); border-radius: 8px; }
+.knowledge-import-dialog progress::-moz-progress-bar { background: var(--accent-primary); border-radius: 8px; }

@@ -15,6 +15,25 @@ const message: Message = {
 };
 
 describe("MessageBubble render boundary", () => {
+  it("keeps answer actions visible without hover and exposes single-message deletion", () => {
+    const markup = renderToStaticMarkup(createElement(MessageBubble, { message, onDelete: () => undefined }));
+    expect(markup).toContain('aria-label="回答操作"');
+    expect(markup).toContain('aria-label="复制回答"');
+    expect(markup).toContain('aria-label="朗读回答"');
+    expect(markup).toContain('aria-label="删除这条回答"');
+    expect(markup).not.toContain("group-hover:opacity-100");
+    expect(markup).not.toContain("opacity-0");
+  });
+
+  it("places rollback and single-message deletion on user messages and tracks action changes", () => {
+    const user = { ...message, id: "user-1", role: "user" };
+    const rollback = () => undefined;
+    const markup = renderToStaticMarkup(createElement(MessageBubble, { message: user, onRollback: rollback, onDelete: () => undefined }));
+    expect(markup).toContain('aria-label="回退这条消息"');
+    expect(markup).toContain('aria-label="删除这条消息"');
+    expect(areMessageBubblePropsEqual({ message: user, onRollback: rollback }, { message: user, onRollback: () => undefined })).toBe(false);
+    expect(areMessageBubblePropsEqual({ message: user }, { message: user, actionsDisabled: true })).toBe(false);
+  });
   it("skips unchanged message props during streaming updates", () => {
     expect(
       areMessageBubblePropsEqual(

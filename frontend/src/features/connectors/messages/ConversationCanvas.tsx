@@ -1,25 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, useNodesInitialized, useReactFlow, type Edge, type Node, type NodeProps, type Viewport } from "@xyflow/react";
-import { GitBranch, Maximize2, RefreshCw, Send, Square, X } from "lucide-react";
+import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, useNodesInitialized, useNodesState, useReactFlow, type Edge, type Node, type NodeProps, type Viewport } from "@xyflow/react";
+import { GitBranch, Maximize2, Paperclip, RefreshCw, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import BranchComposer from "./BranchComposer";
+import { useSelectedMessageFocus } from "./useSelectedMessageFocus";
+import { ResourceCards } from "../../resources/ResourceCard";
+import { originLabel } from "../../../components/chat/conversationHistoryModel";
 import { Button } from "../../../components/ui";
 import { stopGeneration, type AgentEvent } from "../../../api/chat";
 import { getMessageCanvas, saveMessageCanvasLayout, streamMessageCanvasBranch, type ConnectorMessage, type MessageCanvasOverview } from "../../../api/connectorMessages";
 import { ancestorPath, type MessagePosition } from "./messageTree";
 import { conversationFamilies, layoutMessageForest } from "./messageForest";
+import { reconcileMessageNodes } from "./reconcileMessageNodes";
 import "@xyflow/react/dist/style.css";
 import "./messageBranches.css";
 
 const statusLabels: Record<string, string> = { idle: "就绪", running: "正在执行", waiting_approval: "等待审批", completed: "已完成", failed: "执行失败", cancelled: "已停止", interrupted: "已中断" };
 const running = (status: string) => status === "running" || status === "waiting_approval";
-type SpeechNode = Node<{ message: ConnectorMessage; onPath: boolean; onBranch: () => void; busy: boolean }, "conversationSpeech">;
+type SpeechNode = Node<{ message: ConnectorMessage; title:string; origin:string; onPath: boolean; onBranch: () => void; busy: boolean }, "conversationSpeech">;
 
 function ConversationSpeech({ data, selected }: NodeProps<SpeechNode>) {
   const message = data.message;
   return <article className="message-branch-node" data-role={message.role} data-selected={selected} data-path={data.onPath} data-status={message.status}>
     <Handle id="previous" type="target" position={Position.Top} /><Handle id="branch-target" type="target" position={Position.Left} />
+    <div className="canvas-node-context"><span>{data.origin}</span><span title={data.title}>{data.title}</span></div>
     <header><strong>{message.role === "user" ? "我的提问" : "小昔涟的回答"}</strong><span>{message.role === "user" ? "提问" : statusLabels[message.status] ?? message.status}</span></header>
     <p>{message.content || "（无正文）"}</p>
+    {!!message.attachments?.length&&<span className="canvas-node-attachments"><Paperclip size={12}/>{message.attachments.length} 个附件</span>}
     {message.reasoning && <span className="conversation-canvas-reasoning-label">含思考过程</span>}
     {message.role === "assistant" && <button type="button" className="message-branch-node-action nodrag nopan" disabled={data.busy} aria-label="从此回答创建分支对话" onClick={event => { event.stopPropagation(); data.onBranch(); }}><GitBranch size={11} />创建分支</button>}
     <Handle id="next" type="source" position={Position.Bottom} /><Handle id="branch-source" type="source" position={Position.Right} />
@@ -34,8 +43,10 @@ function Overview({ initialConversationId }: { initialConversationId?: string | 
   const flow = useReactFlow<SpeechNode>();
   const initialized = useNodesInitialized();
   const [overview, setOverview] = useState<MessageCanvasOverview | null>(null);
+  const [sourceFilter,setSourceFilter]=useState("desktop");
+  const [familyFilter,setFamilyFilter]=useState("");
   const [positions, setPositions] = useState<Record<string, MessagePosition>>({});
-  const [measurements, setMeasurements] = useState<Record<string, { width: number; height: number }>>({});
+  const [nodes, setNodes, onNodesChange] = useNodesState<SpeechNode>([]);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 0.8 });
   const [selected, setSelected] = useState<string | null>(null);
   const [branchParent, setBranchParent] = useState<ConnectorMessage | null>(null);
@@ -51,6 +62,7 @@ function Overview({ initialConversationId }: { initialConversationId?: string | 
   const mounted = useRef(true);
   const active = useRef<Turn | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
+  useSelectedMessageFocus(selected,initialized);
   positionsRef.current = positions;
 
   const refresh = useCallback(async (reopen = false) => {
@@ -101,9 +113,9 @@ function Overview({ initialConversationId }: { initialConversationId?: string | 
     catch (cause) { if (mounted.current) setError(explain(cause)); }
   }
 
-  function chooseBranch(message: ConnectorMessage) {
+  const chooseBranch = useCallback((message: ConnectorMessage) => {
     setBranchParent(message); setSelected(message.id); composer.current?.focus();
-  }
+  }, []);
 
   async function finish(turn: Turn) {
     if (turn.ended) return;
@@ -148,10 +160,19 @@ function Overview({ initialConversationId }: { initialConversationId?: string | 
     turn.controller = streamMessageCanvasBranch(branchParent.conversation_id, branchParent.id, text, onEvent);
   }
 
-  const messages = useMemo(() => overview?.conversations.flatMap(conversation => conversation.nodes) ?? [], [overview]);
   const families = useMemo(() => conversationFamilies(overview?.conversations ?? []), [overview]);
+  const byConversation=useMemo(()=>new Map(overview?.conversations.map(conversation=>[conversation.id,conversation])||[]),[overview]);
+  useEffect(()=>{const target=initialConversationId&&byConversation.get(initialConversationId);if(target){setSourceFilter(target.origin?.kind||"desktop");setFamilyFilter(families.find(family=>family.conversationIds.includes(target.id))?.id||"");}},[initialConversationId,!!overview]);
+  const sourceFamilies=useMemo(()=>families.filter(family=>sourceFilter==="all"||(byConversation.get(family.id)?.origin?.kind||"desktop")===sourceFilter),[families,sourceFilter,byConversation]);
+  const messages = useMemo(() => {
+    const family=familyFilter?families.find(family=>family.id===familyFilter):null;
+    return overview?.conversations.filter(conversation=>(sourceFilter==="all"||(conversation.origin?.kind||"desktop")===sourceFilter)&&(!family||family.conversationIds.includes(conversation.id))).flatMap(conversation=>conversation.nodes)||[];
+  },[overview,families,familyFilter,sourceFilter]);
   const path = useMemo(() => new Set(ancestorPath(messages, selected)), [messages, selected]);
-  const nodes = useMemo<SpeechNode[]>(() => messages.map(message => ({ id: message.id, type: "conversationSpeech", measured: measurements[message.id], position: positions[message.id], draggable: true, selected: selected === message.id, data: { message, onPath: path.has(message.id), busy, onBranch: () => chooseBranch(message) } })), [messages, positions, measurements, selected, path, busy]);
+  useEffect(() => {
+    const projection: SpeechNode[] = messages.map(message => ({ id: message.id, type: "conversationSpeech", position: positions[message.id], draggable: true, selected: selected === message.id, data: { message, title:byConversation.get(message.conversation_id)?.title||"对话",origin:originLabel(byConversation.get(message.conversation_id)?.origin),onPath: path.has(message.id), busy, onBranch: () => chooseBranch(message) } }));
+    setNodes(current => reconcileMessageNodes(current, projection));
+  }, [messages, positions, selected, path, busy, chooseBranch, setNodes,byConversation]);
   const byId = new Map(messages.map(message => [message.id, message]));
   const groupStatuses = new Map(overview?.conversations.map(conversation => [conversation.id, conversation.status]));
   const edges: Edge[] = messages.filter(message => message.parent_id && byId.has(message.parent_id)).map(message => {
@@ -162,17 +183,22 @@ function Overview({ initialConversationId }: { initialConversationId?: string | 
   const focused = messages.find(message => message.id === selected);
 
   return <section className="message-branch-workspace conversation-canvas" aria-label="全部对话消息画布">
-    <header className="message-branch-toolbar"><label>定位对话<select aria-label="定位画布对话" value="" onChange={event => setCamera(`conversation:${event.target.value}`)}><option value="">全部对话（{families.length}）</option>{families.map(family => <option key={family.id} value={family.id}>{family.title}{family.conversationIds.length > 1 ? ` · ${family.conversationIds.length} 条路径` : ""}</option>)}</select></label><Button variant="secondary" size="sm" onClick={() => setCamera("fit")}><Maximize2 size={14} />适应画布</Button><Button variant="secondary" size="sm" disabled={loading} onClick={() => { setError(""); void refresh().catch(cause => setError(explain(cause))); }}><RefreshCw size={14} />刷新</Button><span>点击消息查看全文 · 从回答展开另一条路径 · 独立对话互不连线</span></header>
+    <header className="message-branch-toolbar">
+      <div className="canvas-source-filter" role="group" aria-label="画布会话来源">{[{id:"desktop",label:"桌面"},{id:"channel",label:"渠道"},{id:"all",label:"全部"}].map(source=><button type="button" key={source.id} aria-pressed={sourceFilter===source.id} onClick={()=>{setSourceFilter(source.id);setFamilyFilter("");setSelected(null);setCamera("fit");}}>{source.label}</button>)}</div>
+      <label>定位对话<select aria-label="定位画布对话" value={familyFilter} onChange={event=>{setFamilyFilter(event.target.value);setSelected(null);setCamera(event.target.value?`conversation:${event.target.value}`:"fit");}}><option value="">全部对话（{sourceFamilies.length}）</option>{sourceFamilies.map(family=><option key={family.id} value={family.id}>{family.title}{family.conversationIds.length>1?` · ${family.conversationIds.length} 条路径`:""}</option>)}</select></label>
+      <Button variant="secondary" size="sm" onClick={()=>setCamera("fit")}><Maximize2 size={14}/>适应画布</Button><Button variant="secondary" size="sm" disabled={loading} onClick={()=>{setError("");void refresh().catch(cause=>setError(explain(cause)));}}><RefreshCw size={14}/>刷新</Button><span>{messages.length} 条消息 · {sourceFamilies.length} 组对话</span>
+    </header>
     {error && <p className="message-branch-error" role="alert">{error}</p>}
-    <div className="message-branch-stage"><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} viewport={viewport} onViewportChange={setViewport} minZoom={0.1} maxZoom={2} nodesConnectable={false} deleteKeyCode={null}
-      onNodesChange={changes => { const dimensions = changes.filter(change => change.type === "dimensions"); if (dimensions.length) setMeasurements(current => { const next = { ...current }; for (const change of dimensions) if (change.dimensions) next[change.id] = change.dimensions; return next; }); }}
+    <div className="conversation-canvas-shell"><div className="message-branch-stage"><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} viewport={viewport} onViewportChange={setViewport} minZoom={0.1} maxZoom={2} nodesConnectable={false} deleteKeyCode={null}
+      onNodesChange={onNodesChange}
       onNodeClick={(_, node) => setSelected(node.id)} onNodeDrag={(_, node) => setPositions(current => ({ ...current, [node.id]: node.position }))} onNodeDragStop={(_, node) => { const next = { ...positionsRef.current, [node.id]: node.position }; setPositions(next); void persist(next); }} onMoveEnd={(_, next) => { void persist(positionsRef.current, next); }}><Background color="var(--border-soft)" gap={22} /><Controls showInteractive={false} /></ReactFlow>
       {loading && <div className="message-branch-empty" role="status">正在读取已有对话记录…</div>}
-      {!loading && overview?.conversations.length === 0 && <div className="message-branch-empty"><GitBranch size={28} /><p>还没有对话，在主页发送问题后会自动出现在这里</p></div>}
+      {!loading && messages.length === 0 && <div className="message-branch-empty"><GitBranch size={28} /><p>当前筛选下没有消息，切换来源或选择其他对话查看</p></div>}
     </div>
-    {focused && <aside className="message-branch-detail conversation-canvas-detail" aria-label="选中消息详情"><header><strong>{focused.role === "user" ? "提问全文" : "回答全文"}</strong><button type="button" aria-label="关闭消息详情" onClick={() => setSelected(null)}><X size={14} /></button></header><p>{focused.content}</p>{focused.reasoning && <details className="conversation-canvas-reasoning"><summary>思考过程</summary><p>{focused.reasoning}</p></details>}<Link to={`/chat/${focused.conversation_id}`}>打开此路径的完整记录</Link>{focused.error && <p role="alert">{focused.error}</p>}{focused.role === "assistant" && <Button size="sm" variant="secondary" disabled={busy} onClick={() => chooseBranch(focused)}><GitBranch size={14} />从此回答创建分支</Button>}</aside>}
+    {focused&&<aside className="message-branch-detail conversation-canvas-detail" aria-label="选中消息详情"><header><div><strong>{focused.role==="user"?"提问全文":"回答全文"}</strong><span className="canvas-detail-origin">{originLabel(byConversation.get(focused.conversation_id)?.origin)} · {byConversation.get(focused.conversation_id)?.title}</span></div><button type="button" aria-label="关闭消息详情" onClick={()=>setSelected(null)}><X size={16}/></button></header>{focused.attachments?.length?<ResourceCards files={focused.attachments}/>:null}<div className="canvas-detail-content conversation-markdown prose prose-sm max-w-none"><ReactMarkdown remarkPlugins={[remarkGfm]}>{focused.content||"（无正文）"}</ReactMarkdown></div>{focused.reasoning&&<details className="conversation-canvas-reasoning"><summary>思考过程</summary><p>{focused.reasoning}</p></details>}<Link to={`/chat/${focused.conversation_id}`}>打开这条路径的完整记录</Link>{focused.error&&<p role="alert">{focused.error}</p>}{focused.role==="assistant"&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>chooseBranch(focused)}><GitBranch size={14}/>从此回答创建分支</Button>}</aside>}
+    </div>
     {(busy || activity.length > 0) && <div className="message-branch-activity" role="status">{streamText && <p className="conversation-canvas-stream">{streamText}</p>}{activity.slice(-3).map((line, index) => <p key={index}>{line}</p>)}{activeConversation && <Link to={`/chat/${activeConversation}`}>打开当前执行对话与审批</Link>}</div>}
-    {branchParent && <form className="message-branch-composer" onSubmit={event => { event.preventDefault(); send(); }}><div className="message-branch-composer-context"><GitBranch size={14} /><span>另一条路径 · {branchParent.content.slice(0, 60)}</span><button type="button" disabled={busy} onClick={() => setBranchParent(null)}>取消</button></div><textarea ref={composer} aria-label="分支对话提问" placeholder="从此回答继续提问，展开另一条消息路径…" value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} rows={2} /><div className="message-branch-send">{busy ? <Button type="button" variant="danger" size="sm" onClick={() => void stop()}><Square size={14} />停止生成</Button> : <Button type="submit" size="sm" disabled={!draft.trim()}><Send size={14} />发送到新分支</Button>}</div></form>}
+    {branchParent&&<BranchComposer parent={branchParent} draft={draft} onChange={setDraft} onSend={send} onStop={()=>void stop()} onCancel={()=>setBranchParent(null)} busy={busy} inputRef={composer} conversationTitle={byConversation.get(branchParent.conversation_id)?.title}/>}
   </section>;
 }
 

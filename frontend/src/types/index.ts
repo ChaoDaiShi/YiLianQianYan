@@ -22,6 +22,8 @@ export interface ToolCallRecord {
   finishedAt?: number;
 }
 
+export interface AttachmentReference { id: string; name: string; mime_type?: string; size?: number }
+export interface ConversationOrigin { kind: "desktop" | "channel"; provider?: string; channel_name?: string }
 export interface Message {
   id: string;
   role: string;
@@ -31,12 +33,15 @@ export interface Message {
   tool_name?: string;
   created_at: number;
   process?: ConversationProcess;
+  attachments?: AttachmentReference[];
 }
 export interface ProcessToolCall { toolCallId: string; name: string; args?: Record<string, unknown>; arguments?: string; result?: string; execution?: ToolCallRecord }
 export interface ConversationProcess { reasoning?: string; tools: ProcessToolCall[] }
 
 export type WorkspaceMode = "chat" | "work" | "create";
 export interface Conversation {
+  origin?: ConversationOrigin;
+  unassigned_attachments?: AttachmentReference[];
   id: string;
   title: string;
   messages: Message[];
@@ -53,6 +58,7 @@ export interface Conversation {
 }
 
 export interface ConversationSummary {
+  origin?: ConversationOrigin;
   id: string;
   title: string;
   run_status?: ConversationRunStatus;
@@ -67,6 +73,7 @@ export type ConversationRunStatus =
   | "idle"
   | "running"
   | "waiting_approval"
+  | "waiting_input"
   | "completed"
   | "failed"
   | "cancelled"

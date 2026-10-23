@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getResourceContent, getResourcePreview, type ResourcePreview } from "../../api/resources";
 import type { Attachment } from "./attachmentQueue";
+import { ResourceCard } from "./ResourceCard";
 
 const LABELS = { queued: "等待上传", uploading: "上传中", parsing: "获取解析结果", ready: "已就绪", failed: "失败", removed: "已移除" };
 
@@ -32,13 +33,9 @@ export function ControlledResourcePreview({ resourceId }: { resourceId: string }
 }
 
 export default function ResourceAttachments({ items, onRemove }: { items: Attachment[]; onRemove: (id: string) => void }) {
-  return <ul aria-label="输入附件" className="space-y-1 px-2 py-2 text-xs">
-    {items.map(item => <li key={item.id} className="rounded border border-[var(--border)] p-2">
-      <div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate">{item.name}</span><span role="status">{LABELS[item.state]}</span>
-        {item.state !== "removed" ? <button type="button" aria-label={`移除 ${item.name}`} onClick={() => onRemove(item.id)}>移除</button> : null}
-      </div>
-      {item.error && item.state !== "removed" ? <p role="alert" className="mt-1 text-[var(--danger)]">{item.error}</p> : null}
-      {item.state === "ready" && item.resourceId ? <ResourcePreviewDisclosure resourceId={item.resourceId} /> : null}
+  return <ul aria-label="输入附件" className="resource-card-grid">
+    {items.filter(item=>item.state!=="removed").map(item => <li key={item.id}>
+      <ResourceCard file={{id:item.resourceId||"",name:item.name}} onRemove={()=>onRemove(item.id)} status={LABELS[item.state]} error={item.error}/>
     </li>)}
   </ul>;
 }

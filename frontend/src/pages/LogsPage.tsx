@@ -219,6 +219,7 @@ export default function LogsPage() {
 
   return (
     <PageShell
+      variant="workspace"
       title="日志"
       description={activeView === "tools" ? "排查工具执行错误、查看参数与返回结果" : `查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（符合筛选 ${total} 条）`}
       className="ui-opt-logs system-center-page page-canvas flex h-full min-h-0 flex-col"

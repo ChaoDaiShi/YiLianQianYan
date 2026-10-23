@@ -2,6 +2,7 @@ import type {ConnectorNode,ConnectorView,ConnectorViewport} from "../../../api/c
 import type {SettingPreset,SettingsCanvasState} from "../../../api/settingsCanvas";
 export const SETTING_PREFIX="setting:";
 export const SETTING_GROUP_PREFIX="setting-group:";
+export const SETTINGS_NODE_SIZE={width:220,height:80,gap:16} as const;
 export interface SettingsGroup {id:string;label:string;description:string;representative:string;side:SettingPreset["side"];presetIds:readonly string[]}
 export const SETTINGS_GROUPS:readonly SettingsGroup[]=[
  {id:"models",label:"模型与服务",description:"对话、搜索、图像与向量服务",representative:"model",side:"right",presetIds:["model","search","vision","image","embedding"]},
@@ -31,19 +32,20 @@ export function composeSettingsGraph(view:ConnectorView|null,state:SettingsCanva
  const bindings=view?[...view.bindings]:[];
  if(view){nodes.push({id:`constraint:${agentId}`,entity_id:agentId,kind:"constraint",label:"权限与范围",x:center.x,y:center.y-128});bindings.push({id:`derived:constraint:${agentId}`,kind:"derived_constraint",source_id:`constraint:${agentId}`,target_id:center.id});}
  const groups=settingsGroups(presets).filter(group=>group.presets.some(preset=>state.connected_node_ids.includes(preset.id)));
- const occupied=nodes.map(node=>({x:node.x,y:node.y,width:220,height:node.kind==="agent"?142:74}));
+ const occupied=nodes.map(node=>({x:node.x,y:node.y,width:SETTINGS_NODE_SIZE.width,height:node.kind==="agent"?142:SETTINGS_NODE_SIZE.height}));
+ const overlaps=(point:{x:number;y:number})=>occupied.some(box=>point.x<box.x+box.width+SETTINGS_NODE_SIZE.gap&&point.x+SETTINGS_NODE_SIZE.width+SETTINGS_NODE_SIZE.gap>box.x&&point.y<box.y+box.height+SETTINGS_NODE_SIZE.gap&&point.y+SETTINGS_NODE_SIZE.height+SETTINGS_NODE_SIZE.gap>box.y);
  const categoryPositions=new Map<string,{x:number;y:number}>();
  const offsets:Record<string,{x:number;y:number}>={models:{x:300,y:-60},voice:{x:300,y:60},agent:{x:-300,y:-60},interface:{x:-300,y:60},security:{x:0,y:-180},extensions:{x:0,y:180}};
  for(const group of groups){
   const saved=state.nodes.find(point=>point.id===`group:${group.id}`)??state.nodes.find(point=>point.id===group.representative);
-  if(saved){categoryPositions.set(group.id,{x:saved.x,y:saved.y});occupied.push({x:saved.x,y:saved.y,width:220,height:74});}
+  if(saved){categoryPositions.set(group.id,{x:saved.x,y:saved.y});occupied.push({x:saved.x,y:saved.y,width:SETTINGS_NODE_SIZE.width,height:SETTINGS_NODE_SIZE.height});}
  }
  for(const group of groups){
   let position=categoryPositions.get(group.id);let slot=0;
   while(!position){const offset=offsets[group.id];const next={x:center.x+offset.x+slot*(group.side==="left"?-292:292),y:center.y+offset.y};
-   if(!occupied.some(box=>next.x<box.x+box.width+16&&next.x+236>box.x&&next.y<box.y+box.height+16&&next.y+90>box.y))position=next;slot++;
+   if(!overlaps(next))position=next;slot++;
   }
-  categoryPositions.set(group.id,position);occupied.push({...position,width:220,height:74});
+  categoryPositions.set(group.id,position);occupied.push({...position,width:SETTINGS_NODE_SIZE.width,height:SETTINGS_NODE_SIZE.height});
   const id=SETTING_GROUP_PREFIX+group.id;
   nodes.push({id,entity_id:`group:${group.id}`,kind:`setting_${group.side}`,label:group.label,settings_expanded:state.expanded_group_ids.includes(group.id),...position});
   const incoming=group.side==="top"||group.side==="left";
@@ -56,8 +58,8 @@ export function composeSettingsGraph(view:ConnectorView|null,state:SettingsCanva
   for(const preset of group.presets.filter(preset=>state.connected_node_ids.includes(preset.id))){
    const saved=state.nodes.find(point=>point.id===preset.id);
    // The former representative position belongs to the category after splitting the hierarchy.
-   if(saved&&!(preset.id===group.representative&&saved.x===category.x&&saved.y===category.y)){
-    leafPositions.set(preset.id,{x:saved.x,y:saved.y});occupied.push({x:saved.x,y:saved.y,width:220,height:74});
+   if(saved&&!(preset.id===group.representative&&saved.x===category.x&&saved.y===category.y)&&!overlaps(saved)){
+    leafPositions.set(preset.id,{x:saved.x,y:saved.y});occupied.push({x:saved.x,y:saved.y,width:SETTINGS_NODE_SIZE.width,height:SETTINGS_NODE_SIZE.height});
    }
   }
  }
@@ -67,10 +69,10 @@ export function composeSettingsGraph(view:ConnectorView|null,state:SettingsCanva
   const direction=group.side==="left"?-1:1;
   let column=category.x+direction*292;
   const rowY=(index:number)=>category.y+(index-(visible.length-1)/2)*98;
-  while(visible.some((preset,index)=>!leafPositions.has(preset.id)&&occupied.some(box=>column<box.x+box.width+16&&column+236>box.x&&rowY(index)<box.y+box.height+16&&rowY(index)+90>box.y)))column+=direction*292;
+  while(visible.some((preset,index)=>!leafPositions.has(preset.id)&&overlaps({x:column,y:rowY(index)})))column+=direction*292;
   for(const [index,preset] of visible.entries()){
    const position=leafPositions.get(preset.id)??{x:column,y:rowY(index)};
-   occupied.push({...position,width:220,height:74});
+   occupied.push({...position,width:SETTINGS_NODE_SIZE.width,height:SETTINGS_NODE_SIZE.height});
    const id=SETTING_PREFIX+preset.id;
    nodes.push({id,entity_id:preset.id,kind:group.side==="left"?"setting_left":"setting_right",label:preset.label,...position});
    bindings.push({id:`derived:setting-child:${preset.id}`,kind:"derived_setting_child",source_id:SETTING_GROUP_PREFIX+group.id,target_id:id});

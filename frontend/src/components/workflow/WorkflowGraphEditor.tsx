@@ -105,6 +105,25 @@ export default function WorkflowGraphEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
+  const [toolArgumentDrafts, setToolArgumentDrafts] = useState<Record<string, string>>({});
+  const toolInputErrors = nodes.flatMap(node => {
+    if (node.config.type !== "tool" || toolArgumentDrafts[node.id] === undefined) return [];
+    try {
+      const value: unknown = JSON.parse(toolArgumentDrafts[node.id]);
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [`节点 ${node.id}：工具参数必须是 JSON 对象`];
+      return [];
+    } catch { return [`节点 ${node.id}：工具参数不是有效 JSON`]; }
+  });
+  const editToolArguments = (nodeId: string, value: string) => {
+    setToolArgumentDrafts(current => ({ ...current, [nodeId]: value }));
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        setNodes(current => current.map(node => node.id === nodeId && node.config.type === "tool"
+          ? { ...node, config: { ...node.config, arguments: parsed as Record<string, unknown> } } : node));
+      }
+    } catch { /* The raw draft stays visible until the user fixes it. */ }
+  };
 
   const definition = useMemo(() => definitionFor(nodes, edges, entryNodeId), [nodes, edges, entryNodeId]);
   const dirty = name !== savedSnapshot.name || description !== savedSnapshot.description || !workflowDefinitionsEqual(definition, savedSnapshot.definition);
@@ -114,6 +133,12 @@ export default function WorkflowGraphEditor({
 
   const updateNode = (nodeId: string, patch: Partial<WorkflowNodeDefinition>) => {
     setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, ...patch } : node)));
+    if (patch.kind || patch.id) setToolArgumentDrafts(current => {
+      const next = { ...current };
+      delete next[nodeId];
+      if (!patch.kind && patch.id && current[nodeId] !== undefined) next[patch.id] = current[nodeId];
+      return next;
+    });
     if (patch.id && entryNodeId === nodeId) setEntryNodeId(patch.id);
     if (patch.id && selectedNodeId === nodeId) setSelectedNodeId(patch.id);
   };
@@ -143,6 +168,7 @@ export default function WorkflowGraphEditor({
   };
 
   const removeNode = (nodeId: string) => {
+    setToolArgumentDrafts(current => { const next = { ...current }; delete next[nodeId]; return next; });
     setNodes((current) => current.filter((node) => node.id !== nodeId));
     setEdges((current) => current.filter((edge) => edge.from !== nodeId && edge.to !== nodeId));
     setCustomOffsets((prev) => {
@@ -163,12 +189,14 @@ export default function WorkflowGraphEditor({
   };
 
   const handleValidate = () => {
+    if (toolInputErrors.length) { setError(toolInputErrors.join("；")); return; }
     const clientError = validateGraphClientSide(definition);
     setError(clientError ?? "");
     setValidationMessage(clientError ?? "本地结构校验通过，保存时仍由后端进行权威校验。");
   };
 
   const handleSave = async () => {
+    if (toolInputErrors.length) { setError(toolInputErrors.join("；")); return; }
     const clientError = validateGraphClientSide(definition);
     if (clientError) {
       setError(clientError);
@@ -243,8 +271,8 @@ export default function WorkflowGraphEditor({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button variant="ghost" size="sm" onClick={handleValidate}><Check className="h-3.5 w-3.5" />校验</Button>
-          {onRun && persistedGraph && <Button variant="secondary" size="sm" onClick={() => onRun(persistedGraph)} disabled={dirty}><Play className="h-3.5 w-3.5" />运行</Button>}
-          <Button size="sm" onClick={handleSave} disabled={saving || !dirty}><Save className="h-3.5 w-3.5" />保存</Button>
+          {onRun && persistedGraph && <Button variant="secondary" size="sm" onClick={() => onRun(persistedGraph)} disabled={dirty || toolInputErrors.length > 0}><Play className="h-3.5 w-3.5" />运行</Button>}
+          <Button size="sm" onClick={handleSave} disabled={saving || !dirty || toolInputErrors.length > 0}><Save className="h-3.5 w-3.5" />保存</Button>
         </div>
       </header>
 
@@ -423,36 +451,41 @@ export default function WorkflowGraphEditor({
 
         <aside className="workflow-editor-inspector scrollbar-thin">
           <div className="workflow-editor-section-title">Inspector</div><p className="workflow-editor-section-hint">只显示当前选中节点的真实配置</p>
-          {selectedNode ? <NodeInspector node={selectedNode} isEntry={entryNodeId === selectedNode.id} onUpdate={(patch) => updateNode(selectedNode.id, patch)} onConfigChange={(config) => updateNodeConfig(selectedNode.id, config)} onSetEntry={() => setEntryNodeId(selectedNode.id)} onDelete={() => removeNode(selectedNode.id)} /> : <EmptyState icon={<GitBranch className="h-5 w-5" />} title="选择一个节点" description="节点的实际配置会显示在这里。" className="min-h-[260px] px-3 py-10" />}
+          {selectedNode ? <NodeInspector toolArgumentsText={toolArgumentDrafts[selectedNode.id]} onToolArgumentsChange={value => editToolArguments(selectedNode.id, value)} node={selectedNode} isEntry={entryNodeId === selectedNode.id} onUpdate={(patch) => updateNode(selectedNode.id, patch)} onConfigChange={(config) => updateNodeConfig(selectedNode.id, config)} onSetEntry={() => setEntryNodeId(selectedNode.id)} onDelete={() => removeNode(selectedNode.id)} /> : <EmptyState icon={<GitBranch className="h-5 w-5" />} title="选择一个节点" description="节点的实际配置会显示在这里。" className="min-h-[260px] px-3 py-10" />}
         </aside>
       </div>
     </div>
   );
 }
 
-function NodeInspector({ node, isEntry, onUpdate, onConfigChange, onSetEntry, onDelete }: { node: WorkflowNodeDefinition; isEntry: boolean; onUpdate: (patch: Partial<WorkflowNodeDefinition>) => void; onConfigChange: (config: WorkflowNodeConfig) => void; onSetEntry: () => void; onDelete: () => void }) {
+function NodeInspector({ toolArgumentsText, onToolArgumentsChange, node, isEntry, onUpdate, onConfigChange, onSetEntry, onDelete }: { toolArgumentsText?: string; onToolArgumentsChange: (value: string) => void; node: WorkflowNodeDefinition; isEntry: boolean; onUpdate: (patch: Partial<WorkflowNodeDefinition>) => void; onConfigChange: (config: WorkflowNodeConfig) => void; onSetEntry: () => void; onDelete: () => void }) {
   const presentation = getNodePresentation(node.kind);
   return <div className="mt-4 space-y-4">
     <div className="workflow-inspector-node-heading"><div className={`workflow-inspector-kind ${TONE_CLASSES[presentation.tone]}`}>{presentation.label}</div><button type="button" onClick={onDelete} className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]" aria-label="删除节点"><Trash2 className="h-4 w-4" /></button></div>
     <Input label="节点 ID" value={node.id} onChange={(event) => onUpdate({ id: event.target.value })} />
     <div><label htmlFor="workflow-node-kind" className="mb-1.5 block text-sm font-medium">节点类型</label><select id="workflow-node-kind" value={node.kind} onChange={(event) => { const kind = event.target.value as WorkflowNodeKind; onUpdate({ kind, config: emptyNode(kind, node.id).config }); }} className="w-full rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2 text-sm text-[var(--text)] focus-ring-token focus:outline-none">{WORKFLOW_NODE_KINDS.map((kind) => <option key={kind} value={kind}>{getNodePresentation(kind).label}</option>)}</select></div>
     <label className="workflow-entry-toggle"><input type="radio" name="workflow-entry-node" checked={isEntry} onChange={onSetEntry} /><span>设为入口节点</span></label>
-    <NodeConfigFields node={node} onChange={onConfigChange} />
+    <NodeConfigFields toolArgumentsText={toolArgumentsText} onToolArgumentsChange={onToolArgumentsChange} node={node} onChange={onConfigChange} />
     <details className="workflow-technical-details"><summary>查看技术详情</summary><pre>{JSON.stringify({ id: node.id, kind: node.kind, config: node.config }, null, 2)}</pre></details>
   </div>;
 }
 
-function NodeConfigFields({ node, onChange }: { node: WorkflowNodeDefinition; onChange: (config: WorkflowNodeConfig) => void }) {
+function NodeConfigFields({ toolArgumentsText, onToolArgumentsChange, node, onChange }: { toolArgumentsText?: string; onToolArgumentsChange: (value: string) => void; node: WorkflowNodeDefinition; onChange: (config: WorkflowNodeConfig) => void }) {
   switch (node.kind) {
     case "agent": { const config = node.config as Extract<WorkflowNodeConfig, { type: "agent" }>; return <Textarea label="Agent 指令" value={config.prompt} onChange={(event) => onChange({ type: "agent", prompt: event.target.value })} placeholder="输入这个 Agent 节点实际使用的指令" />; }
-    case "tool": return <ToolConfigFields node={node} onChange={onChange} />;
+    case "tool": return <ToolConfigFields text={toolArgumentsText} onTextChange={onToolArgumentsChange} node={node} onChange={onChange} />;
     case "subagent": { const config = node.config as Extract<WorkflowNodeConfig, { type: "subagent" }>; return <div className="space-y-3"><Input label="子智能体名" value={config.subagent_name} onChange={(event) => onChange({ type: "subagent", subagent_name: event.target.value, task: config.task })} /><Textarea label="任务" value={config.task} onChange={(event) => onChange({ type: "subagent", subagent_name: config.subagent_name, task: event.target.value })} /></div>; }
     case "condition": { const config = node.config as Extract<WorkflowNodeConfig, { type: "condition" }>; return <div><label htmlFor="workflow-condition" className="mb-1.5 block text-sm font-medium">条件</label><select id="workflow-condition" value={config.when} onChange={(event) => onChange({ type: "condition", when: event.target.value as WorkflowCondition })} className="w-full rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2 text-sm focus-ring-token focus:outline-none"><option value="always">始终继续</option><option value="previous_succeeded">上一步成功时继续</option></select></div>; }
     case "output": { const config = node.config as Extract<WorkflowNodeConfig, { type: "output" }>; return <Textarea label="输出模板" value={config.template ?? ""} onChange={(event) => onChange({ type: "output", template: event.target.value || null })} placeholder="留空则使用运行时默认输出" />; }
   }
 }
 
-function ToolConfigFields({ node, onChange }: { node: WorkflowNodeDefinition; onChange: (config: WorkflowNodeConfig) => void }) {
+function ToolConfigFields({ text, onTextChange, node, onChange }: { text?: string; onTextChange: (value: string) => void; node: WorkflowNodeDefinition; onChange: (config: WorkflowNodeConfig) => void }) {
   const config = node.config as Extract<WorkflowNodeConfig, { type: "tool" }>;
-  return <div className="space-y-3"><Input label="工具名" value={config.tool_name} onChange={(event) => onChange({ type: "tool", tool_name: event.target.value, arguments: config.arguments })} hint="使用现有工具注册表中的真实名称" /><Textarea label="参数（JSON）" value={JSON.stringify(config.arguments ?? {}, null, 2)} onChange={(event) => { try { const parsed = JSON.parse(event.target.value); if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) onChange({ type: "tool", tool_name: config.tool_name, arguments: parsed }); } catch { /* Keep the last valid arguments. */ } }} className="font-mono text-xs" rows={5} /></div>;
+  let inputError = "";
+  if (text !== undefined) {
+    try { const value: unknown = JSON.parse(text); if (!value || typeof value !== "object" || Array.isArray(value)) inputError = "工具参数必须是 JSON 对象"; }
+    catch { inputError = "请输入有效 JSON 后保存或运行"; }
+  }
+  return <div className="space-y-3"><Input label="工具名" value={config.tool_name} onChange={(event) => onChange({ type: "tool", tool_name: event.target.value, arguments: config.arguments })} hint="使用现有工具注册表中的真实名称" /><Textarea label="参数（JSON）" value={text ?? JSON.stringify(config.arguments, null, 2)} onChange={event => onTextChange(event.target.value)} className="font-mono text-xs" rows={5} aria-invalid={Boolean(inputError)} />{inputError && <p role="alert" className="text-xs text-[var(--danger)]">{inputError}</p>}</div>;
 }

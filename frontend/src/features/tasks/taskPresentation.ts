@@ -85,6 +85,7 @@ export function conversationRunStatusToTaskStatus(
 ): TaskStatus {
   if (status === "running") return "running";
   if (status === "waiting_approval") return "waiting_approval";
+  if (status === "waiting_input") return "waiting_user";
   if (status === "failed" || status === "interrupted") return "failed";
   if (status === "cancelled") return "cancelled";
   return "completed";

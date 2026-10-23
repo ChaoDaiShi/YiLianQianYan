@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Play, Pencil, Trash2 } from "lucide-react";
-import { Button, Panel, Badge, EmptyState, Spinner } from "../ui";
+import { Button, Panel, Badge, EmptyState, Spinner, Input } from "../ui";
 import {
   listWorkflowGraphs,
   deleteWorkflowGraph,
@@ -37,6 +37,7 @@ export default function RuntimeWorkflowList({
   selectedGraphId,
   compact = false,
 }: RuntimeWorkflowListProps) {
+  const [query,setQuery] = useState("");
   const [graphs, setGraphs] = useState<WorkflowGraphRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -60,7 +61,7 @@ export default function RuntimeWorkflowList({
   const handleDelete = async (graph: WorkflowGraphRecord) => {
     if (!window.confirm(`确定删除运行工作流 "${graph.name}" 吗？历史运行记录将保留。`)) return;
     const res = await deleteWorkflowGraph(graph.id);
-    if (res.ok) load();
+    if (res.ok) load(); else setError(res.error);
   };
 
   if (loading && graphs.length === 0) {
@@ -181,9 +182,10 @@ export default function RuntimeWorkflowList({
     );
   }
 
+  const filtered = graphs.filter(graph=>`${graph.name} ${graph.description}`.toLowerCase().includes(query.trim().toLowerCase()));
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {graphs.map((graph) => {
+    <div className="space-y-4"><Input aria-label="搜索运行工作流" placeholder="搜索工作流名称或用途…" value={query} onChange={event=>setQuery(event.target.value)}/>{error&&<p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}{filtered.length===0&&<EmptyState title="没有匹配的工作流"/>}<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {filtered.map((graph) => {
         const isSelected = selectedGraphId === graph.id;
         return (
           <Panel
@@ -229,6 +231,6 @@ export default function RuntimeWorkflowList({
           </Panel>
         );
       })}
-    </div>
+    </div></div>
   );
 }

@@ -3,7 +3,7 @@
 // Transport is `core/api/http.ts`; this module owns these calls rather than
 // borrowing them from the legacy bundle.
 import { API_BASE } from "../core/api/http";
-import { request } from "../core/api/http";
+import { request, requestResult } from "../core/api/http";
 import { controlSessionHeaders } from "./controlSession";
 import type { ChatRequestOptions } from "../components/chat/chatRequestOptions";
 import type { WorkspaceMode } from "../types";
@@ -15,6 +15,9 @@ import type { WorkspaceMode } from "../types";
 export interface AgentEvent {
   type: string;
   conversation_id: string;
+  user_message_id?: string;
+  error_code?: string;
+  affected_user_message_id?: string | null;
   token?: string;
   tool_call_id?: string;
   tool_name?: string;
@@ -48,6 +51,23 @@ export interface AgentEvent {
 
 export type EventHandler = (event: AgentEvent) => void;
 
+export interface ConversationInput {
+  question_id: string; run_id: string; conversation_id: string; tool_call_id: string;
+  title: string; kind: "text" | "single_choice";
+  options: Array<{ id: string; label: string; description: string }>;
+  allow_text: boolean; status: "pending" | "answered" | "cancelled"; revision: number;
+  answer: string | null; created_at: number; resolved_at: number | null;
+}
+export interface UserInputAnswer { revision: number; option_id?: string; text?: string }
+export async function listConversationInputs(id: string): Promise<ConversationInput[]> {
+  const result = await requestResult<ConversationInput[]>("GET", `/api/conversations/${encodeURIComponent(id)}/inputs`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+export function answerConversationInput(questionId: string, answer: UserInputAnswer, onEvent: EventHandler, conversationId: string): AbortController {
+  return streamChatRequest(`/api/conversation-inputs/${encodeURIComponent(questionId)}/answer`, answer, onEvent, conversationId);
+}
+
 export function sendMessage(
   message: string,
   conversationId: string | null,
@@ -74,12 +94,18 @@ export function streamChatRequest(path:string,body:unknown,onEvent:EventHandler,
     .then(async (res) => {
       if (!res.ok) {
         let detail = "";
+        let errorCode: string | undefined;
+        let affectedMessageId: string | null | undefined;
         try {
           const body = (await res.clone().json()) as {
             error?: string;
             message?: string;
+            code?: string;
+            affected_user_message_id?: string | null;
           };
           detail = body.error || body.message || "";
+          errorCode = body.code;
+          affectedMessageId = body.affected_user_message_id;
         } catch {
           /* non-JSON error body */
         }
@@ -88,6 +114,8 @@ export function streamChatRequest(path:string,body:unknown,onEvent:EventHandler,
           conversation_id: conversationId || "",
           error: detail || `HTTP ${res.status}`,
           request_rejected: true,
+          error_code: errorCode,
+          affected_user_message_id: affectedMessageId,
         });
         onEvent({type:"stream_end",conversation_id:resolvedConversationId});
         return;
@@ -132,6 +160,7 @@ export function streamChatRequest(path:string,body:unknown,onEvent:EventHandler,
                 onEvent({
                   type: "connected",
                   conversation_id: parsed.conversation_id || "",
+                  user_message_id: parsed.user_message_id,
                 });
               } else if (parsed.type) {
                 onEvent(parsed as AgentEvent);

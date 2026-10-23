@@ -3,6 +3,35 @@
 import { requestResult } from "../core/api/http";
 import type { Conversation, ConversationSummary, WorkspaceMode } from "../types";
 
+export interface MessageMutationResult {
+  conversation: Conversation;
+  deleted_message_ids: string[];
+  removed_protocol_count: number;
+}
+export interface MessageRollbackResult extends MessageMutationResult {
+  draft: { text: string; resources: Array<{ id: string; name: string }>; resource_scope: "conversation" };
+}
+export class MessageMutationError extends Error {
+  readonly code?: string;
+  readonly affectedUserMessageId?: string;
+  constructor(message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.name = "MessageMutationError";
+    this.code = typeof details?.code === "string" ? details.code : undefined;
+    this.affectedUserMessageId = typeof details?.affected_user_message_id === "string" ? details.affected_user_message_id : undefined;
+  }
+}
+export async function rollbackConversationMessage(conversationId: string, messageId: string): Promise<MessageRollbackResult> {
+  const result = await requestResult<MessageRollbackResult>("POST", `/api/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/rollback`, {}, true);
+  if (!result.ok) throw new MessageMutationError(result.error, result.details);
+  return result.data;
+}
+export async function deleteConversationMessage(conversationId: string, messageId: string): Promise<MessageMutationResult> {
+  const result = await requestResult<MessageMutationResult>("DELETE", `/api/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`, undefined, true);
+  if (!result.ok) throw new MessageMutationError(result.error, result.details);
+  return result.data;
+}
+
 export async function listConversations(): Promise<ConversationSummary[]> {
   const result = await requestResult<ConversationSummary[]>("GET", "/api/conversations");
   if (!result.ok) throw new Error(result.error);

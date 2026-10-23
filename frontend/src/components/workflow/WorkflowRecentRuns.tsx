@@ -54,6 +54,12 @@ export default function WorkflowRecentRuns({
     load();
   }, [load, refreshKey]);
 
+  useEffect(() => {
+    if (!runs.some(run => ["created", "running", "waiting_approval"].includes(run.status))) return;
+    const timer = window.setTimeout(() => void load(), 2000);
+    return () => window.clearTimeout(timer);
+  }, [runs, load]);
+
   return (
     <div className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 space-y-3">
       <div className="flex items-center justify-between gap-2 border-b border-[var(--border-soft)] pb-2">
@@ -66,6 +72,7 @@ export default function WorkflowRecentRuns({
         </Button>
       </div>
 
+      {error && runs.length > 0 && <p role="alert" className="text-xs text-[var(--danger)]">{error}</p>}
       {loading && runs.length === 0 ? (
         <div className="flex justify-center py-6">
           <Spinner className="w-5 h-5" />

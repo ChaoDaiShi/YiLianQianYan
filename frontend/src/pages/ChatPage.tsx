@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import ChatView from "../components/chat/ChatView";
 import ConversationSidebar from "../components/chat/ConversationSidebar";
+import ConversationBranchesDialog from "../components/chat/ConversationBranchesDialog";
 import {
   getDrawerState,
   getWorkspaceMode,
@@ -47,6 +48,7 @@ export default function ChatPage() {
   const [gitOpen,setGitOpen]=useState(false);
   const [familyEntries, setFamilyEntries] = useState<MessageCanvasConversation[]>([]);
   const [familyError, setFamilyError] = useState("");
+  const [branchFamilyId,setBranchFamilyId]=useState<string|null>(null);
   const families = useMemo(() => conversationFamilies(familyEntries), [familyEntries]);
   const activeFamily = families.find(family => conversationId && family.conversationIds.includes(conversationId));
   useEffect(() => {
@@ -190,6 +192,7 @@ export default function ChatPage() {
   const conversationSidebar = (onClose?: () => void) => (
     <ConversationSidebar
       families={families}
+      onShowBranches={setBranchFamilyId}
       activeId={conversationId}
       onSelect={(nextId) => onConversationChange(nextId)}
       onNew={() => onConversationChange(null)}
@@ -231,6 +234,7 @@ export default function ChatPage() {
         </Drawer>
       )}
 
+      {branchFamilyId&&families.find(family=>family.id===branchFamilyId)&&<ConversationBranchesDialog key={branchFamilyId} family={families.find(family=>family.id===branchFamilyId)!} entries={familyEntries} activeId={conversationId} onSelect={onConversationChange} onClose={()=>setBranchFamilyId(null)}/>}
       <ChatView
         conversationId={conversationId}
         onWorkspaceModeChange={handleActivityMode}

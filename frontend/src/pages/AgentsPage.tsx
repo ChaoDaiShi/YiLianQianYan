@@ -112,6 +112,7 @@ export default function AgentsPage() {
 
   return (
     <PageShell
+      variant="workspace"
       title="智能体"
       description="管理承担不同角色和任务的智能体配置。"
       className="capability-page page-canvas ui-opt-capabilities ui-opt-agents"

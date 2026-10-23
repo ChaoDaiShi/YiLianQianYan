@@ -5,6 +5,16 @@ const file = (name = "notes.txt", size = 5, type = "text/plain") => ({ name, siz
 const options = () => ({ upload: vi.fn(async () => ({ id: "res-real" })), preview: vi.fn(async () => ({ status: "ready" })) });
 
 describe("bounded attachment queue", () => {
+  it("restores existing resource identities without uploading and allows editing the draft attachments", async () => {
+    const deps = options();
+    const queue = new AttachmentQueue(deps);
+    queue.restore([{ id: "source-resource", name: "原始资料.pdf" }, { id: "image-resource", name: "截图.png" }]);
+    expect(queue.readyIds()).toEqual(["source-resource", "image-resource"]);
+    await queue.process();
+    expect(deps.upload).not.toHaveBeenCalled();
+    queue.remove(queue.snapshot()[0].id);
+    expect(queue.readyIds()).toEqual(["image-resource"]);
+  });
   it("drains files added while an earlier upload is pending", async () => {
     let resolve!: (value: { id: string }) => void;
     const deps = options(); deps.upload.mockImplementationOnce(() => new Promise(done => { resolve = done; }));

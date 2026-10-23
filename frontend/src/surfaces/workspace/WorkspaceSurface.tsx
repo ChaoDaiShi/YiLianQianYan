@@ -6,6 +6,8 @@ import ChatPage from "../../pages/ChatPage";
 
 const ConnectorsPage = lazy(() => import("../../features/connectors/ConnectorsPage"));
 const MorePage = lazy(() => import("../../pages/MorePage"));
+const AutomationsPage = lazy(() => import("../../features/automation/AutomationsPage"));
+const ChannelsPage = lazy(() => import("../../features/channels/ChannelsPage"));
 const PluginFeaturePage = lazy(() => import("../../features/plugins/PluginFeaturePage"));
 const SystemPage = lazy(() => import("../../pages/SystemPage"));
 const LogsPage = lazy(() => import("../../pages/LogsPage"));
@@ -30,6 +32,8 @@ export default function WorkspaceSurface() {
         <Route path="chat/:id" element={<ChatPage />} />
         <Route path="connectors" element={<ConnectorsPage />} />
         <Route path="more" element={<MorePage />} />
+        <Route path="automations" element={<AutomationsPage />} />
+        <Route path="channels" element={<ChannelsPage />} />
         <Route path="more/plugins/:pluginId/:featureId" element={<PluginFeaturePage />} />
         <Route path="system" element={<SystemPage />} />
         <Route path="logs" element={<LogsPage />} />

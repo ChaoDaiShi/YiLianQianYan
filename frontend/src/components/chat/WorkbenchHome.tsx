@@ -6,7 +6,7 @@ import {
   resolveAgentStatus,
   type AgentStatus,
 } from "./agentStatus";
-import ChatInput from "./ChatInput";
+import ChatInput, { type RestoredComposerDraft } from "./ChatInput";
 import type { ChatRequestOptions, WorkspaceMode } from "./chatRequestOptions";
 import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 
@@ -20,6 +20,8 @@ interface WorkbenchHomeProps {
   onStop: () => void;
   suggestedText?: string;
   onTextUsed?: () => void;
+  restoredDraft?: RestoredComposerDraft | null;
+  inputDisabled?: boolean;
   onHint?: (text: string) => void;
   onOpenCurrentTask: () => void;
   chatVoiceControls?: ChatVoiceControls | null;
@@ -114,6 +116,8 @@ export default function WorkbenchHome({
   onStop,
   suggestedText,
   onTextUsed,
+  restoredDraft,
+  inputDisabled,
   onHint,
   onOpenCurrentTask,
   chatVoiceControls,
@@ -196,6 +200,8 @@ export default function WorkbenchHome({
           onStop={onStop}
           suggestedText={suggestedText}
           onTextUsed={onTextUsed}
+          restoredDraft={restoredDraft}
+          disabled={inputDisabled}
           chatVoiceControls={chatVoiceControls}
           onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
         />

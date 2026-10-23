@@ -3,7 +3,7 @@
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer .composer-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas: "mode input actions" "feedback feedback feedback";
+  grid-template-areas: "feedback feedback feedback" "mode input actions";
   align-items: center;
   gap: 0 8px;
   width: 100%;
@@ -50,12 +50,12 @@
 .compact-composer .chat-voice-listening,.compact-composer .chat-voice-meter { position: absolute; bottom: 40px; padding: 3px 7px; border-radius: 8px; background: var(--surface-solid); white-space: nowrap; font-size:0.625rem; }
 .compact-composer .chat-voice-listening { right: 60px; }
 .compact-composer .chat-voice-meter { right: 0; }
-.compact-composer .composer-feedback { grid-area: feedback; padding-top: 8px; min-width: 0; }
+.compact-composer .composer-feedback { grid-area: feedback; padding-bottom: 8px; min-width: 0; }
 .compact-composer[data-workspace-mode="work"] .composer-card,.compact-composer[data-workspace-mode="create"] .composer-card,
 .workbench-grid .home-composer.compact-composer[data-workspace-mode="work"] .composer-card,.workbench-grid .home-composer.compact-composer[data-workspace-mode="create"] .composer-card,
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode="work"] .composer-card,
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode="create"] .composer-card {
-  grid-template-areas: "input input input" "mode . actions" "feedback feedback feedback";
+  grid-template-areas: "feedback feedback feedback" "input input input" "mode . actions";
   min-height: 110px;
   row-gap: 5px;
   padding: 10px 12px 8px;

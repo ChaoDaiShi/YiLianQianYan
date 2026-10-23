@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
+import { GitBranch, MessageSquare, Monitor, Plus, Radio, Search, Trash2, X } from "lucide-react";
+import { buildHistoryEntries, originDescription } from "./conversationHistoryModel";
+import "./conversationHistory.css";
 import { deleteConversation, listConversations } from "../../api/client";
 import type { ConversationSummary } from "../../types";
 import { Button, EmptyState } from "../ui";
@@ -12,6 +14,7 @@ interface Props {
   onNew: () => void;
   onClose?: () => void;
   families?: ConversationFamily[];
+  onShowBranches?: (id:string)=>void;
 }
 
 export default function ConversationSidebar({
@@ -20,9 +23,13 @@ export default function ConversationSidebar({
   onNew,
   onClose,
   families = [],
+  onShowBranches,
 }: Props) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [query, setQuery] = useState("");
+  const [source,setSource]=useState<"desktop"|"channel">("desktop");
+  const activeSource=conversations.find(conversation=>conversation.id===activeId)?.origin?.kind;
+  useEffect(()=>{if(activeSource)setSource(activeSource);},[activeId,activeSource]);
 
   useEffect(() => {
     let mounted = true;
@@ -43,19 +50,8 @@ export default function ConversationSidebar({
     };
   }, []);
 
-  const filtered = useMemo(() => {
-    const roots = new Map(families.flatMap(family => family.conversationIds.map(id => [id, family.id] as const)));
-    const independent = conversations.filter(conversation => !roots.has(conversation.id) || roots.get(conversation.id) === conversation.id).map(conversation => {
-      const family = families.find(item => item.id === conversation.id);
-      const members = family ? conversations.filter(item => family.conversationIds.includes(item.id)) : [conversation];
-      return { ...conversation, updated_at: Math.max(...members.map(item => item.updated_at || item.created_at)) };
-    }).sort((a, b) => b.updated_at - a.updated_at);
-    const keyword = query.trim().toLocaleLowerCase();
-    if (!keyword) return independent;
-    return independent.filter((conversation) =>
-      (conversation.title || "新任务").toLocaleLowerCase().includes(keyword)
-    );
-  }, [conversations, query, families]);
+  const entries=useMemo(()=>buildHistoryEntries(conversations,families,query),[conversations,families,query]);
+  const filtered=useMemo(()=>entries.filter(entry=>(entry.origin?.kind||"desktop")===source),[entries,source]);
 
   const selectConversation = (id: string) => {
     onSelect(id);
@@ -139,8 +135,10 @@ export default function ConversationSidebar({
               : conversation.title || "新任务"
           }
         >
-          {displayTitle}
+          <span className="history-row-title">{displayTitle}</span>
+          {conversation.origin?.kind==="channel"&&<span className="history-row-source" title={conversation.origin.channel_name}>{originDescription(conversation.origin)}</span>}
         </button>
+        {family&&family.conversationIds.length>1&&<button type="button" className="history-branch-button" aria-label={`查看${displayTitle}的${family.conversationIds.length}条对话路径`} title={`${family.conversationIds.length} 条路径 · 查看分支`} onClick={()=>onShowBranches?.(family.id)}><GitBranch size={15}/><span>{family.conversationIds.length}</span></button>}
         <button
           type="button"
           onClick={() => void removeConversation(conversation)}
@@ -188,6 +186,10 @@ export default function ConversationSidebar({
           <Plus className="h-4 w-4" />
           新建任务
         </Button>
+        <div className="history-source-tabs" role="tablist" aria-label="会话来源">
+          <button type="button" role="tab" aria-selected={source==="desktop"} onClick={()=>setSource("desktop")}><Monitor size={13}/><span>桌面</span><small>{entries.filter(x=>x.origin?.kind!=="channel").length}</small></button>
+          <button type="button" role="tab" aria-selected={source==="channel"} onClick={()=>setSource("channel")}><Radio size={13}/><span>渠道</span><small>{entries.filter(x=>x.origin?.kind==="channel").length}</small></button>
+        </div>
         <label className="relative block">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-faint)]" />
           <input
@@ -203,8 +205,8 @@ export default function ConversationSidebar({
       <div className="conversation-list scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2">
         {filtered.length === 0 ? (
           <EmptyState
-            title={query ? "没有匹配的任务" : "暂无任务"}
-            description={query ? "尝试更换搜索词" : "从上方新建一个任务"}
+            title={query ? "没有匹配的对话" : source==="channel"?"暂无渠道对话":"暂无桌面对话"}
+            description={query ? "尝试更换搜索词或来源" : source==="channel"?"QQ、微信和飞书消息会记录在这里":"从上方新建一个任务"}
             className="py-10"
           />
         ) : !hasGroups ? (

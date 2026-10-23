@@ -15,8 +15,10 @@ import {
   listWorkflows,
   type Workflow,
 } from "../../api/client";
-import { ArrowDown, ShieldAlert } from "lucide-react";
-import { bindResources } from "../../api/resources";
+import { ArrowDown, ShieldAlert, FolderOpen } from "lucide-react";
+import ConversationWorkspaceControl from "./ConversationWorkspaceControl";
+import ConversationOutputsModal from "../../features/outputs/ConversationOutputsModal";
+import { bindResources, getResource, listResourceBindings, unbindResource } from "../../api/resources";
 import { getChatModelReadiness } from "../../api/providerConnection";
 import type { ConversationalAnchor } from "../../api/voice";
 import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
@@ -24,6 +26,7 @@ import { chatRuntime } from "../../features/execution/chatRuntime";
 import { toToolCallRecords } from "../../features/execution/reducer";
 import { workspaceModes, type ChatRequestOptions, type WorkspaceMode } from "./chatRequestOptions";
 import type { PendingApproval } from "../../types/approval";
+import type { Message } from "../../types";
 import type { AgentRunState } from "../../features/execution/model";
 import {
   CHAT_COLUMN_VIEWPORT_CLASS_NAME,
@@ -31,7 +34,8 @@ import {
   scrollMessageListToBottom,
 } from "../layout/workspaceLayout";
 import { createConversationOwnership } from "./conversationOwnership";
-import ChatInput from "./ChatInput";
+import ChatInput, { type RestoredComposerDraft } from "./ChatInput";
+import UserInputCard from "./UserInputCard";
 import ChatHeader from "./ChatHeader";
 import MessageList, { type StreamingState } from "./MessageList";
 import WorkbenchHome from "./WorkbenchHome";
@@ -91,17 +95,22 @@ export default function ChatView({
   headerActions,
 }: ChatViewProps) {
   const [currentConvId, setCurrentConvId] = useState<string | null>(conversationId);
+  const [outputsConversation, setOutputsConversation] = useState<string | null>(null);
   const runtimeId = currentConvId || "__draft__";
   const subscribe = useCallback((listener: () => void) => chatRuntime.subscribe(runtimeId, listener), [runtimeId]);
   const getSnapshot = useCallback(() => chatRuntime.snapshot(runtimeId), [runtimeId]);
   const runtime = useSyncExternalStore(subscribe, getSnapshot);
-  const { messages, modelRoute, loading: isLoading, run: runState, pendingApprovals, resolving } = runtime;
+  const { messages, modelRoute, loading: isLoading, run: runState, pendingApprovals, pendingInputs, resolving } = runtime;
   const [localError, setLocalError] = useState<string | null>(null);
   const error = localError || runtime.error;
   const [finished, setFinished] = useState(false);
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [allWorkflows, setAllWorkflows] = useState<Workflow[]>([]);
   const [suggestedText, setSuggestedText] = useState("");
+  const [restoredDraft, setRestoredDraft] = useState<RestoredComposerDraft | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const retryInFlight = useRef(false);
+  const persistedMessageIds = useMemo(() => new Set(runtime.conversation?.messages.map((message) => message.id) ?? []), [runtime.conversation]);
   const [modelUnavailable, setModelUnavailable] = useState(false);
   const routeNotices = useRef(new Set<string>());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
@@ -119,7 +128,9 @@ export default function ChatView({
     if (ownership.id !== conversationId) {
       ownership.activate(conversationId);
       setCurrentConvId(conversationId);
+      setOutputsConversation(null);
       setLocalError(null);
+      setRestoredDraft(null);
       routeNotices.current.clear();
       onVoiceAnchorChange?.(null);
     }
@@ -218,7 +229,7 @@ export default function ChatView({
 
   const handleSend = useCallback(
     async (text: string, resourceIds: string[] = [], options?: ChatRequestOptions) => {
-      if (!text.trim() || isLoading || pendingApprovals.length > 0) return false;
+      if (!text.trim() || isLoading || runtime.historyMutation || pendingApprovals.length > 0 || pendingInputs.length > 0) return false;
       let ticket = ownership.capture();
       if (!options?.model_profile_id) {
         const readiness = await getChatModelReadiness(currentConvId);
@@ -236,19 +247,93 @@ export default function ChatView({
         setCurrentConvId(targetId);
         onConversationChange(targetId);
       }
-      if (resourceIds.length > 0) {
-        await bindResources({ kind: "conversation", conversation_id: targetId }, resourceIds);
+      const removedRestoredResources = new Set(restoredDraft?.resources.filter((resource) => !resourceIds.includes(resource.id)).map((resource) => resource.id) ?? []);
+      if (removedRestoredResources.size > 0 || resourceIds.length > 0) {
+        const bindings = await listResourceBindings({ kind: "conversation", conversation_id: targetId });
+        if (!ownership.current(ticket)) return false;
+        for (const binding of bindings) {
+          if (removedRestoredResources.has(binding.resource_id)) await unbindResource(binding.id);
+        }
+        const existingIds = new Set(bindings.map((binding) => binding.resource_id));
+        const newResourceIds = resourceIds.filter((resourceId) => !existingIds.has(resourceId));
+        if (newResourceIds.length > 0) await bindResources({ kind: "conversation", conversation_id: targetId }, newResourceIds);
       }
       if (!ownership.current(ticket)) return false;
       shouldFollowMessagesRef.current = true;
       setLocalError(null);
-      return chatRuntime.send(targetId, text, activeWorkflow?.id, options);
-    }, [activeWorkflow, currentConvId, isLoading, pendingApprovals.length, onConversationChange, ownership]
+      const resources=await Promise.all(resourceIds.map(id=>getResource(id)));
+      if (!ownership.current(ticket)) return false;
+      if(resources.some(resource=>!resource))throw new Error("附件元数据读取失败，请重新发送");
+      const attachments=resources.map(resource=>({id:resource!.id,name:resource!.name,mime_type:resource!.mime_type,size:resource!.size}));
+      const accepted = chatRuntime.send(targetId, text, activeWorkflow?.id, {...options,resource_ids:resourceIds}, attachments);
+      if (accepted) setRestoredDraft(null);
+      return accepted;
+    }, [activeWorkflow, currentConvId, isLoading, runtime.historyMutation, pendingApprovals.length, pendingInputs.length, onConversationChange, ownership, restoredDraft]
   );
 
+  const handleRollback = useCallback((message: Message) => {
+    if (!currentConvId) return;
+    const ticket = ownership.capture();
+    setLocalError(null);
+    void chatRuntime.rollback(currentConvId, message.id).then((result) => {
+      if (!ownership.current(ticket)) return;
+      setSuggestedText("");
+      setRestoredDraft({ id: crypto.randomUUID(), text: result.draft.text, resources: result.draft.resources });
+      shouldFollowMessagesRef.current = true;
+    }).catch((cause: unknown) => {
+      if (ownership.current(ticket)) setLocalError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, [currentConvId, ownership]);
+
+  const handleDeleteMessage = useCallback((message: Message) => {
+    if (!currentConvId) return;
+    const ticket = ownership.capture();
+    setLocalError(null);
+    void chatRuntime.deleteMessage(currentConvId, message.id).catch((cause: unknown) => {
+      if (ownership.current(ticket)) setLocalError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, [currentConvId, ownership]);
+
+  const handleLocateMessage = useCallback(() => {
+    const viewport = messagesScrollRef.current;
+    if (!viewport) return;
+    const target = Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]"))
+      .find((element) => element.dataset.messageId === runtime.affectedUserMessageId);
+    if (!target) return;
+    const viewportRect = viewport.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const offset = targetRect.top - viewportRect.top - viewport.clientTop;
+    const centering = (viewport.clientHeight - Math.min(targetRect.height, viewport.clientHeight)) / 2;
+    const top = Math.max(0, Math.min(viewport.scrollHeight - viewport.clientHeight, viewport.scrollTop + offset - centering));
+    shouldFollowMessagesRef.current = false;
+    viewport.scrollTo({ top, behavior: "smooth" });
+    target.focus({ preventScroll: true });
+  }, [runtime.affectedUserMessageId]);
+
   const handleRetry = useCallback(() => {
-    if (runtime.lastSubmittedText.trim() && !isLoading) void handleSend(runtime.lastSubmittedText);
-  }, [handleSend, isLoading, runtime.lastSubmittedText]);
+    if (!runtime.lastSubmittedText.trim() || isLoading || runtime.live || retryInFlight.current || runtime.historyMutation) return;
+    const ticket = ownership.capture();
+    retryInFlight.current = true;
+    setRetrying(true);
+    setLocalError(null);
+    void (async () => {
+      let text = runtime.lastSubmittedText;
+      let resourceIds: string[] = [];
+      if (currentConvId && runtime.retryMessageId) {
+        const result = await chatRuntime.rollback(currentConvId, runtime.retryMessageId);
+        if (!ownership.current(ticket)) return;
+        text = result.draft.text;
+        resourceIds = result.draft.resources.map((resource) => resource.id);
+        setSuggestedText("");
+        setRestoredDraft({ id: crypto.randomUUID(), text, resources: result.draft.resources });
+      }
+      if (!ownership.current(ticket)) return;
+      const accepted = await handleSend(text, resourceIds);
+      if (accepted && ownership.current(ticket)) setRestoredDraft({ id: crypto.randomUUID(), text: "", resources: [] });
+    })().catch((cause: unknown) => {
+      if (ownership.current(ticket)) setLocalError(cause instanceof Error ? cause.message : String(cause));
+    }).finally(() => { retryInFlight.current = false; setRetrying(false); });
+  }, [handleSend, isLoading, runtime.live, runtime.lastSubmittedText, runtime.retryMessageId, runtime.historyMutation, currentConvId, ownership]);
 
   const handleStop = useCallback(async () => {
     if (currentConvId) await chatRuntime.stop(currentConvId);
@@ -276,7 +361,7 @@ export default function ChatView({
     <>
       <div className={`chat-region ${CHAT_COLUMN_VIEWPORT_CLASS_NAME} ${chatModeClass}`} data-workspace-mode={runtime.workspaceMode}>
         <ChatHeader
-          panelControls={headerActions}
+          panelControls={<>{currentConvId && <ConversationWorkspaceControl key={currentConvId} conversationId={currentConvId} />}{currentConvId && <button type="button" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]" onClick={() => setOutputsConversation(currentConvId)} title="查看当前对话成果"><FolderOpen size={14}/><span>成果</span></button>}{headerActions}</>}
           title="智能工作台"
           connection={runState.connection}
           activeWorkflow={activeWorkflow}
@@ -301,6 +386,7 @@ export default function ChatView({
           </section>
         ) : null}
         <ModelRouteNotice route={modelRoute}/>
+        {pendingInputs.map((question) => <UserInputCard key={question.question_id} question={question} pending={Boolean(resolving[question.question_id])} onAnswer={(answer) => { if (currentConvId) chatRuntime.answer(currentConvId, question, answer); }} onCancel={() => { if (currentConvId) void chatRuntime.stop(currentConvId); }} />)}
 
         {pendingApprovals.length > 0 && (
           <div
@@ -336,6 +422,8 @@ export default function ChatView({
           onStop={handleStop}
           suggestedText={suggestedText}
           onTextUsed={() => setSuggestedText("")}
+          restoredDraft={restoredDraft}
+          inputDisabled={Boolean(runtime.historyMutation) || retrying}
           onHint={setSuggestedText}
           onOpenCurrentTask={onOpenCurrentTask}
           chatVoiceControls={chatVoiceControls}
@@ -350,8 +438,13 @@ export default function ChatView({
               scrollContainerRef={messagesScrollRef}
               onScroll={handleMessageScroll}
               error={error}
-              onRetry={handleRetry}
+              onRetry={!runtime.live && !runtime.historyMutation && !runtime.affectedUserMessageId && !retrying ? handleRetry : undefined}
+              onLocateMessage={runtime.affectedUserMessageId && persistedMessageIds.has(runtime.affectedUserMessageId) ? handleLocateMessage : undefined}
               onSpeak={onManualSpeech}
+              onRollback={handleRollback}
+              onDelete={handleDeleteMessage}
+              persistedMessageIds={persistedMessageIds}
+              actionsDisabled={isLoading || runtime.live || Boolean(runtime.historyMutation) || retrying}
             />
 
             {!isNearBottomState && (
@@ -380,6 +473,8 @@ export default function ChatView({
               onStop={handleStop}
               suggestedText={suggestedText}
               onTextUsed={() => setSuggestedText("")}
+              restoredDraft={restoredDraft}
+              disabled={Boolean(runtime.historyMutation) || retrying}
               chatVoiceControls={chatVoiceControls}
               onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
             />
@@ -388,6 +483,7 @@ export default function ChatView({
       )}
 
       </div>
+      {outputsConversation && outputsConversation === currentConvId && <ConversationOutputsModal key={outputsConversation} conversationId={outputsConversation} onClose={() => setOutputsConversation(null)} canRequestDownload={!isLoading && pendingApprovals.length === 0 && pendingInputs.length === 0} onRequestDownload={id => handleSend(`请继续下载当前对话已生成的图片，调用 image_generation，参数仅传 output_id：${id}。完成真实资源登记，不要重新生成图片。`)}/>}
       {renderExecution?.({
         state: runState,
         pendingApprovals,

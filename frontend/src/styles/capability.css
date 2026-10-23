@@ -418,3 +418,16 @@
     padding-top: 12px;
   }
 }
+
+/* Split managers own their list/detail scroll regions rather than scrolling both columns. */
+.capability-page-body.capability-page-body-split { overflow: hidden; min-height: 0; }
+.capability-page-body-split .capability-split-layout { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+.capability-page-body-split .capability-list-panel { min-height: 0; overflow: hidden; }
+.capability-page-body-split .capability-list-scroll { min-height: 0; max-height: none; overscroll-behavior: contain; }
+.capability-page-body-split .capability-detail-panel { min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+.capability-page-body-split .capability-list-toolbar,
+.capability-page-body-split .capability-list-heading,
+.capability-page-body-split .capability-filter-surface { flex-shrink: 0; }
+@media (max-width: 980px) {
+  .capability-page-body-split .capability-split-layout { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+}

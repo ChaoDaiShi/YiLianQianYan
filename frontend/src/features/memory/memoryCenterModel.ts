@@ -58,3 +58,14 @@ export function getMemoryDetailFields(memory: MemoryRecord): MemoryDetailField[]
     { key: "source", label: "来源", value: memory.source },
   ];
 }
+
+type BadgeTone = "default" | "success" | "warning" | "danger" | "info" | "accent";
+
+export function categoryBadgeTone(category: string): BadgeTone {
+  const tone = getMemoryCategoryPresentation(category).tone;
+  return tone === "info" ? "info" : tone === "accent" || tone === "purple" ? "accent" : tone === "warning" ? "warning" : "default";
+}
+
+export function formatMemoryTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}

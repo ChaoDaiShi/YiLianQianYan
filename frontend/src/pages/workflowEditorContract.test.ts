@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vitest";
 import workflowsPageSource from "./WorkflowsPage.tsx?raw";
 import workflowEditorSource from "../components/workflow/WorkflowGraphEditor.tsx?raw";
+import workflowRunDialogSource from "../features/workflows/WorkflowRunDialog.tsx?raw";
 
 describe("workflow editor page contract", () => {
   it("keeps the existing graph APIs and run inspector wiring", () => {
     expect(workflowsPageSource).toContain('useState<Tab>("runtime")');
     expect(workflowsPageSource).toContain("RuntimeWorkflowList");
     expect(workflowsPageSource).toContain("WorkflowGraphEditor");
-    expect(workflowsPageSource).toContain("startWorkflowRun");
-    expect(workflowsPageSource).toContain("WorkflowRunInspector");
+    expect(workflowsPageSource).toMatch(/<RuntimeWorkflowList\b[\s\S]*?onRun=\{handleRun\}/);
+    expect(workflowsPageSource).toMatch(/<WorkflowGraphEditor\b[\s\S]*?onRun=\{handleRun\}/);
+    expect(workflowsPageSource).toMatch(/const handleRun[\s\S]*?setRunGraph\(graph\)/);
+    expect(workflowsPageSource).toMatch(/<WorkflowRunDialog\b[^>]*graph=\{runGraph\}/);
+    expect(workflowRunDialogSource).toContain('from "../../api/workflows"');
+    expect(workflowRunDialogSource).toContain("await startWorkflowRun(graph.id, inputs)");
+    expect(workflowRunDialogSource).toContain("if (response.ok) onStarted(response.data.run_id)");
+    expect(workflowRunDialogSource).toContain("else setError(response.error)");
+    expect(workflowsPageSource).toMatch(/onStarted=\{id\s*=>\s*\{[\s\S]*?setActiveRunId\(id\)/);
+    expect(workflowsPageSource).toMatch(/<WorkflowRunInspector\b[^>]*runId=\{activeRunId\}/);
     expect(workflowEditorSource).toContain("createWorkflowGraph");
     expect(workflowEditorSource).toContain("updateWorkflowGraph");
     expect(workflowEditorSource).toContain("validateGraphClientSide");

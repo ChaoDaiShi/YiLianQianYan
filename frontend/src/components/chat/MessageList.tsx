@@ -18,10 +18,15 @@ interface MessageListProps {
   onScroll?: React.UIEventHandler<HTMLDivElement>;
   error?: string | null;
   onRetry?: () => void;
+  onLocateMessage?: () => void;
   onSpeak?: (text: string) => void;
+  onRollback?: (message: Message) => void;
+  onDelete?: (message: Message) => void;
+  actionsDisabled?: boolean;
+  persistedMessageIds?: ReadonlySet<string>;
 }
 
-function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
+function ErrorNotice({ error, onRetry, onLocateMessage }: { error: string; onRetry?: () => void; onLocateMessage?: () => void }) {
   const presentation = presentExecutionError(error);
 
   return (
@@ -39,6 +44,7 @@ function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }
             {presentation.message}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
+            {onLocateMessage && <button type="button" onClick={onLocateMessage} className="rounded-[var(--radius-sm)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-1.5 text-xs text-[var(--text-primary)]">定位原问题</button>}
             {onRetry && (
               <button
                 type="button"
@@ -75,7 +81,12 @@ export default function MessageList({
   onScroll,
   error,
   onRetry,
+  onLocateMessage,
   onSpeak,
+  onRollback,
+  onDelete,
+  actionsDisabled,
+  persistedMessageIds,
 }: MessageListProps) {
   return (
     <div
@@ -89,6 +100,9 @@ export default function MessageList({
             key={message.id}
             message={message}
             onSpeak={onSpeak}
+            onRollback={onRollback}
+            onDelete={onDelete}
+            actionsDisabled={actionsDisabled || Boolean(persistedMessageIds && !persistedMessageIds.has(message.id))}
           />
         ))}
 
@@ -113,7 +127,7 @@ export default function MessageList({
           </div>
         )}
 
-        {error && <ErrorNotice error={error} onRetry={onRetry} />}
+        {error && <ErrorNotice error={error} onRetry={onRetry} onLocateMessage={onLocateMessage} />}
       </div>
     </div>
   );

@@ -101,7 +101,7 @@ export default function AccountCenterPage() {
     if (section !== "privacy" || !state || state.identity.status === "guest") return;
     void getPrivacySummary().then((result) => { if (result.ok) setDataSummary(result.data.summary); });
   }, [section, state?.identity.status]);
-  useEffect(()=>{if(section!=="account"||state?.identity.status==="guest")return;void listCloudSessions().then(result=>{if(result.ok)setSessions(result.data.sessions)})},[section,state?.identity.status]);
+  useEffect(()=>{if(section!=="account"||!state||state.identity.status==="guest")return;void listCloudSessions().then(result=>{if(result.ok)setSessions(result.data.sessions)})},[section,state?.identity.status]);
 
   const authenticate = async () => {
     setBusy(true); setError("");
@@ -230,6 +230,7 @@ export default function AccountCenterPage() {
 
   return (
     <PageShell
+      variant="workspace"
       title="账号中心"
       description="本地功能始终可用；登录后再由你决定是否启用跨设备同步。"
       className="cloud-page page-canvas flex h-full min-h-0 flex-col"

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createConversationRuntime } from "./conversationRuntime";
 import type { AgentEvent } from "../../api/chat";
+import type { ConversationInput } from "../../api/chat";
 import type { Conversation } from "../../types";
+import { MessageMutationError, type MessageMutationResult, type MessageRollbackResult } from "../../api/conversations";
 import type { PendingApproval } from "../../types/approval";
 
 const approval: PendingApproval = {
@@ -24,17 +26,99 @@ function setup(initial = conversation("idle")) {
     emit = cb;
   });
   const send = vi.fn((_text: string, _id: string | null, cb: (event: AgentEvent) => void) => { emit = cb; return new AbortController(); });
+  const rollback = vi.fn(async (_id: string, _message: string): Promise<MessageRollbackResult> => ({ conversation: initial, deleted_message_ids: [], removed_protocol_count: 0, draft: { text: "", resources: [], resource_scope: "conversation" } }));
+  const deleteMessage = vi.fn(async (_id: string, _message: string): Promise<MessageMutationResult> => ({ conversation: initial, deleted_message_ids: [], removed_protocol_count: 0 }));
+  let inputs: ConversationInput[] = [];
+  const answerInput = vi.fn((_question: string, _answer: { revision: number }, cb: (event: AgentEvent) => void, _conversation: string) => { emit = cb; return new AbortController(); });
   const runtime = createConversationRuntime({
+    listConversationInputs: vi.fn(async () => inputs),
+    answerConversationInput: answerInput,
     loadConversation: load, listPendingApprovals: pending, getApproval: lookup, setWorkspaceMode: setMode,
+    rollbackMessage: rollback, deleteMessage,
     sendMessage: send,
     approveAction: decide, rejectAction: decide, stopGeneration: vi.fn(async () => undefined),
   });
-  return { runtime, load, pending, lookup, decide, setMode, send, emit: (event: Omit<AgentEvent, "conversation_id">) => emit({ conversation_id: "a", ...event }) };
+  return { runtime, load, pending, lookup, decide, setMode, send, rollback, deleteMessage, answerInput, setInputs: (value: ConversationInput[]) => { inputs = value; }, emit: (event: Omit<AgentEvent, "conversation_id">) => emit({ conversation_id: "a", ...event }) };
 }
 
 describe("conversation runtime ownership", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+  it("aligns the optimistic user bubble with the accepted server message identity", () => {
+    const { runtime, emit } = setup();
+    runtime.send("a", "查看系统服务");
+    emit({ type: "connected", user_message_id: "accepted-user" });
+    expect(runtime.snapshot("a").messages).toHaveLength(1);
+    expect(runtime.snapshot("a").messages[0].id).toBe("accepted-user");
+  });
+
+  it("waits for authoritative deletion and retains other visible messages", async () => {
+    const user = { id: "user", role: "user", content: "问题", created_at: 1 };
+    const reply = { id: "reply", role: "assistant", content: "回答", created_at: 2 };
+    const before: Conversation = { ...conversation("completed"), messages: [user, reply] };
+    const after: Conversation = { ...before, messages: [user] };
+    const { runtime, load, deleteMessage } = setup(before);
+    await runtime.refresh("a");
+    let resolve!: (value: MessageMutationResult) => void;
+    deleteMessage.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const deleting = runtime.deleteMessage("a", "reply");
+    expect(runtime.snapshot("a").messages.map((message) => message.id)).toEqual(["user", "reply"]);
+    expect(runtime.send("a", "并发发送")).toBe(false);
+    load.mockResolvedValue(after);
+    resolve({ conversation: after, deleted_message_ids: ["reply"], removed_protocol_count: 0 });
+    await deleting;
+    expect(runtime.snapshot("a").messages.map((message) => message.id)).toEqual(["user"]);
+    expect(runtime.snapshot("a").historyMutation).toBeNull();
+  });
+
+  it("returns the server rollback draft and does not widen an invalid history rollback", async () => {
+    const user = { id: "user", role: "user", content: "问题", created_at: 1 };
+    const before: Conversation = { ...conversation("failed"), messages: [user], run_error: "provider failure" };
+    const { runtime, load, rollback } = setup(before);
+    await runtime.refresh("a");
+    rollback.mockRejectedValueOnce(new MessageMutationError("更早的工具记录不完整", { code: "chat_history_protocol_invalid", affected_user_message_id: "earlier-user" }));
+    await expect(runtime.rollback("a", "user")).rejects.toThrow("更早的工具记录不完整");
+    expect(runtime.snapshot("a").messages[0].id).toBe("user");
+    expect(runtime.snapshot("a").affectedUserMessageId).toBe("earlier-user");
+    expect(rollback).toHaveBeenCalledTimes(1);
+    const after = conversation("idle");
+    const draft = { text: "问题", resources: [{ id: "resource", name: "资料.txt" }], resource_scope: "conversation" as const };
+    rollback.mockResolvedValueOnce({ conversation: after, deleted_message_ids: ["user"], removed_protocol_count: 0, draft });
+    load.mockResolvedValue(after);
+    await expect(runtime.rollback("a", "user")).resolves.toMatchObject({ draft });
+    expect(runtime.snapshot("a").messages).toEqual([]);
+    expect(runtime.snapshot("a").affectedUserMessageId).toBeNull();
+  });
+  it("does not select an older persisted message for retry after HTTP admission rejects a new draft", async () => {
+    const previous: Conversation = { ...conversation("completed"), messages: [{ id: "previous-user", role: "user", content: "以前的问题", created_at: 1 }] };
+    const { runtime, emit } = setup(previous);
+    await runtime.refresh("a");
+    runtime.send("a", "尚未被接受的新问题");
+    emit({ type: "error", error: "HTTP 400", request_rejected: true });
+    emit({ type: "stream_end" });
+    await runtime.refresh("a");
+    expect(runtime.snapshot("a").retryMessageId).toBeNull();
+    expect(runtime.snapshot("a").lastSubmittedText).toBe("尚未被接受的新问题");
+    expect(runtime.snapshot("a").messages.map((message) => message.id)).toEqual(["previous-user"]);
+  });
+
+  it("identifies the failed persisted user message for retry after reloading", async () => {
+    const { runtime } = setup({ ...conversation("failed"), run_error: "provider rejected", messages: [{ id: "failed-user", role: "user", content: "查看系统服务", created_at: 1 }] });
+    await runtime.refresh("a");
+    expect(runtime.snapshot("a").retryMessageId).toBe("failed-user");
+  });
+  it("restores necessary input and submits the original question once without approval", async () => {
+    const { runtime, setInputs, answerInput, decide } = setup(conversation("waiting_input"));
+    const question: ConversationInput = { question_id: "question", run_id: "original-turn", conversation_id: "a", tool_call_id: "ask", title: "输出语言？", kind: "text", options: [], allow_text: true, status: "pending", revision: 1, answer: null, created_at: 1, resolved_at: null };
+    setInputs([question]);
+    await runtime.refresh("a");
+    expect(runtime.snapshot("a").pendingInputs).toEqual([question]);
+    expect(runtime.send("a", "another turn")).toBe(false);
+    expect(runtime.answer("a", question, { revision: 1, text: "中文" })).toBe(true);
+    expect(runtime.answer("a", question, { revision: 1, text: "中文" })).toBe(false);
+    expect(answerInput).toHaveBeenCalledTimes(1);
+    expect(decide).not.toHaveBeenCalled();
+  });
   it("keeps actual provider reasoning and called tools on completion and after reloading protocol history", async () => {
     const { runtime, emit, load } = setup();
     runtime.send("a", "read file");

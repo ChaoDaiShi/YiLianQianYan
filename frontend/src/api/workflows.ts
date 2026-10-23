@@ -181,10 +181,19 @@ export async function deleteWorkflowGraph(id: string) {
   return requestResult<{ status: string }>("DELETE", `/api/workflow-graphs/${id}`);
 }
 
-export async function startWorkflowRun(graphId: string) {
+export type WorkflowNodeInput =
+  | { type: "agent"; prompt: string }
+  | { type: "tool"; arguments: Record<string, unknown> }
+  | { type: "subagent"; task: string }
+  | { type: "output"; template: string | null };
+
+export type WorkflowRunInputs = Record<string, WorkflowNodeInput>;
+
+export async function startWorkflowRun(graphId: string, inputs?: WorkflowRunInputs) {
   return requestResult<{ run_id: string; execution_id: string; status: string }>(
     "POST",
-    `/api/workflow-graphs/${graphId}/run`
+    `/api/workflow-graphs/${graphId}/run`,
+    inputs === undefined ? undefined : { inputs }
   );
 }
 

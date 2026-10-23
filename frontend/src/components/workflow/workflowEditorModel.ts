@@ -139,7 +139,12 @@ export function workflowDefinitionsEqual(
   left: WorkflowGraphDefinition,
   right: WorkflowGraphDefinition
 ): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  const orderedObject = (_key: string, value: unknown): unknown => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(record).sort().map(key => [key, record[key]]));
+  };
+  return JSON.stringify(left, orderedObject) === JSON.stringify(right, orderedObject);
 }
 
 export type WorkflowSaveStateInput = {

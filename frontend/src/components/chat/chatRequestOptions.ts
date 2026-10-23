@@ -2,7 +2,7 @@ export type ApprovalMode = "full_approval" | "partial_approval" | "full_access";
 export type ThinkingMode = "standard" | "thinking";
 import type { WorkspaceMode } from "../../types";
 export type { WorkspaceMode } from "../../types";
-export interface ChatRequestOptions { model_profile_id?: string; thinking_mode?: ThinkingMode; workspace_mode?: WorkspaceMode }
+export interface ChatRequestOptions { model_profile_id?: string; thinking_mode?: ThinkingMode; workspace_mode?: WorkspaceMode; resource_ids?: string[] }
 export const workspaceModes = [
   { value: "chat", label: "聊天", description: "轻松交流与问答" },
   { value: "work", label: "工作", description: "在工作区执行与交付任务" },

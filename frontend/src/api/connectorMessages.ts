@@ -1,7 +1,9 @@
 import { connectorRequest, type ConnectorViewport } from "./connectors";
 import { streamChatRequest, type EventHandler } from "./chat";
+import type { AttachmentReference, ConversationOrigin } from "../types";
 
 export interface ConnectorMessage {
+  attachments?:AttachmentReference[];
   id: string;
   parent_id: string | null;
   role: "user" | "assistant" | "process";
@@ -29,6 +31,7 @@ export interface MessageSources {
   graphs: Array<{ conversation_id: string }>;
 }
 export interface MessageCanvasConversation {
+  origin?:ConversationOrigin;
   id: string;
   title: string;
   status: string;

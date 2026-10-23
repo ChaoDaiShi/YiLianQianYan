@@ -84,6 +84,7 @@ export default function SystemPage() {
 
   return (
     <PageShell
+      variant="workspace"
       title="系统监控"
       description="查看应用、服务和资源的当前运行状态。"
       className="ui-opt-system system-center-page page-canvas flex h-full min-h-0 flex-col"

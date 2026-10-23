@@ -83,6 +83,7 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
   const missingWorkspace=await fetch(base+"/api/workspace-git",{headers});assert.equal(missingWorkspace.status,400);
   facts.checks.push("git_requires_explicit_registered_workspace_no_cwd_fallback");
   let sequence = 0;
+  let retryRejected=false;
   let skillTarget;
   let skillRoot;
   const provider = createServer(async (request, response) => {
@@ -96,6 +97,7 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     }
     const lastUser = body.messages.findLastIndex(message => message.role === "user");
     const question = body.messages[lastUser]?.content ?? "";
+    if(question==="R8_RETRY_PROTOCOL"&&!retryRejected){retryRejected=true;response.writeHead(400,{"Content-Type":"application/json"});response.end(JSON.stringify({error:{message:"controlled retry failure",type:"invalid_request_error",code:"invalid_request_error"}}));return;}
     const hasTool = body.messages.slice(lastUser + 1).some(message => message.role === "tool");
     const skillRequest = question === SKILL_QUESTION;
     const protocolTools=body.messages.slice(lastUser+1).filter(message=>message.role==="assistant").flatMap(message=>message.tool_calls??[]).map(call=>call.function?.name);
@@ -300,6 +302,7 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     const detail = await api("GET", `/api/knowledge/documents/${document.id}`);
     assert.equal(detail.text, documentText);
     assert.ok(detail.chunks.some(chunk => chunk.content.includes(tail)));
+    await page.getByRole("dialog",{name:"导入结果",exact:true}).getByRole("button",{name:"关闭导入结果",exact:true}).click();
     await page.locator(".knowledge-document-open").filter({ hasText: knowledgeName }).click();
     await eventually(() => page.getByLabel("知识文档全文", { exact: true }).textContent(), value => value === documentText, "knowledge full text visible");
     await page.getByLabel("知识文档全文", { exact: true }).evaluate(element => element.scrollIntoView({ block: "end" }));
@@ -341,10 +344,10 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     await page.getByRole("button", { name: "刷新发现", exact: true }).click();
     const skills = await eventually(() => api("GET", "/api/skills"), entries => skillFixtures.every(fixture => entries.some(skill => skill.source_id === fixture.sourceId && skill.display_name === fixture.name)), "actual Codex and Claude workspace skill discovery");
     const external=skills.find(skill=>skill.display_name===HOST_SKILL);assert.ok(external);assert.equal(external.compatibility.runtime_ready,false);assert.equal(external.compatibility.status,"external_host");
-    const hostToggle=page.getByRole("checkbox",{name:"显示宿主专用技能",exact:true});assert.equal(await hostToggle.isChecked(),false);
+    const hostToggle=page.getByRole("combobox",{name:"技能状态筛选",exact:true});assert.equal(await hostToggle.inputValue(),"ready");
     await page.getByRole("textbox",{name:"搜索技能",exact:true}).fill(HOST_SKILL);assert.equal(await page.getByRole("option").filter({hasText:HOST_SKILL}).count(),0);
-    await hostToggle.check();await page.getByRole("option").filter({hasText:HOST_SKILL}).click();await page.getByText("需要外部宿主能力",{exact:true}).waitFor();
-    await screenshot("host-skill-dependencies");await hostToggle.uncheck();
+    await hostToggle.selectOption("all");await page.getByRole("option").filter({hasText:HOST_SKILL}).click();await page.getByText("需要外部宿主能力",{exact:true}).waitFor();
+    await screenshot("host-skill-dependencies");await hostToggle.selectOption("ready");
     facts.checks.push("host_only_skills_are_hidden_by_default_and_show_actual_missing_tools");
     for (const fixture of skillFixtures) {
       const skill = skills.find(entry => entry.source_id === fixture.sourceId && entry.display_name === fixture.name);
@@ -355,11 +358,12 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
       if (fixture.sourceId === "workspace-codex") { skillTarget = skill.name; skillRoot = loaded.root_dir; }
       await page.getByRole("textbox", { name: "搜索技能", exact: true }).fill(fixture.name);
       await page.getByRole("option").filter({ hasText: fixture.name }).click();
-      await page.getByRole("button", { name: "更多 · 查看全文", exact: true }).click();
-      const full = page.getByRole("dialog", { name: "技能全文", exact: true });
-      await eventually(() => full.locator("pre").textContent(), value => value === fixture.content, "actual discovered skill full text");
+      const expand=page.getByRole("button", { name: "展开完整使用说明", exact: true });
+      if(await expand.count())await expand.click();
+      const full = page.getByLabel("技能详情", { exact: true });
+      await eventually(() => full.locator(".skill-reading-content").textContent(), value => value === fixture.content, "actual discovered skill full text");
       await screenshot(`skill-${fixture.directory.slice(1)}-full-text`);
-      await full.getByRole("button", { name: "关闭技能全文", exact: true }).click();
+      await full.getByRole("button", { name: "收起全文", exact: true }).click();
     }
     facts.checks.push("real_codex_and_claude_workspace_skills_are_discovered_readonly", "discovered_skill_full_text_matches_actual_files");
     assert.ok(skillTarget && skillRoot);
@@ -376,13 +380,36 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     facts.checks.push("actual_load_skill_returns_discovered_file_tail_and_root_to_provider","external_skill_procedure_runs_real_project_write_file");
     facts.skills = skillFixtures.map(({ name, sourceId, path }) => ({ name, sourceId, path }));
     await navigate("/capabilities?category=tool");
-    const toolDialog=page.getByRole("dialog",{name:"工具管理",exact:true});await toolDialog.getByLabel("工具列表",{exact:true}).waitFor();
-    assert.equal(await toolDialog.getByRole("combobox").count(),0);assert.equal(await toolDialog.locator(".capability-split-layout,.capability-detail-panel").count(),0);
-    assert.equal(await toolDialog.getByText("新增能力来源",{exact:true}).count(),0);assert.equal(await toolDialog.getByText("能力概览",{exact:true}).count(),0);
+    const toolDialog=page.getByLabel("运行时工具",{exact:true});await toolDialog.getByLabel("工具列表",{exact:true}).waitFor();
+    assert.equal(await page.getByRole("dialog").count(),0);
     await toolDialog.getByRole("textbox",{name:"搜索工具",exact:true}).fill("write_file");
     await toolDialog.locator(".tool-manager-row").filter({hasText:"写入文件"}).click();await toolDialog.getByLabel("工具详情",{exact:true}).waitFor();
-    await screenshot("compact-tool-detail");await toolDialog.getByRole("button",{name:"返回工具列表",exact:true}).click();await toolDialog.getByRole("textbox",{name:"搜索工具",exact:true}).fill("");await screenshot("compact-tool-list");
-    facts.checks.push("tools_use_dedicated_compact_list_and_single_item_detail");
+    await screenshot("compact-tool-detail");await toolDialog.getByRole("textbox",{name:"搜索工具",exact:true}).fill("");await screenshot("compact-tool-list");
+    facts.checks.push("tools_use_persistent_list_and_detail_without_outer_modal");
+    await navigate("/chat");
+    const retryId=await send("R8_RETRY_PROTOCOL");
+    await eventually(()=>api("GET",`/api/conversations/${retryId}`),conversation=>conversation.run_status==="failed","controlled first request failure");
+    await page.getByRole("button",{name:"重新尝试",exact:true}).click();
+    let retryConversation=await completed(retryId,"R8_RETRY_PROTOCOL");
+    assert.equal(retryConversation.messages.filter(message=>message.role==="user").length,1);
+    const retryUser=retryConversation.messages.find(message=>message.role==="user");
+    const retryAnswer=retryConversation.messages.findLast(message=>message.role==="assistant"&&message.content);
+    const answerArticle=page.locator(`article[data-message-id="${retryAnswer.id}"]`);
+    await answerArticle.getByRole("button",{name:"复制回答",exact:true}).waitFor();
+    await page.mouse.move(2,2);
+    assert.equal(await answerArticle.getByRole("button",{name:"复制回答",exact:true}).evaluate(node=>getComputedStyle(node.parentElement).opacity),"1");
+    await screenshot("persistent-message-actions");
+    await answerArticle.getByRole("button",{name:"删除这条回答",exact:true}).click();
+    await eventually(()=>api("GET",`/api/conversations/${retryId}`),conversation=>!conversation.messages.some(message=>message.id===retryAnswer.id),"single answer deletion persisted");
+    retryConversation=await api("GET",`/api/conversations/${retryId}`);
+    assert.ok(retryConversation.messages.some(message=>message.id===retryUser.id));
+    await page.reload();
+    await page.locator(`article[data-message-id="${retryUser.id}"]`).getByRole("button",{name:"回退这条消息",exact:true}).click();
+    await eventually(()=>page.getByRole("textbox",{name:"聊天输入",exact:true}).inputValue(),value=>value==="R8_RETRY_PROTOCOL","rollback restores editable draft");
+    assert.equal((await api("GET",`/api/conversations/${retryId}`)).messages.length,0);
+    assert.ok((await api("GET",`/api/conversations/${rootId}`)).messages.length>0);
+    await screenshot("rollback-restores-draft");
+    facts.checks.push("failed_retry_replaces_original_user_without_duplicates","message_actions_are_always_visible_and_delete_only_selected_answer","user_rollback_restores_draft_and_preserves_other_conversations");
     facts.status = "PASS";
     return facts;
   } catch (error) {

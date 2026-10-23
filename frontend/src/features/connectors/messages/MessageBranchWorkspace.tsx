@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, useNodesInitialized, useReactFlow, type Node, type NodeProps, type Viewport } from "@xyflow/react";
-import { GitBranch, Plus, Send, Square } from "lucide-react";
+import { GitBranch, Plus } from "lucide-react";
 import { Button } from "../../../components/ui";
 import { createConversation } from "../../../api/conversations";
 import { bindConnectorResource } from "../../../api/connectors";
@@ -10,6 +10,11 @@ import { createMessageGraph, getMessageGraph, getMessageSources, saveMessageLayo
 import { ancestorPath, layoutMessageTree, nextAssistantParent, type MessagePosition } from "./messageTree";
 import "@xyflow/react/dist/style.css";
 import "./messageBranches.css";
+import BranchComposer from "./BranchComposer";
+import { useSelectedMessageFocus } from "./useSelectedMessageFocus";
+import { ResourceCards } from "../../resources/ResourceCard";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type SpeechNode = Node<{ message: ConnectorMessage; onPath: boolean; onBranch: () => void; busy: boolean }, "speech">;
 function Speech({ data, selected }: NodeProps<SpeechNode>) {
@@ -52,6 +57,7 @@ function Workspace({ canvasId, agentId, initialConversationId, onResourcesChange
   const [measurements, setMeasurements] = useState<Record<string, { width: number; height: number }>>({});
   const [camera, setCamera] = useState<{ kind: "fit" | "center"; id?: string } | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  useSelectedMessageFocus(selected,nodesInitialized);
   const positionsRef = useRef(positions);
   const active = useRef<ActiveTurn | null>(null);
   const mounted = useRef(true);
@@ -226,7 +232,7 @@ function Workspace({ canvasId, agentId, initialConversationId, onResourcesChange
       <span>拖动画布平移 · 滚轮缩放 · 点击消息查看全文</span>
     </header>
     {error && <p className="message-branch-error" role="alert">{error}</p>}
-    <div className="message-branch-stage">
+    <div className="conversation-canvas-shell"><div className="message-branch-stage">
       <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} viewport={viewport} onViewportChange={setViewport}
         minZoom={0.25} maxZoom={1.8} nodesDraggable={!busy} nodesConnectable={false} deleteKeyCode={null}
         onNodesChange={changes => {
@@ -249,13 +255,10 @@ function Workspace({ canvasId, agentId, initialConversationId, onResourcesChange
       {loading && <div className="message-branch-empty" role="status">正在加载消息画布…</div>}
       {!loading && messages.length === 0 && <div className="message-branch-empty"><GitBranch size={28} /><p>{root ? "输入第一条提问，开始绘制消息链" : "新建对话后，每条提问与回答都会成为独立节点"}</p></div>}
     </div>
-    {focused && <aside className="message-branch-detail" aria-label="选中消息详情"><header><strong>{focused.role === "user" ? "提问全文" : "回答全文"}</strong><button type="button" onClick={() => { setSelected(null); void selectMessageNode(canvasId, root, null).catch(cause => setError(explain(cause))); }}>关闭详情</button></header><p>{focused.content || "等待正文"}</p><Link className="text-sm text-[var(--accent-primary)]" to={`/chat/${focused.conversation_id}`}>在主页打开此分支</Link>{focused.error && <p role="alert">{focused.error}</p>}{focused.role === "assistant" && !focused.id.startsWith("pending-") && <Button size="sm" variant="secondary" disabled={busy} onClick={() => chooseBranch(focused.id)}><GitBranch size={14} />从此回答继续提问</Button>}</aside>}
+    {focused&&<aside className="message-branch-detail conversation-canvas-detail" aria-label="选中消息详情"><header><strong>{focused.role==="user"?"提问全文":"回答全文"}</strong><button type="button" aria-label="关闭消息详情" onClick={()=>{setSelected(null);void selectMessageNode(canvasId,root,null).catch(cause=>setError(explain(cause)));}}>关闭详情</button></header>{focused.attachments?.length?<ResourceCards files={focused.attachments}/>:null}<div className="canvas-detail-content conversation-markdown prose prose-sm max-w-none"><ReactMarkdown remarkPlugins={[remarkGfm]}>{focused.content||"等待正文"}</ReactMarkdown></div><Link to={`/chat/${focused.conversation_id}`}>打开这条路径的完整记录</Link>{focused.error&&<p role="alert">{focused.error}</p>}{focused.role==="assistant"&&!focused.id.startsWith("pending-")&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>chooseBranch(focused.id)}><GitBranch size={14}/>从此回答继续提问</Button>}</aside>}
+    </div>
     {(activity.length > 0 || approvalConversation || graph?.runs.some(run => run.error || run.status === "waiting_approval")) && <div className="message-branch-activity" role="status">{activity.slice(-5).map((line, index) => <p key={index}>{line}</p>)}{graph?.runs.filter(run => run.error || run.status === "waiting_approval").map(run => <p key={run.conversation_id}>{run.error || "等待审批"} · <Link to={`/chat/${run.conversation_id}`}>打开执行对话</Link></p>)}{approvalConversation && <Link to={`/chat/${approvalConversation}`}>打开执行对话处理审批</Link>}</div>}
-    <form className="message-branch-composer" onSubmit={event => { event.preventDefault(); send(); }}>
-      <div className="message-branch-composer-context">{parent ? <><GitBranch size={14} /><span>从此回答继续提问 · {parent.content.slice(0, 36)}</span></> : <span>新问题 · 从画布起点开始</span>}</div>
-      <textarea ref={composerRef} aria-label="消息画布提问" placeholder={root ? "输入问题；选中任意回答可从该处继续分支…" : "请先新建或选择对话"} value={draft} onChange={event => setDraft(event.target.value)} disabled={!root || busy || loading} rows={2} />
-      <div className="message-branch-send">{busy ? <Button type="button" variant="danger" size="sm" onClick={() => void stop()}><Square size={14} />停止生成</Button> : <Button type="submit" size="sm" disabled={!root || loading || !draft.trim()}><Send size={14} />发送提问</Button>}</div>
-    </form>
+    <BranchComposer parent={parent} draft={draft} onChange={setDraft} onSend={send} onStop={()=>void stop()} busy={busy} disabled={!root||loading} inputRef={composerRef} conversationTitle={sources.conversations.find(item=>item.id===root)?.title}/>
   </section>;
 }
 

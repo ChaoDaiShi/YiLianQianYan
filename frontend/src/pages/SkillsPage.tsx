@@ -28,7 +28,7 @@ import { validateSkillDraft } from "../features/skills/skillForm";
 type EditorMode = "create" | "edit" | null;
 
 export default function SkillsPage({ embedded = false, initialSkill }: { embedded?: boolean; initialSkill?: string } = {}) {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [skillContent, setSkillContent] = useState("");
@@ -39,6 +39,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [search, setSearch] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [showHostSkills, setShowHostSkills] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(null);
   const [formName, setFormName] = useState("");
@@ -72,6 +73,9 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
 
   const openSkill = useCallback(async (skill: SkillSummary) => {
     setSelectedName(skill.name);
+    requestedSkillRef.current = skill.name;
+    setSearchParams(current=>{const next=new URLSearchParams(current);next.set("skill",skill.name);return next;},{replace:true});
+    setFullTextOpen(false);
     setDetailLoading(true);
     setDetailError("");
     const reqId = ++requestIdRef.current;
@@ -80,7 +84,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
     if (result.ok) setSkillContent(result.data.content);
     else setDetailError(result.error || "无法加载技能内容。请检查技能目录与后端连接。");
     setDetailLoading(false);
-  }, []);
+  }, [setSearchParams]);
 
   useEffect(() => {
     const requested = initialSkill ?? searchParams.get("skill");
@@ -89,6 +93,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
     const skill = skills.find((item) => item.name === requested);
     if (skill) {
       requestedSkillRef.current = requested;
+      setSearch(""); setSourceFilter("all");
       if (!skill.compatibility?.runtime_ready) setShowHostSkills(true);
       void openSkill(skill);
     }
@@ -96,14 +101,14 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const visible = showHostSkills ? skills : skills.filter((skill) => skill.compatibility?.runtime_ready === true);
+    const visible = skills.filter(skill => (showHostSkills || skill.compatibility?.runtime_ready === true) && (sourceFilter === "all" || (skill.source ?? "未标注来源") === sourceFilter));
     if (!query) return visible;
     return visible.filter((skill) =>
       [skill.name, skill.description, skill.path, skill.source ?? "", skill.display_name ?? ""].some((value) =>
         value.toLowerCase().includes(query)
       )
     );
-  }, [skills, search, showHostSkills]);
+  }, [skills, search, showHostSkills, sourceFilter]);
 
   const selectedSkill = skills.find((skill) => skill.name === selectedName) ?? null;
 
@@ -186,7 +191,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
   };
 
   return (
-    <ManagementFrame embedded={embedded}
+    <ManagementFrame embedded={embedded} variant="workspace"
       title="技能"
       description="管理小昔涟可以使用的技能能力。"
       className="capability-page skills-page page-canvas ui-opt-capabilities ui-opt-skills"
@@ -204,33 +209,11 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
         </>
       }
     >
-      <div className="capability-page-body skills-page-body">
+      <div className="capability-page-body capability-page-body-split skills-page-body">
+        <div className="capability-workbench-toolbar"><Input aria-label="搜索技能" placeholder="搜索技能名称或说明…" value={search} onChange={event=>setSearch(event.target.value)}/><select aria-label="技能来源筛选" className="settings-select" value={sourceFilter} onChange={event=>setSourceFilter(event.target.value)}><option value="all">全部来源</option>{[...new Set(skills.map(skill=>skill.source??"未标注来源"))].map(source=><option key={source} value={source}>{source}</option>)}</select><select aria-label="技能状态筛选" className="settings-select" value={showHostSkills?"all":"ready"} onChange={event=>{const all=event.target.value==="all";setShowHostSkills(all);if(!all&&selectedSkill&&!selectedSkill.compatibility?.runtime_ready){requestIdRef.current++;setSelectedName(null);setSkillContent("");setDetailLoading(false);}}}><option value="ready">本机可用</option><option value="all">全部（含宿主专用）</option></select><span className="capability-list-caption" aria-label="技能可用数量">可用 {skills.filter(skill=>skill.compatibility?.runtime_ready===true).length}</span></div>
         <div className="capability-split-layout skills-split-layout">
           <aside className="capability-list-panel" aria-label="技能列表">
-            <div className="capability-list-toolbar">
-              <Input
-                aria-label="搜索技能"
-                placeholder="搜索技能…"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-2 px-4 pb-3 text-[11px] text-[var(--text-muted)]">
-              <label className="inline-flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" aria-label="显示宿主专用技能" checked={showHostSkills} onChange={(event) => {
-                  setShowHostSkills(event.target.checked);
-                  if (!event.target.checked && selectedSkill && !selectedSkill.compatibility?.runtime_ready) {
-                    requestIdRef.current++;
-                    setSelectedName(null);
-                    setSkillContent("");
-                    setDetailLoading(false);
-                  }
-                }} className="accent-[var(--accent-primary)]" />
-                显示宿主专用技能
-              </label>
-              <span aria-label="技能可用数量">可用 {skills.filter(skill => skill.compatibility?.runtime_ready === true).length} · 宿主 {skills.filter(skill => skill.compatibility?.runtime_ready === false).length}</span>
-            </div>
-
+            <p className="capability-list-caption">{filtered.length} 个技能</p>
             <div className="capability-list-scroll scrollbar-thin">
               {loading ? (
                 <div className="capability-skeleton-stack" aria-label="正在加载技能">
@@ -301,9 +284,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                           {skill.description || "暂无描述"}
                         </span>
                         {skill.source && <span className="text-[11px] text-[var(--text-muted)] block">来源：{skill.source}</span>}
-                        <span className="text-[11px] text-[var(--text-faint)] font-mono truncate block mt-0.5">
-                          {skill.path}
-                        </span>
+
                       </button>
                     );
                   })}
@@ -418,9 +399,9 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                           <span>{copiedKey === `content-${selectedSkill.name}` ? "已复制全文" : "复制全文"}</span>
                         </button>
                       </div>
-                      <Button size="sm" variant="ghost" onClick={() => setFullTextOpen(true)}>更多 · 查看全文</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setFullTextOpen(value=>!value)}>{fullTextOpen?"收起全文":"展开完整使用说明"}</Button>
                       <pre className="skill-reading-content leading-[1.6]">
-                        {skillContent.slice(0, 1100) || "（内容为空）"}
+                        {(fullTextOpen?skillContent:skillContent.slice(0,1100)) || "（内容为空）"}
                       </pre>
                     </div>
                   )}
@@ -541,7 +522,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
         onConfirm={() => void confirmRemoveSkill()}
         onCancel={() => setDeleteConfirm(null)}
       />
-      <Modal open={fullTextOpen} onClose={() => setFullTextOpen(false)} title="技能全文" size="xl"><pre className="whitespace-pre-wrap break-words text-sm">{skillContent}</pre></Modal>
+
     </ManagementFrame>
   );
 }

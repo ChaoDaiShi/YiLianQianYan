@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { Brain, Clock3, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { MemoryRecord } from "../api/client";
+import { listWithdrawnMemories } from "../api/memory";
+import MemoryDetail from "../features/memory/MemoryDetail";
 import { useMemoryStore } from "../stores/memoryStore";
 import PageShell from "../components/layout/PageShell";
 import { Badge, Button, EmptyState, ErrorState, Modal, Skeleton, Textarea } from "../components/ui";
 import { knowledgeDocumentForMemory } from "../features/memory/knowledgeMemory";
 import {
+  categoryBadgeTone,
+  formatMemoryTime,
   getMemoryCategoryPresentation,
   getMemorySourceLabel,
   memoryCategoryCounts,
@@ -21,20 +24,9 @@ const SOURCE_OPTIONS = [
   { value: "document", label: "文档" },
 ] as const;
 
-type BadgeTone = "default" | "success" | "warning" | "danger" | "info" | "accent";
-
-function categoryBadgeTone(category: string): BadgeTone {
-  const tone = getMemoryCategoryPresentation(category).tone;
-  return tone === "info" ? "info" : tone === "accent" || tone === "purple" ? "accent" : tone === "warning" ? "warning" : "default";
-}
-
-function formatMemoryTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
 export default function MemoryPage() {
   const {
-    memories,
+    memories: activeMemories,
     stats,
     isLoading,
     error,
@@ -48,10 +40,21 @@ export default function MemoryPage() {
     reindexMemoriesAction,
   } = useMemoryStore();
 
+  const [view, setView] = useState<"active" | "withdrawn">("active");
+  const [withdrawn, setWithdrawn] = useState<MemoryRecord[]>([]);
+  const [withdrawnError, setWithdrawnError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
   const [filterSource, setFilterSource] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const memories = view === "active" ? activeMemories : withdrawn.filter((memory) =>
+    (!search.trim() || memory.content.includes(search.trim())) && (!filterCategory || memory.category === filterCategory) && (!filterSource || memory.source === filterSource));
+  const loadWithdrawn = async () => {
+    try { setWithdrawn(await listWithdrawnMemories()); setWithdrawnError(null); }
+    catch (cause) { setWithdrawnError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  useEffect(() => { if (view === "withdrawn") void loadWithdrawn(); }, [view]);
+
 
   // Add modal state
   const [showAddModal, setShowAddModal] = useState(false);
@@ -97,6 +100,7 @@ export default function MemoryPage() {
   const hasActiveFilter = Boolean(search.trim() || filterCategory || filterSource);
 
   const reload = () => {
+    if (view === "withdrawn") void loadWithdrawn();
     loadMemories({
       q: search.trim() || undefined,
       category: filterCategory || undefined,
@@ -136,7 +140,7 @@ export default function MemoryPage() {
   };
 
   const handleOpenEdit = (memory: MemoryRecord) => {
-    if (knowledgeDocumentForMemory(memory)) return;
+    if (knowledgeDocumentForMemory(memory) || view === "withdrawn") return;
     setEditingMemory(memory);
     setEditContent(memory.content);
     setEditError(null);
@@ -166,7 +170,7 @@ export default function MemoryPage() {
   const handleDelete = async (memory: MemoryRecord) => {
     if (knowledgeDocumentForMemory(memory)) return;
     if (isDeleting) return;
-    if (!window.confirm("删除这条记忆？\n\n删除后，这条记录将从记忆中心移除。")) return;
+    if (!window.confirm("删除这条记忆？\n\n删除后，这条记录及全部历史版本将永久移除。若需要保留历史，请使用撤回。")) return;
     setIsDeleting(true);
     setDeleteError(null);
     try {
@@ -187,6 +191,7 @@ export default function MemoryPage() {
           setSelectedId(remaining[nextIndex].id);
         }
         setDeleteError(null);
+        if (view === "withdrawn") await loadWithdrawn();
       }
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : String(err));
@@ -210,6 +215,11 @@ export default function MemoryPage() {
       <div className="memory-page-body scrollbar-thin">
         <MemoryOverview counts={categoryCounts} total={stats?.total ?? memories.length} onSelect={setFilterCategory} />
 
+        <div className="memory-filter-group" aria-label="记忆状态">
+          <button className="memory-filter-button" aria-pressed={view === "active"} onClick={() => setView("active")}>当前可用</button>
+          <button className="memory-filter-button" aria-pressed={view === "withdrawn"} onClick={() => setView("withdrawn")}>已撤回</button>
+        </div>
+        {withdrawnError && view === "withdrawn" && <p role="alert" className="text-xs text-[var(--danger)]">{withdrawnError}</p>}
         <div className="memory-toolbar">
           <label className="memory-search-field">
             <Search className="h-4 w-4 shrink-0 text-[var(--text-faint)]" />
@@ -327,6 +337,8 @@ export default function MemoryPage() {
                 onDelete={() => handleDelete(selectedMemory)}
                 isDeleting={isDeleting}
                 deleteError={deleteError}
+                onChanged={reload}
+                withdrawn={view === "withdrawn"}
               />
             ) : (
               <EmptyState
@@ -517,67 +529,6 @@ function MemoryRow({
       <div className="memory-row-meta">
         <span>{formatMemoryTime(memory.updated_at)}</span>
       </div>
-    </div>
-  );
-}
-
-function MemoryDetail({
-  memory, onEdit, onDelete, isDeleting, deleteError,
-}: {
-  memory: MemoryRecord; onEdit: () => void; onDelete: () => void; isDeleting?: boolean; deleteError?: string | null;
-}) {
-  const category = getMemoryCategoryPresentation(memory.category);
-  const documentId = knowledgeDocumentForMemory(memory);
-  return (
-    <div className="memory-detail-content">
-      <div className="memory-detail-heading">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={categoryBadgeTone(memory.category)}>{category.label}</Badge>
-            <span className="text-xs text-[var(--text-secondary)]">{getMemorySourceLabel(memory.source)}</span>
-            {documentId && <Badge tone="default">文档片段 · 只读</Badge>}
-          </div>
-          <h2>记忆详情</h2>
-        </div>
-        {!documentId && <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={onEdit} aria-label="编辑记忆">
-            <Pencil className="h-4 w-4" />
-            编辑
-          </Button>
-          <Button variant="ghost" size="sm" onClick={onDelete} aria-label="删除记忆" loading={isDeleting} loadingLabel="删除中…">
-            <Trash2 className="h-4 w-4 text-[var(--danger)]" />
-            删除
-          </Button>
-        </div>}
-      </div>
-      {documentId && <p className="rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-6 text-[var(--text-secondary)]">该片段由知识文档管理，请在知识库中重新导入或移除源文档。 <Link className="text-[var(--accent-primary)] underline" to={`/knowledge?document=${encodeURIComponent(documentId)}`}>管理源文档</Link></p>}
-
-      {deleteError && (
-        <div className="rounded-[var(--radius-sm)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 p-2.5 text-xs text-[var(--danger)]" role="alert">
-          {deleteError}
-        </div>
-      )}
-
-      <div className="memory-detail-body">
-        <p>{memory.content}</p>
-      </div>
-
-      <dl className="memory-detail-fields">
-        <div><dt>分类</dt><dd>{category.label}</dd></div>
-        <div><dt>来源</dt><dd>{getMemorySourceLabel(memory.source)}</dd></div>
-        <div><dt>创建时间</dt><dd>{formatMemoryTime(memory.created_at)}</dd></div>
-        <div><dt>更新时间</dt><dd>{formatMemoryTime(memory.updated_at)}</dd></div>
-      </dl>
-
-      <details className="memory-technical-details">
-        <summary>查看技术详情</summary>
-        <dl>
-          <div><dt>ID</dt><dd className="font-mono text-xs">{memory.id}</dd></div>
-          {memory.source_conversation_id && (
-            <div><dt>来源对话 ID</dt><dd className="font-mono text-xs">{memory.source_conversation_id}</dd></div>
-          )}
-        </dl>
-      </details>
     </div>
   );
 }

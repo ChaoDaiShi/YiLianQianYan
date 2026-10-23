@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Plus, Trash2, Pencil, CheckCircle2, Loader2, AlertTriangle,
 } from "lucide-react";
 import {
   getWorkflowGraph, listWorkflows, createWorkflow, updateWorkflow, deleteWorkflow, activateWorkflow,
-  startWorkflowRun,
   type Workflow,
 } from "../api/client";
 import ManagementFrame from "../features/capabilities/ManagementFrame";
@@ -28,6 +28,7 @@ import WorkflowRunInspector from "../components/workflow/WorkflowRunInspector";
 import WorkflowRecentRuns from "../components/workflow/WorkflowRecentRuns";
 import type { WorkflowGraphRecord } from "../api/client";
 import TaskGraphWorkflowList from "../features/workflows/TaskGraphWorkflowList";
+import WorkflowRunDialog from "../features/workflows/WorkflowRunDialog";
 
 const BUILTIN_ICONS: Record<string, string> = {
   "react-default": "🔄",
@@ -41,6 +42,7 @@ const BUILTIN_ICONS: Record<string, string> = {
 type Tab = "templates" | "runtime" | "taskgraphs";
 
 export default function WorkflowsPage({ embedded = false, initialGraphId }: { embedded?: boolean; initialGraphId?: string } = {}) {
+  const [searchParams] = useSearchParams();
   const [graphLoadError, setGraphLoadError] = useState("");
   const [tab, setTab] = useState<Tab>("runtime");
   const [editorGraph, setEditorGraph] = useState<WorkflowGraphRecord | null>(null);
@@ -48,7 +50,8 @@ export default function WorkflowsPage({ embedded = false, initialGraphId }: { em
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runtimeRefresh, setRuntimeRefresh] = useState(0);
 
-  useEffect(() => { if (!initialGraphId) return; let current = true; void getWorkflowGraph(initialGraphId).then(result => { if (!current) return; if (result.ok) { setEditorGraph(result.data); setEditorOpen(true); } else setGraphLoadError(result.error); }); return () => { current = false; }; }, [initialGraphId]);
+  useEffect(() => { if (!initialGraphId && searchParams.get("workflow_tab") === "templates") setTab("templates"); }, [initialGraphId, searchParams]);
+  useEffect(() => { if (!initialGraphId) return; let current = true; void getWorkflowGraph(initialGraphId).then(result => { if (!current) return; if (result.ok) { setGraphLoadError(""); setTab("runtime"); setEditorGraph(result.data); setEditorOpen(true); } else setGraphLoadError(result.error); }); return () => { current = false; }; }, [initialGraphId]);
   return (
     <ManagementFrame embedded={embedded}
       title="工作流"
@@ -98,6 +101,7 @@ export default function WorkflowsPage({ embedded = false, initialGraphId }: { em
 }
 
 function TemplatesTab() {
+  const [query,setQuery] = useState("");
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -199,8 +203,9 @@ function TemplatesTab() {
   };
 
   const handleActivate = async (id: string) => {
-    await activateWorkflow(id);
-    setActiveId(id);
+    const result = await activateWorkflow(id);
+    if (!result) { showToast("激活工作流失败", "error"); return; }
+    setActiveId(result.active_id);
     showToast("工作流已激活", "success");
     await load();
   };
@@ -226,7 +231,7 @@ function TemplatesTab() {
 
   return (
     <div className="flex flex-col">
-      <div className="flex justify-end mb-4">
+      <div className="flex justify-between gap-3 mb-4"><Input aria-label="搜索模板工作流" placeholder="搜索模板名称或用途…" value={query} onChange={event=>setQuery(event.target.value)}/>
         <Button size="sm" onClick={openAdd}>
           <Plus className="w-4 h-4" />
           自定义工作流
@@ -234,7 +239,7 @@ function TemplatesTab() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {workflows.map((wf) => {
+        {workflows.filter(wf=>`${wf.name} ${wf.description}`.toLowerCase().includes(query.trim().toLowerCase())).map((wf) => {
           const isActive = wf.id === activeId;
           return (
             <Panel key={wf.id} className={`group cursor-pointer transition-all ${isActive ? "ring-1 ring-[var(--accent)]/50" : ""}`}>
@@ -399,17 +404,24 @@ function RuntimeTab({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [locateNodeId, setLocateNodeId] = useState<string | null>(null);
+  const [runGraph, setRunGraph] = useState<WorkflowGraphRecord | null>(null);
 
-  const handleRun = async (graph: WorkflowGraphRecord) => {
+  const handleRun = (graph: WorkflowGraphRecord) => {
     setRunError("");
-    const res = await startWorkflowRun(graph.id);
-    if (res.ok) {
-      setActiveRunId(res.data.run_id);
-      setRuntimeRefresh(runtimeRefresh + 1);
-    } else {
-      setRunError(res.error);
-    }
+    setRunGraph(graph);
   };
+
+  const openRunGraph = async (graphId: string) => {
+    setRunError("");
+    const result = await getWorkflowGraph(graphId);
+    if (!result.ok) { setRunError(result.error); return; }
+    setEditorGraph(result.data); setEditorOpen(true);
+    setSelectedNodeId(null); setHighlightedNodeId(null); setLocateNodeId(null);
+  };
+
+  const runDialog = runGraph ? <WorkflowRunDialog key={runGraph.id} graph={runGraph} onClose={() => setRunGraph(null)} onStarted={id => {
+    setRunGraph(null); setActiveRunId(id); setRuntimeRefresh(runtimeRefresh + 1);
+  }} /> : null;
 
   const handleCreate = () => {
     setEditorGraph(null);
@@ -423,6 +435,7 @@ function RuntimeTab({
   if (editorOpen) {
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col">
+        {runDialog}
         {runError && (
           <div className="mx-4 mt-3 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]" role="alert">
             {runError}
@@ -430,6 +443,7 @@ function RuntimeTab({
         )}
         <div className="flex-1 min-h-0 overflow-hidden">
           <WorkflowGraphEditor
+            key={editorGraph?.id ?? "new-workflow"}
             graph={editorGraph}
             onRun={handleRun}
             selectedNodeId={selectedNodeId}
@@ -446,6 +460,7 @@ function RuntimeTab({
         {activeRunId && (
           <div className="shrink-0 max-h-[40vh] overflow-y-auto border-t border-[var(--border-soft)]">
             <WorkflowRunInspector
+              key={activeRunId}
               runId={activeRunId}
               onClose={() => setActiveRunId(null)}
               selectedNodeId={selectedNodeId}
@@ -461,6 +476,7 @@ function RuntimeTab({
 
   return (
     <div className="space-y-6">
+      {runDialog}
       <div className="flex justify-end">
         <Button size="sm" onClick={handleCreate}>
           <Plus className="w-4 h-4" />
@@ -482,11 +498,12 @@ function RuntimeTab({
       />
 
       {activeRunId && (
-        <WorkflowRunInspector runId={activeRunId} onClose={() => setActiveRunId(null)} />
+        <WorkflowRunInspector key={activeRunId} runId={activeRunId} onClose={() => setActiveRunId(null)} onOpenGraph={id => void openRunGraph(id)} />
       )}
 
       <WorkflowRecentRuns
         onSelectRun={setActiveRunId}
+        selectedRunId={activeRunId}
         refreshKey={runtimeRefresh}
       />
 

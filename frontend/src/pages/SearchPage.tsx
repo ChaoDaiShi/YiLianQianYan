@@ -67,6 +67,7 @@ export default function SearchPage() {
 
   return (
     <PageShell
+      variant="workspace"
       title="AI 搜索"
       description="统一检索入口。AnySearch 是首个 Provider，凭据仍保存在本机。"
       className="cloud-page search-page page-canvas flex h-full min-h-0 flex-col"

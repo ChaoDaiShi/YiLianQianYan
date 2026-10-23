@@ -37,6 +37,7 @@ import {
 } from "../features/tasks/taskPresentation";
 import { deriveTaskDisplayTitle } from "../components/chat/taskTitle";
 import { formatWorkspacePath } from "../features/tasks/workspacePresentation";
+import WorkspaceLearning from "../features/learning/WorkspaceLearning";
 
 export default function WorkspaceDetailPage() {
   const { id = "" } = useParams();
@@ -47,6 +48,7 @@ export default function WorkspaceDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showLearning, setShowLearning] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
@@ -192,6 +194,7 @@ export default function WorkspaceDetailPage() {
               归档
             </Button>
           )}
+          <Button type="button" variant="secondary" onClick={() => setShowLearning(true)} disabled={!workspace}>资料学习</Button>
           <Button type="button" onClick={() => setShowCreate(true)} disabled={!workspace}>
             <Plus className="h-4 w-4" />
             新建任务
@@ -353,6 +356,9 @@ export default function WorkspaceDetailPage() {
       )}
 
       {/* New Task Modal */}
+      <Modal open={showLearning} onClose={() => setShowLearning(false)} title="项目资料学习" size="xl">
+        {showLearning && <WorkspaceLearning workspaceId={id} />}
+      </Modal>
       <Modal
         open={showCreate}
         onClose={() => setShowCreate(false)}

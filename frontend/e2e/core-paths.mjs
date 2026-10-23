@@ -16,6 +16,7 @@ import { typedBindingU31 } from "./typed-binding-u31.mjs";
 import { proofloop } from "./proofloop.mjs";
 import { workbenchRevision5 } from "./workbench-revision5.mjs";
 import { runWorkbenchRevision7 } from "./workbench-revision7.mjs";
+import { v1R3 } from "./v1-r3.mjs";
 import { runWorkbenchRevision6 } from "./workbench-revision6.mjs";
 import { workbenchRevision4 } from "./workbench-revision4.mjs";
 import { settingsRevision3 } from "./settings-revision3.mjs";
@@ -276,6 +277,7 @@ try {
     testExitCode = 0;
   } else if (workbenchRevision7Stage) {
     const result=await runWorkbenchRevision7({page,frontendPort,backendPort,controlToken,evidenceDir,workspace});
+    if(process.argv.includes("--v1-r3")) result.v1_r3=await v1R3({page,frontendPort,backendPort,controlToken,evidenceDir,workspace});
     if(browserErrors.length)throw new Error(browserErrors.join(" | "));
     await writeFile(join(evidenceDir,"result.json"),JSON.stringify(result,null,2));
     process.stdout.write(JSON.stringify(result)+"\n");testExitCode=0;

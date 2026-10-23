@@ -1,10 +1,39 @@
 import {describe,expect,it} from "vitest";
-import {composeSettingsGraph,mergeSettingsGroupLayout,settingsGroups,settingsFocusNodeIds} from "./settingsGraph";
+import {composeSettingsGraph,mergeSettingsGroupLayout,settingsGroups,settingsFocusNodeIds,SETTINGS_NODE_SIZE} from "./settingsGraph";
 import presetCatalog from "./settingPresets.json";
 import type {SettingPreset,SettingsCanvasState} from "../../../api/settingsCanvas";
 const presets=presetCatalog as SettingPreset[];
 const state:SettingsCanvasState={connected_node_ids:presets.map(preset=>preset.id),expanded_group_ids:[],nodes:[],viewport:{x:0,y:0,zoom:1}};
 describe("expandable settings graph",()=>{
+ it("keeps all simultaneously expanded setting cards apart",()=>{
+  const graph=composeSettingsGraph(null,{...state,expanded_group_ids:settingsGroups(presets).map(group=>group.id)},presets);
+  const cards=graph.nodes.filter(node=>node.kind.startsWith("setting_"));
+  for(let a=0;a<cards.length;a++)for(let b=a+1;b<cards.length;b++){
+   const left=cards[a],right=cards[b];
+   const separated=Math.abs(left.x-right.x)>=SETTINGS_NODE_SIZE.width+SETTINGS_NODE_SIZE.gap||Math.abs(left.y-right.y)>=SETTINGS_NODE_SIZE.height+SETTINGS_NODE_SIZE.gap;
+   expect(separated,`${left.id} overlaps ${right.id}`).toBe(true);
+  }
+ });
+ it("relocates conflicting saved voice leaves while preserving dragged nonconflicting coordinates",()=>{
+  const prior:SettingsCanvasState={...state,expanded_group_ids:["models","voice"],nodes:[
+   {id:"group:models",x:660,y:126},{id:"group:voice",x:660,y:246},
+   {id:"model",x:952,y:-70},{id:"search",x:952,y:28},{id:"vision",x:1800,y:900},
+   {id:"image",x:952,y:224},{id:"embedding",x:952,y:322},
+   {id:"stt",x:952,y:197},{id:"tts",x:952,y:295},
+  ]};
+  const graph=composeSettingsGraph(null,prior,presets);
+  const point=(id:string)=>graph.nodes.find(node=>node.entity_id===id)!;
+  expect({x:point("vision").x,y:point("vision").y}).toEqual({x:1800,y:900});
+  expect({x:point("image").x,y:point("image").y}).toEqual({x:952,y:224});
+  expect(point("stt").x).toBeGreaterThan(point("image").x+SETTINGS_NODE_SIZE.width);
+  expect(point("tts").x).toBeGreaterThan(point("embedding").x+SETTINGS_NODE_SIZE.width);
+  const saved=mergeSettingsGroupLayout(prior,graph,[],prior.viewport);
+  const reloaded=composeSettingsGraph(null,saved,presets);
+  expect(reloaded.nodes.map(({id,x,y})=>({id,x,y}))).toEqual(graph.nodes.map(({id,x,y})=>({id,x,y})));
+  const dragged=mergeSettingsGroupLayout(saved,graph,[{id:"setting:vision",x:2020,y:1040}],prior.viewport);
+  const afterDrag=composeSettingsGraph(null,dragged,presets).nodes.find(node=>node.id==="setting:vision")!;
+  expect({x:afterDrag.x,y:afterDrag.y}).toEqual({x:2020,y:1040});
+ });
  it("places default categories symmetrically within a compact overview",()=>{
   const graph=composeSettingsGraph(null,state,presets);
   const center=graph.nodes.find(node=>node.kind==="agent")!;

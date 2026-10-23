@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Ban, Loader2, Navigation, AlertCircle } from "lucide-react";
+import { Ban, Loader2, Navigation, AlertCircle, GitBranch } from "lucide-react";
 import { Button, Badge, Spinner, Inspector } from "../ui";
 import { listPendingApprovals } from "../../api/approvals";
 import {
@@ -61,6 +61,7 @@ export interface WorkflowRunInspectorProps {
   onNodeHighlight?: (id: string | null) => void;
   onLocateNode?: (id: string) => void;
   onRunLoaded?: (run: WorkflowRunRecord) => void;
+  onOpenGraph?: (graphId: string) => void;
 }
 
 export default function WorkflowRunInspector({
@@ -71,6 +72,7 @@ export default function WorkflowRunInspector({
   onNodeHighlight,
   onLocateNode,
   onRunLoaded,
+  onOpenGraph,
 }: WorkflowRunInspectorProps) {
   const [run, setRun] = useState<WorkflowRunRecord | null>(null);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
@@ -172,8 +174,9 @@ export default function WorkflowRunInspector({
         </Badge>
       }
       description={`执行 ${run!.execution_id.slice(0, 8)}… · 创建于 ${new Date(run!.created_at).toLocaleTimeString()} · 更新于 ${new Date(run!.updated_at).toLocaleTimeString()}`}
-      actions={
-        !terminal ? (
+      actions={<>
+        {onOpenGraph && run!.workflow_graph_id && <Button size="sm" variant="secondary" onClick={() => onOpenGraph(run!.workflow_graph_id!)}><GitBranch className="w-3.5 h-3.5" />打开工作流</Button>}
+        {!terminal ? (
           <Button
             size="sm"
             variant="secondary"
@@ -185,12 +188,13 @@ export default function WorkflowRunInspector({
             <Ban className="w-3.5 h-3.5" />
             取消运行
           </Button>
-        ) : undefined
-      }
+        ) : null}
+      </>}
       onClose={onClose}
       bodyClassName="space-y-3.5 p-4"
     >
 
+      {error && <p role="alert" className="text-xs text-[var(--danger)]">{error}</p>}
       {approval && <WorkflowApprovalCard approval={approval} onDecision={load} />}
 
       {/* Selected canvas node not found in this run callout */}
@@ -220,7 +224,7 @@ export default function WorkflowRunInspector({
               isSelected={selectedNodeId === node.node_id}
               onSelect={() => onNodeSelect?.(node.node_id)}
               onHighlight={(highlight) => onNodeHighlight?.(highlight ? node.node_id : null)}
-              onLocate={() => onLocateNode?.(node.node_id)}
+              onLocate={onLocateNode ? () => onLocateNode(node.node_id) : undefined}
             />
           ))}
         </div>
@@ -240,7 +244,7 @@ function NodeRow({
   isSelected: boolean;
   onSelect: () => void;
   onHighlight: (highlight: boolean) => void;
-  onLocate: () => void;
+  onLocate?: () => void;
 }) {
   const toneClasses: Record<string, string> = {
     completed: "text-[var(--success)]",
@@ -313,7 +317,7 @@ function NodeRow({
                 {durationText}
               </span>
             )}
-            <button
+            {onLocate && <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
@@ -325,14 +329,15 @@ function NodeRow({
             >
               <Navigation className="w-3 h-3" />
               定位
-            </button>
+            </button>}
           </div>
         </div>
 
         {node.result?.summary && (
-          <p className="text-xs text-[var(--text-secondary)] line-clamp-3 bg-[var(--surface-muted)]/70 rounded p-1.5 leading-relaxed">
-            {node.result.summary}
-          </p>
+          <details onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} className="text-xs bg-[var(--surface-muted)] rounded p-2 leading-relaxed">
+            <summary className="cursor-pointer text-[var(--accent-primary)]">查看节点结果</summary>
+            <p className="mt-2 whitespace-pre-wrap break-words text-[var(--text-secondary)] select-text">{node.result.summary}</p>
+          </details>
         )}
 
         {node.error && (

@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -19,13 +18,21 @@ import { buildChatRequestOptions, type ChatRequestOptions, type ThinkingMode, ty
 import { WorkspaceModeControl } from "./WorkspaceModeControl";
 import "./compactComposer.css";
 
+export interface RestoredComposerDraft {
+  id: string;
+  text: string;
+  resources: Array<{ id: string; name: string }>;
+}
+
 interface ChatInputProps {
   onSend: (text: string, resourceIds?: string[], options?: ChatRequestOptions) => void | boolean | Promise<void | boolean>;
   conversationId?: string | null;
   isLoading: boolean;
+  disabled?: boolean;
   onStop?: () => void;
   suggestedText?: string;
   onTextUsed?: () => void;
+  restoredDraft?: RestoredComposerDraft | null;
   /** Injected by GlobalVoiceHost so chat capture cannot create a second runtime. */
   chatVoiceControls?: ChatVoiceControls | null;
   onRequestGlobalVoiceSession?: () => void;
@@ -39,9 +46,11 @@ export default function ChatInput({
   onSend,
   conversationId,
   isLoading,
+  disabled = false,
   onStop,
   suggestedText,
   onTextUsed,
+  restoredDraft,
   chatVoiceControls = null,
   onRequestGlobalVoiceSession,
   workspaceMode = "chat",
@@ -56,21 +65,33 @@ export default function ChatInput({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
   const sendInFlight = useRef(false);
-  const queue = useMemo(() => {
-    const next = new AttachmentQueue({
-      upload: async (file, signal) => {
+  const [queueOwner,setQueueOwner]=useState<{conversationId:typeof conversationId;queue:AttachmentQueue}|null>(null);
+  const queue=queueOwner&&queueOwner.conversationId===conversationId?queueOwner.queue:null;
+  useEffect(()=>{
+    const next=new AttachmentQueue({
+      upload:async(file,signal)=>{
         const resource = await ingestResource(file, signal);
-        if (!resource) throw new Error("资源上传失败，请移除后重试");
-        return { id: resource.id };
+        if(!resource)throw new Error("资源上传失败，请移除后重试");
+        return {id:resource.id};
       },
-      preview: getResourcePreview,
-      changed: () => setAttachments(next.snapshot()),
+      preview:getResourcePreview,
+      changed:()=>setAttachments(next.snapshot()),
     });
-    return next;
-  }, [conversationId]);
-  useEffect(() => { setAttachments(queue.snapshot()); return () => queue.dispose(); }, [queue]);
+    setAttachments([]);setQueueOwner({conversationId,queue:next});
+    return()=>next.dispose();
+  },[conversationId]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const restoredId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!queue || !restoredDraft || restoredId.current === restoredDraft.id) return;
+    setInput(restoredDraft.text);
+    queue.restore(restoredDraft.resources);
+    restoredId.current = restoredDraft.id;
+    setResourceNotice(restoredDraft.resources.length ? "已恢复当前对话绑定的附件，可调整后发送" : "");
+    textareaRef.current?.focus();
+  }, [queue, restoredDraft]);
 
   useEffect(() => {
     if (!suggestedText) return;
@@ -96,9 +117,9 @@ export default function ChatInput({
   }, [input, workspaceMode]);
 
   const pendingAttachments = attachments.some(item => item.state !== "ready" && item.state !== "removed");
-  const canSend = Boolean(input.trim() || queue.readyIds().length) && !pendingAttachments && !isLoading && !sending;
+  const canSend = Boolean(queue && (input.trim() || queue.readyIds().length)) && !pendingAttachments && !isLoading && !disabled && !sending;
   const send = async () => {
-    if (!canSend || sendInFlight.current) return;
+    if (!queue || !canSend || sendInFlight.current) return;
     const text = input.trim() || "请查看我附加的文件。";
     sendInFlight.current = true; setSending(true); setResourceNotice("");
     try {
@@ -121,7 +142,7 @@ export default function ChatInput({
   };
 
   const addFiles = (files: File[]) => {
-    if (isLoading || sending) return;
+    if (!queue || isLoading || sending) return;
     try { queue.add(files); setResourceNotice(""); void queue.process(); }
     catch (error) { setResourceNotice(error instanceof Error ? error.message : "附件无效"); }
   };
@@ -134,6 +155,11 @@ export default function ChatInput({
   return (
     <div className="home-composer compact-composer w-full" data-workspace-mode={workspaceMode} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); addFiles(Array.from(event.dataTransfer.files)); }}>
       <div className="composer-card conversation-composer-inner">
+        {(attachments.some(item => item.state !== "removed") || resourceNotice || modeError) && <div className="composer-feedback">
+          <ResourceAttachments items={attachments} onRemove={id => queue?.remove(id)}/>
+          {resourceNotice && <p className="text-caption text-[var(--text-muted)]" role="status">{resourceNotice}</p>}
+          {modeError && <p className="text-caption text-[var(--danger)]" role="alert">{modeError}</p>}
+        </div>}
         <div className="composer-mode-slot"><WorkspaceModeControl mode={workspaceMode} onChange={onWorkspaceModeChange} disabled={isLoading || sending || modeChanging} /></div>
         <textarea
           ref={textareaRef}
@@ -144,7 +170,7 @@ export default function ChatInput({
           placeholder={workspaceMode === "chat" ? "和小昔涟聊聊…" : workspaceMode === "work" ? "描述你希望完成的工作…" : "写下想法，开始创造…"}
           aria-label="聊天输入"
           rows={1}
-          disabled={isLoading}
+          disabled={isLoading || disabled}
           title="Enter 发送 · Shift + Enter 换行"
           className="composer-textarea"
         />
@@ -157,11 +183,7 @@ export default function ChatInput({
           {isLoading ? <Button type="button" className="composer-send" iconOnly size="sm" variant="danger" onClick={onStop} title="停止执行" aria-label="停止执行"><Square size={16}/></Button>
             : <Button type="button" className="composer-send" iconOnly size="sm" loading={sending} loadingLabel="正在提交" onClick={() => void send()} disabled={!canSend || sending} title="发送消息" aria-label="发送消息"><Send size={16}/></Button>}
         </div>
-        {(attachments.some(item => item.state !== "removed") || resourceNotice || modeError) && <div className="composer-feedback">
-          <ResourceAttachments items={attachments} onRemove={id => queue.remove(id)}/>
-          {resourceNotice && <p className="text-caption text-[var(--text-muted)]" role="status">{resourceNotice}</p>}
-          {modeError && <p className="text-caption text-[var(--danger)]" role="alert">{modeError}</p>}
-        </div>}
+
       </div>
     </div>
   );

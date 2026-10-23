@@ -7,14 +7,14 @@ export interface AttachmentQueueOptions {
 }
 export const MAX_ATTACHMENTS = 8;
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-const EXTENSIONS = new Set(["txt", "md", "markdown", "csv", "tsv", "rs", "ts", "tsx", "js", "jsx", "json", "py", "css", "html", "yaml", "yml", "toml", "xml", "sql", "log", "png", "jpg", "jpeg", "pdf", "docx", "xlsx"]);
+const EXTENSIONS = new Set(["txt", "md", "markdown", "csv", "tsv", "rs", "ts", "tsx", "js", "jsx", "json", "py", "css", "html", "yaml", "yml", "toml", "xml", "sql", "log", "png", "jpg", "jpeg", "pdf", "docx", "pptx", "xlsx"]);
 
 export function validateAttachment(file: Pick<File, "name" | "size" | "type">): string | null {
   if (!file.size || file.size > MAX_ATTACHMENT_BYTES) return "文件须为 1 字节至 25 MiB";
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (!EXTENSIONS.has(extension)) return "暂不支持此文件类型";
   const declared = file.type.split(";")[0].trim().toLowerCase();
-  const expected: Record<string,string> = { png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",pdf:"application/pdf",docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+  const expected: Record<string,string> = { png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",pdf:"application/pdf",docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",pptx:"application/vnd.openxmlformats-officedocument.presentationml.presentation",xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
   if (declared && declared !== "application/octet-stream") {
     if (expected[extension] ? declared !== expected[extension] : !(declared.startsWith("text/") || ["application/json","application/xml","application/javascript"].includes(declared))) return "文件类型与 MIME 不一致";
   }
@@ -29,6 +29,14 @@ export class AttachmentQueue {
   private processing: Promise<void> | null = null;
   private disposed = false;
   constructor(private options: AttachmentQueueOptions) {}
+  restore(resources: Array<{ id: string; name: string }>): void {
+    if (this.disposed) return;
+    this.controllers.forEach(controller => controller.abort());
+    this.controllers.clear();
+    this.files.clear();
+    this.items = resources.map(resource => ({ id: crypto.randomUUID(), name: resource.name, state: "ready", resourceId: resource.id }));
+    this.options.changed?.();
+  }
   add(files: File[]): void {
     if (this.disposed) return;
     if (this.items.filter(item => item.state !== "removed").length + files.length > MAX_ATTACHMENTS) throw new Error("一次最多添加 8 个文件");

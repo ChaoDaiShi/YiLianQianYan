@@ -25,7 +25,7 @@ export const API_BASE =
   "http://127.0.0.1:9420";
 
 /** A request that could not be completed. `status` is 0 for a transport error. */
-export type ApiFailure = { ok: false; status: number; error: string };
+export type ApiFailure = { ok: false; status: number; error: string; details?: Record<string, unknown> };
 
 export type ApiResult<T> = { ok: true; data: T } | ApiFailure;
 
@@ -74,23 +74,26 @@ export async function request<T>(
 export async function requestResult<T>(
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  includeErrorDetails = false,
 ): Promise<ApiResult<T>> {
   try {
     const res = await fetch(`${API_BASE}${path}`, jsonInit(method, body));
     const text = await res.text();
     if (!res.ok) {
       let error = `HTTP ${res.status}`;
+      let details: Record<string, unknown> | undefined;
       try {
         const parsed = JSON.parse(text) as { error?: string; message?: string };
         if (parsed && typeof parsed === "object") {
+          if (includeErrorDetails) details = parsed as Record<string, unknown>;
           const msg = parsed.error || parsed.message;
           if (msg) error = String(msg);
         }
       } catch {
         if (text.trim()) error = text.trim();
       }
-      return { ok: false, status: res.status, error };
+      return { ok: false, status: res.status, error, ...(details ? { details } : {}) };
     }
     if (!text) return { ok: true, data: {} as T };
     return { ok: true, data: JSON.parse(text) as T };

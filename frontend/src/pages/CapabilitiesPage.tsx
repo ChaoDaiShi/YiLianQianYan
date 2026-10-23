@@ -118,7 +118,7 @@ export function CapabilityRegistryContent({ initialKind = "all" }: { initialKind
   };
 
   return (
-    <ManagementFrame embedded
+    <ManagementFrame embedded variant="workspace"
       title="能力"
       description="了解忆涟能做什么，查看可用状态与所需权限。"
       className="capability-page page-canvas ui-opt-capabilities"
@@ -141,7 +141,7 @@ export function CapabilityRegistryContent({ initialKind = "all" }: { initialKind
         </>
       }
     >
-      <div className="capability-page-body">
+      <div className="capability-page-body capability-page-body-split">
         {report && (
           <div className="capability-refresh-report" role="status">
             发现 {report.discovered} · 就绪 {report.ready} · 不可用 {report.unavailable} · 重复 {report.duplicates} · Provider 失败 {report.provider_failures}

@@ -4,6 +4,58 @@
 // borrowing them from the legacy bundle.
 import { requestResult } from "../core/api/http";
 
+export interface MemoryGovernance {
+  memory_id: string;
+  revision: number;
+  status: "active" | "withdrawn";
+  scope: string;
+  source_ref: string | null;
+  reason: string;
+  content_hash: string;
+  embedding_revision: number | null;
+  embedding_model: string | null;
+  embedding_dimension: number | null;
+  embedding_generation: number | null;
+  valid_from: number | null;
+  valid_until: number | null;
+}
+
+export interface MemoryVersion {
+  revision: number; content: string; category: string; source: string;
+  source_ref: string | null; scope: string; status: string; reason: string;
+  recorded_at: number; valid_from: number | null; valid_until: number | null;
+}
+
+export async function getMemoryGovernance(id: string): Promise<MemoryGovernance> {
+  const result = await requestResult<MemoryGovernance>("GET", `/api/memories/${encodeURIComponent(id)}/governance`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
+export async function getMemoryHistory(id: string): Promise<MemoryVersion[]> {
+  const result = await requestResult<MemoryVersion[]>("GET", `/api/memories/${encodeURIComponent(id)}/history`);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
+export async function correctMemory(id: string, data: { content: string; expected_revision: number; reason: string; scope?: string; source_ref?: string }): Promise<MemoryRecord> {
+  const result = await requestResult<MemoryRecord>("POST", `/api/memories/${encodeURIComponent(id)}/correct`, data);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
+export async function withdrawMemory(id: string, data: { expected_revision: number; reason: string }): Promise<MemoryGovernance> {
+  const result = await requestResult<MemoryGovernance>("POST", `/api/memories/${encodeURIComponent(id)}/withdraw`, data);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
+export async function listWithdrawnMemories(): Promise<MemoryRecord[]> {
+  const result = await requestResult<MemoryRecord[]>("GET", "/api/memories/withdrawn");
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
 // ── Memories ──
 
 export interface MemoryRecord {

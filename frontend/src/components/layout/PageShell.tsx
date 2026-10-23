@@ -100,7 +100,7 @@ export default function PageShell({
   return (
     <div
       className={cn(
-        "page-canvas relative h-full w-full overflow-hidden bg-transparent",
+        "page-canvas relative h-full min-h-0 min-w-0 w-full overflow-hidden bg-transparent",
         !hasCustomDisplay && "flex flex-col",
         className,
       )}
