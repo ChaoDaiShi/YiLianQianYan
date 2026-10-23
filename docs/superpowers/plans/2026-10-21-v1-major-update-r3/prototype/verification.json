@@ -1,0 +1,218 @@
+{
+  "kind": "standalone_prototype_only",
+  "browser_path_reason": "Browser plugin not available",
+  "screenshots": [
+    {
+      "id": "chat",
+      "title": "已有对话",
+      "route": "/chat/:id",
+      "file": "screenshots/01-chat.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "home",
+      "title": "新对话",
+      "route": "/chat",
+      "file": "screenshots/02-home.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "canvas",
+      "title": "消息画布",
+      "route": "/connectors",
+      "file": "screenshots/03-canvas.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "workspaces",
+      "title": "工作空间",
+      "route": "/workspaces",
+      "file": "screenshots/04-workspaces.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "workspace",
+      "title": "空间详情",
+      "route": "/workspaces/:id",
+      "file": "screenshots/05-workspace.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "capabilities",
+      "title": "能力入口",
+      "route": "/capabilities",
+      "file": "screenshots/06-capabilities.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "tools",
+      "title": "工具管理",
+      "route": "能力 → 工具",
+      "file": "screenshots/07-tools.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "agents",
+      "title": "智能体",
+      "route": "/agents",
+      "file": "screenshots/08-agents.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "memory",
+      "title": "记忆",
+      "route": "/memory",
+      "file": "screenshots/09-memory.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "knowledge",
+      "title": "知识库",
+      "route": "/knowledge",
+      "file": "screenshots/10-knowledge.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "settings",
+      "title": "设置总览",
+      "route": "/settings",
+      "file": "screenshots/11-settings.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "settings-expanded",
+      "title": "设置分组展开",
+      "route": "/settings",
+      "file": "screenshots/12-settings-expanded.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "monitor",
+      "title": "监控",
+      "route": "/system",
+      "file": "screenshots/13-monitor.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "logs",
+      "title": "日志",
+      "route": "/logs",
+      "file": "screenshots/14-logs.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "account",
+      "title": "账号与隐私",
+      "route": "/account",
+      "file": "screenshots/15-account.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "setup",
+      "title": "首次配置",
+      "route": "/setup",
+      "file": "screenshots/16-setup.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "automation",
+      "title": "时间任务",
+      "route": "拟新增 /automations",
+      "file": "screenshots/17-automation.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "channels",
+      "title": "消息渠道",
+      "route": "拟新增 /channels",
+      "file": "screenshots/18-channels.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "learning",
+      "title": "资料学习",
+      "route": "拟新增空间页签",
+      "file": "screenshots/19-learning.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "outputs",
+      "title": "创造与成果",
+      "route": "空间成果 / 当前结果面板",
+      "file": "screenshots/20-outputs.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "more",
+      "title": "更多功能",
+      "route": "/more",
+      "file": "screenshots/21-more.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "plugin",
+      "title": "插件功能弹窗",
+      "route": "/more/plugins/:pluginId/:featureId",
+      "file": "screenshots/22-plugin.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "voice",
+      "title": "语音浮层",
+      "route": "global overlay",
+      "file": "screenshots/23-voice.png",
+      "width": 1440,
+      "height": 900
+    }
+  ],
+  "interactions": [
+    "aux_open_close_restores_width",
+    "history_collapse",
+    "process_disclosure",
+    "six_groups_five_model_leaves_editor",
+    "capability_tool_modal_detail",
+    "knowledge_excerpt_escape_focus",
+    "list_filter",
+    "learning_answer_feedback",
+    "mode_selection"
+  ],
+  "viewports": [
+    {
+      "width": 800,
+      "height": 600,
+      "pages": 20,
+      "status": "PASS"
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "pages": 20,
+      "status": "PASS"
+    }
+  ],
+  "errors": [],
+  "failedRequests": [],
+  "status": "PASS"
+}

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>忆涟千言 · v1 页面预览 R2</title>
+<style>
+:root{font-family:"Microsoft YaHei","Segoe UI",sans-serif;color:#292536;background:#f8f6fd}
+*{box-sizing:border-box}body{margin:0}a{color:#a43c75}button,select{font:inherit}button,a,select{touch-action:manipulation}
+header{padding:22px 28px;background:white;border-bottom:1px solid #e9e2ef;display:flex;align-items:center;justify-content:space-between;gap:20px}
+h1{font-size:21px;margin:0 0 6px}p{line-height:1.7;margin:0;color:#696276}.badge{font-size:12px;background:#fce8f2;border-radius:12px;padding:5px 10px;color:#9d346a}
+.layout{display:grid;grid-template-columns:224px minmax(0,1fr);min-height:calc(100vh - 100px)}
+nav{padding:18px 12px;border-right:1px solid #e9e2ef;background:#fff;max-height:calc(100vh - 104px);overflow:auto;position:sticky;top:0}
+nav a{display:block;padding:10px 12px;margin:3px 0;border-radius:8px;text-decoration:none;color:#696276;font-size:14px}
+nav a[aria-current="page"]{background:#fbe5f0;color:#a43c75;font-weight:600}
+main{padding:22px;min-width:0}.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+h2{font-size:19px;margin:0;flex:1}button,.original{padding:8px 13px;border:1px solid #ddd4e5;border-radius:8px;background:#fff;color:#51475c;text-decoration:none;font-size:14px;cursor:pointer}
+button:disabled{opacity:.4;cursor:default}:focus-visible{outline:3px solid #ea91b9;outline-offset:3px}
+figure{margin:0;background:white;border:1px solid #e9e2ef;border-radius:12px;overflow:hidden}
+figure img{display:block;width:100%;height:auto}figcaption{padding:16px 18px}
+.route{font-size:12px;margin:8px 0;color:#81758b;overflow-wrap:anywhere}
+footer{font-size:12px;color:#81758b;margin-top:16px;line-height:1.8}
+.mobile-select{display:none}
+@media(max-width:800px){header{padding:16px}.layout{display:block}nav{display:none}main{padding:12px}.mobile-select{display:block;width:100%;padding:10px;margin-bottom:14px;border:1px solid #ddd4e5;border-radius:8px;background:white}h2{font-size:16px}}
+</style>
+</head>
+<body>
+<header><div><h1>忆涟千言 · v1 页面预览</h1><p>完整功能，按需展开 · R2 / 20 张页面图</p></div><span class="badge">概念设计 · 非运行截图</span></header>
+<div class="layout">
+<nav aria-label="预览页面"><a href="#01-chat" data-id="01-chat">01　简洁对话主页</a>
+<a href="#02-canvas" data-id="02-canvas">02　消息画布</a>
+<a href="#03-workspaces" data-id="03-workspaces">03　工作空间</a>
+<a href="#04-workspace-code" data-id="04-workspace-code">04　空间详情与代码协作</a>
+<a href="#05-capabilities" data-id="05-capabilities">05　能力中心</a>
+<a href="#06-agents" data-id="06-agents">06　智能体与角色</a>
+<a href="#07-memory" data-id="07-memory">07　记忆</a>
+<a href="#08-knowledge" data-id="08-knowledge">08　知识库</a>
+<a href="#09-settings" data-id="09-settings">09　设置画布</a>
+<a href="#10-monitor" data-id="10-monitor">10　监控</a>
+<a href="#11-logs" data-id="11-logs">11　日志</a>
+<a href="#12-account" data-id="12-account">12　账号与隐私</a>
+<a href="#13-setup" data-id="13-setup">13　首次配置</a>
+<a href="#14-more" data-id="14-more">14　更多功能</a>
+<a href="#15-plugin" data-id="15-plugin">15　插件功能页</a>
+<a href="#16-automation" data-id="16-automation">16　定时任务</a>
+<a href="#17-learning" data-id="17-learning">17　资料学习</a>
+<a href="#18-create" data-id="18-create">18　创作与成果</a>
+<a href="#19-voice" data-id="19-voice">19　语音通话</a>
+<a href="#20-channels" data-id="20-channels">20　外部消息渠道</a></nav>
+<main>
+<select class="mobile-select" aria-label="选择预览页面"><option value="01-chat">简洁对话主页</option><option value="02-canvas">消息画布</option><option value="03-workspaces">工作空间</option><option value="04-workspace-code">空间详情与代码协作</option><option value="05-capabilities">能力中心</option><option value="06-agents">智能体与角色</option><option value="07-memory">记忆</option><option value="08-knowledge">知识库</option><option value="09-settings">设置画布</option><option value="10-monitor">监控</option><option value="11-logs">日志</option><option value="12-account">账号与隐私</option><option value="13-setup">首次配置</option><option value="14-more">更多功能</option><option value="15-plugin">插件功能页</option><option value="16-automation">定时任务</option><option value="17-learning">资料学习</option><option value="18-create">创作与成果</option><option value="19-voice">语音通话</option><option value="20-channels">外部消息渠道</option></select>
+<div class="toolbar"><h2 id="title"></h2><button id="previous" type="button">上一页</button><button id="next" type="button">下一页</button><a class="original" id="original" target="_blank" rel="noopener">查看原图 ↗</a></div>
+<figure><img id="preview" src="01-chat.png" alt="简洁对话主页概念图"><figcaption><p id="note"></p><div class="route" id="route"></div></figcaption></figure>
+<footer>图内任务、文件、记录、时间及状态均为示意；准确功能和文案以开发文档为准。<br>此图册仅支持翻页查看图片，图片中的应用按钮不能执行业务操作。支持键盘 ← → 翻页。<br><a href="../product-experience-r2.md">产品与交互规格</a> · <a href="../../2026-10-21-v1-major-update.md">主开发文档</a> · <a href="README.md">全部图片索引</a></footer>
+</main></div>
+<script>
+const items=[{"id":"01-chat","title":"简洁对话主页","file":"01-chat.png","route":"/chat/:id","note":"默认只看对话与结果；历史、过程、资料和高级设置按需展开。"},{"id":"02-canvas","title":"消息画布","file":"02-canvas.png","route":"/connectors","note":"只呈现消息分支，选择节点后继续对话；不混入工作流编辑器。"},{"id":"03-workspaces","title":"工作空间","file":"03-workspaces.png","route":"/workspaces","note":"以空间列表为主，保留最近成果入口。"},{"id":"04-workspace-code","title":"空间详情与代码协作","file":"04-workspace-code.png","route":"/workspaces/:id","note":"文件与预览为主；修改对比、Git 和验证展开查看。"},{"id":"05-capabilities","title":"能力中心","file":"05-capabilities.png","route":"/capabilities","note":"按类别管理能力，状态与配置入口放在条目中。"},{"id":"06-agents","title":"智能体与角色","file":"06-agents.png","route":"/agents","note":"一次编辑一个角色，能力与模型使用折叠区。"},{"id":"07-memory","title":"记忆","file":"07-memory.png","route":"/memory","note":"使用列表和行内详情管理偏好、来源及归档。"},{"id":"08-knowledge","title":"知识库","file":"08-knowledge.png","route":"/knowledge","note":"集合与文档列表分开，阅读和用于对话是主要动作。"},{"id":"09-settings","title":"设置画布","file":"09-settings.png","route":"/settings","note":"保留设置画布，默认显示分组而非所有设置项。"},{"id":"10-monitor","title":"监控","file":"10-monitor.png","route":"/system","note":"先看服务状态，用量明细再展开；图表是示意数据。"},{"id":"11-logs","title":"日志","file":"11-logs.png","route":"/logs","note":"用记录表格浏览日志，技术详情在单条记录中查看。"},{"id":"12-account","title":"账号与隐私","file":"12-account.png","route":"/account","note":"本地使用、同步与隐私分开，登录保持可选。"},{"id":"13-setup","title":"首次配置","file":"13-setup.png","route":"/setup","note":"一次配置一个步骤，实际连接测试独立于保存。"},{"id":"14-more","title":"更多功能","file":"14-more.png","route":"/more","note":"专项功能集中入口，默认不将业务面板堆到首页。"},{"id":"15-plugin","title":"插件功能页","file":"15-plugin.png","route":"/more/plugins/:pluginId/:featureId","note":"插件复用声明式能力表单，不建立任意网页插件宿主。"},{"id":"16-automation","title":"定时任务","file":"16-automation.png","route":"/automations（拟新增）","note":"任务列表、启停和下次时间为主，详情按需查看。"},{"id":"17-learning","title":"资料学习","file":"17-learning.png","route":"/workspaces/:id/learning（拟新增）","note":"围绕当前资料与练习，来源和历史使用次级入口。"},{"id":"18-create","title":"创作与成果","file":"18-create.png","route":"/workspaces/:id/creation（拟新增）","note":"文稿编辑与版本管理；图片、办公文档通过页签进入。"},{"id":"19-voice","title":"语音通话","file":"19-voice.png","route":"全局语音浮层","note":"语音浮层保留输入框；文字与语音属于同一会话。"},{"id":"20-channels","title":"外部消息渠道","file":"20-channels.png","route":"/channels（拟新增）","note":"逐渠道配置；图中全部未连接，不代表已接通服务。"}];
+let current=0;
+function show(){
+ const id=location.hash.slice(1);
+ const found=items.findIndex(x=>x.id===id);
+ current=found<0?0:found;
+ const item=items[current];
+ document.getElementById("title").textContent=(current+1)+" / "+items.length+" · "+item.title;
+ const img=document.getElementById("preview");img.src=item.file;img.alt=item.title+" · 概念预览";
+ document.getElementById("note").textContent=item.note;
+ document.getElementById("route").textContent="产品入口："+item.route;
+ document.getElementById("original").href=item.file;
+ document.getElementById("previous").disabled=current===0;document.getElementById("next").disabled=current===items.length-1;
+ document.querySelectorAll("nav a").forEach(a=>{if(a.dataset.id===item.id)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");});
+ document.querySelector("select").value=item.id;
+}
+function move(delta){const index=current+delta;if(index>=0&&index<items.length)location.hash=items[index].id;}
+document.getElementById("previous").addEventListener("click",()=>move(-1));
+document.getElementById("next").addEventListener("click",()=>move(1));
+document.querySelector("select").addEventListener("change",event=>{location.hash=event.target.value;});
+document.addEventListener("keydown",event=>{if(["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName))return;if(event.key==="ArrowRight"){event.preventDefault();move(1);}if(event.key==="ArrowLeft"){event.preventDefault();move(-1);}});
+window.addEventListener("hashchange",show);show();
+</script></body></html>

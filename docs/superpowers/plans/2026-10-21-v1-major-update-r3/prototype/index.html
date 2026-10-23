@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>忆涟千言 R3 · 页面交互原型</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="preview-bar"><span>R3 交互原型 · 示例数据 · 不连接后端</span><label>预览页面 <select id="preview-select" aria-label="选择预览页面"></select></label><a href="../README.md">研究与开发文档 ↗</a></div>
+<div class="app">
+<nav class="nav-rail" aria-label="主导航">
+<a class="logo" href="#home"><img src="assets/favicon.png" alt="忆涟千言"></a>
+<div id="nav-main"></div><div class="nav-bottom" id="nav-bottom"></div>
+</nav>
+<div id="surface"></div>
+</div>
+<dialog id="dialog"><form method="dialog"><header><h2 id="dialog-title"></h2><button aria-label="关闭对话框" class="icon-button">×</button></header></form><div id="dialog-content"></div></dialog>
+<div id="notice" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

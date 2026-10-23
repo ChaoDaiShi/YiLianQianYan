@@ -1,0 +1,450 @@
+{
+  "research_date": "2026-10-21",
+  "local_head": "bec18552cbdb8ddb23de0215254b3c3376d7fc22",
+  "local_branch": "develop",
+  "remote_head": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+  "local_inspection": "focused code, global symbol searches, repository reports and 3 saved actual screenshots; no product tests rerun",
+  "local_files": [
+    {
+      "path": "frontend/src/surfaces/workspace/WorkspaceSurface.tsx",
+      "sha256": "69dc134c190ae1568241d6f2e9bcc5c07ac7b31791671cb2e58445e4588500cd",
+      "bytes": 2991
+    },
+    {
+      "path": "frontend/src/components/layout/navRegistry.ts",
+      "sha256": "58b16fef7bc947f793c9689a2b7d5f337f5f9c37b91ba4997d8cc4e59bd45a5b",
+      "bytes": 2971
+    },
+    {
+      "path": "frontend/src/components/chat/ChatInput.tsx",
+      "sha256": "df61657b4ef6a6904d78408786f0e52269e7911f0cfefce0fda4643388841553",
+      "bytes": 8527
+    },
+    {
+      "path": "frontend/src/components/chat/ChatView.tsx",
+      "sha256": "ebbcb5733f1d7910fd972e1c1b47a76c1d904efa01ca12881c6d4b83d1bb5e41",
+      "bytes": 16478
+    },
+    {
+      "path": "frontend/src/api/chat.ts",
+      "sha256": "b77dd6da312da0c95d1f9698a0ce715c0766a0c182b69424b01b3119d788f524",
+      "bytes": 5287
+    },
+    {
+      "path": "frontend/src/features/execution/chatRuntime.ts",
+      "sha256": "b9c2437bfff43ff9e4cdb3d522b328e55402ef9642e53bd8db7bc6471d1ffbb7",
+      "bytes": 921
+    },
+    {
+      "path": "frontend/src/features/execution/conversationRuntime.ts",
+      "sha256": "e040149c8ab009622a96a5995bd75b0e51454701d7c04320e1c68bcfb20e682d",
+      "bytes": 14777
+    },
+    {
+      "path": "frontend/src/components/chat/currentTaskEntry.ts",
+      "sha256": "e37c7d7b4643ef3025bde1b9eb1dd0286473516946c340b7ac60a733ca02011e",
+      "bytes": 247
+    },
+    {
+      "path": "frontend/src/features/settings/canvas/settingsGraph.ts",
+      "sha256": "56616f975f85930bca3e83532af1ad6fdb0058928fb41c66593f63a7e59b26b9",
+      "bytes": 7150
+    },
+    {
+      "path": "frontend/src/features/capabilities/CapabilityNavigation.tsx",
+      "sha256": "19eaef400cfd5770438ccd389b5cd4729715a25b1a912a299626e52f58ff8466",
+      "bytes": 3561
+    },
+    {
+      "path": "frontend/src/features/workflows/TaskGraphWorkflowList.tsx",
+      "sha256": "fb40f1ba856c90b8a687ac909cf92c3a549293d8f5e875eb7eb2d075f9e413a0",
+      "bytes": 4479
+    },
+    {
+      "path": "backend/src/api/chat.rs",
+      "sha256": "e627d834618b6bd54855147d3af90a6e7eebc328228951d0d0f44b9b0a62099f",
+      "bytes": 82082
+    },
+    {
+      "path": "backend/src/api/chat_runtime.rs",
+      "sha256": "85db1523c2088b4da57100b8e11fc20cb01da16b8f9537ba0909e7930b398892",
+      "bytes": 20698
+    },
+    {
+      "path": "backend/src/api/chat_lifecycle.rs",
+      "sha256": "310648e3d0c01fcb9234be0ab1f0bc74f95aa0d018236e5669ddb7047e1147ce",
+      "bytes": 19204
+    },
+    {
+      "path": "backend/src/api/chat_grounding.rs",
+      "sha256": "6536331dc5143501cba6e5ae2502a587209e2842276e67112448cbd79a1e9f06",
+      "bytes": 3770
+    },
+    {
+      "path": "backend/src/api/approvals.rs",
+      "sha256": "3b775a8cff0fb039ed25f7dda4dd26a2702bfbf6f17a5efff70597724367d04c",
+      "bytes": 106399
+    },
+    {
+      "path": "backend/src/agent/engine.rs",
+      "sha256": "0b1fdc18e486fc698a028e50c44fc458aab868ade437297559517c9ef8f7a86c",
+      "bytes": 59885
+    },
+    {
+      "path": "backend/src/agent/state.rs",
+      "sha256": "87673f319ba2ce34a028e8fe3cfb76c693f81a2d010de3227f6ce48da3a6fcea",
+      "bytes": 5618
+    },
+    {
+      "path": "backend/src/config/types.rs",
+      "sha256": "92c11a219131db7f6431e6f7ab177692f1ccdd3ed960e534fe01e8f30e42abd3",
+      "bytes": 23239
+    },
+    {
+      "path": "backend/src/db/conversations.rs",
+      "sha256": "d002b89b238ed38f2b591f1a9409e21f38f7048c726891c2067f1e21eabc8c21",
+      "bytes": 29692
+    },
+    {
+      "path": "backend/src/db/resource_bindings.rs",
+      "sha256": "83620027fd41206bef09773b32a6e696eec08dbeacebc437463fd8d7e471c8b3",
+      "bytes": 9974
+    },
+    {
+      "path": "backend/src/modules/resource/binding.rs",
+      "sha256": "6f1979cd9d8266544a580db8e02765f0c0bad24838a149b91accbcc2497deb73",
+      "bytes": 2683
+    },
+    {
+      "path": "backend/src/db/knowledge.rs",
+      "sha256": "9162fd23faa463f4935a957c8b219dbf7543c3a3d0546f598921bcbd29cc8b4c",
+      "bytes": 11165
+    },
+    {
+      "path": "backend/src/db/knowledge/context.rs",
+      "sha256": "112cfef0c48d0fe687f25c6fdda323c9185a547bb5ef94af6117dab9468094c5",
+      "bytes": 12529
+    },
+    {
+      "path": "backend/src/db/memories.rs",
+      "sha256": "0abc2f10e45bc43ca0472f7c4dc170cbb8e092df5c6038039d3730fc0524fc3b",
+      "bytes": 29253
+    },
+    {
+      "path": "backend/src/db/connector_messages/overview.rs",
+      "sha256": "6083951daf24af788dcea3334fae0df17b02b6c0bdca8424eb0261454e0596ea",
+      "bytes": 12130
+    },
+    {
+      "path": "backend/src/tools/basic_services.rs",
+      "sha256": "bfca21228266313657245d9bbe091180ef263a843cec5966b4f4b0b4348ef37d",
+      "bytes": 12401
+    },
+    {
+      "path": "backend/src/integrations/llm/types.rs",
+      "sha256": "b8158d10a155607e593bf9b47520d1a651f5dabfc208786a8a82689686a44c43",
+      "bytes": 7362
+    },
+    {
+      "path": "backend/src/modules/task/artifact.rs",
+      "sha256": "196a251fc71d6b7c87994eef0c41b474c8691326322c6c5a4dab7014e16feaca",
+      "bytes": 22154
+    },
+    {
+      "path": "backend/src/modules/task/model.rs",
+      "sha256": "dda9a9fe7762070fb961fc6edec9c094d997f3ae765cf728a532d135ee459fe6",
+      "bytes": 18623
+    },
+    {
+      "path": "backend/src/api/tasks.rs",
+      "sha256": "65691e4f72fb5d7decd5d3201c6007033084100c1c36bf38edc06f5258b9e970",
+      "bytes": 19306
+    },
+    {
+      "path": "backend/src/modules/task/scheduler.rs",
+      "sha256": "4baf54f8f8a31685d6cfa07c1e3c5490929071106dfc4e4c53d2a5b2d32d1b60",
+      "bytes": 12198
+    },
+    {
+      "path": "backend/src/tools/skill/compatibility.rs",
+      "sha256": "2066ab99ab1ab93dc9b8f7493ff578e894b3f5a8432f9a03a971907307fa209d",
+      "bytes": 13958
+    },
+    {
+      "path": "backend/src/plugin/manifest.rs",
+      "sha256": "8164ffc409144dac3d2f17e79232f8f358f4c663af73b689f0b9190fa97b2798",
+      "bytes": 7736
+    },
+    {
+      "path": "backend/src/api/agent_persona.rs",
+      "sha256": "d9cfaf4dba233d2a43f5551ab0216f16c339bb757cf25348deb5642093fa9a6a",
+      "bytes": 6664
+    },
+    {
+      "path": "backend/src/api/workspace_git.rs",
+      "sha256": "787adff95677e1a77dfd463e2fded3896f907d92669c28e1c01920f42e687f0a",
+      "bytes": 4033
+    },
+    {
+      "path": "frontend/src/theme/presets.ts",
+      "sha256": "197bded356475a46dbd7424e053453f3bd5a7cffe620633a3aea2bbf02ee20ff",
+      "bytes": 11122
+    },
+    {
+      "path": "frontend/package.json",
+      "sha256": "14d279a8973a4aa102cefbf065c58f75c6468ac8ac80f2b8f5504da834f48d63",
+      "bytes": 1042
+    },
+    {
+      "path": "plugins/browser-adapter/README.md",
+      "sha256": "1cbc4bb866b40536f92c2ea6776d42f017e2861c5e915339b52eddd872fd09ce",
+      "bytes": 3624
+    },
+    {
+      "path": "docs/pid/2026-10-20-connector-workbench/revision-7-results.md",
+      "sha256": "e8b3228be42b702a51aea7ced02164fe34c9067671715380a37abb7b4359712e",
+      "bytes": 6977
+    },
+    {
+      "path": "docs/pid/2026-10-20-connector-workbench/revision7-previews/index.md",
+      "sha256": "f3d52bbd225a21ed9084170eff5e5153bdc659683e2dce2136a48d5fd1311383",
+      "bytes": 1993
+    }
+  ],
+  "remote_files": [
+    {
+      "path": "src/main/orchestrator/harness/cyrene-harness.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/orchestrator/harness/cyrene-harness.ts",
+      "line_count": 762,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/orchestrator/mode-prompt-profile.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/orchestrator/mode-prompt-profile.ts",
+      "line_count": 20,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/orchestrator/run-capabilities.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/orchestrator/run-capabilities.ts",
+      "line_count": 66,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/orchestrator/chat-loop.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/orchestrator/chat-loop.ts",
+      "line_count": 420,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/rag/retriever.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/rag/retriever.ts",
+      "line_count": 161,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/learn/progress/learn-progress-types.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/learn/progress/learn-progress-types.ts",
+      "line_count": 54,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/channels/conversation-binding-store.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/channels/conversation-binding-store.ts",
+      "line_count": 214,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/renderer/react/app/routing/AppRouter.tsx",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/renderer/react/app/routing/AppRouter.tsx",
+      "line_count": 52,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/orchestrator/harness/tool-round.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/orchestrator/harness/tool-round.ts",
+      "line_count": 447,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/orchestrator/harness/compaction.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/orchestrator/harness/compaction.ts",
+      "line_count": 245,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/orchestrator/conversation-transcript-projection.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/orchestrator/conversation-transcript-projection.ts",
+      "line_count": 1208,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/rag/file-ingest.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/rag/file-ingest.ts",
+      "line_count": 58,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/renderer/react/features/chat/components/ChatPageNavigation.tsx",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/renderer/react/features/chat/components/ChatPageNavigation.tsx",
+      "line_count": 158,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/renderer/react/features/chat/components/ChatPagePanelHost.tsx",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/renderer/react/features/chat/components/ChatPagePanelHost.tsx",
+      "line_count": 19,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/renderer/react/features/chat/components/ChatPageInspector.tsx",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/renderer/react/features/chat/components/ChatPageInspector.tsx",
+      "line_count": 205,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/renderer/react/features/chat/components/ChatComposer.tsx",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/renderer/react/features/chat/components/ChatComposer.tsx",
+      "line_count": 900,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/renderer/react/features/chat/components/WorkspacePreview.tsx",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/renderer/react/features/chat/components/WorkspacePreview.tsx",
+      "line_count": 159,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/scheduler/types.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/scheduler/types.ts",
+      "line_count": 95,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/memory/memory-mode.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/memory/memory-mode.ts",
+      "line_count": 29,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/browser/browser-panel-runtime.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/browser/browser-panel-runtime.ts",
+      "line_count": 12,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/browser/browser-panel-controller.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/browser/browser-panel-controller.ts",
+      "line_count": 1351,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/learn/obsidian/obsidian-workspace-service.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/learn/obsidian/obsidian-workspace-service.ts",
+      "line_count": 643,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/scheduler/scheduler-runner.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/scheduler/scheduler-runner.ts",
+      "line_count": 403,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/channels/dispatcher.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/channels/dispatcher.ts",
+      "line_count": 421,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/channels/delivery-service.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/channels/delivery-service.ts",
+      "line_count": 35,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/skills/types.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/skills/types.ts",
+      "line_count": 59,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/code-git/git-service.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/code-git/git-service.ts",
+      "line_count": 546,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/orchestrator/harness/run-store.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/orchestrator/harness/run-store.ts",
+      "line_count": 129,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/memory/memory-manager.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/memory/memory-manager.ts",
+      "line_count": 226,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/memory/memory-conflict.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/memory/memory-conflict.ts",
+      "line_count": 103,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/learn/progress/learn-post-turn.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/learn/progress/learn-post-turn.ts",
+      "line_count": 91,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    },
+    {
+      "path": "src/main/channels/agent-policy.ts",
+      "commit": "dc55c5f66768abf2fe52b3631b7df71b5449cd69",
+      "url": "https://github.com/Playa-Cyrene/Cyrene-Agent/blob/dc55c5f66768abf2fe52b3631b7df71b5449cd69/src/main/channels/agent-policy.ts",
+      "line_count": 63,
+      "inspection": "focused definitions and relevant control flow; not exhaustive audit"
+    }
+  ],
+  "actual_screenshots_viewed": [
+    "docs/pid/2026-10-20-connector-workbench/revision7-previews/chat-no-right-gap-light-browser.png",
+    "docs/pid/2026-10-20-connector-workbench/revision7-previews/settings-inline-expanded-light-browser.png",
+    "docs/pid/2026-10-20-connector-workbench/revision7-previews/message-forest-alternative-path-light-browser.png"
+  ],
+  "limitations": [
+    "Neither product was launched in this research turn.",
+    "Remote screenshot fetch unsuccessful; Cyrene UI conclusions rely on source.",
+    "R3 prototype has demonstration data and no backend connection."
+  ]
+}

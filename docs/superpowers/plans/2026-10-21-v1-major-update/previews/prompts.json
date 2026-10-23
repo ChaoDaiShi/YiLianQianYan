@@ -1,0 +1,133 @@
+{
+  "date": "2026-10-21",
+  "tool": "imagegen built-in",
+  "purpose": "concept previews, not implemented product",
+  "reference": "01-chat.png",
+  "common_prompt": "Create a single high-fidelity Chinese Windows Tauri desktop app page mockup for 忆涟千言. Use the provided simplified mockup as the exact visual reference for window chrome, narrow plum navigation rail, icon style, font scale, rose/lilac palette and restrained rounded corners. It is a STYLE REFERENCE; replace the entire main conversation area with the specific page described below. One image = one full screen, landscape 16:9 at high resolution, straight-on. Do not create a collage. Readable Chinese sans-serif. Very SIMPLE, polished and airy, functional with moderate whitespace. Main background #F8F6FD, white surfaces, text #292536, muted #696276, rose accent #ea91b9, dark plum nav #29263a. No ornamental flowers or anime characters, no busy gradients, no arbitrary metrics, no dense multi-column dashboard, no technical IDs, no disk paths, no markdown syntax in UI. Top slim titlebar app name, small 'v1 页面概念预览', standard Windows controls. Keep 72px left rail: 主页, 画布, 工作空间, 能力, 更多; bottom 设置 and 我的. Only active destination accented. Consistent slim page header with page title left and at most one primary action right. Main work area uses at most TWO content columns; routine detail panes CLOSED unless this page explicitly needs one. Use clean list rows instead of card grids except when requested. Menus are collapsed, do not show all options at once. All data is illustrative, status claims are mockup text, not live evidence. No explanatory captions outside application. SCREEN SPEC:\n",
+  "pages": [
+    {
+      "id": "01-chat",
+      "title": "简洁对话主页",
+      "file": "01-chat.png",
+      "prompt": "简洁对话；历史与详情默认收起，成果以文件行呈现。"
+    },
+    {
+      "id": "02-canvas",
+      "title": "消息画布",
+      "file": "02-canvas.png",
+      "prompt": "Active rail 画布. Header '画布', dropdown 'v1 更新研究', action '+ 新建画布'. One small subtitle '从一段对话，探索不同方向'. Large near-white canvas with faint dot grid, only FIVE well-spaced message nodes connected by fine lavender curves: root '整理 v1 更新方向', child '功能与页面梳理', branching two '深入代码协作' and '完善学习体验', another child '生成开发报告'. Nodes show short one-line excerpts, not metadata fields. Selected node very subtle pink outline. No permanently open properties inspector or resource catalogue. Selected node small contextual button '继续对话'. Bottom left zoom controls + − 100%, bottom right tiny minimap. Huge breathing room. Small secondary top button '全部对话'. This is conversational branching, NOT a workflow builder."
+    },
+    {
+      "id": "03-workspaces",
+      "title": "工作空间",
+      "file": "03-workspaces.png",
+      "prompt": "Active rail 工作空间. Header '工作空间', action '+ 新建空间'. Subheading '把对话、资料和成果放在一起'. Simple search input '搜索工作空间'. Three elegant wide folder list rows, NOT a dashboard: '忆涟千言' description '产品开发与文档' right '最近使用'; '学习笔记' description '课程资料与练习'; '日常创作' description '文章、图片与灵感'. Each folder row contains one quiet secondary action '打开' and ellipsis. Lower section '最近成果' two understated document rows 'v1 更新开发文档.md' and '学习笔记.md'. No task timelines, no graphs, no long filesystem paths."
+    },
+    {
+      "id": "04-workspace-code",
+      "title": "空间详情与代码协作",
+      "file": "04-workspace-code.png",
+      "prompt": "Active rail 工作空间. Header breadcrumb '工作空间 / 忆涟千言', action '开始对话'. Small unobtrusive tabs '文件' selected, '任务', '成果', '定时'. Main two-panel workspace: narrow file tree showing frontend, backend, docs, README.md with README.md selected; large calm text/code preview of README.md with title '忆涟千言' and short Chinese markdown-like rendered content '桌面 AI 工作助手' '运行与开发' '项目说明'. Top of preview only small '预览  修改对比' segmented control and '打开文件' icon. Bottom thin collapsed strip 'Git：2 个文件变更   查看差异 ›' and '验证结果 ›'. No embedded terminal taking half screen, no diagnostics spam. Goal is simple file-oriented workspace, code tools available on demand."
+    },
+    {
+      "id": "05-capabilities",
+      "title": "能力中心",
+      "file": "05-capabilities.png",
+      "prompt": "Active rail 能力. Header '能力', action '+ 添加能力'. Subtitle '为小涟选择合适的方法和工具'. Simple six small category tabs: Skill, 工作流, MCP, 工具, 插件, 导入. Skill selected. Search '搜索技能'. List of FOUR generously spaced rows with icons: '资料研究' / '检索来源并整理有依据的回答' / '已启用'; '文档写作' / '生成可编辑的文档与报告' / '已启用'; '代码协作' / '阅读项目、修改代码并验证' / '已启用'; '图片创作' / '根据描述生成图片' / '需配置'. Rows have restrained chevron and status, no long permission block, no grid of nested cards. At bottom quiet '管理本地发现位置 ›'."
+    },
+    {
+      "id": "06-agents",
+      "title": "智能体与角色",
+      "file": "06-agents.png",
+      "prompt": "Active rail 更多. Header '智能体', action '+ 新建智能体'. Two-column content, narrow simple agent list '小涟' selected, '写作伙伴', '代码助手'; wide uncluttered form for '小涟'. Small abstract rose circle avatar, text '你的日常工作伙伴'. Fields '名称' value '小涟', '表达风格' value '自然、简洁，有条理', '用户提示词' small textarea '理解目标后直接开展工作，清楚说明结果。'. Collapsed sections '能力与资料 ›' and '模型选择 ›'. Single bottom rose '保存'. No relationship scores, no anthropomorphic emotion chart, no permanent tool catalogue."
+    },
+    {
+      "id": "07-memory",
+      "title": "记忆",
+      "file": "07-memory.png",
+      "prompt": "Active rail 更多. Header '记忆', action '+ 添加记忆'. Subtitle '你可以查看、修改，也可以让小涟忘记'. Search '搜索记忆'. Small tabs '当前使用' selected, '已归档'. Four calm list rows: '偏好使用中文交流' tag '偏好' source '你确认的内容'; '当前在开发忆涟千言' tag '项目' source '来自对话'; '说明结果时附上文件位置' tag '偏好'; '学习资料按课程分类' tag '习惯'. Each row ellipsis only. One row selected reveals compact INLINE expanded detail '来源：项目规划对话' link '查看原对话', buttons '修改' '归档'. No giant memory statistics, no neural network illustration, no confidence percentage."
+    },
+    {
+      "id": "08-knowledge",
+      "title": "知识库",
+      "file": "08-knowledge.png",
+      "prompt": "Active rail 更多. Header '知识库', action '+ 导入资料'. Main top search '搜索文档内容'. Left modest list of collections '全部资料', '项目开发' selected, '学习课程', '+ 新建集合'. Main wide list with columns '文档', '类型', '操作': 'v1 开发规格.md' Markdown; '接口说明.pdf' PDF; '项目需求.docx' Word; '调研记录.xlsx' Excel. One selected file row with tiny buttons '阅读' '用于对话'. Bottom subtle hint '也可以将文件拖到这里'. No charts, no indexing percentages, no file contents preview until clicked, no large toolbar."
+    },
+    {
+      "id": "09-settings",
+      "title": "设置画布",
+      "file": "09-settings.png",
+      "prompt": "Active rail 设置. Header '设置', small choice '全局设置 ▾', top-right '管理节点' quiet outlined button. IMPORTANT existing app uses SETTINGS CANVAS, preserve a very simplified grouped canvas rather than converting to a conventional settings list. Main faint dot canvas with central calm rose-bordered small node '小涟' and exactly FOUR grouped setting nodes in cardinal positions around it, neatly connected with thin soft lines: '模型与服务' subtitle '对话 · 语音 · 搜索', '角色与上下文' subtitle '身份 · 记忆 · 压缩', '安全控制' subtitle '权限 · 审批', '外观与交互' subtitle '主题 · 导航 · 通知'. Grouped nodes have small icon and chevron. No individual provider branches or all settings forms visible. Tiny bottom hint '点击分类修改设置'. Keep canvas minimal and spacious."
+    },
+    {
+      "id": "10-monitor",
+      "title": "监控",
+      "file": "10-monitor.png",
+      "prompt": "Active rail 更多. Header '监控', action small '刷新'. Subtitle '当前运行与服务状态'. Main four clean horizontal rows under section '服务': '对话模型' green '可用', '语音识别' green '可用', '图像生成' amber '未配置', '本地运行' neutral '空闲'. Under divider '最近用量' one restrained narrow lavender area/bar chart, 7 daily bars, modest axis and note '仅统计服务商返回的用量'. No giant KPI cards, no pie charts, no fabricated uptime or accuracy, no running task timeline. Everything airy and simple."
+    },
+    {
+      "id": "11-logs",
+      "title": "日志",
+      "file": "11-logs.png",
+      "prompt": "Active rail 更多. Header '日志', action '导出'. One search '搜索执行记录', quiet compact filter '全部类型 ▾'. Simple readable log table 5 rows, columns '时间', '事件', '来源', '结果'. Events '读取项目文档' / '当前对话' / '完成'; '生成开发报告' / '当前对话' / '完成'; '模型调用' / '资料研究' / '完成'; '等待用户回答' / '代码协作' / '待回答'; '定时任务触发' / '每周摘要' / '完成'. Each row has chevron. Bottom selected row detail CLOSED with a small '点击记录查看详情' hint. No terminal wall, no raw JSON, no technical IDs or secret-looking strings."
+    },
+    {
+      "id": "12-account",
+      "title": "账号与隐私",
+      "file": "12-account.png",
+      "prompt": "Active rail 我的. Header '账号'. Main centered max-width 760px. Small avatar circle and '本地使用' heading with subtitle '无需登录，也能使用本机工作空间'. Rose outlined button '登录账号'. Below clean separated rows: '云同步' subtitle '由你选择同步内容' right '未启用'; '本机数据' subtitle '对话、资料与工作记录' action '管理'; '导出数据' right arrow; '隐私设置' right arrow. Modest bottom note '模型与服务密钥保存在本机安全存储中'. Do not claim cloud connected. No giant billing/pricing/subscription panels."
+    },
+    {
+      "id": "13-setup",
+      "title": "首次配置",
+      "file": "13-setup.png",
+      "prompt": "First-run onboarding within same app chrome but hide rail for focused setup. Centered compact white form, heading '让小涟开始工作', subtitle '先连接一个对话模型，其余能力可以按需设置'. Top tiny step labels '身份  模型  搜索  语音  完成', 模型 active pink. Fields '服务商' dropdown '自定义兼容服务', '服务地址' empty placeholder '填写服务地址', '模型名称' empty placeholder '填写模型名称', 'API Key' empty password field. Secondary button '测试连接', status '尚未测试'. Bottom actions '稍后设置' muted and '保存并继续' rose. Clear model-specific form only, no other settings open and no invented endpoint or actual credentials."
+    },
+    {
+      "id": "14-more",
+      "title": "更多功能",
+      "file": "14-more.png",
+      "prompt": "Active rail 更多. Header '更多'. Subtitle '需要时，再打开这些工具'. Simple 2-column compact navigation list, 8 entries each icon + title + one short description: '智能体' '角色与能力'; '记忆' '管理长期偏好'; '知识库' '整理与阅读资料'; '定时任务' '安排重复工作'; '学习' '笔记与练习'; '创作' '文稿与图片'; '监控' '查看运行状态'; '日志' '回看执行记录'. Below divider small section '已添加的插件' single row '项目周报' with tiny 插件 badge. No installation marketplace, no promotional banners, no dense dashboard."
+    },
+    {
+      "id": "15-plugin",
+      "title": "插件功能页",
+      "file": "15-plugin.png",
+      "prompt": "Active rail 更多. Header breadcrumb '更多 / 项目周报', tiny badge '插件'. This is a DECLARATIVE workflow extension page, not arbitrary embedded website. Main slim form heading '生成项目周报'. Description '根据选定资料整理本周进展'. Fields '工作空间' dropdown '忆涟千言', '参考资料' compact selected document chips '开发记录.md' and '任务清单.md', '输出格式' dropdown 'Markdown'. One button '开始生成'. Below divider '最近结果' one compact file row '项目周报.md' with '打开'. Top-right subtle '插件设置' link. No generated completion at same time as running status, no heavy graph, no invented third-party branding."
+    },
+    {
+      "id": "16-automation",
+      "title": "定时任务",
+      "file": "16-automation.png",
+      "prompt": "Active rail 更多. Header '定时任务', primary '+ 新建任务'. Quiet tabs '全部' '已启用' '已暂停'. Three simple schedule list rows: '每周项目摘要' schedule '每周五 18:00 · 上海时间' small status '已启用'; '复习学习笔记' schedule '每天 20:30 · 上海时间' status '已启用'; '整理下载目录' schedule '手动运行' status '已暂停'. Each row small enable toggle and ellipsis. Below divider '最近运行' two rows with task name and '已完成' or '已错过' honest badges. Small bottom note '定时任务需要应用保持运行'. Do not show schedule editor at same time, no calendar grid or complex chart."
+    },
+    {
+      "id": "17-learning",
+      "title": "资料学习",
+      "file": "17-learning.png",
+      "prompt": "Active rail 工作空间. Header breadcrumb '学习笔记 / 资料学习', action '开始学习'. Small tabs '资料', '笔记', '练习' selected. Main focused one question area with tiny '练习 1 / 5', title '如何判断一个任务已经完成？', radio choices '工具返回成功即可' and '检查实际结果是否满足目标'. No option selected. Quiet source link '来自：Agent 开发笔记 · 第 2 节'. Button '提交答案'. At far left within content a modest narrow list of two study documents, no right progress dashboard. Below question unobtrusive '学习记录 ›'. Do not reveal answer or score before submit. Warm restrained rose/lilac styling."
+    },
+    {
+      "id": "18-create",
+      "title": "创作与成果",
+      "file": "18-create.png",
+      "prompt": "Active rail 工作空间. Header '创作', small breadcrumb '日常创作', top right '+ 新建创作'. Small tabs '文稿' selected, '图片', '办公文档'. Main two columns: slim list '项目介绍' selected, '活动文案', '报告大纲'; wide clean document editor titled '项目介绍', readable short content '忆涟千言' and '让日常想法，成为可以完成的工作。' with two short paragraphs about natural language goals and local workspace. Minimal editor toolbar bold/heading/list icons. Bottom quiet revision '版本 2 · 已保存', button '导出 ▾'. No decorative generated illustration in document. No code, no task timeline, no excessive metadata. Export menu closed."
+    },
+    {
+      "id": "19-voice",
+      "title": "语音通话",
+      "file": "19-voice.png",
+      "prompt": "Active rail 主页. Very simple chat page behind a SINGLE small floating call panel centered towards bottom-right but not blocking composer. Background chat title '和小涟聊聊', one user message '帮我记下明天要整理项目资料。', assistant line '好，你希望几点提醒？'. Call panel approx 330x240, white with delicate border, small rose abstract avatar, title '小涟', state '正在聆听', tiny understated waveform, microphone mute button and rose/red '结束通话' button. Composer still visible with '输入消息…'. No full-screen voice takeover, no technical voice provider states, no timeline, no extra status dashboard. This demonstrates voice + text using one conversation."
+    },
+    {
+      "id": "20-channels",
+      "title": "外部消息渠道",
+      "file": "20-channels.png",
+      "prompt": "Active rail 更多. Header '消息渠道', small subtitle '将已授权的对话接入小涟'. Three spacious horizontal rows only: '飞书' subtitle '接收消息与回复' status '未连接' action '配置'; '微信 iLink' subtitle '独立账号与会话' status '未配置' action '配置'; 'QQ / OneBot' subtitle '通过已配置服务连接' status '未配置' action '配置'. No connected badges or fake conversations. Below divider '会话与回复范围' two collapsed rows '允许回复的会话 ›' '可使用的能力 ›'. Gentle footer '配置完成并授权后，才会接收与回复消息'. At most one simple optional '接入说明' button. No QR code, no credentials, no OAuth logos or fabricated platform API addresses. Keep all claims unconfigured."
+    }
+  ],
+  "revision_notes": {
+    "04-workspace-code": "Readme body edited to explicit example text; removed generated installation commands and OS compatibility assertions.",
+    "01-chat": "Simplified from initial four-column mockup: remove history and context panels by default, compact file result and composer."
+  }
+}
