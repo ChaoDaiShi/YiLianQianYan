@@ -17,6 +17,12 @@ fn sample_args(tool_name: &str) -> serde_json::Value {
         "open_application" => serde_json::json!({"application": "QQ"}),
         "load_skill" => serde_json::json!({"name": "example"}),
         "write_todos" => serde_json::json!({"todos": []}),
+        "ask_user" => serde_json::json!({
+            "title": "请选择输出语言",
+            "kind": "text",
+            "options": [],
+            "allow_text": true
+        }),
         "process" => serde_json::json!({"action": "list"}),
         "mouse" => serde_json::json!({"action": "move", "x": 1, "y": 1}),
         "keyboard" => serde_json::json!({"action": "press", "key": "enter"}),

@@ -1,4 +1,5 @@
 pub mod completion_guard;
+pub mod context_compaction;
 pub mod definition;
 pub mod delegation;
 pub mod engine;
@@ -6,4 +7,5 @@ pub mod memory;
 pub mod observation;
 pub mod state;
 pub(crate) mod subagent_runtime;
+pub mod user_input;
 pub mod verifier;

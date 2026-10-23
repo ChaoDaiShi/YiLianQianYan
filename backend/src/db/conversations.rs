@@ -14,6 +14,7 @@ pub enum ConversationRunStatus {
     Idle,
     Running,
     WaitingApproval,
+    WaitingInput,
     Completed,
     Failed,
     Cancelled,
@@ -26,6 +27,7 @@ impl ConversationRunStatus {
             Self::Idle => "idle",
             Self::Running => "running",
             Self::WaitingApproval => "waiting_approval",
+            Self::WaitingInput => "waiting_input",
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -38,6 +40,7 @@ impl ConversationRunStatus {
             "idle" => Self::Idle,
             "running" => Self::Running,
             "waiting_approval" => Self::WaitingApproval,
+            "waiting_input" => Self::WaitingInput,
             "completed" => Self::Completed,
             "failed" => Self::Failed,
             "cancelled" => Self::Cancelled,
@@ -286,6 +289,15 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM settings WHERE key=?1 OR key=?2",
+                params![
+                    format!("conversation_compaction:{id}"),
+                    format!("conversation_workspace:{id}")
+                ],
+            )
+            .map_err(|e| e.to_string())?;
         transaction.execute("DELETE FROM settings WHERE key = ?1 OR key = 'conversation_mode:' || ?2 OR key IN (SELECT 'chat_reasoning:' || id FROM messages WHERE conversation_id = ?2) OR key IN (SELECT 'chat_turn_reasoning:' || id FROM messages WHERE conversation_id = ?2)", params![format!("chat_options:{id}"),id]).map_err(|e|e.to_string())?;
         transaction
             .execute(
@@ -391,7 +403,7 @@ impl Database {
     ) -> Result<Vec<MessageRow>, String> {
         let mut stmt = conn.prepare(
             "SELECT id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at
-             FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC"
+             FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC, rowid ASC"
         ).map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![conv_id], |row| {
@@ -610,14 +622,15 @@ impl Database {
     ) -> Result<(), String> {
         let now = chrono::Utc::now().timestamp_millis();
         let terminal = status.is_terminal();
-        let conn = self.conn();
-        let changed = conn
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let changed = tx
             .execute(
                 "UPDATE conversations
                  SET run_status=?2,
                      run_error=?3,
                      run_started_at=CASE
-                         WHEN ?2='running' AND run_status='waiting_approval' THEN run_started_at
+                         WHEN ?2='running' AND run_status IN ('running','waiting_approval','waiting_input') THEN run_started_at
                          WHEN ?2='running' THEN ?4
                          ELSE run_started_at
                      END,
@@ -630,6 +643,9 @@ impl Database {
         if changed == 0 {
             return Err("conversation not found".to_string());
         }
+        tx.execute("UPDATE conversation_turns SET status=?2,finished_at=?3 WHERE id=(SELECT id FROM conversation_turns WHERE conversation_id=?1 AND finished_at IS NULL ORDER BY started_at DESC,rowid DESC LIMIT 1)",
+            params![conversation_id,status.as_str(),if terminal {Some(now)} else {None}]).map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 

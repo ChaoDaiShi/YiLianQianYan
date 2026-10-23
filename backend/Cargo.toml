@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 # HTTP server
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.7", features = ["json", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
@@ -47,10 +47,17 @@ async-stream = "0.3"
 tokio-util = "0.7"
 async-trait = "0.1"
 parking_lot = "0.12"
+# Feishu official binary WebSocket frames and OneBot reverse WebSocket transport.
+tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
+prost = "0.14"
+# Render the actual iLink login ticket as an SVG QR code without adding image codecs.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+# IANA timezone rules for daily/weekly automation schedules, including DST.
+chrono-tz = "0.10"
 regex = "1"
 glob = "0.3"
 thiserror = "1"
@@ -86,6 +93,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 # Base64 encoding
 base64 = "0.22"
+
+# OneBot v11 mandates HMAC-SHA1 for signed HTTP event callbacks.
+hmac = "0.12"
+sha1 = "0.10"
 
 # System information
 sysinfo = "0.31"

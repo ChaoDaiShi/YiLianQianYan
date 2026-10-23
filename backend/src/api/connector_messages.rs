@@ -41,10 +41,31 @@ pub fn router() -> Router<Arc<AppServer>> {
         .route("/api/connectors/:canvas/messages/:root/turns", post(turn))
 }
 
-async fn overview(
-    State(server): State<Arc<AppServer>>,
-) -> ApiResult<Json<crate::db::connector_messages::MessageCanvasOverview>> {
-    server.db.message_canvas_overview().map(Json).map_err(bad)
+async fn overview(State(server): State<Arc<AppServer>>) -> ApiResult<Json<Value>> {
+    let mut overview = serde_json::to_value(server.db.message_canvas_overview().map_err(bad)?)
+        .map_err(|e| bad(e.to_string()))?;
+    let origins = server.db.conversation_origins().map_err(bad)?;
+    if let Some(conversations) = overview["conversations"].as_array_mut() {
+        for conversation in conversations {
+            let id = conversation["id"]
+                .as_str()
+                .ok_or_else(|| bad("会话缺少标识".into()))?
+                .to_owned();
+            conversation["origin"] = origins
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| bad("会话来源不存在".into()))?;
+            let attachments = server.db.message_attachments(&id).map_err(bad)?;
+            if let Some(nodes) = conversation["nodes"].as_array_mut() {
+                for node in nodes {
+                    if let Some(items) = node["id"].as_str().and_then(|id| attachments.get(id)) {
+                        node["attachments"] = json!(items);
+                    }
+                }
+            }
+        }
+    }
+    Ok(Json(overview))
 }
 
 async fn overview_layout(
@@ -94,31 +115,51 @@ async fn sources(
         .map_err(bad)
 }
 
+fn present_graph(server: &AppServer, graph: ConnectorMessageGraph) -> ApiResult<Json<Value>> {
+    let mut value = serde_json::to_value(graph).map_err(|e| bad(e.to_string()))?;
+    let ids = value["nodes"]
+        .as_array()
+        .ok_or_else(|| bad("消息图数据不可用".into()))?
+        .iter()
+        .filter_map(|node| node["conversation_id"].as_str().map(str::to_owned))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut attachments = std::collections::BTreeMap::new();
+    for id in ids {
+        attachments.extend(server.db.message_attachments(&id).map_err(bad)?);
+    }
+    for node in value["nodes"].as_array_mut().unwrap() {
+        if let Some(items) = node["id"].as_str().and_then(|id| attachments.get(id)) {
+            node["attachments"] = json!(items);
+        }
+    }
+    Ok(Json(value))
+}
+
 async fn detail(
     State(server): State<Arc<AppServer>>,
     Path((canvas, root)): Path<(String, String)>,
-) -> ApiResult<Json<ConnectorMessageGraph>> {
-    server
+) -> ApiResult<Json<Value>> {
+    let graph = server
         .db
         .connector_message_graph(&canvas, &root)
-        .map(Json)
         .map_err(|error| {
             (
                 StatusCode::NOT_FOUND,
                 Json(json!({"code":"not_found","error":error})),
             )
-        })
+        })?;
+    present_graph(&server, graph)
 }
 
 async fn create(
     State(server): State<Arc<AppServer>>,
     Path((canvas, root)): Path<(String, String)>,
-) -> ApiResult<Json<ConnectorMessageGraph>> {
-    server
+) -> ApiResult<Json<Value>> {
+    let graph = server
         .db
         .create_connector_message_graph(&canvas, &root)
-        .map(Json)
-        .map_err(bad)
+        .map_err(bad)?;
+    present_graph(&server, graph)
 }
 
 #[derive(Deserialize)]
@@ -185,6 +226,7 @@ async fn execute_turn(
             options,
             conversation_id: Some(conversation.clone()),
             message,
+            resource_ids: Vec::new(),
             workflow_id: None,
             goal_ref: None,
         }),

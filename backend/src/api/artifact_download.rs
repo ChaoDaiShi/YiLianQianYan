@@ -258,6 +258,9 @@ fn download_extension(mime: Option<&str>) -> &'static str {
         Some("image/png") => ".png",
         Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document") => ".docx",
         Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") => ".xlsx",
+        Some("application/vnd.openxmlformats-officedocument.presentationml.presentation") => {
+            ".pptx"
+        }
         _ => ".bin",
     }
 }

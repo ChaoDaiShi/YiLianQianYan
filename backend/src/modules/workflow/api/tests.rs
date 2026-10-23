@@ -98,9 +98,13 @@ async fn run_start_returns_immediately_and_completes() {
     let (path, server) = test_server();
     let graph_id = create_graph_id(&server).await;
 
-    let result = run_workflow_graph(State(server.clone()), Path(graph_id.clone()))
-        .await
-        .unwrap();
+    let result = run_workflow_graph(
+        State(server.clone()),
+        Path(graph_id.clone()),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap();
     let run_id = result.0["run_id"].as_str().unwrap().to_string();
     assert_eq!(
         result.0["status"], "created",
@@ -230,9 +234,13 @@ async fn cancel_terminal_run_is_stable() {
     let (path, server) = test_server();
     let graph_id = create_graph_id(&server).await;
 
-    let start = run_workflow_graph(State(server.clone()), Path(graph_id.clone()))
-        .await
-        .unwrap();
+    let start = run_workflow_graph(
+        State(server.clone()),
+        Path(graph_id.clone()),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap();
     let run_id = start.0["run_id"].as_str().unwrap().to_string();
     wait_until_terminal(&server, &run_id).await;
 

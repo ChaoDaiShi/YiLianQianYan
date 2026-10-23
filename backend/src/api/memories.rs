@@ -18,6 +18,88 @@ use crate::integrations::llm::types::ChatMessage;
 
 pub type StorageApiError = (StatusCode, Json<serde_json::Value>);
 
+fn governance_error(error: String) -> StorageApiError {
+    let status = match error.as_str() {
+        "memory_revision_conflict"
+        | "stale_embedding_result"
+        | "knowledge_document_owned_chunk" => StatusCode::CONFLICT,
+        "invalid_memory_correction"
+        | "invalid_memory_scope"
+        | "invalid_memory_reason"
+        | "sensitive_memory_content"
+        | "invalid_memory_content"
+        | "invalid_memory_category"
+        | "invalid_memory_source" => StatusCode::BAD_REQUEST,
+        _ => return storage_error(error),
+    };
+    (
+        status,
+        Json(serde_json::json!({"code":error,"error":error})),
+    )
+}
+
+pub async fn governance_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::db::memory_governance::MemoryGovernance>, StorageApiError> {
+    if server.db.find_memory(&id).map_err(storage_error)?.is_none() {
+        return Err(not_found_error("记忆"));
+    }
+    server
+        .db
+        .memory_governance(&id)
+        .map(Json)
+        .map_err(storage_error)
+}
+
+pub async fn history_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::db::memory_governance::MemoryVersion>>, StorageApiError> {
+    if server.db.find_memory(&id).map_err(storage_error)?.is_none() {
+        return Err(not_found_error("记忆"));
+    }
+    server
+        .db
+        .memory_history(&id)
+        .map(Json)
+        .map_err(storage_error)
+}
+
+pub async fn correct_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::db::memory_governance::CorrectMemoryRequest>,
+) -> Result<Json<Memory>, StorageApiError> {
+    server
+        .db
+        .correct_memory(&id, &req)
+        .map(Json)
+        .map_err(governance_error)
+}
+
+pub async fn withdraw_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::db::memory_governance::WithdrawMemoryRequest>,
+) -> Result<Json<crate::db::memory_governance::MemoryGovernance>, StorageApiError> {
+    server
+        .db
+        .withdraw_memory(&id, &req)
+        .map(Json)
+        .map_err(governance_error)
+}
+
+pub async fn withdrawn_handler(
+    State(server): State<Arc<AppServer>>,
+) -> Result<Json<Vec<Memory>>, StorageApiError> {
+    server
+        .db
+        .withdrawn_memories()
+        .map(Json)
+        .map_err(storage_error)
+}
+
 fn storage_error(_: String) -> StorageApiError {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -89,14 +171,21 @@ pub async fn create_handler(
     State(server): State<Arc<AppServer>>,
     Json(req): Json<CreateMemoryRequest>,
 ) -> Result<Json<Memory>, StorageApiError> {
-    let mem = server.db.create_memory(&req).map_err(storage_error)?;
+    let mem = server.db.create_memory(&req).map_err(governance_error)?;
     // Auto-embed: best-effort, never fails the create
     let model_cfg = server.config.read().model.clone();
     if model_cfg.has_embedding() {
         let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
-        match llm.embed(&req.content).await {
+        let ticket = server
+            .db
+            .begin_memory_embedding(
+                &mem,
+                &crate::db::memory_governance::embedding_identity(&model_cfg),
+            )
+            .map_err(governance_error)?;
+        match llm.embed(&mem.content).await {
             Ok(vec) => {
-                if let Err(e) = server.db.update_memory_embedding(&mem.id, &vec) {
+                if let Err(e) = server.db.complete_memory_embedding(&ticket, &vec) {
                     tracing::warn!(memory_id = %mem.id, error = %e, "failed to persist embedding");
                 }
             }
@@ -202,10 +291,15 @@ pub async fn retrieve_handler(
         }
     }
 
-    match server
-        .db
-        .retrieve_memories_hybrid(&query, query_embedding.as_deref())
-    {
+    match server.db.retrieve_scoped_memories(
+        &query,
+        query_embedding.as_deref(),
+        Some(&crate::db::memory_governance::embedding_identity(
+            &model_cfg,
+        )),
+        None,
+        true,
+    ) {
         Ok(scored) => Ok(Json(serde_json::json!({
             "query": q,
             "count": scored.len(),
@@ -250,18 +344,8 @@ fn is_sensitive(content: &str) -> bool {
     crate::safety::contains_sensitive_content(content)
 }
 
-fn memory_exists(db: &crate::db::Database, category: &str, content: &str) -> bool {
-    let trimmed = content.trim();
-    db.list_memories(&MemoryQuery {
-        category: Some(category.to_string()),
-        q: None,
-        source: None,
-        limit: Some(500),
-        offset: None,
-    })
-    .unwrap_or_default()
-    .into_iter()
-    .any(|m| m.content.trim() == trimmed)
+fn memory_exists(db: &crate::db::Database, category: &str, content: &str) -> Result<bool, String> {
+    db.memory_duplicate_exists(category, content)
 }
 
 /// Build the tool definition for structured memory extraction.
@@ -528,7 +612,7 @@ async fn process_extracted_memories(
         }
 
         // Dedup
-        if memory_exists(&server.db, &mem.category, &content) {
+        if memory_exists(&server.db, &mem.category, &content).map_err(storage_error)? {
             skipped += 1;
             continue;
         }
@@ -551,9 +635,16 @@ async fn process_extracted_memories(
         // Auto-embed: best-effort, never fails memory creation
         if has_embedding {
             let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
+            let ticket = server
+                .db
+                .begin_memory_embedding(
+                    &memory,
+                    &crate::db::memory_governance::embedding_identity(&model_cfg),
+                )
+                .map_err(governance_error)?;
             match llm.embed(&content).await {
                 Ok(vec) => {
-                    if let Err(e) = server.db.update_memory_embedding(&memory.id, &vec) {
+                    if let Err(e) = server.db.complete_memory_embedding(&ticket, &vec) {
                         tracing::warn!(memory_id = %memory.id, error = %e, "failed to persist embedding");
                     }
                 }
@@ -668,7 +759,10 @@ pub async fn reindex_handler(
     }
 
     // Load memories missing embedding
-    let missing = match server.db.list_memories_without_embedding(requested) {
+    let missing = match server.db.memories_needing_embedding(
+        &crate::db::memory_governance::embedding_identity(&config.model),
+        requested,
+    ) {
         Ok(memories) => memories,
         Err(e) => {
             tracing::error!("reindex: failed to load missing-embedding memories: {e}");
@@ -683,8 +777,18 @@ pub async fn reindex_handler(
     let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
 
     for memory in &missing {
+        let ticket = match server.db.begin_memory_embedding(
+            memory,
+            &crate::db::memory_governance::embedding_identity(&config.model),
+        ) {
+            Ok(ticket) => ticket,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
         match llm_client.embed(&memory.content).await {
-            Ok(vector) => match server.db.update_memory_embedding(&memory.id, &vector) {
+            Ok(vector) => match server.db.complete_memory_embedding(&ticket, &vector) {
                 Ok(()) => {
                     succeeded += 1;
                     tracing::debug!(
@@ -713,8 +817,11 @@ pub async fn reindex_handler(
         }
     }
 
-    let remaining = match server.db.count_memories_without_embedding() {
-        Ok(c) => c,
+    let remaining = match server.db.memories_needing_embedding(
+        &crate::db::memory_governance::embedding_identity(&config.model),
+        i64::MAX as usize,
+    ) {
+        Ok(memories) => memories.len(),
         Err(e) => {
             tracing::error!("reindex: failed to count remaining memories: {e}");
             return Err(storage_error(e));
@@ -1769,7 +1876,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reindex_does_not_overwrite_existing_embedding() {
+    async fn reindex_rebuilds_legacy_embeddings_without_model_identity() {
         let (server, db_path, conv_id) = test_server("reindex-no-overwrite");
         let existing = seed_memory_with_embedding(
             &server.db,
@@ -1789,14 +1896,18 @@ mod tests {
         )
         .await
         .unwrap();
-        // Only 1 memory was missing (the "新 memory")
-        assert_eq!(json.0["processed"], 1);
-        assert_eq!(json.0["succeeded"], 1);
-        assert_eq!(counter.load(Ordering::SeqCst), 1);
-
-        // Existing embedding unchanged
+        // Legacy vectors have no provider/model identity and must be rebuilt.
+        assert_eq!(json.0["processed"], 2);
+        assert_eq!(json.0["succeeded"], 2);
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
         let mem = server.db.get_memory(&existing).unwrap();
-        assert_eq!(mem.embedding.as_deref(), Some("[0.11,0.22]"));
+        assert_eq!(mem.embedding.as_deref(), Some("[0.5,0.25,0.125]"));
+        assert!(server
+            .db
+            .memory_governance(&existing)
+            .unwrap()
+            .embedding_model
+            .is_some());
 
         std::fs::remove_file(&db_path).ok();
     }

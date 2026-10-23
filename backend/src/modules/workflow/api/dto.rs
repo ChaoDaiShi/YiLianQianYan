@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct StartWorkflowRunRequest {
+    #[serde(default)]
+    pub inputs: crate::modules::workflow::application::run_inputs::WorkflowRunInputs,
+}
+
 #[derive(serde::Deserialize)]
 pub struct CreateWorkflowGraphRequest {
     pub name: Option<String>,

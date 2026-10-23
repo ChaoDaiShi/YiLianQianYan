@@ -155,6 +155,8 @@ pub struct AppServer {
     pub mcp_runtime_manager: Arc<McpRuntimeManager>,
     /// Application-lifetime OS-backed secret store (single instance).
     pub secret_store: Arc<dyn SecretStore>,
+    /// Owns configured channel connections and their cancellation lifecycle.
+    pub channel_runtime: crate::modules::channel::runtime::ChannelRuntime,
     /// Application-lifetime secret resolver (single instance).
     pub secret_resolver: Arc<SecretResolver>,
     /// Single-flight gate for final cloud STT requests.
@@ -496,9 +498,11 @@ impl AppServer {
                     self.db.clone_connection(),
                     Arc::clone(&self.secret_resolver),
                     kind,
-                ),
+                )
+                .with_resource_service(self.resource_service.clone()),
             ));
         }
+        crate::modules::code::register(&mut base_registry, self.db.clone_connection());
         let mut occupied_names: HashSet<String> = base_registry
             .list_tools()
             .into_iter()

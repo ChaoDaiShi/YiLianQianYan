@@ -67,13 +67,33 @@ pub async fn start_workflow_run(
     server: &AppServer,
     graph_id: &str,
 ) -> Result<RunStarted, RunServiceError> {
+    start_workflow_run_with_inputs(server, graph_id, Default::default()).await
+}
+
+pub async fn start_workflow_run_with_inputs(
+    server: &AppServer,
+    graph_id: &str,
+    inputs: super::run_inputs::WorkflowRunInputs,
+) -> Result<RunStarted, RunServiceError> {
+    start_workflow_run_identified(server, graph_id, inputs, WorkflowRunId::generate()).await
+}
+
+pub(crate) async fn start_workflow_run_identified(
+    server: &AppServer,
+    graph_id: &str,
+    inputs: super::run_inputs::WorkflowRunInputs,
+    run_id: WorkflowRunId,
+) -> Result<RunStarted, RunServiceError> {
     crate::modules::capability::import_store::require_active_plugin_resource(&server.db, graph_id)
         .map_err(RunServiceError::InvalidRun)?;
-    let graph = server
+    let mut graph = server
         .db
         .get_workflow_graph(graph_id)
         .map_err(RunServiceError::Read)?
         .ok_or(RunServiceError::GraphNotFound)?;
+
+    super::run_inputs::apply_run_inputs(&mut graph.definition, inputs)
+        .map_err(RunServiceError::InvalidRun)?;
 
     // Subject is resolved server-side (the local desktop user), never client-supplied.
     let now = chrono::Utc::now().timestamp_millis();
@@ -88,13 +108,8 @@ pub async fn start_workflow_run(
         .map(crate::modules::task::AgentId::new)
         .transpose()
         .map_err(|e| RunServiceError::InvalidRun(e.to_string()))?;
-    let run = WorkflowRun::new(
-        WorkflowRunId::generate(),
-        context,
-        graph.definition.clone(),
-        now,
-    )
-    .map_err(|error| RunServiceError::InvalidRun(error.to_string()))?;
+    let run = WorkflowRun::new(run_id, context, graph.definition.clone(), now)
+        .map_err(|error| RunServiceError::InvalidRun(error.to_string()))?;
     let run_id = run.run_id.clone();
     let execution_id = run.execution_context.execution_id.clone();
     let initial_status = run.status.to_string();

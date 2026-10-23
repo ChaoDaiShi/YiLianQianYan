@@ -11,9 +11,49 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::app::state::AppServer;
-use crate::db::{Conversation, ConversationSummary};
+use crate::db::ConversationSummary;
+
+#[path = "conversation_messages.rs"]
+pub mod messages;
 
 pub type StorageApiError = (StatusCode, Json<serde_json::Value>);
+#[derive(Deserialize)]
+pub struct WorkspaceChoice {
+    pub workspace_id: Option<String>,
+}
+pub async fn workspace_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    server.db.get_conversation(&id).map_err(storage_error)?;
+    Ok(Json(
+        serde_json::json!({"workspace_id":server.db.conversation_workspace(&id).map_err(storage_error)?}),
+    ))
+}
+pub async fn workspace_update_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Json(body): Json<WorkspaceChoice>,
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    server
+        .db
+        .set_conversation_workspace(&id, body.workspace_id.as_deref())
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":e})),
+            )
+        })?;
+    Ok(Json(serde_json::json!({"workspace_id":body.workspace_id})))
+}
+
+pub async fn turns_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    let turns = server.db.conversation_turns(&id).map_err(storage_error)?;
+    Ok(Json(serde_json::json!({"turns":turns})))
+}
 
 fn storage_error(_: String) -> StorageApiError {
     (
@@ -39,12 +79,22 @@ fn not_found_error(entity: &str) -> StorageApiError {
 
 pub async fn list_handler(
     State(server): State<Arc<AppServer>>,
-) -> Result<Json<Vec<ConversationSummary>>, StorageApiError> {
-    server
-        .db
-        .list_conversations()
-        .map(Json)
-        .map_err(storage_error)
+) -> Result<Json<Vec<serde_json::Value>>, StorageApiError> {
+    let origins = server.db.conversation_origins().map_err(storage_error)?;
+    let rows = server.db.list_conversations().map_err(storage_error)?;
+    let rows = rows
+        .into_iter()
+        .map(|row| {
+            let origin = origins
+                .get(&row.id)
+                .cloned()
+                .ok_or_else(|| storage_error("会话来源不存在".into()))?;
+            let mut value = serde_json::to_value(row).map_err(|e| storage_error(e.to_string()))?;
+            value["origin"] = origin;
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, StorageApiError>>()?;
+    Ok(Json(rows))
 }
 
 // ── Create ──
@@ -100,9 +150,16 @@ pub async fn create_handler(
 pub async fn load_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-) -> Result<Json<Conversation>, StorageApiError> {
+) -> Result<Json<serde_json::Value>, StorageApiError> {
     match server.db.find_conversation(&id) {
-        Ok(Some(conv)) => Ok(Json(conv)),
+        Ok(Some(conv)) => {
+            let value = serde_json::to_value(conv).map_err(|e| storage_error(e.to_string()))?;
+            server
+                .db
+                .present_conversation(value)
+                .map(Json)
+                .map_err(storage_error)
+        }
         Ok(None) => Err(not_found_error("对话")),
         Err(e) => Err(storage_error(e)),
     }

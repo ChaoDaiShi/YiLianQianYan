@@ -1150,6 +1150,10 @@ type PausedWorkflow = (
 );
 
 async fn run_paused_workflow() -> PausedWorkflow {
+    run_paused_workflow_with_agent(false).await
+}
+
+async fn run_paused_workflow_with_agent(include_agent: bool) -> PausedWorkflow {
     let executions = Arc::new(AtomicUsize::new(0));
     let db_path =
         std::env::temp_dir().join(format!("yilian-wf-resume-{}.db", uuid::Uuid::new_v4()));
@@ -1168,15 +1172,23 @@ async fn run_paused_workflow() -> PausedWorkflow {
     let gateway = Arc::new(gateway);
     let approval_store = Arc::new(crate::safety::ApprovalStore::new());
 
-    let mut run = run(
+    let mut nodes = vec![tool_node(
         "bash",
-        vec![tool_node(
-            "bash",
-            "bash",
-            serde_json::json!({"command": "git push origin develop"}),
-        )],
-        vec![],
-    );
+        "bash",
+        serde_json::json!({"command": "git push origin develop"}),
+    )];
+    let mut edges = vec![];
+    if include_agent {
+        nodes.push(agent_node(
+            "after-approval",
+            "Summarize the completed operation",
+        ));
+        edges.push(WorkflowEdgeDefinition {
+            from: id("bash"),
+            to: id("after-approval"),
+        });
+    }
+    let mut run = run("bash", nodes, edges);
     let run_id = run.run_id.to_string();
     db.create_workflow_run("g1", &run).unwrap();
 
@@ -1230,6 +1242,11 @@ async fn workflow_approve_resumes_and_completes() {
         "local-user",
         true,
         &CancellationToken::new(),
+        Arc::new(FakeAgentExecutor {
+            text: "after approval".into(),
+            fail: false,
+            cancel_on_generate: None,
+        }),
     )
     .await
     .unwrap();
@@ -1255,6 +1272,11 @@ async fn workflow_reject_stops_run() {
         "local-user",
         false,
         &CancellationToken::new(),
+        Arc::new(FakeAgentExecutor {
+            text: "after approval".into(),
+            fail: false,
+            cancel_on_generate: None,
+        }),
     )
     .await
     .unwrap();
@@ -1280,6 +1302,11 @@ async fn workflow_double_approve_cannot_execute_twice() {
         "local-user",
         true,
         &CancellationToken::new(),
+        Arc::new(FakeAgentExecutor {
+            text: "after approval".into(),
+            fail: false,
+            cancel_on_generate: None,
+        }),
     )
     .await
     .unwrap();
@@ -1293,6 +1320,11 @@ async fn workflow_double_approve_cannot_execute_twice() {
         "local-user",
         true,
         &CancellationToken::new(),
+        Arc::new(FakeAgentExecutor {
+            text: "after approval".into(),
+            fail: false,
+            cancel_on_generate: None
+        }),
     )
     .await
     .is_err());
@@ -1312,6 +1344,11 @@ async fn workflow_subject_mismatch_rejected() {
         "attacker",
         true,
         &CancellationToken::new(),
+        Arc::new(FakeAgentExecutor {
+            text: "after approval".into(),
+            fail: false,
+            cancel_on_generate: None
+        }),
     )
     .await
     .is_err());
@@ -1361,6 +1398,11 @@ async fn workflow_wrong_run_rejected() {
         "local-user",
         true,
         &CancellationToken::new(),
+        Arc::new(FakeAgentExecutor {
+            text: "after approval".into(),
+            fail: false,
+            cancel_on_generate: None,
+        }),
     )
     .await;
     assert!(result.is_err());
@@ -1734,4 +1776,44 @@ async fn llm_agent_executor_fails_closed_on_llm_error() {
         matches!(error, WorkflowExecutionError::Execution(_)),
         "expected an execution error, got {error:?}"
     );
+}
+
+#[tokio::test]
+async fn workflow_approval_resumes_following_agent_with_injected_executor() {
+    let (gateway, approval_store, db, run_id, approval_id, executions, db_path) =
+        run_paused_workflow_with_agent(true).await;
+    resolve_workflow_approval(
+        &gateway,
+        &approval_store,
+        &db,
+        &approval_id,
+        "local-user",
+        true,
+        &CancellationToken::new(),
+        Arc::new(FakeAgentExecutor {
+            text: "approved operation summarized".into(),
+            fail: false,
+            cancel_on_generate: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let stored = db
+        .get_workflow_run(&WorkflowRunId::new(run_id).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.run.status, WorkflowRunStatus::Completed);
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        stored
+            .run
+            .node(&id("after-approval"))
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .summary,
+        "approved operation summarized"
+    );
+    let _ = std::fs::remove_file(db_path);
 }

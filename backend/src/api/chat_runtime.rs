@@ -185,8 +185,16 @@ pub async fn prepare_with_model(
         .map(|id| server.db.connector_agent_for_conversation(id))
         .transpose()?
         .flatten();
+    let workspace_id = conversation
+        .map(|id| server.db.conversation_workspace(id))
+        .transpose()?
+        .flatten();
     let bindings = match agent_id.as_deref() {
-        Some(id) => server.db.connector_runtime_bindings(id)?,
+        Some(id) => server.db.connector_runtime_bindings_for_scope(
+            id,
+            conversation,
+            workspace_id.as_deref(),
+        )?,
         None => ConnectorRuntimeBindings::default(),
     };
     let mut config = server.config.read().clone();
@@ -314,6 +322,7 @@ pub async fn prepare_with_model(
                         server.secret_resolver.clone(),
                         kind,
                     )
+                    .with_resource_service(server.resource_service.clone())
                     .with_agent_id(id.to_string()),
                 ));
             }
@@ -365,6 +374,7 @@ pub async fn prepare_with_model(
                 server.secret_resolver.clone(),
                 kind,
             )
+            .with_resource_service(server.resource_service.clone())
             .with_conversation_id(conversation.unwrap_or_default().to_string());
             if let Some(id) = &agent_id {
                 tool = tool.with_agent_id(id.clone());
@@ -376,6 +386,9 @@ pub async fn prepare_with_model(
             tools.register(Arc::new(tool));
         }
     }
+    // Necessary input is a conversation control, independent of bound action
+    // capabilities. The engine suspends the turn; this tool grants no action.
+    tools.register(Arc::new(crate::agent::user_input::AskUserTool));
     let profile = crate::api::agents::persona::profile_for_agent(
         &server.db,
         agent_id.as_deref().unwrap_or("default"),
@@ -401,7 +414,21 @@ pub async fn prepare_with_model(
             ));
         }
     }
-    Ok(ChatRuntime {
+    if let Some(conversation) = conversation {
+        crate::modules::resource::conversation_context::append(server, conversation, &mut prompt)?;
+    }
+    if let Some(id) = workspace_id {
+        let workspace = server
+            .db
+            .get_workspace(&crate::workspace::WorkspaceId::new(id).map_err(|e| e.to_string())?)?
+            .ok_or("当前对话的工作空间已不存在")?;
+        prompt.push_str(&format!(
+            "\n\n当前工作空间：{}\n目录上下文：{}\n",
+            workspace.name,
+            workspace.root_path.as_deref().unwrap_or("未设置")
+        ));
+    }
+    let mut runtime = ChatRuntime {
         agent_id,
         config,
         bindings,
@@ -409,7 +436,9 @@ pub async fn prepare_with_model(
         prompt,
         model_row,
         model_pool_id: pool_id,
-    })
+    };
+    crate::modules::channel::restrict_runtime(&server.db, conversation, &mut runtime)?;
+    Ok(runtime)
 }
 pub fn client(
     server: &AppServer,

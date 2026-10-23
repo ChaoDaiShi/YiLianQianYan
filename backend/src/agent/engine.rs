@@ -106,6 +106,10 @@ pub enum RunOutcome {
     Done { output: String },
     /// The loop paused awaiting user approval (approval_required was sent).
     Paused { approval_id: String },
+    WaitingInput {
+        tool_call_id: String,
+        request: super::user_input::UserInputRequest,
+    },
 }
 
 const MAX_ITERATIONS: usize = 20;
@@ -280,6 +284,7 @@ async fn dispatch_tool_call(
     let outcome = security_gateway
         .execute_with_on_start(&request, RiskLevel::Low, || {
             execution_started.store(true, std::sync::atomic::Ordering::SeqCst);
+            state.mark_tool_started(&tool_call.id);
             let _ = tx.try_send(AgentEvent {
                 event_type: "tool_start".into(),
                 conversation_id: conversation_id.to_string(),
@@ -623,6 +628,7 @@ pub async fn run_react_loop_with_channel(
     tx: &Sender<AgentEvent>,
     log_buffer: &LogBuffer,
 ) -> Result<RunOutcome, String> {
+    super::state::tool_protocol::validate(&state.messages)?;
     let inherited = super::delegation::current_scope();
     let scope = super::delegation::ExecutionScope {
         cancel: cancel_token.clone(),
@@ -641,7 +647,7 @@ pub async fn run_react_loop_with_channel(
             .unwrap_or_default(),
         deadline: inherited.and_then(|v| v.deadline),
     };
-    super::delegation::EXECUTION_SCOPE
+    let result = super::delegation::EXECUTION_SCOPE
         .scope(
             scope,
             run_react_loop_inner(
@@ -657,7 +663,11 @@ pub async fn run_react_loop_with_channel(
                 log_buffer,
             ),
         )
-        .await
+        .await;
+    if result.is_err() {
+        state.close_interrupted_tool_batch();
+    }
+    result
 }
 
 async fn run_react_loop_inner(
@@ -678,6 +688,7 @@ async fn run_react_loop_inner(
     let mut consecutive_same_tool = 0usize;
     let mut completion_replans = 0usize;
     let reasoning_journal = parking_lot::Mutex::new(String::new());
+    let mut compacted_context = state.compaction_checkpoint.clone();
 
     loop {
         if cancel_token.is_cancelled() {
@@ -697,6 +708,16 @@ async fn run_react_loop_inner(
         }
 
         // ── THINK: Call LLM with streaming ──
+        let model_messages = super::context_compaction::project(
+            &state.messages,
+            &tools_openai,
+            &_config.compaction,
+            client,
+            cancel_token,
+            &mut compacted_context,
+        )
+        .await?;
+        state.compaction_checkpoint = compacted_context.clone();
         let stream_response_tokens = should_stream_response_tokens(state);
         let execution_scope = super::delegation::current_scope();
         let strict_budget = execution_scope
@@ -709,7 +730,7 @@ async fn run_react_loop_inner(
                 .map(|(scope, budget)| {
                     let input_upper_bound =
                         crate::integrations::llm::client::conservative_input_token_upper_bound(
-                            &state.messages,
+                            &model_messages,
                             &tools_openai,
                         )
                         .ok_or_else(|| "proofloop_usage_unavailable".to_string())?;
@@ -757,7 +778,7 @@ async fn run_react_loop_inner(
             record_reasoning_delta(tx, conversation_id, &reasoning_journal, reasoning);
         };
         let invocation = client.stream_with_reasoning_max_tokens(
-            &state.messages,
+            &model_messages,
             &tools_openai,
             strict_output_limit.unwrap_or_else(|| client.max_output_tokens()),
             on_token,
@@ -816,6 +837,14 @@ async fn run_react_loop_inner(
         // ── Check for tool calls ──
         if accumulator.has_tool_calls() {
             if let Some(tool_calls) = accumulator.to_tool_calls() {
+                let ids = tool_calls
+                    .iter()
+                    .map(|call| call.id.as_str())
+                    .collect::<std::collections::HashSet<_>>();
+                if ids.len() != tool_calls.len() || ids.contains("") {
+                    return Err("模型返回重复或空工具调用ID，本轮工具未执行".into());
+                }
+                state.started_tool_calls.clear();
                 state.add_assistant_message(
                     if accumulator.content.is_empty() {
                         None
@@ -826,6 +855,48 @@ async fn run_react_loop_inner(
                 );
                 if let Some(message) = state.messages.last_mut() {
                     message.reasoning_content = Some(accumulator.reasoning_content.clone());
+                }
+
+                // A necessary-input question owns the entire round, even when listed last.
+                if let Some(question) = tool_calls
+                    .iter()
+                    .find(|call| call.function.name == "ask_user")
+                {
+                    let parsed = serde_json::from_str::<super::user_input::UserInputRequest>(
+                        &question.function.arguments,
+                    )
+                    .map_err(|e| e.to_string())
+                    .and_then(|request| {
+                        request.validate()?;
+                        Ok(request)
+                    });
+                    for call in tool_calls.iter().filter(|call| call.id != question.id) {
+                        state.add_tool_result(call.id.clone(),call.function.name.clone(),serde_json::json!({"status":"not_executed","reason":"waiting_for_user_input"}).to_string());
+                        let mut event = AgentEvent::error_event(conversation_id, String::new());
+                        event.event_type = "tool_end".into();
+                        event.error = None;
+                        event.tool_call_id = Some(call.id.clone());
+                        event.tool_name = Some(call.function.name.clone());
+                        event.status = Some("not_executed".into());
+                        event.result = Some("等待必要输入，本轮未执行".into());
+                        let _ = tx.send(event).await;
+                    }
+                    match parsed {
+                        Ok(request) => {
+                            return Ok(RunOutcome::WaitingInput {
+                                tool_call_id: question.id.clone(),
+                                request,
+                            })
+                        }
+                        Err(error) => {
+                            state.add_tool_result(
+                                question.id.clone(),
+                                "ask_user".into(),
+                                format!("Invalid question: {error}"),
+                            );
+                            continue;
+                        }
+                    }
                 }
 
                 for (i, tc) in tool_calls.iter().enumerate() {

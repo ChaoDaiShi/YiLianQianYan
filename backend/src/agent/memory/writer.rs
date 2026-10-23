@@ -67,6 +67,7 @@ pub struct MemoryWriter {
     llm: LlmClient,
     policy: MemoryWritePolicy,
     has_embedding: bool,
+    embedding_model: String,
 }
 
 impl MemoryWriter {
@@ -82,24 +83,58 @@ impl MemoryWriter {
             llm: LlmClient::new(config, resolver),
             policy,
             has_embedding,
+            embedding_model: crate::db::memory_governance::embedding_identity(config),
         }
     }
 
     /// Validate and persist each candidate, deduplicating against both existing
     /// memories and candidates stored earlier in this same batch.
     pub async fn write(&self, candidates: Vec<MemoryCandidate>) -> WriteReport {
-        let mut existing = self
-            .db
-            .list_memories(&MemoryQuery {
-                category: None,
-                source: None,
-                q: None,
-                limit: Some(2000),
-                offset: None,
-            })
-            .unwrap_or_default();
+        let mut existing = match self.db.list_memories(&MemoryQuery {
+            category: None,
+            source: None,
+            q: None,
+            limit: Some(i64::MAX as usize),
+            offset: None,
+        }) {
+            Ok(existing) => existing,
+            Err(error) => {
+                return WriteReport {
+                    failed: candidates.len(),
+                    outcomes: candidates
+                        .iter()
+                        .map(|_| WriteOutcome::Failed {
+                            error: error.clone(),
+                        })
+                        .collect(),
+                    ..WriteReport::default()
+                }
+            }
+        };
 
         let mut report = WriteReport::default();
+        let mut scoped = Vec::new();
+        for memory in existing {
+            match self.db.memory_governance(&memory.id) {
+                Ok(governance) if governance.scope == "profile" && memory.source != "document" => {
+                    scoped.push(memory)
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    return WriteReport {
+                        failed: candidates.len(),
+                        outcomes: candidates
+                            .iter()
+                            .map(|_| WriteOutcome::Failed {
+                                error: error.clone(),
+                            })
+                            .collect(),
+                        ..WriteReport::default()
+                    }
+                }
+            }
+        }
+        existing = scoped;
         for candidate in candidates {
             if let Err(reason) = validate_candidate(&candidate, &self.policy, &existing) {
                 report.rejected += 1;
@@ -151,9 +186,12 @@ impl MemoryWriter {
 
         let mut embedding_failed = false;
         if self.has_embedding {
+            let ticket = self
+                .db
+                .begin_memory_embedding(&memory, &self.embedding_model)?;
             match self.llm.embed(&memory.content).await {
                 Ok(vector) => {
-                    let _ = self.db.update_memory_embedding(&memory.id, &vector);
+                    embedding_failed = self.db.complete_memory_embedding(&ticket, &vector).is_err();
                 }
                 Err(_) => {
                     embedding_failed = true;

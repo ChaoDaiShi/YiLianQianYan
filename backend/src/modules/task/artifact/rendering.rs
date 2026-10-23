@@ -74,7 +74,7 @@ pub(super) fn render_source_output(
                 .ok_or(ArtifactGenerationError::StructuredPayloadMissing)?;
             Ok(deliverable_renderers::render_json(file_name, value)?)
         }
-        DeliverableFormat::Docx | DeliverableFormat::Pdf => {
+        DeliverableFormat::Docx | DeliverableFormat::Pptx | DeliverableFormat::Pdf => {
             let document = structured
                 .and_then(|value| value.get("report").or_else(|| value.get("document")))
                 .cloned()
@@ -83,6 +83,8 @@ pub(super) fn render_source_output(
                 .map_err(|error| RenderError::InvalidPayload(error.to_string()))?;
             if format == DeliverableFormat::Docx {
                 Ok(deliverable_renderers::render_docx(file_name, &document)?)
+            } else if format == DeliverableFormat::Pptx {
+                Ok(deliverable_renderers::render_pptx(file_name, &document)?)
             } else {
                 Ok(deliverable_renderers::render_pdf(file_name, &document)?)
             }
@@ -113,7 +115,8 @@ pub(super) fn artifact_type_for_mime(mime_type: &str) -> ArtifactType {
         "text/markdown" => ArtifactType::Report,
         "application/json"
         | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => ArtifactType::Data,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        | "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
             ArtifactType::Document
         }
         "image/png" => ArtifactType::Image,

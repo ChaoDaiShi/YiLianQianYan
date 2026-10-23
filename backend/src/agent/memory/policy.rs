@@ -74,7 +74,7 @@ pub fn validate_candidate(
     if contains_secret(content) {
         return Err(ValidationError::ContainsSecret);
     }
-    if is_duplicate(content, existing) {
+    if is_duplicate(content, candidate.category.as_str(), existing) {
         return Err(ValidationError::Duplicate);
     }
     Ok(())
@@ -85,15 +85,13 @@ fn contains_secret(content: &str) -> bool {
     crate::safety::contains_sensitive_content(content)
 }
 
-/// A near-duplicate is an exact match (case/whitespace-insensitive) or a
-/// containment relationship with an existing memory.
-fn is_duplicate(content: &str, existing: &[Memory]) -> bool {
+/// Only normalized equality is a duplicate. Negation and more specific corrections
+/// must not disappear merely because one sentence contains another.
+fn is_duplicate(content: &str, category: &str, existing: &[Memory]) -> bool {
     let normalized = normalize(content);
     existing.iter().any(|memory| {
         let existing_norm = normalize(&memory.content);
-        normalized == existing_norm
-            || existing_norm.contains(&normalized)
-            || normalized.contains(&existing_norm)
+        memory.category == category && normalized == existing_norm
     })
 }
 

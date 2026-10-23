@@ -98,7 +98,7 @@ fn persist_event(
     }
     if matches!(
         event.event_type.as_str(),
-        "done" | "error" | "approval_required"
+        "done" | "error" | "approval_required" | "user_input_required"
     ) {
         pending.push(event);
     } else {
@@ -130,7 +130,7 @@ impl ChatTurnEvents {
                             let _ = reply.send(match &failure { Some(error) => Err(error.clone()), None => Ok(()) });
                         }
                         Some(DrainCommand::Publish { conversation, status, error, complete }) => {
-                            let expected = match status { ConversationRunStatus::Completed => "done", ConversationRunStatus::WaitingApproval => "approval_required", _ => "error" };
+                            let expected = match status { ConversationRunStatus::Completed => "done", ConversationRunStatus::WaitingApproval => "approval_required", ConversationRunStatus::WaitingInput => "user_input_required", _ => "error" };
                             let mut published = false;
                             for event in pending { if event.event_type == expected { let _ = stream.send(event); published = true; } }
                             if !published { if let Some(error) = error { let _ = stream.send(AgentEvent::error_event(&conversation,error)); } }

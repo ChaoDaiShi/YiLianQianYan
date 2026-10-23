@@ -332,6 +332,7 @@ fn workflow_approval_stream(
             &subject_id,
             approve,
             &CancellationToken::new(),
+            crate::modules::workflow::application::run_service::build_agent_executor(&server),
         ).await;
 
         match result {
@@ -1388,35 +1389,63 @@ async fn resume_agent(
     runtime: &crate::api::chat::runtime::ChatRuntime,
     handoff: Option<&ChatTurnEvents>,
 ) {
-    let llm_client =
-        match crate::api::chat::runtime::client(server, runtime, &approval.conversation_id, tx) {
-            Ok(client) => client,
-            Err(error) => {
-                let _ = set_turn_status(
-                    handoff,
-                    db,
-                    &approval.conversation_id,
-                    crate::db::ConversationRunStatus::Failed,
-                    Some(&error),
-                );
-                let _ = tx
-                    .send(AgentEvent::error_event(&approval.conversation_id, error))
-                    .await;
-                return;
-            }
-        };
-    let llm_client = match db.load_chat_options(&approval.conversation_id) {
+    resume_conversation(
+        server,
+        db,
+        tool_registry,
+        config,
+        log_buffer,
+        system_prompt,
+        &approval.conversation_id,
+        tx,
+        goal_run,
+        runtime,
+        handoff,
+    )
+    .await;
+}
+
+pub(crate) async fn resume_conversation(
+    server: &AppServer,
+    db: &Database,
+    tool_registry: &Arc<ToolRegistry>,
+    config: &AppConfig,
+    log_buffer: &LogBuffer,
+    system_prompt: &str,
+    conversation_id: &str,
+    tx: &Sender<AgentEvent>,
+    goal_run: Option<GoalChatRun>,
+    runtime: &crate::api::chat::runtime::ChatRuntime,
+    handoff: Option<&ChatTurnEvents>,
+) {
+    let llm_client = match crate::api::chat::runtime::client(server, runtime, conversation_id, tx) {
+        Ok(client) => client,
+        Err(error) => {
+            let _ = set_turn_status(
+                handoff,
+                db,
+                conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&error),
+            );
+            let _ = tx
+                .send(AgentEvent::error_event(conversation_id, error))
+                .await;
+            return;
+        }
+    };
+    let llm_client = match db.load_chat_options(conversation_id) {
         Ok(options) => options.client(llm_client),
         Err(error) => {
             let _ = set_turn_status(
                 handoff,
                 db,
-                &approval.conversation_id,
+                conversation_id,
                 crate::db::ConversationRunStatus::Failed,
                 Some(&error),
             );
             let _ = tx
-                .send(AgentEvent::error_event(&approval.conversation_id, error))
+                .send(AgentEvent::error_event(conversation_id, error))
                 .await;
             return;
         }
@@ -1424,38 +1453,38 @@ async fn resume_agent(
     let _ = set_turn_status(
         handoff,
         db,
-        &approval.conversation_id,
+        conversation_id,
         crate::db::ConversationRunStatus::Running,
         None,
     );
-    let mode = match db.conversation_mode(&approval.conversation_id) {
+    let mode = match db.conversation_mode(conversation_id) {
         Ok(mode) => mode,
         Err(error) => {
             let _ = set_turn_status(
                 handoff,
                 db,
-                &approval.conversation_id,
+                conversation_id,
                 crate::db::ConversationRunStatus::Failed,
                 Some(&error),
             );
             let _ = tx
-                .send(AgentEvent::error_event(&approval.conversation_id, error))
+                .send(AgentEvent::error_event(conversation_id, error))
                 .await;
             return;
         }
     };
-    let history = match db.load_chat_messages(&approval.conversation_id) {
+    let history = match db.load_chat_messages(conversation_id) {
         Ok(messages) => messages,
         Err(error) => {
             let _ = set_turn_status(
                 handoff,
                 db,
-                &approval.conversation_id,
+                conversation_id,
                 crate::db::ConversationRunStatus::Failed,
                 Some(&error),
             );
             let _ = tx
-                .send(AgentEvent::error_event(&approval.conversation_id, error))
+                .send(AgentEvent::error_event(conversation_id, error))
                 .await;
             return;
         }
@@ -1470,17 +1499,33 @@ async fn resume_agent(
         let _ = set_turn_status(
             handoff,
             db,
-            &approval.conversation_id,
+            conversation_id,
             crate::db::ConversationRunStatus::Failed,
             Some(&error),
         );
         let _ = tx
-            .send(AgentEvent::error_event(&approval.conversation_id, error))
+            .send(AgentEvent::error_event(conversation_id, error))
             .await;
         return;
     }
     let mut agent_state = AgentState::new(grounded_prompt);
     agent_state.load_history(history);
+    match db.load_conversation_compaction(conversation_id) {
+        Ok(point) => agent_state.compaction_checkpoint = point,
+        Err(error) => {
+            let _ = set_turn_status(
+                handoff,
+                db,
+                conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&error),
+            );
+            let _ = tx
+                .send(AgentEvent::error_event(conversation_id, error))
+                .await;
+            return;
+        }
+    }
     if let Some(run) = goal_run.as_ref() {
         agent_state.goal_ref = Some(run.goal_ref.clone());
         agent_state.add_user_message(run.goal_summary.clone());
@@ -1494,7 +1539,7 @@ async fn resume_agent(
     server
         .active_tasks
         .lock()
-        .insert(approval.conversation_id.clone(), cancel_token.clone());
+        .insert(conversation_id.to_string(), cancel_token.clone());
 
     let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
         config.sandbox.clone(),
@@ -1515,7 +1560,7 @@ async fn resume_agent(
         &server.approval_store,
         &security_gateway,
         config,
-        &approval.conversation_id,
+        conversation_id,
         &cancel_token,
         tx,
         log_buffer,
@@ -1537,18 +1582,23 @@ async fn resume_agent(
 
     // Persist any new messages produced during the resumed run.
     let now = chrono::Utc::now().timestamp_millis();
+    if let Err(error) =
+        db.save_conversation_compaction(conversation_id, &agent_state.compaction_checkpoint)
+    {
+        result = Err(error);
+    }
     for msg in &agent_state.messages[prev_count.min(agent_state.messages.len())..] {
         if msg.role == "user" || msg.role == "system" {
             continue;
         }
-        if let Err(error) = db.persist_chat_message(&approval.conversation_id, msg, now) {
+        if let Err(error) = db.persist_chat_message(conversation_id, msg, now) {
             result = Err(error);
             break;
         }
     }
 
     if handoff.is_none() {
-        server.active_tasks.lock().remove(&approval.conversation_id);
+        server.active_tasks.lock().remove(conversation_id);
     }
 
     match result {
@@ -1556,17 +1606,31 @@ async fn resume_agent(
             let _ = set_turn_status(
                 handoff,
                 db,
-                &approval.conversation_id,
+                conversation_id,
                 crate::db::ConversationRunStatus::Completed,
                 None,
             );
             log_buffer.push("info", "agent", "审批后 Agent 完成");
         }
+        Ok(RunOutcome::WaitingInput {
+            tool_call_id,
+            request,
+        }) => {
+            crate::api::conversation_inputs::persist_waiting_input(
+                db,
+                conversation_id,
+                &tool_call_id,
+                &request,
+                tx,
+                handoff,
+            )
+            .await;
+        }
         Ok(RunOutcome::Paused { approval_id }) => {
             let _ = set_turn_status(
                 handoff,
                 db,
-                &approval.conversation_id,
+                conversation_id,
                 crate::db::ConversationRunStatus::WaitingApproval,
                 None,
             );
@@ -1580,7 +1644,7 @@ async fn resume_agent(
             let _ = set_turn_status(
                 handoff,
                 db,
-                &approval.conversation_id,
+                conversation_id,
                 crate::db::ConversationRunStatus::Failed,
                 Some(&e),
             );
@@ -1588,7 +1652,7 @@ async fn resume_agent(
             let _ = tx
                 .send(AgentEvent {
                     event_type: "error".into(),
-                    conversation_id: approval.conversation_id.clone(),
+                    conversation_id: conversation_id.to_string(),
                     error: Some(e),
                     token: None,
                     tool_call_id: None,
@@ -1599,7 +1663,7 @@ async fn resume_agent(
                     message_id: None,
                     risk_level: None,
                     reason: None,
-                    approval_id: Some(approval.approval_id.clone()),
+                    approval_id: None,
                     verification_success: None,
                     verification_reason: None,
                     should_replan: None,

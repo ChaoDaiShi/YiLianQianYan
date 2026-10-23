@@ -62,6 +62,9 @@ pub fn extract_preview(name: &str, mime: &str, bytes: &[u8]) -> ResourcePreview 
             }
             other => other.map(Some),
         }
+    } else if mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" {
+        preview.kind = "pptx".into();
+        parsers::pptx::parse(bytes).map(Some)
     } else if name.to_ascii_lowercase().ends_with(".docx") {
         preview.kind = "docx".into();
         parsers::docx::parse(bytes).map(Some)

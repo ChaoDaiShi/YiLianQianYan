@@ -206,7 +206,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, definition_json, created_at, updated_at
-                 FROM workflow_graphs ORDER BY created_at ASC",
+                 FROM workflow_graphs WHERE id NOT LIKE 'operation:%' ORDER BY created_at ASC",
             )
             .map_err(|error| error.to_string())?;
         let rows = stmt

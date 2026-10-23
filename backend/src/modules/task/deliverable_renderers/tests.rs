@@ -3,6 +3,92 @@ use calamine::{Data, Reader};
 use std::io::{Cursor, Read};
 
 #[test]
+fn pptx_contains_editable_ooxml_slides_master_layout_theme_and_roundtrips_text() {
+    let document = DocumentContent {
+        title: "中文演示".into(),
+        sections: vec![DocumentSection {
+            heading: "关键结果".into(),
+            paragraphs: vec!["原始证据 & 结果".into()],
+            table: Some(vec![vec!["指标".into(), "7".into()]]),
+        }],
+        sources: vec!["source-marker".into()],
+    };
+    let rendered = render_pptx("presentation.pptx", &document).unwrap();
+    assert_eq!(rendered.mime_type, PPTX_MIME);
+    assert!(rendered.bytes.starts_with(b"PK"));
+    let mut package = zip::ZipArchive::new(Cursor::new(&rendered.bytes)).unwrap();
+    for part in [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "ppt/presentation.xml",
+        "ppt/_rels/presentation.xml.rels",
+        "ppt/theme/theme1.xml",
+        "ppt/slideMasters/slideMaster1.xml",
+        "ppt/slideMasters/_rels/slideMaster1.xml.rels",
+        "ppt/slideLayouts/slideLayout1.xml",
+        "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+        "ppt/slides/_rels/slide2.xml.rels",
+    ] {
+        assert!(package.by_name(part).is_ok(), "missing {part}");
+    }
+    let mut slide = String::new();
+    package
+        .by_name("ppt/slides/slide2.xml")
+        .unwrap()
+        .read_to_string(&mut slide)
+        .unwrap();
+    assert!(slide.contains("Editable title"));
+    assert!(slide.contains("Editable body"));
+    assert!(slide.contains("<a:t"));
+    assert!(slide.contains("&amp;"));
+    assert!(!slide.contains("<p:pic"));
+    let text = crate::modules::resource::extract_document_text(
+        "presentation.pptx",
+        PPTX_MIME,
+        &rendered.bytes,
+    )
+    .unwrap();
+    assert!(text.contains("中文演示"));
+    assert!(text.contains("原始证据 & 结果"));
+    assert!(text.contains("指标 | 7"));
+    assert!(text.contains("source-marker"));
+    let inspection =
+        crate::modules::task::proofloop::deliverable_format::inspect_deliverable_format(
+            PPTX_MIME,
+            "presentation.pptx",
+            &rendered.bytes,
+        )
+        .unwrap();
+    assert!(inspection.extracted_text.unwrap().contains("关键结果"));
+}
+
+#[test]
+fn pptx_format_contract_preserves_extension_and_paginates_long_body() {
+    assert_eq!(
+        DeliverableFormat::try_from("pptx").unwrap(),
+        DeliverableFormat::Pptx
+    );
+    assert_eq!(
+        file_name_for_format("report", DeliverableFormat::Pptx).unwrap(),
+        "report.pptx"
+    );
+    assert!(file_name_for_format("report.pdf", DeliverableFormat::Pptx).is_err());
+    let document = DocumentContent {
+        title: "长篇正文".into(),
+        sections: vec![DocumentSection {
+            heading: "内容".into(),
+            paragraphs: (0..23).map(|n| format!("独立段落{n}")).collect(),
+            table: None,
+        }],
+        sources: vec![],
+    };
+    let rendered = render_pptx("long.pptx", &document).unwrap();
+    let slides = crate::modules::resource::parsers::pptx::slides(&rendered.bytes, 20000).unwrap();
+    assert_eq!(slides.len(), 4);
+    assert!(slides[3].text.contains("独立段落22"));
+}
+
+#[test]
 fn markdown_and_json_keep_the_structured_source_bytes() {
     let markdown = render_markdown("brief.md", "# 来源内容\n\n真实正文。".into());
     assert_eq!(markdown.mime_type, "text/markdown");

@@ -17,16 +17,60 @@ pub fn router() -> Router<Arc<AppServer>> {
         .route("/api/knowledge/documents", get(list).post(import))
         .route("/api/knowledge/documents/:id", get(detail).delete(remove))
         .route("/api/knowledge/search", get(search))
+        .route(
+            "/api/knowledge/collections",
+            get(collections).post(create_collection),
+        )
 }
-async fn list(State(server): State<Arc<AppServer>>) -> Result<Json<Value>, Error> {
+#[derive(Deserialize)]
+struct ListQuery {
+    collection_id: Option<String>,
+}
+async fn list(
+    State(server): State<Arc<AppServer>>,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<Value>, Error> {
+    let documents = server
+        .db
+        .knowledge_documents_for_collection(query.collection_id.as_deref())
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let ids = documents
+        .iter()
+        .map(|document| document.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let memberships = server
+        .db
+        .knowledge_memberships(None)
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .into_iter()
+        .filter(|membership| ids.contains(membership.document_id.as_str()))
+        .collect::<Vec<_>>();
     Ok(Json(
-        json!({"documents":server.db.knowledge_documents().map_err(|e|error(StatusCode::INTERNAL_SERVER_ERROR,e))?}),
+        json!({"documents":documents,"memberships":memberships,"collections":server.db.knowledge_collections().map_err(|e|error(StatusCode::INTERNAL_SERVER_ERROR,e))?}),
+    ))
+}
+async fn collections(State(server): State<Arc<AppServer>>) -> Result<Json<Value>, Error> {
+    Ok(Json(
+        json!({"collections":server.db.knowledge_collections().map_err(|e|error(StatusCode::INTERNAL_SERVER_ERROR,e))?}),
+    ))
+}
+#[derive(Deserialize)]
+struct CreateCollection {
+    name: String,
+}
+async fn create_collection(
+    State(server): State<Arc<AppServer>>,
+    Json(body): Json<CreateCollection>,
+) -> Result<Json<Value>, Error> {
+    Ok(Json(
+        json!({"collection":server.db.ensure_knowledge_collection(&body.name).map_err(|e|error(StatusCode::BAD_REQUEST,e))?}),
     ))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Import {
     resource_id: String,
+    location: Option<crate::db::knowledge::KnowledgeImportLocation>,
 }
 static KNOWLEDGE_PARSERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 async fn import(
@@ -53,13 +97,14 @@ async fn import(
             &resource.mime_type,
             &bytes,
         )?;
-        server.db.import_knowledge(
+        server.db.import_knowledge_in_collection(
             &id,
             &resource.name,
             &resource.mime_type,
             &resource.hash,
             resource.size as i64,
             &text,
+            body.location.as_ref(),
         )
     })
     .await
@@ -73,10 +118,8 @@ async fn detail(
 ) -> Result<Json<Value>, Error> {
     let document = server
         .db
-        .knowledge_documents()
+        .find_knowledge_document(&id)
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .into_iter()
-        .find(|d| d.id == id)
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "知识文档不存在"))?;
     let chunks = server
         .db
@@ -87,24 +130,29 @@ async fn detail(
         .knowledge_text(&id)
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "知识正文不存在"))?;
+    let build_id = server
+        .db
+        .knowledge_build_for_document(&id)
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(
-        json!({"document":document,"chunks":chunks,"text":text}),
+        json!({"document":document,"chunks":chunks,"text":text,"build_id":build_id,"memberships":server.db.knowledge_memberships(Some(&id)).map_err(|e|error(StatusCode::INTERNAL_SERVER_ERROR,e))?}),
     ))
 }
 #[derive(Deserialize)]
 struct Search {
     q: String,
+    collection_id: Option<String>,
 }
 async fn search(
     State(server): State<Arc<AppServer>>,
     Query(query): Query<Search>,
 ) -> Result<Json<Value>, Error> {
-    let query = query.q.trim();
-    if query.is_empty() {
+    let text = query.q.trim();
+    if text.is_empty() {
         return Ok(Json(json!({"hits":[]})));
     }
     Ok(Json(
-        json!({"hits":server.db.search_knowledge(query).map_err(|e|error(StatusCode::INTERNAL_SERVER_ERROR,e))?}),
+        json!({"hits":server.db.search_knowledge_in_collection(text,query.collection_id.as_deref()).map_err(|e|error(StatusCode::INTERNAL_SERVER_ERROR,e))?}),
     ))
 }
 async fn remove(

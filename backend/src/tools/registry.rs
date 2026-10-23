@@ -76,6 +76,7 @@ impl ToolRegistry {
 
         // Task planning
         registry.register(Arc::new(WriteTodosTool));
+        registry.register(Arc::new(crate::agent::user_input::AskUserTool));
 
         // Process management
         registry.register(Arc::new(ProcessTool));

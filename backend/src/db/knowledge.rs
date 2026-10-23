@@ -4,7 +4,9 @@ use super::{
 };
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
+mod collections;
 mod context;
+pub use collections::{KnowledgeCollection, KnowledgeImportLocation, KnowledgeMembership};
 pub use context::KnowledgeContext;
 
 const SCHEMA:ProductMigrationSpec=ProductMigrationSpec::new(1025,"1025_knowledge_documents",MigrationOwner::V1TaskWorld,
@@ -62,13 +64,20 @@ pub fn split_document(text: &str) -> Vec<String> {
 }
 impl Database {
     pub fn initialize_knowledge_schema(&self) -> Result<(), rusqlite::Error> {
-        self.apply_product_migration(&SCHEMA)
+        self.apply_product_migration(&SCHEMA)?;
+        self.apply_product_migration(&collections::SCHEMA)
     }
     pub fn knowledge_documents(&self) -> Result<Vec<KnowledgeDocument>, String> {
+        self.knowledge_documents_for_collection(None)
+    }
+    pub fn knowledge_documents_for_collection(
+        &self,
+        collection: Option<&str>,
+    ) -> Result<Vec<KnowledgeDocument>, String> {
         let conn = self.conn();
-        let mut statement=conn.prepare("SELECT d.id,d.resource_id,d.name,d.mime_type,d.hash,d.size,d.char_count,COUNT(m.id),d.created_at FROM knowledge_documents d LEFT JOIN knowledge_document_chunks c ON c.document_id=d.id LEFT JOIN memories m ON m.id=c.memory_id GROUP BY d.id ORDER BY d.created_at DESC,d.id").map_err(|e|e.to_string())?;
+        let mut statement=conn.prepare("SELECT d.id,d.resource_id,d.name,d.mime_type,d.hash,d.size,d.char_count,COUNT(m.id),d.created_at FROM knowledge_documents d LEFT JOIN knowledge_document_chunks c ON c.document_id=d.id LEFT JOIN memories m ON m.id=c.memory_id WHERE (?1 IS NULL OR EXISTS(SELECT 1 FROM knowledge_collection_documents membership WHERE membership.document_id=d.id AND membership.collection_id=?1)) GROUP BY d.id ORDER BY d.created_at DESC,d.id").map_err(|e|e.to_string())?;
         let result = statement
-            .query_map([], |r| {
+            .query_map([collection], |r| {
                 Ok(KnowledgeDocument {
                     id: r.get(0)?,
                     resource_id: r.get(1)?,
@@ -95,8 +104,19 @@ impl Database {
         size: i64,
         text: &str,
     ) -> Result<(KnowledgeDocument, bool), String> {
-        let parts = split_document(text);
-        if parts.is_empty() {
+        self.import_knowledge_in_collection(resource_id, name, mime, hash, size, text, None)
+    }
+    pub fn import_knowledge_in_collection(
+        &self,
+        resource_id: &str,
+        name: &str,
+        mime: &str,
+        hash: &str,
+        size: i64,
+        text: &str,
+        location: Option<&KnowledgeImportLocation>,
+    ) -> Result<(KnowledgeDocument, bool), String> {
+        if text.trim().is_empty() {
             return Err("文档没有可导入的文本".into());
         }
         let mut conn = self.conn();
@@ -114,19 +134,20 @@ impl Database {
         if created {
             let now = chrono::Utc::now().timestamp_millis();
             tx.execute("INSERT INTO knowledge_documents(id,resource_id,name,mime_type,hash,size,char_count,text_content,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![id,resource_id,name,mime,hash,size,text.chars().count() as i64,text,now]).map_err(|e|e.to_string())?;
-            for (index, content) in parts.into_iter().enumerate() {
+            for (index, content) in split_document(text).into_iter().enumerate() {
                 let memory = uuid::Uuid::new_v4().to_string();
                 let metadata=serde_json::json!({"knowledge_document_id":id,"resource_id":resource_id,"document_name":name,"chunk_index":index}).to_string();
                 tx.execute("INSERT INTO memories(id,content,category,source,metadata,created_at,updated_at) VALUES(?1,?2,'knowledge','document',?3,?4,?4)",params![memory,content,metadata,now]).map_err(|e|e.to_string())?;
                 tx.execute("INSERT INTO knowledge_document_chunks(document_id,memory_id,chunk_index) VALUES(?1,?2,?3)",params![id,memory,index as i64]).map_err(|e|e.to_string())?;
             }
         }
+        if let Some(location) = location {
+            collections::attach_on(&tx, &id, location)?;
+        }
         tx.commit().map_err(|e| e.to_string())?;
         drop(conn);
         let document = self
-            .knowledge_documents()?
-            .into_iter()
-            .find(|d| d.id == id)
+            .find_knowledge_document(&id)?
             .ok_or("知识文档记录不可用")?;
         Ok((document, created))
     }
@@ -174,14 +195,21 @@ impl Database {
         result
     }
     pub fn search_knowledge(&self, query: &str) -> Result<Vec<KnowledgeSearchHit>, String> {
+        self.search_knowledge_in_collection(query, None)
+    }
+    pub fn search_knowledge_in_collection(
+        &self,
+        query: &str,
+        collection: Option<&str>,
+    ) -> Result<Vec<KnowledgeSearchHit>, String> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
         }
         let conn = self.conn();
-        let mut statement=conn.prepare("SELECT id,name,text_content,instr(lower(text_content),lower(?1)) FROM knowledge_documents WHERE instr(lower(text_content),lower(?1))>0 OR instr(lower(name),lower(?1))>0 ORDER BY created_at DESC,id LIMIT 200").map_err(|e|e.to_string())?;
+        let mut statement=conn.prepare("SELECT id,name,text_content,instr(lower(text_content),lower(?1)) FROM knowledge_documents WHERE (instr(lower(text_content),lower(?1))>0 OR instr(lower(name),lower(?1))>0) AND (?2 IS NULL OR EXISTS(SELECT 1 FROM knowledge_collection_documents m WHERE m.document_id=knowledge_documents.id AND m.collection_id=?2)) ORDER BY created_at DESC,id LIMIT 200").map_err(|e|e.to_string())?;
         let rows = statement
-            .query_map([query], |row| {
+            .query_map(params![query, collection], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -251,5 +279,7 @@ impl Database {
     }
 }
 
+#[cfg(test)]
+mod collection_tests;
 #[cfg(test)]
 mod tests;

@@ -4,17 +4,27 @@
 
 pub mod access_rules;
 mod artifact_provenance;
+pub mod automations;
 pub mod basic_services;
+pub mod channels;
 pub mod cloud;
 pub mod connector_messages;
 pub mod connectors;
 mod conversation_goal;
+pub mod conversation_inputs;
+pub mod conversation_messages;
 pub mod conversation_modes;
+pub mod conversation_outputs;
+pub mod conversation_presentation;
+pub mod conversation_turns;
 mod conversations;
 pub mod knowledge;
+pub mod knowledge_build;
+pub mod learning;
 mod llm_models;
 mod mcp;
 mod memories;
+pub mod memory_governance;
 mod migrations;
 pub mod model_pools;
 mod proofloop;
@@ -84,6 +94,16 @@ impl Database {
         db.initialize_connectors_schema()?;
         db.initialize_connector_messages_schema()?;
         db.initialize_knowledge_schema()?;
+        db.initialize_conversation_turns()?;
+        db.initialize_conversation_inputs()?;
+        db.initialize_conversation_outputs()?;
+        db.initialize_automations_schema()?;
+        db.initialize_learning()?;
+        db.initialize_channels()?;
+        db.initialize_conversation_presentation()?;
+        db.migrate_memory_governance()
+            .map_err(rusqlite::Error::InvalidParameterName)?;
+        db.initialize_knowledge_build_schema()?;
         db.initialize_access_rules_schema()?;
         db.init_model_pools()
             .map_err(rusqlite::Error::InvalidParameterName)?;

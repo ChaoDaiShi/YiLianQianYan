@@ -44,6 +44,7 @@ pub fn validate_upload(
         "jpg" | "jpeg" => "image/jpeg",
         "pdf" => "application/pdf",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _ => return Err("不支持此文件类型".into()),
     };

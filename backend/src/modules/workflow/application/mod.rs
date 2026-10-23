@@ -8,4 +8,5 @@
 
 pub mod approval_service;
 pub mod graph_service;
+pub mod run_inputs;
 pub mod run_service;

@@ -13,8 +13,8 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use super::super::definition::WorkflowNodeId;
-use super::super::executor::SecurityGatewayNodeExecutor;
-use super::super::run::{NodeRunStatus, WorkflowRunId};
+use super::super::executor::{SecurityGatewayNodeExecutor, WorkflowAgentExecutor};
+use super::super::run::{safe_tool_result_summary, NodeRunResult, NodeRunStatus, WorkflowRunId};
 use super::super::runner::WorkflowRunner;
 use crate::db::Database;
 use crate::safety::execution_gateway::SecurityExecutionOutcome;
@@ -32,6 +32,7 @@ pub async fn resolve_workflow_approval(
     subject_id: &str,
     approve: bool,
     cancel: &CancellationToken,
+    agent_executor: Arc<dyn WorkflowAgentExecutor>,
 ) -> Result<(), String> {
     let lookup = approval_store
         .get(approval_id)
@@ -66,6 +67,9 @@ pub async fn resolve_workflow_approval(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "工作流运行不存在".to_string())?;
     let (graph_id, mut run) = (stored.workflow_graph_id, stored.run);
+    if run.status.is_terminal() || cancel.is_cancelled() {
+        return Err("工作流已结束，不能继续执行此审批".into());
+    }
 
     let node_id = WorkflowNodeId::new(workflow_node_id).map_err(|error| error.to_string())?;
     if run.node(&node_id).is_none() {
@@ -102,10 +106,28 @@ pub async fn resolve_workflow_approval(
             .map_err(|error| error.to_string())?;
         match outcome {
             Ok(SecurityExecutionOutcome::Executed { tool_result, .. }) if tool_result.ok => {
+                if let Some(node) = run.node_mut(&node_id) {
+                    node.result = Some(NodeRunResult::new(safe_tool_result_summary(
+                        &tool_result.content,
+                    )));
+                }
                 run.transition_node(&node_id, NodeRunStatus::Completed, now)
                     .map_err(|error| error.to_string())?;
             }
-            _ => {
+            outcome => {
+                let error = match outcome {
+                    Ok(SecurityExecutionOutcome::Executed { tool_result, .. }) => {
+                        tool_result.error.unwrap_or(tool_result.content)
+                    }
+                    Ok(
+                        SecurityExecutionOutcome::Denied { reason }
+                        | SecurityExecutionOutcome::RequiresApproval { reason, .. },
+                    ) => reason,
+                    Err(error) => error.to_string(),
+                };
+                if let Some(node) = run.node_mut(&node_id) {
+                    node.error = Some(NodeRunResult::new(error).summary);
+                }
                 run.transition_node(&node_id, NodeRunStatus::Failed, now)
                     .map_err(|error| error.to_string())?;
             }
@@ -123,7 +145,8 @@ pub async fn resolve_workflow_approval(
     // Continue the scheduler for any remaining nodes (approve only).
     if approve {
         let executor =
-            SecurityGatewayNodeExecutor::new(Arc::clone(gateway), Arc::clone(approval_store));
+            SecurityGatewayNodeExecutor::new(Arc::clone(gateway), Arc::clone(approval_store))
+                .with_agent_executor(agent_executor);
         let runner = WorkflowRunner::new(executor);
         let db = db.clone_connection();
         runner

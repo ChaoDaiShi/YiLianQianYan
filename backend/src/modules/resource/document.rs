@@ -1,29 +1,25 @@
 //! Complete textual document extraction for knowledge ingestion.
-//! Upload and container limits are shared with previews; a document exceeding
-//! the explicit text budget is rejected rather than indexed as a partial file.
+//! Upload bytes and container limits are shared with previews. Knowledge extraction
+//! reads the complete accepted document; only the preview has a character budget.
 
 use super::{parsers, validate_upload};
-
-pub const MAX_DOCUMENT_CHARS: usize = 2_000_000;
 
 pub fn extract_document_text(name: &str, mime: &str, bytes: &[u8]) -> Result<String, String> {
     let mime = validate_upload(name, mime, bytes.len(), 1)?;
     let text = match mime.as_str() {
         mime if mime.starts_with("text/") => parsers::text::parse(bytes)?,
-        "application/pdf" => parsers::pdf::parse_with_limit(bytes, MAX_DOCUMENT_CHARS)?,
+        "application/pdf" => parsers::pdf::parse_with_limit(bytes, usize::MAX)?,
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
-            parsers::docx::parse_with_limit(bytes, MAX_DOCUMENT_CHARS)?
+            parsers::docx::parse_with_limit(bytes, usize::MAX)?
+        }
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
+            parsers::pptx::parse_with_limit(bytes, usize::MAX)?
         }
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
-            parsers::xlsx::parse_with_limit(bytes, MAX_DOCUMENT_CHARS)?
+            parsers::xlsx::parse_with_limit(bytes, usize::MAX)?
         }
         _ => return Err("此文件不提供可提取文本；图像 OCR 暂不支持".into()),
     };
-    if text.chars().count() > MAX_DOCUMENT_CHARS {
-        return Err(format!(
-            "文档提取文本超过 {MAX_DOCUMENT_CHARS} 字符限制，未导入部分内容"
-        ));
-    }
     if text.trim().is_empty() {
         return Err(if mime == "application/pdf" {
             "PDF 无文本层；扫描件 OCR 暂不支持"
@@ -74,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn knowledge_text_keeps_tail_beyond_preview_and_rejects_over_limit_or_nontext() {
+    fn knowledge_text_keeps_large_document_tail_and_preserves_upload_and_preview_limits() {
         let text = format!("{}TAIL_MARKER", "涟".repeat(MAX_PREVIEW_CHARS + 100));
         for name in ["notes.txt", "notes.md", "table.csv", "source.rs"] {
             let full = extract_document_text(name, "text/plain", text.as_bytes()).unwrap();
@@ -84,13 +80,20 @@ mod tests {
             assert!(preview.truncated);
             assert_eq!(preview.text.unwrap().chars().count(), MAX_PREVIEW_CHARS);
         }
+        let large = format!("{}LARGE_TEXT_TAIL", "a".repeat(2_000_001));
+        assert_eq!(
+            extract_document_text("large.txt", "text/plain", large.as_bytes()).unwrap(),
+            large
+        );
+        let preview = extract_preview("large.txt", "text/plain", large.as_bytes());
+        assert!(preview.truncated);
+        assert!(!preview.text.unwrap().contains("LARGE_TEXT_TAIL"));
         assert!(extract_document_text(
-            "large.txt",
+            "too-large.txt",
             "text/plain",
-            "a".repeat(MAX_DOCUMENT_CHARS + 1).as_bytes()
+            &vec![b'a'; crate::modules::resource::MAX_INPUT_BYTES + 1]
         )
-        .unwrap_err()
-        .contains("未导入部分内容"));
+        .is_err());
         assert!(extract_document_text("bad.txt", "text/plain", &[255, 254]).is_err());
         assert!(extract_document_text("empty.txt", "text/plain", b" \n ").is_err());
         assert!(

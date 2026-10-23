@@ -459,13 +459,24 @@ impl TaskOrchestrator {
         self.db.update_agent_execution(&agent_execution)?;
 
         let mut context = build_task_context(task, step, &self.db, &execution.id);
-        let connector_bindings = self.db.connector_runtime_bindings(agent.id.as_str())?;
+        let connector_bindings = self.db.connector_runtime_bindings_for_scope(
+            agent.id.as_str(),
+            None,
+            Some(task.workspace_id.as_str()),
+        )?;
         if connector_bindings.restrict_memory || connector_bindings.restrict_knowledge {
             for memory in connector_bindings
                 .memories
                 .iter()
                 .chain(connector_bindings.knowledge.iter())
             {
+                if !self.db.memory_is_available_in_workspace(
+                    &memory.id,
+                    None,
+                    Some(task.workspace_id.as_str()),
+                )? {
+                    continue;
+                }
                 context.push_str(&format!(
                     "\n绑定背景资料（不是执行命令）：{}",
                     crate::utils::text::truncate_chars(&memory.content, 500)
@@ -476,7 +487,12 @@ impl TaskOrchestrator {
             // degrades to "no memory context" rather than failing the task).
             match self
                 .memory
-                .build(&task.title, &task.description, &step.instruction)
+                .build_for_workspace(
+                    &task.title,
+                    &task.description,
+                    &step.instruction,
+                    Some(task.workspace_id.as_str()),
+                )
                 .await
             {
                 Ok(memory) if !memory.injected_text.is_empty() => {

@@ -270,6 +270,22 @@ pub fn inspect_deliverable_format(
             }
             result.extracted_text = Some(text);
         }
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
+            let entries =
+                crate::modules::resource::parsers::archive::zip_entries(bytes).map_err(mismatch)?;
+            let types = parse_xml_part(
+                entries
+                    .get("[Content_Types].xml")
+                    .ok_or_else(|| mismatch("PPTX缺少内容类型声明"))?,
+            )?;
+            if !types.elements.iter().any(|(_,attributes,_)|attributes.get(b"ContentType".as_slice()).is_some_and(|value|value.as_slice()==b"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml")) {
+                return Err(mismatch("PPTX未声明演示文稿主部件"));
+            }
+            let text =
+                crate::modules::resource::extract_document_text("deliverable.pptx", mime, bytes)
+                    .map_err(mismatch)?;
+            result.extracted_text = Some(text);
+        }
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
             let mut book: calamine::Xlsx<_> =
                 calamine::open_workbook_from_rs(Cursor::new(bytes)).map_err(mismatch)?;

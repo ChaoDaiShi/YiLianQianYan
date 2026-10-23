@@ -1,10 +1,15 @@
 //! Real-byte renderers for explicitly requested task deliverable formats.
 
+mod pptx;
+pub use pptx::render_pptx;
+
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Write};
 
 pub const DOCX_MIME: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+pub const PPTX_MIME: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 pub const XLSX_MIME: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 pub const PNG_WIDTH: u32 = 800;
 pub const PNG_HEIGHT: u32 = 480;
@@ -22,6 +27,7 @@ pub enum DeliverableFormat {
     Markdown,
     Json,
     Docx,
+    Pptx,
     Xlsx,
     Png,
     Pdf,
@@ -33,6 +39,7 @@ impl DeliverableFormat {
             Self::Markdown => "text/markdown",
             Self::Json => "application/json",
             Self::Docx => DOCX_MIME,
+            Self::Pptx => PPTX_MIME,
             Self::Xlsx => XLSX_MIME,
             Self::Png => "image/png",
             Self::Pdf => "application/pdf",
@@ -44,6 +51,7 @@ impl DeliverableFormat {
             Self::Markdown => "md",
             Self::Json => "json",
             Self::Docx => "docx",
+            Self::Pptx => "pptx",
             Self::Xlsx => "xlsx",
             Self::Png => "png",
             Self::Pdf => "pdf",
@@ -63,6 +71,7 @@ impl TryFrom<&str> for DeliverableFormat {
             "markdown" | "text/markdown" => Ok(Self::Markdown),
             "json" | "application/json" => Ok(Self::Json),
             "docx" | DOCX_MIME => Ok(Self::Docx),
+            "pptx" | PPTX_MIME => Ok(Self::Pptx),
             "xlsx" | XLSX_MIME => Ok(Self::Xlsx),
             "png" | "image/png" => Ok(Self::Png),
             "pdf" | "application/pdf" => Ok(Self::Pdf),

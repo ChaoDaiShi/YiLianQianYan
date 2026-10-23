@@ -94,6 +94,7 @@ pub struct MemoryContextBuilder {
     db: Database,
     llm: LlmClient,
     has_embedding: bool,
+    embedding_model: String,
 }
 
 impl MemoryContextBuilder {
@@ -103,6 +104,7 @@ impl MemoryContextBuilder {
             db,
             llm: LlmClient::new(config, resolver),
             has_embedding,
+            embedding_model: crate::db::memory_governance::embedding_identity(config),
         }
     }
 
@@ -116,6 +118,16 @@ impl MemoryContextBuilder {
         title: &str,
         description: &str,
         instruction: &str,
+    ) -> Result<MemoryContext, String> {
+        self.build_for_workspace(title, description, instruction, None)
+            .await
+    }
+    pub async fn build_for_workspace(
+        &self,
+        title: &str,
+        description: &str,
+        instruction: &str,
+        workspace_id: Option<&str>,
     ) -> Result<MemoryContext, String> {
         let query = build_memory_query(title, description, instruction);
 
@@ -135,14 +147,26 @@ impl MemoryContextBuilder {
             }
         }
 
-        let memories = self.db.retrieve_memories_hybrid(
-            &RetrieveQuery {
-                q: query.clone(),
-                top_k: DEFAULT_TOP_K,
-                category: None,
-            },
-            query_embedding.as_deref(),
-        )?;
+        let retrieval = RetrieveQuery {
+            q: query.clone(),
+            top_k: DEFAULT_TOP_K,
+            category: None,
+        };
+        let memories = match workspace_id {
+            Some(workspace) => self.db.retrieve_workspace_memories(
+                &retrieval,
+                query_embedding.as_deref(),
+                Some(&self.embedding_model),
+                workspace,
+            )?,
+            None => self.db.retrieve_scoped_memories(
+                &retrieval,
+                query_embedding.as_deref(),
+                Some(&self.embedding_model),
+                None,
+                true,
+            )?,
+        };
 
         let injected_text = build_context_text(&memories);
         Ok(MemoryContext {

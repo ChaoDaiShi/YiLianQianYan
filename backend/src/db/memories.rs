@@ -101,7 +101,6 @@ fn default_top_k() -> usize {
     10
 }
 
-const RETRIEVAL_CANDIDATE_LIMIT: usize = 500;
 const MAX_TOP_K: usize = 50;
 
 // Lexical-only scoring weights (Retrieval v2)
@@ -248,7 +247,44 @@ fn compute_text_score(query: &str, content: &str) -> f64 {
 
 impl Database {
     pub fn create_memory(&self, req: &CreateMemoryRequest) -> Result<Memory, String> {
+        if req.content.trim().is_empty() || req.content.chars().count() > 2000 {
+            return Err("invalid_memory_content".into());
+        }
+        if !["fact", "preference", "knowledge", "note"].contains(&req.category.as_str()) {
+            return Err("invalid_memory_category".into());
+        }
+        if !["auto", "manual", "document"].contains(&req.source.as_str()) {
+            return Err("invalid_memory_source".into());
+        }
+        if req.source != "document" && crate::safety::contains_sensitive_content(&req.content) {
+            return Err("sensitive_memory_content".into());
+        }
         let conn = self.conn();
+        if req.source != "document" {
+            let normalized = super::memory_governance::normalize_memory(&req.content);
+            let mut stmt=conn.prepare("SELECT m.id,m.content,m.category,m.source,m.source_conversation_id,m.embedding,m.metadata,m.created_at,m.updated_at FROM memories m JOIN memory_governance g ON g.memory_id=m.id WHERE m.category=?1 AND g.status='active' AND g.scope='profile' AND m.source!='document' AND NOT EXISTS(SELECT 1 FROM knowledge_document_chunks c WHERE c.memory_id=m.id)").map_err(|e|e.to_string())?;
+            let existing = stmt
+                .query_map([&req.category], |r| {
+                    Ok(Memory {
+                        id: r.get(0)?,
+                        content: r.get(1)?,
+                        category: r.get(2)?,
+                        source: r.get(3)?,
+                        source_conversation_id: r.get(4)?,
+                        embedding: r.get(5)?,
+                        metadata: r.get(6)?,
+                        created_at: r.get(7)?,
+                        updated_at: r.get(8)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+            for memory in existing {
+                let memory = memory.map_err(|e| e.to_string())?;
+                if super::memory_governance::normalize_memory(&memory.content) == normalized {
+                    return Ok(memory);
+                }
+            }
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
@@ -310,7 +346,7 @@ impl Database {
         let conn = self.conn();
         let mut sql = String::from(
             "SELECT id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at
-             FROM memories WHERE 1=1"
+             FROM memories WHERE EXISTS(SELECT 1 FROM memory_governance g WHERE g.memory_id=memories.id AND g.status='active')"
         );
         if exclude_documents {
             sql.push_str(" AND NOT EXISTS(SELECT 1 FROM knowledge_document_chunks c WHERE c.memory_id=memories.id)");
@@ -365,39 +401,37 @@ impl Database {
     }
 
     pub fn update_memory(&self, id: &str, req: &UpdateMemoryRequest) -> Result<Memory, String> {
-        let mut memory = self.get_memory(id)?;
-        let content_changed = req
-            .content
-            .as_ref()
-            .map_or(false, |content| content != &memory.content);
-        if content_changed {
-            memory.embedding = None;
+        if self.knowledge_chunk_document(id)?.is_some() {
+            return Err("knowledge_document_owned_chunk".into());
         }
-        if let Some(ref content) = req.content {
-            memory.content = content.clone();
+        if let Some(content) = &req.content {
+            if content.trim().is_empty() || content.chars().count() > 2000 {
+                return Err("invalid_memory_content".into());
+            }
+            if crate::safety::contains_sensitive_content(content) {
+                return Err("sensitive_memory_content".into());
+            }
         }
-        if let Some(ref category) = req.category {
-            memory.category = category.clone();
+        if let Some(category) = &req.category {
+            if !["fact", "preference", "knowledge", "note"].contains(&category.as_str()) {
+                return Err("invalid_memory_category".into());
+            }
         }
-        if let Some(ref metadata) = req.metadata {
-            memory.metadata = Some(metadata.clone());
-        }
-        memory.updated_at = chrono::Utc::now().timestamp_millis();
-
-        let conn = self.conn();
-        conn.execute(
-            "UPDATE memories SET content=?1, category=?2, metadata=?3, embedding=?4, updated_at=?5 WHERE id=?6",
-            params![
-                memory.content,
-                memory.category,
-                memory.metadata,
-                memory.embedding,
-                memory.updated_at,
-                id
-            ],
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE memory_governance SET reason='edited through memory API' WHERE memory_id=?1",
+            [id],
         )
         .map_err(|e| e.to_string())?;
-        Ok(memory)
+        let changed=tx.execute("UPDATE memories SET content=COALESCE(?1,content),category=COALESCE(?2,category),metadata=COALESCE(?3,metadata),updated_at=?4 WHERE id=?5 AND EXISTS(SELECT 1 FROM memory_governance WHERE memory_id=?5 AND status='active')",
+            params![req.content,req.category,req.metadata,chrono::Utc::now().timestamp_millis(),id]).map_err(|e|e.to_string())?;
+        if changed != 1 {
+            return Err("memory_revision_conflict".into());
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_memory(id)
     }
 
     pub fn delete_memory(&self, id: &str) -> Result<(), String> {
@@ -455,11 +489,11 @@ impl Database {
         let conn = self.conn();
 
         let total: usize = conn
-            .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM memories WHERE EXISTS(SELECT 1 FROM memory_governance g WHERE g.memory_id=memories.id AND g.status='active')", [], |row| row.get(0))
             .map_err(|e| e.to_string())?;
 
         let mut stmt = conn.prepare(
-            "SELECT category, COUNT(*) as cnt FROM memories GROUP BY category ORDER BY cnt DESC"
+            "SELECT category, COUNT(*) as cnt FROM memories WHERE EXISTS(SELECT 1 FROM memory_governance g WHERE g.memory_id=memories.id AND g.status='active') GROUP BY category ORDER BY cnt DESC"
         ).map_err(|e| e.to_string())?;
         let by_category: Vec<(String, usize)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -469,7 +503,7 @@ impl Database {
 
         let mut stmt2 = conn
             .prepare(
-                "SELECT source, COUNT(*) as cnt FROM memories GROUP BY source ORDER BY cnt DESC",
+                "SELECT source, COUNT(*) as cnt FROM memories WHERE EXISTS(SELECT 1 FROM memory_governance g WHERE g.memory_id=memories.id AND g.status='active') GROUP BY source ORDER BY cnt DESC",
             )
             .map_err(|e| e.to_string())?;
         let by_source: Vec<(String, usize)> = stmt2
@@ -506,7 +540,7 @@ impl Database {
             .prepare(
                 "SELECT id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at
                  FROM memories
-                 WHERE embedding IS NULL OR TRIM(embedding) = ''
+                 WHERE (embedding IS NULL OR TRIM(embedding) = '') AND EXISTS(SELECT 1 FROM memory_governance g WHERE g.memory_id=memories.id AND g.status='active')
                  ORDER BY created_at ASC
                  LIMIT ?1",
             )
@@ -534,7 +568,7 @@ impl Database {
     pub fn count_memories_without_embedding(&self) -> Result<usize, String> {
         let conn = self.conn();
         conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE embedding IS NULL OR TRIM(embedding) = ''",
+            "SELECT COUNT(*) FROM memories WHERE (embedding IS NULL OR TRIM(embedding) = '') AND EXISTS(SELECT 1 FROM memory_governance g WHERE g.memory_id=memories.id AND g.status='active')",
             [],
             |row| row.get(0),
         )
@@ -559,7 +593,7 @@ impl Database {
         query: &RetrieveQuery,
         query_embedding: Option<&[f32]>,
     ) -> Result<Vec<ScoredMemory>, String> {
-        self.retrieve_memory_candidates(query, query_embedding, false)
+        self.retrieve_memory_candidates(query, query_embedding, false, None, None, None)
     }
 
     pub fn retrieve_chat_memories(
@@ -567,7 +601,47 @@ impl Database {
         query: &RetrieveQuery,
         query_embedding: Option<&[f32]>,
     ) -> Result<Vec<ScoredMemory>, String> {
-        self.retrieve_memory_candidates(query, query_embedding, true)
+        self.retrieve_memory_candidates(query, query_embedding, true, None, None, None)
+    }
+
+    /// Scope and embedding identity are enforced before relevance scoring.
+    pub fn retrieve_scoped_memories(
+        &self,
+        query: &RetrieveQuery,
+        query_embedding: Option<&[f32]>,
+        embedding_model: Option<&str>,
+        conversation_id: Option<&str>,
+        exclude_documents: bool,
+    ) -> Result<Vec<ScoredMemory>, String> {
+        let workspace = conversation_id
+            .map(|id| self.conversation_workspace(id))
+            .transpose()?
+            .flatten();
+        self.retrieve_memory_candidates(
+            query,
+            query_embedding,
+            exclude_documents,
+            embedding_model,
+            conversation_id,
+            workspace.as_deref(),
+        )
+    }
+
+    pub fn retrieve_workspace_memories(
+        &self,
+        query: &RetrieveQuery,
+        query_embedding: Option<&[f32]>,
+        embedding_model: Option<&str>,
+        workspace_id: &str,
+    ) -> Result<Vec<ScoredMemory>, String> {
+        self.retrieve_memory_candidates(
+            query,
+            query_embedding,
+            true,
+            embedding_model,
+            None,
+            Some(workspace_id),
+        )
     }
 
     fn retrieve_memory_candidates(
@@ -575,23 +649,55 @@ impl Database {
         query: &RetrieveQuery,
         query_embedding: Option<&[f32]>,
         exclude_documents: bool,
+        embedding_model: Option<&str>,
+        conversation_id: Option<&str>,
+        workspace_id: Option<&str>,
     ) -> Result<Vec<ScoredMemory>, String> {
         let candidates = self.list_memory_candidates(
             &MemoryQuery {
                 category: query.category.clone(),
                 source: None,
                 q: None,
-                limit: Some(RETRIEVAL_CANDIDATE_LIMIT),
+                limit: Some(i64::MAX as usize),
                 offset: None,
             },
             exclude_documents,
         )?;
 
+        let generation = embedding_model
+            .map(|model| self.memory_embedding_generation(model))
+            .transpose()?
+            .flatten();
+        let mut permitted = Vec::new();
+        for mut memory in candidates {
+            let governance = self.memory_governance(&memory.id)?;
+            if governance.scope != "profile"
+                && conversation_id
+                    .map(|id| format!("conversation:{id}"))
+                    .as_deref()
+                    != Some(governance.scope.as_str())
+                && workspace_id.map(|id| format!("workspace:{id}")).as_deref()
+                    != Some(governance.scope.as_str())
+            {
+                continue;
+            }
+            if let Some(model) = embedding_model {
+                if governance.embedding_revision != Some(governance.revision)
+                    || governance.embedding_model.as_deref() != Some(model)
+                    || governance.embedding_generation != generation
+                    || governance.stored_embedding_hash.as_deref()
+                        != Some(governance.content_hash.as_str())
+                {
+                    memory.embedding = None;
+                }
+            }
+            permitted.push(memory);
+        }
         let now = chrono::Utc::now().timestamp_millis();
         let use_hybrid = query_embedding.is_some();
         let q_embed = query_embedding;
 
-        let mut scored: Vec<ScoredMemory> = candidates
+        let mut scored: Vec<ScoredMemory> = permitted
             .into_iter()
             .filter_map(|mem| {
                 let text_score = compute_text_score(&query.q, &mem.content);

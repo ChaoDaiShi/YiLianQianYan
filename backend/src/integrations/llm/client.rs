@@ -13,6 +13,8 @@ use super::types::*;
 use crate::config::types::ModelConfig;
 use crate::integrations::secret::SecretResolver;
 
+mod response_format;
+
 pub trait UsageRecorder: Send + Sync {
     fn record(&self, usage: &Usage);
     fn record_stream_usage(&self, _usage: &Usage) {}
@@ -50,6 +52,7 @@ pub enum LlmError {
 
 /// LLM client for OpenAI-compatible chat completion APIs
 pub struct LlmClient {
+    json_object_output: bool,
     thinking_mode: super::thinking::ThinkingMode,
     pool: Option<super::model_pool::ModelPoolRuntime>,
     http: HttpClient,
@@ -77,6 +80,7 @@ impl LlmClient {
             .expect("Failed to create HTTP client");
 
         Self {
+            json_object_output: false,
             thinking_mode: super::thinking::ThinkingMode::Standard,
             pool: None,
             http,
@@ -87,7 +91,12 @@ impl LlmClient {
         }
     }
 
-    pub fn with_model_pool(mut self, pool: super::model_pool::ModelPoolRuntime) -> Self {
+    pub fn with_model_pool(mut self, mut pool: super::model_pool::ModelPoolRuntime) -> Self {
+        if self.json_object_output {
+            for candidate in &mut pool.candidates {
+                candidate.client.set_json_object_output();
+            }
+        }
         self.pool = Some(pool.with_thinking_mode(self.thinking_mode));
         self
     }
@@ -110,6 +119,7 @@ impl LlmClient {
         self.thinking_mode
             .apply(&self.config, &mut value)
             .map_err(LlmError::Api)?;
+        self.apply_response_format(&mut value);
         Ok(value)
     }
 

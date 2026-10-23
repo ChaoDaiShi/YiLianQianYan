@@ -8,7 +8,7 @@ use crate::modules::capability::{CapabilityDescriptor, CapabilityKind, Capabilit
 
 const FORMAT_TERMS: &[&str] = &[
     "csv", "doc", "docx", "html", "jpeg", "jpg", "json", "markdown", "md", "mp3", "mp4", "pdf",
-    "png", "sql", "svg", "text", "txt", "wav", "xls", "xlsx", "xml", "zip",
+    "png", "pptx", "sql", "svg", "text", "txt", "wav", "xls", "xlsx", "xml", "zip",
 ];
 
 pub fn route_total(lexical_bp: u16, type_bp: u16, history_bp: Option<u16>) -> u16 {

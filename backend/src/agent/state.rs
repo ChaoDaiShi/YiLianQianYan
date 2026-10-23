@@ -4,6 +4,8 @@
 
 use crate::integrations::llm::types::ChatMessage;
 
+pub(crate) mod tool_protocol;
+
 /// Running state for a single agent conversation session
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentState {
@@ -18,6 +20,11 @@ pub struct AgentState {
     /// The validated ProofLoop goal bound to this conversation, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_ref: Option<crate::agent::delegation::GoalRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_checkpoint: Option<super::context_compaction::CompactedContext>,
+    /// Observed starts for this in-memory run only; never inferred from model output.
+    #[serde(skip)]
+    pub(crate) started_tool_calls: std::collections::HashSet<String>,
 }
 
 impl AgentState {
@@ -39,6 +46,8 @@ impl AgentState {
             input: String::new(),
             output: String::new(),
             goal_ref: None,
+            compaction_checkpoint: None,
+            started_tool_calls: std::collections::HashSet::new(),
         }
     }
 
@@ -122,6 +131,8 @@ impl AgentState {
         self.input.clear();
         self.output.clear();
         self.goal_ref = None;
+        self.compaction_checkpoint = None;
+        self.started_tool_calls.clear();
 
         // Re-add system prompt
         self.messages.push(ChatMessage {
@@ -136,6 +147,7 @@ impl AgentState {
 
     /// Load messages from persisted history (replaces current messages)
     pub fn load_history(&mut self, messages: Vec<ChatMessage>) {
+        self.started_tool_calls.clear();
         // Keep system prompt, replace rest
         let system_msg = self.messages.first().cloned();
         self.messages = messages;

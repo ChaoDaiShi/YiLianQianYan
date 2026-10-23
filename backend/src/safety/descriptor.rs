@@ -186,7 +186,7 @@ fn builtin_descriptor_profile(
             RiskLevel::Low,
             vec![],
         ),
-        "bash" => match descriptor.resources.as_slice() {
+        "bash" | "workspace_git_write" | "workspace_lsp" => match descriptor.resources.as_slice() {
             [ResourceDescriptor::Shell { command, .. }] if !command.trim().is_empty() => profile(
                 vec![permission(
                     PermissionId::ShellExecute,
@@ -261,7 +261,7 @@ fn builtin_descriptor_profile(
             _ => return Err(invalid_resources()),
         },
         "vision_analysis" | "image_generation" => {
-            if descriptor.resources.is_empty()||!descriptor.resources.iter().all(|resource|matches!(resource,ResourceDescriptor::Network{url,method} if method=="POST"&&url::Url::parse(url).ok().is_some_and(|target|matches!(target.scheme(),"http"|"https")&&target.host_str().is_some()&&target.username().is_empty()&&target.password().is_none()))){return Err(invalid_resources())}
+            if descriptor.resources.is_empty()||!descriptor.resources.iter().all(|resource|matches!(resource,ResourceDescriptor::Network{url,method} if (method=="POST"||(descriptor.tool_name=="image_generation"&&method=="GET"))&&url::Url::parse(url).ok().is_some_and(|target|matches!(target.scheme(),"http"|"https")&&target.host_str().is_some()&&target.username().is_empty()&&target.password().is_none()))){return Err(invalid_resources())}
             profile(
                 vec![permission(
                     PermissionId::NetworkRequest,
@@ -422,8 +422,8 @@ fn builtin_descriptor_profile(
             }
             _ => return Err(invalid_resources()),
         },
-        "write_todos" => match descriptor.resources.as_slice() {
-            [ResourceDescriptor::Agent { action }] if action == "write_todos" => profile(
+        "write_todos" | "ask_user" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Agent { action }] if action == &descriptor.tool_name => profile(
                 vec![permission(
                     PermissionId::AgentPlan,
                     ResourceScope::AgentInternal,
@@ -821,14 +821,14 @@ pub fn describe_builtin_tool(
             default_risk: RiskLevel::Low,
             side_effects: vec![],
         },
-        "write_todos" => ToolSecurityDescriptor {
+        "write_todos" | "ask_user" => ToolSecurityDescriptor {
             tool_name: tool_name.to_string(),
             requested_permissions: vec![permission(
                 PermissionId::AgentPlan,
                 ResourceScope::AgentInternal,
             )],
             resources: vec![ResourceDescriptor::Agent {
-                action: "write_todos".to_string(),
+                action: tool_name.to_string(),
             }],
             default_risk: RiskLevel::Low,
             side_effects: vec![],

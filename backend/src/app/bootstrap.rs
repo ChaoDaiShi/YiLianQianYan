@@ -69,6 +69,8 @@ impl AppServer {
                 tracing::warn!(interrupted, "recovered interrupted conversation runs");
             }
         }
+        db.interrupt_knowledge_builds()?;
+        db.interrupt_channel_runs()?;
         db.initialize_skill_usage()?;
         let audit_recorder = AuditRecorder::new(db.clone_connection());
         let secret_resolver = Arc::new(SecretResolver::new(Arc::clone(&secret_store)));
@@ -182,6 +184,7 @@ impl AppServer {
                 &secret_resolver,
             ))),
             secret_store,
+            channel_runtime: crate::modules::channel::runtime::ChannelRuntime::default(),
             secret_resolver,
             voice_stt_requests: Arc::new(Semaphore::new(1)),
             event_hub,
@@ -326,7 +329,12 @@ pub(crate) async fn create_server_with_control_session(
     // blocks startup — it just becomes Unavailable.
     server.register_mcp_servers_from_db();
     server.refresh_mcp_runtime().await;
+    crate::modules::automation::start_scheduler(
+        server.clone(),
+        server.cloud_revocation_retry_cancel.child_token(),
+    );
     let router = super::router::build_router(server.clone());
+    crate::modules::channel::runtime::start_channels(server.clone()).await;
 
     Ok((server, router))
 }

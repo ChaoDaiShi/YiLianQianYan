@@ -39,6 +39,8 @@ pub struct ChatRequest {
     pub options: options::ChatRequestOptions,
     pub conversation_id: Option<String>,
     pub message: String,
+    #[serde(default)]
+    pub resource_ids: Vec<String>,
     pub workflow_id: Option<String>,
     #[serde(default)]
     pub goal_ref: Option<ChatGoalRef>,
@@ -700,6 +702,26 @@ pub async fn chat_handler(
     };
     let conversation_goal_ref =
         resolve_conversation_goal_ref(req.goal_ref.as_ref(), persisted_goal_ref)?;
+    let channel_context = requested_conversation_id
+        .as_deref()
+        .map(|id| db.channel_for_conversation(id))
+        .transpose()
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "channel_context_failed",
+                error,
+            )
+        })?
+        .flatten()
+        .is_some();
+    if channel_context && (conversation_goal_ref.is_some() || req.workflow_id.is_some()) {
+        return Err(chat_error(
+            StatusCode::BAD_REQUEST,
+            "channel_scope_invalid",
+            "渠道会话仅处理当前私聊文本",
+        ));
+    }
     let cancel_token = CancellationToken::new();
     let goal_run = conversation_goal_ref
         .as_ref()
@@ -726,6 +748,50 @@ pub async fn chat_handler(
         }
     };
     let turn_guard = lifecycle::acquire_turn(&server, &conv_id).await;
+    if !server
+        .approval_store
+        .list_pending_for_conversation(&conv_id)
+        .is_empty()
+    {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "approval_pending",
+            "请先处理当前审批，或回退当前用户消息",
+        ));
+    }
+    if !db
+        .pending_conversation_inputs(&conv_id)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "question_read_failed",
+                error,
+            )
+        })?
+        .is_empty()
+    {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "user_input_pending",
+            "请先回答当前问题，或停止当前轮次",
+        ));
+    }
+
+    if let Some(issue) = db.conversation_protocol_issue(&conv_id).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "chat_history_read_failed",
+            error,
+        )
+    })? {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "code":"chat_history_protocol_invalid","error":issue.error,
+                "affected_user_message_id":issue.affected_user_message_id
+            })),
+        ));
+    }
     let mut runtime = runtime::prepare_with_model(
         &server,
         Some(&conv_id),
@@ -782,7 +848,9 @@ pub async fn chat_handler(
     let mut system_prompt = format!("{}\n\n{}", runtime.prompt, mode.prompt());
 
     // Merge workflow context if workflow_id is provided
-    let workflow_prompt = if let Some(ref wf_id) = req.workflow_id {
+    let workflow_prompt = if channel_context {
+        None
+    } else if let Some(ref wf_id) = req.workflow_id {
         if let Ok(Some(wf)) = db.get_workflow(wf_id) {
             let mut extra = String::new();
             extra.push_str("\n\n## 当前工作流\n\n");
@@ -834,7 +902,7 @@ pub async fn chat_handler(
     // Best-effort enhancement: any retrieval/embedding failure must not block chat.
     let mut memory_mode = "lexical";
     let mut query_embedding: Option<Vec<f32>> = None;
-    if !goal_bound && config.model.has_embedding() {
+    if !goal_bound && !channel_context && config.model.has_embedding() {
         let llm = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
         match llm.embed(&message).await {
             Ok(vec) => {
@@ -853,7 +921,15 @@ pub async fn chat_handler(
         top_k: CHAT_MEMORY_TOP_K,
         category: None,
     };
-    match db.retrieve_chat_memories(&retrieval_query, query_embedding.as_deref()) {
+    match db.retrieve_scoped_memories(
+        &retrieval_query,
+        query_embedding.as_deref(),
+        Some(&crate::db::memory_governance::embedding_identity(
+            &config.model,
+        )),
+        Some(&conv_id),
+        true,
+    ) {
         Ok(mut scored) => {
             scored.retain(|m| {
                 (!runtime.bindings.restrict_memory || m.memory.category == "knowledge")
@@ -908,27 +984,45 @@ pub async fn chat_handler(
         )
     })?;
     agent_state.load_history(history);
+    agent_state.compaction_checkpoint =
+        db.load_conversation_compaction(&conv_id).map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "context_checkpoint_read_failed",
+                error,
+            )
+        })?;
     let prev_msg_count = agent_state.messages.len();
 
     // Persist the current user message after taking the history snapshot.
     let now = chrono::Utc::now().timestamp_millis();
-    let _ = db.add_message(&MessageRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        conversation_id: conv_id.clone(),
-        role: "user".to_string(),
-        content: message.clone(),
-        tool_calls: None,
-        tool_call_id: None,
-        tool_name: None,
-        tool_result: None,
-        created_at: now,
-    });
+    let user_message_id = uuid::Uuid::new_v4().to_string();
+    db.accept_conversation_turn_with_resources(
+        &MessageRow {
+            id: user_message_id.clone(),
+            conversation_id: conv_id.clone(),
+            role: "user".to_string(),
+            content: message.clone(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_result: None,
+            created_at: now,
+        },
+        &req.resource_ids,
+    )
+    .map_err(|error| {
+        server.active_tasks.lock().remove(&conv_id);
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "conversation_turn_write_failed",
+            error,
+        )
+    })?;
 
     // Auto-title: use first user message (trim to 40 chars)
     let title = truncate_chars(&message, 40);
     let _ = db.update_conversation_title(&conv_id, &title);
-    let _ =
-        db.set_conversation_run_status(&conv_id, crate::db::ConversationRunStatus::Running, None);
 
     if let Some(run) = goal_run.as_ref() {
         agent_state.add_user_message(run.goal_summary.clone());
@@ -992,6 +1086,11 @@ pub async fn chat_handler(
             }
         }
 
+        if let Err(error) =
+            db_clone.save_conversation_compaction(&conv_clone, &agent_state.compaction_checkpoint)
+        {
+            result = Err(error);
+        }
         // Save new messages (only assistant + tool produced after the loaded history).
         let total_msgs = agent_state.messages.len();
         let new_start = prev_msg_count; // current user starts here and is filtered below
@@ -1045,6 +1144,20 @@ pub async fn chat_handler(
                 );
                 log_buffer.push("info", "agent", "Agent 完成");
             }
+            Ok(engine::RunOutcome::WaitingInput {
+                tool_call_id,
+                request,
+            }) => {
+                crate::api::conversation_inputs::persist_waiting_input(
+                    &db_clone,
+                    &conv_clone,
+                    &tool_call_id,
+                    &request,
+                    &event_tx,
+                    Some(&handoff),
+                )
+                .await;
+            }
             Ok(engine::RunOutcome::Paused { approval_id }) => {
                 let _ = handoff.set_status(
                     &db_clone,
@@ -1068,7 +1181,7 @@ pub async fn chat_handler(
     let stream = async_stream::stream! {
         yield Ok(Event::default()
             .event("connected")
-            .data(serde_json::json!({"conversation_id": conv_stream}).to_string()));
+            .data(serde_json::json!({"conversation_id": conv_stream,"user_message_id":user_message_id}).to_string()));
 
         while let Some(event) = stream_rx.recv().await {
             let json = serde_json::to_string(&event).unwrap_or_default();
@@ -1093,6 +1206,14 @@ pub async fn stop_handler(
         if let Some(token) = server.active_tasks.lock().get(conv_id) {
             token.cancel();
             return Json(serde_json::json!({"status": "cancelled"}));
+        }
+    }
+    if !conv_id.is_empty() {
+        let _guard = lifecycle::acquire_turn(&server, conv_id).await;
+        match server.db.cancel_conversation_inputs(conv_id) {
+            Ok(true) => return Json(serde_json::json!({"status":"cancelled"})),
+            Err(error) => return Json(serde_json::json!({"status":"error","error":error})),
+            Ok(false) => {}
         }
     }
     Json(serde_json::json!({"status": "not_found"}))
@@ -1693,8 +1814,18 @@ mod tests {
             assert!(!text.contains("UNBOUND KNOWLEDGE MUST NOT APPEAR"));
             assert!(!text.contains("UNBOUND MEMORY MUST NOT APPEAR"));
             assert!(text.contains("SELECTED USER INSTRUCTION"));
-            assert_eq!(request["tools"].as_array().unwrap().len(), 1);
-            assert_eq!(request["tools"][0]["function"]["name"], "read_file");
+            let exposed_tools = request["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| tool["function"]["name"].as_str().unwrap())
+                .collect::<std::collections::BTreeSet<_>>();
+            // Binding admits only read_file as an action. ask_user is the
+            // mandatory necessary-input control and cannot execute an action.
+            assert_eq!(
+                exposed_tools,
+                std::collections::BTreeSet::from(["ask_user", "read_file"])
+            );
         }
         let last_prompt = requests[2]["messages"][0]["content"].as_str().unwrap();
         for forbidden in [
@@ -1758,10 +1889,21 @@ mod tests {
         let database = TempDatabase::new();
         let (server, token) = test_server(&database, &base_url);
         let conversation = server.db.create_conversation("existing").unwrap();
+        let mut previous_answer = message_row(&conversation.id, "assistant", "previous answer", 2);
+        previous_answer.tool_calls = Some(
+            json!([{
+                "id":"previous-call", "type":"function",
+                "function":{"name":"read_file", "arguments":"{}"}
+            }])
+            .to_string(),
+        );
+        let mut previous_tool = message_row(&conversation.id, "tool", "previous tool result", 3);
+        previous_tool.tool_call_id = Some("previous-call".into());
+        previous_tool.tool_name = Some("read_file".into());
         for message in [
             message_row(&conversation.id, "user", "previous question", 1),
-            message_row(&conversation.id, "assistant", "previous answer", 2),
-            message_row(&conversation.id, "tool", "previous tool result", 3),
+            previous_answer,
+            previous_tool,
         ] {
             server.db.add_message(&message).unwrap();
         }

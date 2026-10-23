@@ -385,6 +385,11 @@ impl Database {
         for (index, message) in history.iter().enumerate() {
             let copied_id = uuid::Uuid::new_v4().to_string();
             tx.execute("INSERT INTO messages(id,conversation_id,role,content,tool_calls,tool_call_id,tool_name,tool_result,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![copied_id,id,message.role,message.content,message.tool_calls,message.tool_call_id,message.tool_name,message.tool_result,index as i64]).map_err(err)?;
+            super::conversation_presentation::copy_message_attachments(
+                &tx,
+                &message.id,
+                &copied_id,
+            )?;
             for prefix in ["chat_reasoning", "chat_turn_reasoning"] {
                 tx.execute(
                     "INSERT INTO settings(key,value) SELECT ?1,value FROM settings WHERE key=?2",

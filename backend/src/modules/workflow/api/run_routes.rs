@@ -10,8 +10,19 @@ use crate::modules::workflow::application::run_service;
 pub async fn run_workflow_graph(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let started = run_service::start_workflow_run(&server, &id)
+    let request: StartWorkflowRunRequest = if body.is_empty() {
+        StartWorkflowRunRequest::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("工作流运行参数格式错误：{error}"),
+            )
+        })?
+    };
+    let started = run_service::start_workflow_run_with_inputs(&server, &id, request.inputs)
         .await
         .map_err(run_service_error)?;
     Ok(Json(serde_json::json!({

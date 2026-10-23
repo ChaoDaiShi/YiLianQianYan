@@ -327,6 +327,40 @@ fn create_pending(
     risk_level: RiskLevel,
 ) -> PendingApproval {
     let conversation = server.db.create_conversation("approval test").unwrap();
+    // A real paused chat has already persisted the user turn and the exact
+    // assistant tool call. Approval resolution appends its matching result.
+    let now = chrono::Utc::now().timestamp_millis();
+    server
+        .db
+        .accept_conversation_turn(&yilian_backend::db::MessageRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: conversation.id.clone(),
+            role: "user".to_string(),
+            content: "approval fixture request".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_result: None,
+            created_at: now,
+        })
+        .unwrap();
+    let assistant = serde_json::from_value::<yilian_backend::integrations::llm::types::ChatMessage>(json!({
+        "role":"assistant",
+        "content":null,
+        "tool_calls":[{"id":tool_call_id,"type":"function","function":{"name":tool_name,"arguments":arguments.to_string()}}]
+    })).unwrap();
+    server
+        .db
+        .persist_chat_message(&conversation.id, &assistant, now)
+        .unwrap();
+    server
+        .db
+        .set_conversation_run_status(
+            &conversation.id,
+            yilian_backend::db::ConversationRunStatus::WaitingApproval,
+            None,
+        )
+        .unwrap();
     server.approval_store.create(
         conversation.id,
         tool_call_id.to_string(),

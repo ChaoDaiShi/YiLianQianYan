@@ -292,6 +292,21 @@ impl Database {
         &self,
         agent_id: &str,
     ) -> Result<ConnectorRuntimeBindings, String> {
+        self.connector_runtime_bindings_for_conversation(agent_id, None)
+    }
+    pub fn connector_runtime_bindings_for_conversation(
+        &self,
+        agent_id: &str,
+        conversation_id: Option<&str>,
+    ) -> Result<ConnectorRuntimeBindings, String> {
+        self.connector_runtime_bindings_for_scope(agent_id, conversation_id, None)
+    }
+    pub fn connector_runtime_bindings_for_scope(
+        &self,
+        agent_id: &str,
+        conversation_id: Option<&str>,
+        workspace_id: Option<&str>,
+    ) -> Result<ConnectorRuntimeBindings, String> {
         let mut resolved = ConnectorRuntimeBindings {
             restrict_memory: true,
             restrict_knowledge: true,
@@ -336,11 +351,15 @@ impl Database {
                 }
                 "agent_memory" => {
                     resolved.restrict_memory = true;
-                    resolved.memories.push(self.get_memory(id)?);
+                    if self.memory_is_available_in_workspace(id, conversation_id, workspace_id)? {
+                        resolved.memories.push(self.get_memory(id)?);
+                    }
                 }
                 "agent_knowledge" => {
                     resolved.restrict_knowledge = true;
-                    resolved.knowledge.push(self.get_memory(id)?);
+                    if self.memory_is_available_in_workspace(id, conversation_id, workspace_id)? {
+                        resolved.knowledge.push(self.get_memory(id)?);
+                    }
                 }
                 _ => {}
             }
