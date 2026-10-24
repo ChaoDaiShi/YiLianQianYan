@@ -214,6 +214,9 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
 - Retry / Recovery（启动时 running → interrupted，task → blocked）
 - Workflow Integration（Task 绑定 Workflow，terminal 同步 Task 状态，Output → Text Artifact）
 - Desktop Workspace Surface（工作空间列表/详情、任务列表/时间线/执行/产物、Agents/Teams 页面）
+- v1 预览界面补齐：默认收起聊天历史；工作空间文件树/文本阅读与最近成果；单角色编辑、记忆详情弹窗、定时任务列表；资料学习和创作文稿独立工作页；文稿版本复用本地 Resource 持久化。范围与验证见 [实施记录](docs/superpowers/plans/2026-10-25-v1-preview-completion.md)。
+- 新增只读工作空间文件 API：`GET /api/workspaces/:id/files?path=` 与 `GET /api/workspaces/:id/file?path=README.md`，仅访问已注册目录；支持 UTF-8 文本和 Markdown 预览，其他文件类型明确提示。
+- 新增工作空间文稿 API：`GET/POST /api/workspaces/:id/creations`、`GET/PUT /api/workspaces/:id/creations/:creationId`、`GET /api/workspaces/:id/creations/:creationId/versions/:versionId`；保存新版本须传 `expected_revision`，历史版本不可覆盖。
 
 **Known Limitations**：多智能体顺序执行（无并行）、无 Agent swarm、delegation 深度有界、无分布式 worker、无 Cron/定时任务、无 cloud Workspace、Workflow 调度仍顺序、Agent Team 不绕过 Security Gateway、MCP 仍 stdio、OS 级 Sandbox 未实现。
 
