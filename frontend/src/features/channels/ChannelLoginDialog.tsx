@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, RefreshCw } from "lucide-react";
 import Button from "../../components/ui/Button";
-import Modal from "../../components/ui/Modal";
+import Drawer from "../../components/ui/Drawer";
 import { cancelChannelLogin, getChannelLogin, startChannelLogin, verifyChannelLogin, type ChannelLogin, type ExternalChannel } from "../../api/channels";
 import { channelLoginStatusLabel, isChannelLoginComplete } from "./channelsModel";
 
@@ -124,19 +124,8 @@ export default function ChannelLoginDialog({ channel, initialLogin, onClose, onU
   const expired = login.status === "expired";
   const scanned = login.status === "scaned" || login.status === "scanned" || login.status === "scaned_but_redirect";
 
-  return (
-    <Modal
-      open
-      onClose={() => void closeDialog()}
-      title="微信扫码登录"
-      size="md"
-      footer={(
-        <>
-          {connected ? <Button onClick={onClose}>完成</Button> : <Button variant="ghost" disabled={cancelling || loading || verifying} loading={cancelling} onClick={() => void cancel()}>取消本次扫码</Button>}
-        </>
-      )}
-    >
-      <div className="channel-login-dialog">
+  return <Drawer open side="right" title="微信扫码登录" width={440} onClose={() => void closeDialog()} className="channel-login-drawer">
+      <div className="channel-login-drawer-content"><div className="channel-login-dialog">
         <p>渠道：<strong>{channel.name}</strong></p>
         {loading && <p role="status" className="channels-muted">正在向微信 iLink 请求登录二维码…</p>}
         {<div className="channel-login-state" data-status={login.status}>
@@ -160,7 +149,8 @@ export default function ChannelLoginDialog({ channel, initialLogin, onClose, onU
         {expired && <Button variant="secondary" disabled={loading} loading={loading} onClick={() => void restartLogin()}><RefreshCw size={14} />重新请求二维码</Button>}
         {error && <p className="channels-error" role="alert">{error}</p>}
         {!connected && <p className="channels-muted">仅在此桌面端保存平台返回的登录凭据。登录成功表示授权完成，不表示已经收到消息。</p>}
-      </div>
-    </Modal>
-  );
+      </div><footer className="channel-login-drawer-footer">
+        {connected ? <Button onClick={onClose}>完成</Button> : <Button variant="ghost" disabled={cancelling || loading || verifying} loading={cancelling} onClick={() => void cancel()}>取消本次扫码</Button>}
+      </footer></div>
+    </Drawer>;
 }

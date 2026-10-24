@@ -7,6 +7,7 @@ export type AutomationSchedule =
 export interface AutomationInput {
   expected_revision?: number;
   name: string; workflow_graph_id: string; workspace_id: string;
+  target?: { kind: "workflow"; graph_id: string } | { kind: "agent_turn"; mission_id: string };
   timezone: string; schedule: AutomationSchedule; enabled: boolean;
 }
 export interface Automation extends AutomationInput {
@@ -16,6 +17,9 @@ export interface AutomationOccurrence {
   id: string; automation_id: string; automation_revision: number; timezone: string; occurrence_key: string;
   trigger: "manual" | "scheduled"; scheduled_at: number;
   workspace_id: string; workflow_graph_id: string; run_id: string | null;
+  robot_run_id?: string | null;
+  robot_channel_id?: string | null;
+  conversation_id?: string | null;
   status: string; error: string | null; created_at: number; updated_at: number;
 }
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {

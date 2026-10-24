@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canEditChannelReply, canSendChannelReply, channelLoginStatusLabel, channelReceiveAddress, channelStatusLabel, isChannelLoginComplete, messageStatusLabel, parseAllowedSenders, replyModeDescription, replyModeLabel } from "./channelsModel";
+import { canEditChannelReply, canSendChannelReply, channelLoginStatusLabel, channelReceiveAddress, channelStatusLabel, connectionModesForProvider, isChannelLoginComplete, messageStatusLabel, parseAllowedSenders, replyModeDescription, replyModeLabel } from "./channelsModel";
 
 describe("channel inbox decisions", () => {
   it("requires an enabled channel and a reviewable state before sending", () => {
@@ -42,6 +42,9 @@ describe("channel inbox decisions", () => {
     expect(channelReceiveAddress("onebot11", "reverse_websocket", "/api/channel-callbacks/bot", "http://127.0.0.1:9420"))
       .toBe("ws://127.0.0.1:9420/api/channel-callbacks/bot/ws");
     expect(channelReceiveAddress("feishu", "http", "/api/channel-callbacks/bot", "http://127.0.0.1:9420")).toBeNull();
+    expect(connectionModesForProvider("wechat_onebot")).toEqual([{ value: "reverse_websocket", label: "Akasha-WeChat 反向 WebSocket" }]);
+    expect(channelReceiveAddress("wechat_onebot", "reverse_websocket", "/api/channel-callbacks/akasha", "http://127.0.0.1:9420"))
+      .toBe("ws://127.0.0.1:9420/api/channel-callbacks/akasha/ws");
   });
 
   it("distinguishes automatic delivery provenance from human approval", () => {

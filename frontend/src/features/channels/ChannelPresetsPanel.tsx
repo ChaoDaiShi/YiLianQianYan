@@ -19,6 +19,15 @@ type PresetNavigation =
   | { kind: "select"; preset: ChannelPreset }
   | { kind: "new" }
   | { kind: "duplicate"; preset: ChannelPreset };
+interface PresetEditorSessionDraft { selectedId: string; draft: PresetDraft | null; dirtyNewPreset: boolean; hasUnsavedChanges: boolean; sampleMessage: string }
+let presetEditorSessionDraft: PresetEditorSessionDraft | null = null;
+
+export function clearChannelPresetDraft() {
+  presetEditorSessionDraft = null;
+}
+export function hasUnsavedChannelPresetDraft() {
+  return Boolean(presetEditorSessionDraft?.hasUnsavedChanges);
+}
 
 const toDraft = (preset: ChannelPreset): PresetDraft => ({
   id: preset.id,
@@ -36,19 +45,20 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
   onPresetsChange: (presets: ChannelPreset[]) => void;
   onUnsavedChange: (value: boolean, busy: boolean) => void;
 }) {
-  const [selectedId, setSelectedId] = useState("");
-  const [draft, setDraft] = useState<PresetDraft | null>(null);
+  const restored = presetEditorSessionDraft?.hasUnsavedChanges ? presetEditorSessionDraft : null;
+  const [selectedId, setSelectedId] = useState(restored?.selectedId ?? "");
+  const [draft, setDraft] = useState<PresetDraft | null>(restored?.draft ?? null);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [models, setModels] = useState<LlmModel[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [sampleMessage, setSampleMessage] = useState("");
+  const [sampleMessage, setSampleMessage] = useState(restored?.sampleMessage ?? "");
   const [preview, setPreview] = useState<{ reply: string; conversation_id: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [dirtyNewPreset, setDirtyNewPreset] = useState(false);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [dirtyNewPreset, setDirtyNewPreset] = useState(restored?.dirtyNewPreset ?? false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(restored?.hasUnsavedChanges ?? false);
   const [pendingNavigation, setPendingNavigation] = useState<PresetNavigation | null>(null);
   const alive = useRef(true);
 
@@ -63,6 +73,10 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
   }, []);
 
   useEffect(() => { onUnsavedChange(hasUnsavedChanges, busy); }, [busy, hasUnsavedChanges, onUnsavedChange]);
+  useEffect(() => {
+    if (hasUnsavedChanges) presetEditorSessionDraft = { selectedId, draft, dirtyNewPreset, hasUnsavedChanges, sampleMessage };
+    else if (presetEditorSessionDraft?.hasUnsavedChanges) presetEditorSessionDraft = null;
+  }, [selectedId, draft, dirtyNewPreset, hasUnsavedChanges, sampleMessage]);
 
   useEffect(() => {
     if (dirtyNewPreset) return;
@@ -98,14 +112,17 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
       setDraft(null);
       setDirtyNewPreset(false);
       setHasUnsavedChanges(false);
+      clearChannelPresetDraft();
       return;
     }
+    const nextDraft = action.kind === "new"
+      ? emptyDraft()
+      : { ...toDraft(action.preset), id: null, name: `${action.preset.name}（自定义）`, builtin: false };
+    presetEditorSessionDraft = { selectedId: "", draft: nextDraft, dirtyNewPreset: true, hasUnsavedChanges: true, sampleMessage };
     setSelectedId("");
     setDirtyNewPreset(true);
     setHasUnsavedChanges(true);
-    setDraft(action.kind === "new"
-      ? emptyDraft()
-      : { ...toDraft(action.preset), id: null, name: `${action.preset.name}（自定义）`, builtin: false });
+    setDraft(nextDraft);
   }
 
   function navigate(action: PresetNavigation) {
@@ -124,7 +141,9 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
   }
 
   function updateDraft(patch: Partial<PresetDraft>) {
-    setDraft({ ...current, ...patch, id: current.id, builtin: current.builtin });
+    const next = { ...current, ...patch, id: current.id, builtin: current.builtin };
+    presetEditorSessionDraft = { selectedId, draft: next, dirtyNewPreset, hasUnsavedChanges: true, sampleMessage };
+    setDraft(next);
     setHasUnsavedChanges(true);
     setPreview(null);
   }
@@ -151,6 +170,7 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
       setDraft(null);
       setDirtyNewPreset(false);
       setHasUnsavedChanges(false);
+      clearChannelPresetDraft();
       setPreview(null);
     } catch (reason) {
       if (alive.current) setError(problem(reason));
@@ -187,6 +207,7 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
       setDraft(null);
       setDirtyNewPreset(false);
       setHasUnsavedChanges(false);
+      clearChannelPresetDraft();
       setPreview(null);
       setConfirmDelete(false);
     } catch (reason) {

@@ -100,6 +100,9 @@ export function connectionModesForProvider(provider: string): ConnectionModeOpti
       { value: "reverse_websocket", label: "反向 WebSocket" },
     ];
   }
+  if (provider === "wechat_onebot") {
+    return [{ value: "reverse_websocket", label: "Akasha-WeChat 反向 WebSocket" }];
+  }
   if (provider === "wechat_ilink") {
     return [{ value: "polling", label: "微信 iLink 轮询" }];
   }
@@ -109,12 +112,13 @@ export function connectionModesForProvider(provider: string): ConnectionModeOpti
 export function connectionModeLabel(mode: string) {
   return connectionModesForProvider("feishu").concat(
     connectionModesForProvider("onebot11"),
+    connectionModesForProvider("wechat_onebot"),
     connectionModesForProvider("wechat_ilink"),
   ).find(item => item.value === mode)?.label ?? mode;
 }
 
 export function channelReceiveAddress(provider: string, mode: string, callbackPath: string, apiBase: string) {
-  if (provider !== "onebot11" || (mode !== "http" && mode !== "reverse_websocket")) return null;
+  if (!(["onebot11", "wechat_onebot"].includes(provider)) || (mode !== "http" && mode !== "reverse_websocket")) return null;
   const target = new URL(callbackPath, apiBase);
   if (mode === "reverse_websocket") {
     target.protocol = target.protocol === "https:" ? "wss:" : "ws:";

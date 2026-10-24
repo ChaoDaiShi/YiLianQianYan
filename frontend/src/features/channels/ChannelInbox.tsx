@@ -8,8 +8,12 @@ import { canEditChannelReply, canSendChannelReply, messageStatusLabel, replyMode
 
 const problem = (value: unknown) => value instanceof Error ? value.message : "收信操作失败";
 const confirmedSendStates = new Set<ChannelMessage["status"]>(["sent", "send_failed", "delivery_unknown", "dismissed"]);
+const replyDrafts = new Map<string, string>();
+function replyDraftKey(channel: ExternalChannel, message: ChannelMessage) {
+  return [channel.id, channel.self_id ?? "", message.peer_type, message.peer_id, message.id].join("\u0000");
+}
 
-export default function ChannelInbox({ channel, revision, onCountsChange }: { channel: ExternalChannel; revision: number; onCountsChange: (channelId: string, counts: { all: number; awaiting: number; sent: number }) => void }) {
+export default function ChannelInbox({ channel, revision, conversationId, onCountsChange, onMessagesChange }: { channel: ExternalChannel; revision: number; conversationId?: string; onCountsChange?: (channelId: string, counts: { all: number; awaiting: number; sent: number }) => void; onMessagesChange?: (messages: ChannelMessage[]) => void }) {
   const [messages, setMessages] = useState<ChannelMessage[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -36,7 +40,10 @@ export default function ChannelInbox({ channel, revision, onCountsChange }: { ch
       const result = await listChannelMessages(channel.id);
       if (!alive.current) return;
       setMessages(result.messages);
-      setSelectedId(current => result.messages.some(message => message.id === current) ? current : result.messages[0]?.id ?? "");
+      onMessagesChange?.(result.messages);
+      const relevant = conversationId ? result.messages.filter(message => message.conversation_id === conversationId) : result.messages;
+      const newest = [...relevant].sort((a, b) => b.created_at - a.created_at);
+      setSelectedId(current => relevant.some(message => message.id === current) ? current : newest[0]?.id ?? "");
       setUncertainSendIds(current => new Set([...current].filter(id => {
         const message = result.messages.find(item => item.id === id);
         return message ? !confirmedSendStates.has(message.status) : true;
@@ -51,7 +58,7 @@ export default function ChannelInbox({ channel, revision, onCountsChange }: { ch
       }
       requestInFlight.current = false;
     }
-  }, [channel.id]);
+  }, [channel.id, conversationId, onMessagesChange]);
 
   useEffect(() => { void refresh(); }, [refresh, revision]);
 
@@ -62,17 +69,28 @@ export default function ChannelInbox({ channel, revision, onCountsChange }: { ch
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  const message = messages.find(item => item.id === selectedId) ?? null;
-  useEffect(() => { setText(message?.draft_reply ?? ""); }, [message?.id, message?.draft_reply]);
+  const visibleMessages = conversationId ? messages.filter(item => item.conversation_id === conversationId) : messages;
+  const chronologicalMessages = [...visibleMessages].sort((a, b) => a.created_at - b.created_at);
+  const message = visibleMessages.find(item => item.id === selectedId) ?? null;
+  useEffect(() => {
+    if (!message) { setText(""); return; }
+    const key = replyDraftKey(channel, message);
+    setText(replyDrafts.get(key) ?? message.draft_reply ?? "");
+  }, [channel.id, channel.self_id, message?.id, message?.peer_type, message?.peer_id, message?.draft_reply]);
 
-  const pendingCount = messages.filter(item => item.status === "awaiting_send" || item.status === "send_failed").length;
+  function updateReplyDraft(value: string) {
+    setText(value);
+    if (message) replyDrafts.set(replyDraftKey(channel, message), value);
+  }
+
+  const pendingCount = visibleMessages.filter(item => item.status === "awaiting_send" || item.status === "send_failed").length;
   const messageCounts = {
-    all: messages.length,
+    all: visibleMessages.length,
     awaiting: pendingCount,
-    sent: messages.filter(item => item.status === "sent").length,
+    sent: visibleMessages.filter(item => item.status === "sent").length,
   };
 
-  useEffect(() => { onCountsChange(channel.id, messageCounts); }, [channel.id, messages, onCountsChange]);
+  useEffect(() => { onCountsChange?.(channel.id, messageCounts); }, [channel.id, messageCounts.all, messageCounts.awaiting, messageCounts.sent, onCountsChange]);
 
   async function regenerate() {
     if (!message || message.status !== "failed") return;
@@ -80,6 +98,7 @@ export default function ChannelInbox({ channel, revision, onCountsChange }: { ch
     try {
       const result = await regenerateChannelMessage(channel.id, message.id);
       if (!alive.current) return;
+      replyDrafts.delete(replyDraftKey(channel, message));
       setMessages(current => current.map(item => item.id === result.message.id ? result.message : item));
     } catch (reason) {
       if (alive.current) setError(problem(reason));
@@ -92,6 +111,7 @@ export default function ChannelInbox({ channel, revision, onCountsChange }: { ch
     try {
       const result = await dismissChannelMessage(channel.id, message.id);
       if (!alive.current) return;
+      replyDrafts.delete(replyDraftKey(channel, message));
       setMessages(current => current.map(item => item.id === result.message.id ? result.message : item));
     } catch (reason) {
       if (alive.current) setError(problem(reason));
@@ -106,6 +126,9 @@ export default function ChannelInbox({ channel, revision, onCountsChange }: { ch
     try {
       const result = await approveChannelSend(channel.id, confirmation.message.id, confirmation.text);
       if (!alive.current) return;
+      if (result.message.status === "sent" || result.message.status === "send_failed" || result.message.status === "dismissed") {
+        replyDrafts.delete(replyDraftKey(channel, confirmation.message));
+      }
       setMessages(current => current.map(item => item.id === result.message.id ? result.message : item));
       if (confirmedSendStates.has(result.message.status)) {
         setUncertainSendIds(current => { const next = new Set(current); next.delete(result.message.id); return next; });
@@ -138,23 +161,29 @@ export default function ChannelInbox({ channel, revision, onCountsChange }: { ch
         <span>已发送 <strong>{messageCounts.sent}</strong></span>
       </div>
       {error && <p className="channels-error" role="alert">{error}</p>}
-      {loading ? <p role="status" className="channels-muted">正在读取消息…</p> : error && messages.length === 0 ? null : messages.length === 0 ? (
+        {loading ? <p role="status" className="channels-muted">正在读取消息…</p> : error && visibleMessages.length === 0 ? null : visibleMessages.length === 0 ? (
         <div className="channel-inbox-empty"><MessageSquarePlaceholder /><h4>等待第一条消息</h4><p>完成接入后，真实消息和回复会出现在这里。</p><small>{channel.reply_mode === "automatic" ? "新私聊生成回复后会直接发送；已有草稿保持原状。" : "回复正文可编辑；逐条审阅并批准后发送到对应联系人。"}</small></div>
       ) : (
-        <div className="channel-inbox-workspace">
-          <nav className="channel-message-list" aria-label="收件箱消息">
-            {messages.map(item => <button key={item.id} type="button" className={selectedId === item.id ? "selected" : ""} aria-pressed={selectedId === item.id} onClick={() => setSelectedId(item.id)}>
-              <span className="channel-message-row-meta"><strong>{item.sender_id}</strong><small>{messageStatusLabel(item.status, item.send_mode)}</small></span>
-              <span className="channel-message-row-preview">{item.content}</span>
-              <time dateTime={new Date(item.created_at).toISOString()}>{new Date(item.created_at).toLocaleString()}</time>
-            </button>)}
-          </nav>
+        <div className="channel-thread-panel">
+          <div className="channel-thread-feed" aria-label="本机消息记录">
+            {chronologicalMessages.map(item => <article key={item.id} className="channel-thread-entry">
+              <button type="button" className="channel-thread-message channel-thread-message-inbound" aria-pressed={selectedId === item.id} onClick={() => setSelectedId(item.id)}>
+                <span>{item.sender_id} · {item.peer_type === "group" ? "群消息" : "私聊消息"}</span>
+                <p>{item.content}</p>
+                <time dateTime={new Date(item.created_at).toISOString()}>{new Date(item.created_at).toLocaleString()}</time>
+              </button>
+              {item.draft_reply !== null && <div className="channel-thread-message channel-thread-message-outgoing" data-status={item.status}>
+                <span>忆涟千言 · {messageStatusLabel(item.status, item.send_mode)}</span>
+                <p>{item.draft_reply}</p>
+                {item.status === "sent" && item.reply_message_id && <small>平台回执：{item.reply_message_id}</small>}
+              </div>}
+            </article>)}
+          </div>
 
           {message && <div className="channel-reply">
-            <div className="channel-reply-header"><div><strong>回复给 {message.sender_id}</strong><span>{messageStatusLabel(message.status, message.send_mode)} · {new Date(message.created_at).toLocaleString()}</span></div><Link to={`/chat/${encodeURIComponent(message.conversation_id)}`}>查看本地对话</Link></div>
-            <div className="channel-incoming-text"><span>收到的消息</span><p>{message.content}</p></div>
+            <div className="channel-reply-header"><div><strong>回复给 {message.sender_id} · {message.peer_type === "group" ? "群" : "私聊"}</strong><span>{messageStatusLabel(message.status, message.send_mode)} · {new Date(message.created_at).toLocaleString()}</span></div><Link to={`/chat/${encodeURIComponent(message.conversation_id)}`}>查看本地对话</Link></div>
             {message.draft_reply !== null && <label>回复正文
-              <textarea aria-label="回复正文" rows={7} maxLength={6000} value={text} onChange={event => setText(event.target.value)} readOnly={!canEditChannelReply(message.status)} />
+              <textarea aria-label="回复正文" rows={4} maxLength={6000} value={text} onChange={event => updateReplyDraft(event.target.value)} readOnly={!canEditChannelReply(message.status)} />
             </label>}
             {message.error && <p className="channels-error" role="alert">{message.error}</p>}
             {message.status === "delivery_unknown" && <p className="channel-delivery-warning" role="status">未取得平台送达确认。请在平台核对这条消息；此状态不会提供重发操作。</p>}

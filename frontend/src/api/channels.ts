@@ -1,9 +1,10 @@
 import { requestResult } from "../core/api/http";
 export interface ChannelProvider { id: string; label: string; supported: boolean; protocol: string; docs_url: string; limitations: string[] }
 export type ChannelReplyMode = "automatic" | "manual";
+export type ChannelGroupTrigger = "mention" | "all";
 export interface ExternalChannel {
   id: string; name: string; provider: string; enabled: boolean; app_id: string | null;
-  api_base_url: string | null; self_id: string | null; allowed_senders: string[];
+  api_base_url: string | null; self_id: string | null; allowed_senders: string[]; allowed_groups: string[]; group_trigger: ChannelGroupTrigger;
   connection_mode: "http" | "websocket" | "reverse_websocket" | "polling";
   preset_id: string | null;
   reply_mode: ChannelReplyMode;
@@ -15,15 +16,15 @@ export interface ExternalChannel {
 }
 export interface ChannelMessage {
   id: string; channel_id: string; conversation_id: string; event_id: string; external_message_id: string;
-  sender_id: string; content: string; draft_reply: string | null;
+  sender_id: string; peer_type: "private" | "group"; peer_id: string; content: string; draft_reply: string | null;
   status: "queued" | "running" | "awaiting_send" | "failed" | "sending" | "sent" | "delivery_unknown" | "send_failed" | "dismissed";
   send_mode: ChannelReplyMode | null;
   error: string | null; reply_message_id: string | null; approved_at: number | null; created_at: number; updated_at: number;
 }
-export interface ChannelSession { id: string; channel_id: string; peer_id: string; conversation_id: string; created_at: number }
+export interface ChannelSession { id: string; channel_id: string; peer_id: string; peer_type: "private" | "group"; conversation_id: string; created_at: number }
 export interface ChannelInput {
   name: string; provider: string; enabled: boolean; app_id: string | null; api_base_url: string | null;
-  self_id: string | null; allowed_senders: string[];
+  self_id: string | null; allowed_senders: string[]; allowed_groups: string[]; group_trigger: ChannelGroupTrigger;
   connection_mode: "http" | "websocket" | "reverse_websocket" | "polling";
   preset_id: string | null;
   reply_mode: ChannelReplyMode;

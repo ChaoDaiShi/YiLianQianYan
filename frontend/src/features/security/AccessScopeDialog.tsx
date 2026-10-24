@@ -11,6 +11,7 @@ export function AccessScopeDialog({rule,onClose,onSave,initialAgentId,initialAge
  async function save(){
   let resource:Record<string,unknown>|null=null;
   if(draft.scope==="resource"){
+   if(draft.permission_id.startsWith("messaging.")){setError("联系人和群范围请在消息工作台设置；此处可设置智能体或工具级别的允许与拒绝。");return}
    if(draft.permission_id.startsWith("filesystem.")){if(!path.trim()){setError("请选择文件或目录范围");return}resource={type:"filesystem",root:path.trim(),recursive:true}}
    else if(draft.permission_id==="network.request"){if(!host.trim()){setError("请输入主机名");return}resource={type:"network",scheme:"https",host:host.trim(),methods:["GET","HEAD","OPTIONS","POST","PUT","PATCH","DELETE"],zone:"public"}}
    else if(draft.permission_id==="mcp.invoke"){if(!serverId){setError("请选择 MCP 服务");return}resource={type:"mcp",server_id:serverId,tool_name:tool.trim()||null}}

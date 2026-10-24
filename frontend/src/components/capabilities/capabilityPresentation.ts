@@ -46,6 +46,8 @@ const PERMISSION_LABELS: Record<string, string> = {
   "skill.load": "加载技能",
   "mcp.invoke": "调用 MCP 工具",
   "agent.delegate": "委派 Agent",
+  "messaging.read": "读取渠道消息与联系人",
+  "messaging.send": "发送渠道消息",
 };
 
 const AGENT_SOURCE_LABELS: Record<string, string> = {
