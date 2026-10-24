@@ -17,6 +17,7 @@ use std::sync::Arc;
 type Error = (StatusCode, Json<Value>);
 mod management;
 mod presets;
+mod robot;
 fn error(status: StatusCode, message: impl Into<String>) -> Error {
     (status, Json(json!({"error":message.into()})))
 }
@@ -25,6 +26,7 @@ fn failure(message: String) -> Error {
 }
 pub fn router() -> Router<Arc<AppServer>> {
     Router::new()
+        .merge(robot::router())
         .route("/api/channels/providers", get(providers))
         .route(
             "/api/channels/presets",
@@ -82,7 +84,8 @@ pub fn callback_router() -> Router<Arc<AppServer>> {
 async fn providers() -> Json<Value> {
     Json(json!({"providers":[
         {"id":"feishu","label":"飞书自建应用","supported":true,"protocol":"官方WebSocket长连接或明确选择的HTTP事件订阅v2","docs_url":"https://open.feishu.cn/document/server-docs/im-v1/message/reply","limitations":["仅名单内用户的私聊文本，按渠道设置自动回复或审阅发送","长连接无需公网回调；HTTP模式需要可访问HTTPS回调与Verification Token","需在飞书开放平台开启机器人、消息权限和事件订阅并发布应用"]},
-        {"id":"onebot11","label":"QQ · OneBot 11","supported":true,"protocol":"反向WebSocket或HTTP签名上报 + HTTP API","docs_url":"https://github.com/botuniverse/onebot-11","limitations":["仅名单内私聊纯文本，需独立运行兼容OneBot 11服务","本应用不提供QQ登录实现或账号托管","按服务端配置选择接入方式，不会自动改换协议"]},
+        {"id":"onebot11","label":"QQ · OneBot 11","supported":true,"protocol":"反向WebSocket或HTTP签名上报 + HTTP API","docs_url":"https://napneko.github.io/develop/api","limitations":["支持私聊、选定群与主人目标；需运行兼容OneBot 11的QQ服务","好友、群、历史与主动发信由机器人操作范围控制","最近会话和历史查询依赖NapCat等实现提供的扩展"]},
+        {"id":"wechat_onebot","label":"微信 · Akasha / OneBot","supported":true,"protocol":"WeFlow SSE → Akasha → OneBot 11反向WebSocket","docs_url":"https://github.com/alingalingling/Akasha-WeChat","limitations":["需要Windows桌面微信、WeFlow API和Akasha桥接；本应用不提供该渠道扫码登录","使用Akasha映射ID配置账号与允许联系人／群，接入前应用项目内提供的明确桥接补丁","桥接空成功回执不能证明发送成功，显示送达未知；不支持QQ通讯录和历史工具"]},
         {"id":"wechat_ilink","label":"微信 · iLink","supported":true,"protocol":"官方扫码授权 + 长轮询 + context_token回复","docs_url":"https://github.com/Tencent/openclaw-weixin","limitations":["需在微信中扫码并完成手机确认或数字验证码","支持名单内私聊文本；媒体和群聊不在此文本接入范围","平台确认受理以client_id关联，不等同于联系人已读"]}
     ]}))
 }
@@ -90,7 +93,7 @@ async fn credentials_ready(server: &AppServer, channel: &Channel) -> Result<bool
     let names: &[&str] = match (channel.provider.as_str(), channel.connection_mode.as_str()) {
         ("feishu", "websocket") => &["app_secret"],
         ("feishu", _) => &["app_secret", "verification_token"],
-        ("onebot11", "reverse_websocket") => &["access_token"],
+        ("onebot11" | "wechat_onebot", "reverse_websocket") => &["access_token"],
         ("onebot11", _) => &["access_token", "event_secret"],
         ("wechat_ilink", _) => &["bot_token"],
         _ => return Ok(false),
@@ -132,7 +135,9 @@ fn validate_input(input: &ChannelInput) -> Result<(), Error> {
     if input.name.trim().is_empty() || input.name.chars().count() > 80 {
         return Err(error(StatusCode::BAD_REQUEST, "渠道名称必须为1–80字符"));
     }
-    if (input.allowed_senders.is_empty() && (input.provider != "wechat_ilink" || input.enabled))
+    if (input.allowed_senders.is_empty()
+        && !channel::is_onebot_provider(&input.provider)
+        && (input.provider != "wechat_ilink" || input.enabled))
         || input.allowed_senders.len() > 100
         || input
             .allowed_senders
@@ -160,7 +165,13 @@ fn validate_input(input: &ChannelInput) -> Result<(), Error> {
                 return Err(error(StatusCode::BAD_REQUEST, "飞书需要App ID"));
             }
         }
-        "onebot11" => {
+        "onebot11" | "wechat_onebot" => {
+            if input.provider == "wechat_onebot" && input.connection_mode != "reverse_websocket" {
+                return Err(error(
+                    StatusCode::BAD_REQUEST,
+                    "Akasha 微信使用 reverse_websocket 接入",
+                ));
+            }
             if !["http", "reverse_websocket"].contains(&input.connection_mode.as_str()) {
                 return Err(error(
                     StatusCode::BAD_REQUEST,
@@ -181,6 +192,13 @@ fn validate_input(input: &ChannelInput) -> Result<(), Error> {
                 .any(|id| id.parse::<i64>().is_err())
             {
                 return Err(error(StatusCode::BAD_REQUEST, "OneBot允许用户ID必须为数字"));
+            }
+            if input
+                .allowed_groups
+                .iter()
+                .any(|id| id.parse::<i64>().ok().filter(|v| *v > 0).is_none())
+            {
+                return Err(error(StatusCode::BAD_REQUEST, "群ID必须为正整数"));
             }
             if input.connection_mode == "http" {
                 let url = input
@@ -216,6 +234,14 @@ fn validate_input(input: &ChannelInput) -> Result<(), Error> {
                 "此渠道尚未实现，不能保存为已连接",
             ))
         }
+    }
+    if input.allowed_groups.len() > 100
+        || !matches!(input.group_trigger.as_str(), "mention" | "all")
+    {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "允许群最多100个，触发方式须为mention或all",
+        ));
     }
     Ok(())
 }
@@ -268,7 +294,7 @@ async fn validate_save(
         let names: &[&str] = match (input.provider.as_str(), input.connection_mode.as_str()) {
             ("feishu", "websocket") => &["app_secret"],
             ("feishu", _) => &["app_secret", "verification_token"],
-            ("onebot11", "reverse_websocket") => &["access_token"],
+            ("onebot11" | "wechat_onebot", "reverse_websocket") => &["access_token"],
             ("onebot11", _) => &["access_token", "event_secret"],
             ("wechat_ilink", _) => &["bot_token"],
             _ => &[],
@@ -358,6 +384,8 @@ async fn save(
             input.self_id
         },
         allowed_senders: input.allowed_senders,
+        allowed_groups: input.allowed_groups,
+        group_trigger: input.group_trigger,
         status: if input.enabled {
             "configured"
         } else {
@@ -439,7 +467,10 @@ async fn enabled(
     if input.enabled && !channel.credentials_configured {
         return Err(error(StatusCode::BAD_REQUEST, "渠道凭据不完整"));
     }
-    if input.enabled && channel.allowed_senders.is_empty() {
+    if input.enabled
+        && channel.allowed_senders.is_empty()
+        && !channel::is_onebot_provider(&channel.provider)
+    {
         return Err(error(StatusCode::BAD_REQUEST, "请先配置允许私聊的用户"));
     }
     server.channel_runtime.logins.cancel(&id).await;
@@ -545,7 +576,11 @@ async fn approve_send(
         .channel_message(&id, &message_id)
         .map_err(failure)?
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "渠道消息不存在"))?;
-    if !channel.allowed_senders.contains(&message.sender_id) {
+    if !match message.peer_type.as_str() {
+        "private" => channel.allowed_senders.contains(&message.sender_id),
+        "group" => channel.allowed_groups.contains(&message.peer_id),
+        _ => false,
+    } {
         return Err(error(StatusCode::CONFLICT, "收件人已不在允许名单中"));
     }
     if !server
@@ -633,9 +668,22 @@ async fn callback(
         return Err(error(StatusCode::CONFLICT, "渠道已停用"));
     }
     let Some(inbound) = inbound else {
-        return Ok(Json(json!({"ignored":true,"reason":"当前只接收私聊文本"})));
+        return Ok(Json(
+            json!({"ignored":true,"reason":"该事件不是已支持的文本消息"}),
+        ));
     };
-    if !channel.allowed_senders.contains(&inbound.sender_id) {
+    let owner = if channel.provider == "onebot11" && inbound.peer_type == "private" {
+        let p = server.db.robot_policy(&id).map_err(failure)?;
+        p.enabled && p.owner_ids.contains(&inbound.sender_id)
+    } else {
+        false
+    };
+    let allowed = match inbound.peer_type.as_str() {
+        "private" => channel.allowed_senders.contains(&inbound.sender_id),
+        "group" => channel.allowed_groups.contains(&inbound.peer_id),
+        _ => false,
+    };
+    if !allowed && !owner {
         return Err(error(StatusCode::FORBIDDEN, "发送者未列入允许名单"));
     }
     if inbound.content.trim().is_empty() || inbound.content.chars().count() > 8000 {

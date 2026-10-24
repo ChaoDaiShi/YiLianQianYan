@@ -245,7 +245,7 @@ mod tests {
             .unwrap();
         db.conn()
             .execute(
-                "INSERT INTO channel_sessions VALUES('session','qq','peer',?1,1)",
+                "INSERT INTO channel_sessions(id,channel_id,peer_id,conversation_id,created_at) VALUES('session','qq','peer',?1,1)",
                 [&id],
             )
             .unwrap();

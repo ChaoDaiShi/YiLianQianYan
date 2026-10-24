@@ -15,6 +15,8 @@ pub async fn dispatch_claimed(
     let dispatched = AtomicBool::new(false);
     let result = if channel.provider == "wechat_ilink" {
         super::wechat::send_reply(channel, message, text, &server.secret_store, &dispatched).await
+    } else if channel.provider == super::akasha::PROVIDER {
+        send_akasha(server, channel, message, text, &dispatched).await
     } else if channel.provider == "onebot11" && channel.connection_mode == "reverse_websocket" {
         server
             .channel_runtime
@@ -40,6 +42,45 @@ pub async fn dispatch_claimed(
         .ok_or_else(|| "渠道消息已删除".into())
 }
 
+async fn send_akasha(
+    server: &AppServer,
+    channel: &Channel,
+    message: &ChannelMessage,
+    text: &str,
+    dispatched: &AtomicBool,
+) -> Result<String, String> {
+    use super::akasha::{self, AkashaSendAck};
+    let target = message
+        .peer_id
+        .parse::<i64>()
+        .map_err(|_| "Akasha映射目标ID无效")?;
+    let envelope = match message.peer_type.as_str() {
+        "private" => akasha::private_send_action("managed", target, text)?,
+        "group" => akasha::group_send_action("managed", target, text)?,
+        _ => return Err("Akasha目标会话类型无效".into()),
+    };
+    let data = server
+        .channel_runtime
+        .call_onebot(
+            channel,
+            envelope["action"].as_str().ok_or("Akasha动作无效")?,
+            envelope["params"].clone(),
+            dispatched,
+        )
+        .await?;
+    let reason = match akasha::classify_send_ack(&data) {
+        AkashaSendAck::AcceptedBeforeSend => {
+            "Akasha桥接已受理，但未确认实际发送；送达状态未知，不会自动重发"
+        }
+        AkashaSendAck::UiActionCompleted => {
+            "Akasha已完成UIA发送操作；未提供微信服务器消息回执，送达状态未知"
+        }
+        AkashaSendAck::Rejected => "Akasha桥接报告发送错误，未能确认送达",
+        AkashaSendAck::Unknown => "Akasha返回的回执无法确认发送结果，送达状态未知",
+    };
+    Err(reason.into())
+}
+
 /// Only a newly generated reply whose persisted intake policy was automatic can
 /// be claimed here. A policy change does not flush old reviewable drafts.
 pub async fn send_if_automatic(
@@ -63,7 +104,12 @@ pub async fn send_if_automatic(
     {
         return Ok(message);
     }
-    if !channel.allowed_senders.contains(&message.sender_id) {
+    let allowed = match message.peer_type.as_str() {
+        "private" => channel.allowed_senders.contains(&message.sender_id),
+        "group" => channel.allowed_groups.contains(&message.peer_id),
+        _ => false,
+    };
+    if !allowed {
         server.db.fail_automatic_channel_send(
             channel_id,
             message_id,

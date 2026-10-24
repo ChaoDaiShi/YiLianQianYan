@@ -299,6 +299,31 @@ impl Database {
             )
             .map_err(|e| e.to_string())?;
         transaction.execute("DELETE FROM settings WHERE key = ?1 OR key = 'conversation_mode:' || ?2 OR key IN (SELECT 'chat_reasoning:' || id FROM messages WHERE conversation_id = ?2) OR key IN (SELECT 'chat_turn_reasoning:' || id FROM messages WHERE conversation_id = ?2)", params![format!("chat_options:{id}"),id]).map_err(|e|e.to_string())?;
+        transaction.execute("DELETE FROM channel_robot_actions WHERE run_id IN (SELECT id FROM channel_robot_runs WHERE conversation_id=?1)",[id]).map_err(|e|e.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM channel_robot_runs WHERE conversation_id=?1",
+                [id],
+            )
+            .map_err(|e| e.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM channel_messages WHERE conversation_id=?1",
+                [id],
+            )
+            .map_err(|e| e.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM channel_sessions WHERE conversation_id=?1",
+                [id],
+            )
+            .map_err(|e| e.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM settings WHERE key='conversation_origin:'||?1",
+                [id],
+            )
+            .map_err(|e| e.to_string())?;
         transaction
             .execute(
                 "DELETE FROM messages WHERE conversation_id = ?1",

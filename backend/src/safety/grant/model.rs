@@ -165,6 +165,15 @@ pub enum AuthorizedResource {
         target: Option<String>,
         one_shot_approval: bool,
     },
+    ChannelMessage {
+        channel_id: String,
+        account_id: String,
+        run_id: String,
+        action: String,
+        peer_type: String,
+        peer_id: String,
+        one_shot_approval: bool,
+    },
 }
 
 /// Scope of process control. `AllHostProcesses` is deliberately a distinct,
@@ -312,6 +321,7 @@ pub fn resource_scope(permission: PermissionId) -> ResourceScope {
         PermissionId::ProcessControl | PermissionId::ProcessInspect => ResourceScope::Process,
         PermissionId::ShellExecute => ResourceScope::ShellCommand,
         PermissionId::McpInvoke => ResourceScope::McpServer,
+        PermissionId::MessagingRead | PermissionId::MessagingSend => ResourceScope::ChannelTarget,
         _ => ResourceScope::Workspace,
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     },
     workspace::{Workspace, WorkspaceId, WorkspaceStatus},
 };
-use model::{next_after, Automation, AutomationInput, Occurrence};
+use model::{next_after, Automation, AutomationInput, AutomationTarget, Occurrence};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -31,13 +31,28 @@ pub fn save(
         return Err("任务名称不能为空".into());
     }
     workspace(server, &input.workspace_id)?;
-    if server
-        .db
-        .get_workflow_graph(&input.workflow_graph_id)?
-        .is_none()
-    {
-        return Err("所选工作流不存在".into());
-    }
+    let target = input
+        .target
+        .clone()
+        .unwrap_or_else(|| AutomationTarget::Workflow {
+            graph_id: input.workflow_graph_id.clone(),
+        });
+    let graph_id = match &target {
+        AutomationTarget::Workflow { graph_id } => {
+            if server.db.get_workflow_graph(graph_id)?.is_none() {
+                return Err("所选工作流不存在".into());
+            }
+            graph_id.clone()
+        }
+        AutomationTarget::AgentTurn { mission_id } => {
+            let mission = server
+                .db
+                .robot_mission(mission_id)?
+                .ok_or("机器人目标任务不存在")?;
+            crate::modules::channel::robot::channel(server, &mission.channel_id)?;
+            String::new()
+        }
+    };
     let now = chrono::Utc::now().timestamp_millis();
     let next = next_after(&input.schedule, &input.timezone, now)?;
     if input.enabled && next.is_none() {
@@ -66,7 +81,8 @@ pub fn save(
             .map(str::to_owned)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         name: input.name.trim().into(),
-        workflow_graph_id: input.workflow_graph_id,
+        workflow_graph_id: graph_id,
+        target: Some(target),
         workspace_id: input.workspace_id,
         timezone: input.timezone,
         schedule: input.schedule,
@@ -106,6 +122,7 @@ pub fn set_enabled(
             expected_revision: Some(expected_revision),
             name: current.name,
             workflow_graph_id: current.workflow_graph_id,
+            target: current.target,
             workspace_id: current.workspace_id,
             timezone: current.timezone,
             schedule: current.schedule,
@@ -136,7 +153,11 @@ fn occurrence(
         scheduled_at,
         workspace_id: automation.workspace_id.clone(),
         workflow_graph_id: automation.workflow_graph_id.clone(),
-        run_id: (!missed).then_some(id),
+        run_id: (!missed && !matches!(automation.target, Some(AutomationTarget::AgentTurn { .. })))
+            .then_some(id),
+        robot_run_id: None,
+        robot_channel_id: None,
+        conversation_id: None,
         status: if missed { "skipped" } else { "dispatching" }.into(),
         error: missed.then(|| "已错过执行时间，本次不自动补跑".into()),
         created_at: now,
@@ -145,10 +166,38 @@ fn occurrence(
 }
 
 async fn dispatch(
-    server: &AppServer,
+    server: &Arc<AppServer>,
     automation: &Automation,
     occurrence: &mut Occurrence,
 ) -> Result<(), String> {
+    if let Some(AutomationTarget::AgentTurn { mission_id }) = &automation.target {
+        let result = async {
+            workspace(server, &automation.workspace_id)?;
+            let mut mission = server
+                .db
+                .robot_mission(mission_id)?
+                .ok_or("机器人目标任务已删除")?;
+            mission.workspace_id = Some(automation.workspace_id.clone());
+            crate::modules::channel::robot::start_mission(server.clone(), mission, "automation")
+                .await
+        }
+        .await;
+        match result {
+            Ok(run) => {
+                occurrence.robot_run_id = Some(run.id);
+                occurrence.robot_channel_id = Some(run.channel_id);
+                occurrence.conversation_id = Some(run.conversation_id);
+                occurrence.run_id = None;
+                occurrence.status = run.status;
+            }
+            Err(error) => {
+                occurrence.status = "failed".into();
+                occurrence.error = Some(error);
+            }
+        }
+        occurrence.updated_at = chrono::Utc::now().timestamp_millis();
+        return server.db.update_automation_occurrence(occurrence);
+    }
     let result = async {
         let workspace = workspace(server, &automation.workspace_id)?;
         let graph = server
@@ -208,7 +257,7 @@ async fn dispatch(
     server.db.update_automation_occurrence(occurrence)
 }
 
-pub async fn run_now(server: &AppServer, id: &str) -> Result<Occurrence, String> {
+pub async fn run_now(server: &Arc<AppServer>, id: &str) -> Result<Occurrence, String> {
     let automation = server.db.get_automation(id)?.ok_or("时间任务不存在")?;
     let mut item = occurrence(
         &automation,
@@ -234,6 +283,19 @@ pub fn history(server: &AppServer, id: &str) -> Result<Vec<Occurrence>, String> 
     let mut items = server.db.automation_history(id)?;
     for item in &mut items {
         if item.status == "interrupted" {
+            continue;
+        }
+        if let Some(run_id) = item.robot_run_id.as_deref() {
+            if let Some(run) = server.db.robot_run(run_id)? {
+                item.status = run.status;
+                item.error = run.error;
+                item.updated_at = run.updated_at;
+                item.robot_channel_id = Some(run.channel_id);
+                item.conversation_id = Some(run.conversation_id);
+            } else {
+                item.status = "failed".into();
+                item.error = Some("关联的机器人运行已删除".into());
+            }
             continue;
         }
         if let Some(run_id) = &item.run_id {
@@ -267,6 +329,32 @@ pub fn start_scheduler(
             }
         };
         for mut item in previous {
+            if let Some(id) = item.robot_run_id.as_deref() {
+                match server.db.robot_run(id) {
+                    Ok(Some(mut run)) if run.active() => {
+                        run.status = "stopped".into();
+                        run.error = Some("应用在运行期间退出，本次已中断，不会自动重跑".into());
+                        run.updated_at = chrono::Utc::now().timestamp_millis();
+                        item.status = "interrupted".into();
+                        item.error = run.error.clone();
+                        item.updated_at = run.updated_at;
+                        if let Err(error) = server
+                            .db
+                            .save_robot_run(&run)
+                            .and_then(|_| server.db.update_automation_occurrence(&item))
+                        {
+                            tracing::error!(%error,"机器人定时任务恢复失败");
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error,"机器人任务记录读取失败");
+                        return;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             let mut interrupted = item.status == "dispatching";
             if let Some(run_id) = &item.run_id {
                 let result = async {

@@ -119,6 +119,8 @@ fn only_configured_user_private_media_and_group_messages_are_reported_unsupporte
         api_base_url: None,
         self_id: None,
         allowed_senders: vec![],
+        allowed_groups: vec![],
+        group_trigger: "mention".into(),
         status: "configured".into(),
         last_received_at: None,
         last_error: None,

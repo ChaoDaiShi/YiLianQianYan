@@ -1,7 +1,7 @@
 use super::{ChannelPreset, ChannelPresetInput};
 use crate::{db::Database, modules::task::AgentId};
 
-pub const CHANNEL_PROMPT: &str = "你正在回复已配置外部渠道中的私聊文本。只根据此会话内容回答，不访问本机文件、桌面、私有知识库或其他对话。此会话没有工具权限。不要声称已执行操作。只输出发给联系人的回复正文，不描述内部生成或发送流程。尽量在2000字以内回答。";
+pub const CHANNEL_PROMPT: &str = "你正在回复已配置外部渠道中的会话文本。只根据此会话内容回答，不访问本机文件、桌面、私有知识库或其他对话。此会话没有工具权限。不要声称已执行操作。只输出发给当前会话的回复正文，不描述内部生成或发送流程。尽量在2000字以内回答。";
 
 pub fn builtin_presets() -> Vec<ChannelPreset> {
     [

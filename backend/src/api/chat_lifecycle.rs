@@ -190,6 +190,16 @@ impl ChatTurnEvents {
             status = ConversationRunStatus::Failed;
             error = Some(failure);
         }
+        if let Err(failure) = crate::modules::channel::robot::finish_turn(
+            server,
+            conversation,
+            status,
+            error.as_deref(),
+        )
+        .await
+        {
+            tracing::error!(%failure, %conversation, "机器人运行状态或主人报告保存失败");
+        }
         server.active_tasks.lock().remove(conversation);
         let (complete, published) = oneshot::channel();
         if self

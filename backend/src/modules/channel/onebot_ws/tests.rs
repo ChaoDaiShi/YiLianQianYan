@@ -126,6 +126,64 @@ async fn controlled_reverse_ws_sends_private_text_and_correlates_platform_echo()
 }
 
 #[tokio::test]
+async fn reverse_ws_call_action_supports_group_targets_and_returns_only_data() {
+    let (address, server, shutdown, session_rx) = start_test_ws_server().await;
+    let (mut peer, _) = tokio_tungstenite::connect_async(format!("ws://{address}/ws"))
+        .await
+        .unwrap();
+    let session = session_rx.await.unwrap();
+    let dispatched = Arc::new(AtomicBool::new(false));
+    let task = {
+        let session = Arc::clone(&session);
+        let dispatched = Arc::clone(&dispatched);
+        tokio::spawn(async move {
+            session
+                .call_action(
+                    "get_group_info",
+                    json!({ "group_id": 300 }),
+                    dispatched.as_ref(),
+                )
+                .await
+        })
+    };
+
+    let outgoing = tokio::time::timeout(Duration::from_secs(2), peer.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let outgoing = match outgoing {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text,
+        frame => panic!("expected outgoing text action, received {frame:?}"),
+    };
+    let action: Value = serde_json::from_str(outgoing.as_str()).unwrap();
+    assert_eq!(action["action"], "get_group_info");
+    assert_eq!(action["params"]["group_id"], 300);
+    let echo = action["echo"].as_str().unwrap();
+    peer.send(tokio_tungstenite::tungstenite::Message::Text(
+        json!({
+            "echo": echo,
+            "status": "ok",
+            "retcode": 0,
+            "data": { "group_id": 300, "group_name": "fixture" }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        json!({ "group_id": 300, "group_name": "fixture" })
+    );
+    assert!(dispatched.load(Ordering::SeqCst));
+    peer.close(None).await.unwrap();
+    let _ = shutdown.send(());
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn closing_reverse_ws_after_dispatch_keeps_send_outcome_unconfirmed() {
     let (address, server, shutdown, session_rx) = start_test_ws_server().await;
     let (mut peer, _) = tokio_tungstenite::connect_async(format!("ws://{address}/ws"))
@@ -197,6 +255,8 @@ fn unsupported_event_tracking_ignores_lifecycle_other_bots_and_self_messages() {
         api_base_url: None,
         self_id: Some("100".into()),
         allowed_senders: vec![],
+        allowed_groups: vec!["300".into()],
+        group_trigger: "mention".into(),
         status: "configured".into(),
         last_received_at: None,
         last_error: None,
@@ -232,7 +292,7 @@ fn unsupported_event_tracking_ignores_lifecycle_other_bots_and_self_messages() {
             &channel,
             &json!({"post_type":"message","message_type":"group","self_id":100,"user_id":200,"group_id":300})
         ),
-        Some(("200".into(), "OneBot群聊消息暂不支持".into()))
+        None
     );
     assert_eq!(
         unsupported_onebot_event(

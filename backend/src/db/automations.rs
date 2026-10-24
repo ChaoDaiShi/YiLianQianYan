@@ -11,10 +11,14 @@ const SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
      CREATE TABLE automation_occurrences(id TEXT PRIMARY KEY,automation_id TEXT NOT NULL,occurrence_key TEXT NOT NULL,payload TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(automation_id,occurrence_key));
      CREATE INDEX automation_history ON automation_occurrences(automation_id,created_at DESC);",
 );
+const AGENT_TURNS:ProductMigrationSpec=ProductMigrationSpec::new(1065,"1065_automation_agent_turns",MigrationOwner::V1TaskWorld,
+    "UPDATE automations SET payload=json_set(payload,'$.target',json_object('kind','workflow','graph_id',json_extract(payload,'$.workflow_graph_id'))) WHERE json_type(payload,'$.target') IS NULL;
+     UPDATE automation_occurrences SET payload=json_set(payload,'$.robot_run_id',NULL) WHERE json_type(payload,'$.robot_run_id') IS NULL;");
 
 impl Database {
     pub fn initialize_automations_schema(&self) -> Result<(), rusqlite::Error> {
-        self.apply_product_migration(&SCHEMA)
+        self.apply_product_migration(&SCHEMA)?;
+        self.apply_product_migration(&AGENT_TURNS)
     }
     pub fn list_automations(&self) -> Result<Vec<Automation>, String> {
         let conn = self.conn();
@@ -122,6 +126,16 @@ impl Database {
                 active = true;
                 break;
             }
+            if let Some(id) = item.robot_run_id {
+                let status:Option<String> = tx.query_row("SELECT json_extract(payload,'$.status') FROM channel_robot_runs WHERE id=?1",[id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+                if status
+                    .as_deref()
+                    .is_some_and(|v| ["queued", "running", "awaiting_approval"].contains(&v))
+                {
+                    active = true;
+                    break;
+                }
+            }
             if let Some(id) = item.run_id {
                 let status: Option<String> = tx
                     .query_row(
@@ -215,6 +229,11 @@ mod tests {
             revision: 1,
             name: "daily".into(),
             workflow_graph_id: "graph".into(),
+            target: Some(
+                crate::modules::automation::model::AutomationTarget::Workflow {
+                    graph_id: "graph".into(),
+                },
+            ),
             workspace_id: "workspace".into(),
             timezone: "Asia/Shanghai".into(),
             schedule: Schedule::Daily {
@@ -238,6 +257,9 @@ mod tests {
             workspace_id: "workspace".into(),
             workflow_graph_id: "graph".into(),
             run_id: Some(id.into()),
+            robot_run_id: None,
+            robot_channel_id: None,
+            conversation_id: None,
             status: "dispatching".into(),
             error: None,
             created_at: due,

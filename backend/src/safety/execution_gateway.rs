@@ -350,7 +350,7 @@ impl SecurityExecutionGateway {
         approved_risk: RiskLevel,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
         let evaluated = self.evaluate_core(request, role, approved_risk)?;
-        let decision = match evaluated {
+        let mut decision = match evaluated {
             PolicyDecision::Deny(context) => PolicyDecision::Deny(context),
             PolicyDecision::Allow(mut context) | PolicyDecision::RequireApproval(mut context) => {
                 if context.risk_level > approved_risk {
@@ -368,6 +368,17 @@ impl SecurityExecutionGateway {
                 }
             }
         };
+
+        if let PolicyDecision::Allow(context) = &mut decision {
+            for resource in &mut context.authorized_resources {
+                if let AuthorizedResource::ChannelMessage {
+                    one_shot_approval, ..
+                } = resource
+                {
+                    *one_shot_approval = true;
+                }
+            }
+        }
 
         self.record_policy_decided(request, &decision)?;
         match decision {
@@ -868,6 +879,22 @@ impl SecurityExecutionGateway {
                 ResourceDescriptor::Subagent { name } if !name.trim().is_empty() => {
                     ResourceScope::Subagent
                 }
+                ResourceDescriptor::ChannelMessage {
+                    channel_id,
+                    account_id,
+                    run_id,
+                    action,
+                    peer_type,
+                    peer_id,
+                } if !channel_id.trim().is_empty()
+                    && !account_id.trim().is_empty()
+                    && !run_id.trim().is_empty()
+                    && !action.trim().is_empty()
+                    && !peer_type.trim().is_empty()
+                    && !peer_id.trim().is_empty() =>
+                {
+                    ResourceScope::ChannelTarget
+                }
                 _ => {
                     return Err(DescriptorError::InvalidDescriptor(
                         "tool resource cannot be resolved to a security scope".to_string(),
@@ -1001,6 +1028,14 @@ impl SecurityExecutionGateway {
             resource_scopes,
             assessed_risk.max(final_risk),
         )?;
+        let robot_message_scope =
+            match robot_message_scope(self.db.as_deref(), request, &descriptor) {
+                Ok(scope) => scope,
+                Err(reason) => {
+                    context.reason = reason;
+                    return Ok(PolicyDecision::Deny(context));
+                }
+            };
         let mut authorized_resources = Vec::new();
 
         if sandbox_allows_file_write == Some(false) {
@@ -1171,6 +1206,16 @@ impl SecurityExecutionGateway {
             }));
         }
         context.authorized_resources = authorized_resources;
+        if robot_message_scope.is_some() && matches!(rbac, PolicyDecision::Deny(_)) {
+            return Ok(rbac);
+        }
+        if robot_message_scope.is_some_and(|scope| scope.send && !scope.automatic_send)
+            && !matches!(rbac, PolicyDecision::Deny(_))
+        {
+            context.reason =
+                "QQ send target is outside automatic scope and requires approval".into();
+            return Ok(PolicyDecision::RequireApproval(context));
+        }
         if let Some(config) = &self.permissions_config {
             if matches!(rbac, PolicyDecision::Deny(_)) {
                 return Ok(rbac);
@@ -1186,14 +1231,23 @@ impl SecurityExecutionGateway {
                     PolicyDecision::RequireApproval(context)
                 }
                 PermissionMode::PartialApproval
-                    if matches!(context.risk_level, RiskLevel::High | RiskLevel::Critical)
-                        || matches!(rbac, PolicyDecision::RequireApproval(_)) =>
+                    if (matches!(context.risk_level, RiskLevel::High | RiskLevel::Critical)
+                        || matches!(rbac, PolicyDecision::RequireApproval(_)))
+                        && !robot_message_scope
+                            .is_some_and(|scope| scope.send && scope.automatic_send) =>
                 {
                     context.reason = "部分审批：敏感或危险操作需要批准".into();
                     PolicyDecision::RequireApproval(context)
                 }
                 PermissionMode::PartialApproval => {
-                    context.reason = "部分审批：允许常规操作".into();
+                    context.reason = if robot_message_scope
+                        .is_some_and(|scope| scope.send && scope.automatic_send)
+                    {
+                        "QQ发信在当前账号已保存的自动授权范围内"
+                    } else {
+                        "部分审批：允许常规操作"
+                    }
+                    .into();
                     PolicyDecision::Allow(context)
                 }
                 PermissionMode::FullAccess => {
@@ -1221,6 +1275,14 @@ impl SecurityExecutionGateway {
         match rbac {
             PolicyDecision::Allow(mut rbac_context) => {
                 rbac_context.authorized_resources = context.authorized_resources;
+                Ok(PolicyDecision::Allow(rbac_context))
+            }
+            PolicyDecision::RequireApproval(mut rbac_context)
+                if robot_message_scope.is_some_and(|scope| scope.send && scope.automatic_send) =>
+            {
+                rbac_context.authorized_resources = context.authorized_resources;
+                rbac_context.reason =
+                    "QQ message send is within the persisted automatic scope".into();
                 Ok(PolicyDecision::Allow(rbac_context))
             }
             PolicyDecision::RequireApproval(mut rbac_context) => {
@@ -1257,6 +1319,104 @@ impl SecurityExecutionGateway {
         }
         Ok(decision)
     }
+}
+
+#[derive(Clone, Copy)]
+struct RobotMessageScope {
+    send: bool,
+    automatic_send: bool,
+}
+
+fn robot_message_scope(
+    db: Option<&Database>,
+    request: &SecurityExecutionRequest,
+    descriptor: &ToolSecurityDescriptor,
+) -> Result<Option<RobotMessageScope>, String> {
+    let Some(ResourceDescriptor::ChannelMessage {
+        channel_id,
+        account_id,
+        run_id,
+        action,
+        peer_type,
+        peer_id,
+    }) = descriptor.resources.first()
+    else {
+        return Ok(None);
+    };
+    if descriptor.resources.len() != 1 {
+        return Err("QQ action descriptor must contain one bound channel resource".into());
+    }
+    let db = db.ok_or_else(|| "QQ robot policy database is unavailable".to_string())?;
+    let channel = db
+        .channel(channel_id)
+        .map_err(|error| format!("QQ channel lookup failed: {error}"))?
+        .ok_or_else(|| "QQ channel is no longer configured".to_string())?;
+    if !channel.enabled
+        || channel.provider != "onebot11"
+        || !matches!(
+            channel.connection_mode.as_str(),
+            "http" | "reverse_websocket"
+        )
+        || channel.self_id.as_deref() != Some(account_id.as_str())
+    {
+        return Err("QQ channel is disabled or no longer matches the bound account".into());
+    }
+    let policy = db
+        .robot_policy(channel_id)
+        .map_err(|error| format!("QQ robot policy lookup failed: {error}"))?;
+    if !policy.enabled || policy.channel_id != *channel_id || policy.account_id != *account_id {
+        return Err(
+            "QQ robot policy is disabled or no longer bound to this channel account".into(),
+        );
+    }
+    let run = db
+        .robot_run(run_id)
+        .map_err(|error| format!("QQ robot run lookup failed: {error}"))?
+        .ok_or_else(|| "QQ robot run is no longer available".to_string())?;
+    if run.channel_id != *channel_id
+        || run.account_id != *account_id
+        || run.conversation_id != request.conversation_id
+        || !run.active()
+    {
+        return Err("QQ robot action is not bound to an active run conversation".into());
+    }
+
+    let send = matches!(action.as_str(), "send_private_msg" | "send_group_msg");
+    if send {
+        let expected_peer_type = if action == "send_private_msg" {
+            "private"
+        } else {
+            "group"
+        };
+        if peer_type != expected_peer_type {
+            return Err("QQ send action peer type does not match its platform action".into());
+        }
+        return Ok(Some(RobotMessageScope {
+            send: true,
+            automatic_send: policy.allows_send(peer_type, peer_id),
+        }));
+    }
+
+    if !policy.allows_tool_read(&descriptor.tool_name) {
+        return Err("QQ read action is outside the persisted read scope".into());
+    }
+    let expected_peer_type = match action.as_str() {
+        "get_login_info" => "account",
+        "get_friend_list" => "friends",
+        "get_group_list" => "groups",
+        "get_group_info" | "get_group_member_list" | "get_group_msg_history" => "group",
+        "get_recent_contact" => "recent",
+        "get_friend_msg_history" => "private",
+        "get_msg" => "message",
+        _ => return Err("QQ read action is not recognized by the robot policy".into()),
+    };
+    if peer_type != expected_peer_type {
+        return Err("QQ read action peer type does not match its platform action".into());
+    }
+    Ok(Some(RobotMessageScope {
+        send: false,
+        automatic_send: false,
+    }))
 }
 
 fn grant_resource_evidence(resource: &ResourceDescriptor) -> serde_json::Value {
@@ -1304,6 +1464,13 @@ fn grant_resource_evidence(resource: &ResourceDescriptor) -> serde_json::Value {
             "tool_name": tool_name,
         }),
         ResourceDescriptor::Subagent { .. } => serde_json::json!({ "kind": "subagent" }),
+        ResourceDescriptor::ChannelMessage {
+            action, peer_type, ..
+        } => serde_json::json!({
+            "kind": "channel_message",
+            "action": action,
+            "peer_type": peer_type,
+        }),
     }
 }
 
@@ -1378,6 +1545,22 @@ fn authorized_resource_from_evaluation(
             target: target.clone(),
             one_shot_approval: grant_enforced,
         }),
+        ResourceDescriptor::ChannelMessage {
+            channel_id,
+            account_id,
+            run_id,
+            action,
+            peer_type,
+            peer_id,
+        } => Some(AuthorizedResource::ChannelMessage {
+            channel_id: channel_id.clone(),
+            account_id: account_id.clone(),
+            run_id: run_id.clone(),
+            action: action.clone(),
+            peer_type: peer_type.clone(),
+            peer_id: peer_id.clone(),
+            one_shot_approval: false,
+        }),
         _ => None,
     }
 }
@@ -1399,7 +1582,14 @@ mod tests {
     };
     use crate::agent::verifier::{DefaultVerifier, VerificationResult, Verifier};
     use crate::config::types::{AppConfig, PermissionMode, SandboxConfig, SandboxProfile};
-    use crate::db::{Database, SecurityAuditQuery};
+    use crate::db::{
+        access_rules::{AccessMode, AccessRule},
+        Database, SecurityAuditQuery,
+    };
+    use crate::modules::channel::{
+        robot::types::{RobotPolicy, RobotRun},
+        Channel,
+    };
     use crate::safety::grant::{GrantEffect, GrantResource, GrantSource, SecurityGrant};
     use crate::safety::{
         AuditRecorder, BuiltInRole, DescriptorError, PermissionId, PolicyDecision,
@@ -3445,5 +3635,293 @@ mod tests {
             .evaluate_with_role(&request, BuiltInRole::Restricted, RiskLevel::High)
             .unwrap();
         assert!(matches!(restricted, PolicyDecision::Deny(_)));
+    }
+
+    struct ScopedQqSendTool {
+        channel_id: String,
+        account_id: String,
+        run_id: String,
+        peer_id: String,
+        observed_approval: Arc<parking_lot::Mutex<Vec<Option<bool>>>>,
+    }
+
+    #[async_trait]
+    impl Tool for ScopedQqSendTool {
+        fn name(&self) -> &str {
+            "qq_send_private"
+        }
+        fn description(&self) -> &str {
+            "fixture scoped QQ send"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object", "properties": { "user_id": {"type":"string"}, "text": {"type":"string"} }, "required": ["user_id", "text"] })
+        }
+        fn risk_level(&self) -> RiskLevel {
+            RiskLevel::High
+        }
+        fn security_descriptor(
+            &self,
+            args: &serde_json::Value,
+        ) -> Result<ToolSecurityDescriptor, DescriptorError> {
+            let peer_id = args
+                .get("user_id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| DescriptorError::InvalidDescriptor("missing user_id".into()))?;
+            if peer_id != self.peer_id {
+                return Err(DescriptorError::InvalidDescriptor(
+                    "fixture target does not match its bound peer".into(),
+                ));
+            }
+            Ok(ToolSecurityDescriptor {
+                tool_name: self.name().into(),
+                requested_permissions: vec![
+                    PermissionId::MessagingSend.in_scope(ResourceScope::ChannelTarget)
+                ],
+                resources: vec![ResourceDescriptor::ChannelMessage {
+                    channel_id: self.channel_id.clone(),
+                    account_id: self.account_id.clone(),
+                    run_id: self.run_id.clone(),
+                    action: "send_private_msg".into(),
+                    peer_type: "private".into(),
+                    peer_id: peer_id.into(),
+                }],
+                default_risk: RiskLevel::High,
+                side_effects: vec![crate::safety::SideEffectKind::ExternalService],
+            })
+        }
+        async fn execute(&self, _args: serde_json::Value) -> ToolResult {
+            ToolResult::error("trusted gateway context required")
+        }
+        async fn execute_with_context(
+            &self,
+            args: serde_json::Value,
+            context: &crate::tools::trait_def::ToolExecutionContext,
+        ) -> ToolResult {
+            let peer_id = args["user_id"].as_str().unwrap_or_default();
+            let approval = context.authorized_channel_message(
+                &self.channel_id,
+                &self.account_id,
+                &self.run_id,
+                "send_private_msg",
+                "private",
+                peer_id,
+            );
+            self.observed_approval.lock().push(approval);
+            if approval.is_none() {
+                return ToolResult::error("missing exact channel message evidence");
+            }
+            ToolResult::success_with_structured(
+                "fixture action executed",
+                Some(serde_json::json!({"one_shot_approval": approval.unwrap()})),
+            )
+        }
+    }
+
+    struct ScopedQqFixture {
+        gateway: SecurityExecutionGateway,
+        db: Arc<Database>,
+        request: SecurityExecutionRequest,
+        observed_approval: Arc<parking_lot::Mutex<Vec<Option<bool>>>>,
+        path: std::path::PathBuf,
+    }
+
+    fn scoped_qq_fixture(targets: Vec<String>, peer_id: &str) -> ScopedQqFixture {
+        let path = std::env::temp_dir().join(format!("qq-gateway-{}.db", uuid::Uuid::new_v4()));
+        let db = Arc::new(Database::new(&path).unwrap());
+        let conversation = db.create_conversation("QQ robot fixture").unwrap();
+        let channel = Channel {
+            id: "qq-channel".into(),
+            name: "QQ fixture".into(),
+            provider: "onebot11".into(),
+            connection_mode: "http".into(),
+            preset_id: None,
+            reply_mode: "manual".into(),
+            enabled: true,
+            app_id: None,
+            api_base_url: Some("http://127.0.0.1:1".into()),
+            self_id: Some("100".into()),
+            allowed_senders: vec![],
+            allowed_groups: vec![],
+            group_trigger: "mention".into(),
+            status: "configured".into(),
+            last_received_at: None,
+            last_error: None,
+            last_event: None,
+            created_at: 0,
+            updated_at: 0,
+            callback_path: String::new(),
+            credentials_configured: true,
+        };
+        db.save_channel(&channel).unwrap();
+        let mut policy = RobotPolicy::new(&channel.id);
+        policy.account_id = "100".into();
+        policy.enabled = true;
+        policy.send_private_ids = targets;
+        db.save_robot_policy(&policy).unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let run = RobotRun {
+            id: "qq-run".into(),
+            channel_id: channel.id.clone(),
+            account_id: "100".into(),
+            mission_id: None,
+            conversation_id: conversation.id.clone(),
+            user_message_id: None,
+            origin: "desktop".into(),
+            owner_id: None,
+            goal: "fixture goal".into(),
+            preset_id: None,
+            status: "running".into(),
+            answer: None,
+            error: None,
+            created_at: now,
+            updated_at: now,
+        };
+        db.create_robot_run(&run, None).unwrap();
+        let observed_approval = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let tool = ScopedQqSendTool {
+            channel_id: channel.id,
+            account_id: "100".into(),
+            run_id: run.id,
+            peer_id: peer_id.into(),
+            observed_approval: Arc::clone(&observed_approval),
+        };
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(tool));
+        let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+            SandboxConfig::default(),
+            ".",
+            Arc::new(registry),
+        )
+        .with_db(Arc::clone(&db));
+        let request = SecurityExecutionRequest {
+            conversation_id: conversation.id,
+            tool_call_id: uuid::Uuid::new_v4().to_string(),
+            tool_name: "qq_send_private".into(),
+            arguments: serde_json::json!({ "user_id": peer_id, "text": "fixture" }),
+            subject: SecuritySubject::local_user(),
+        };
+        ScopedQqFixture {
+            gateway,
+            db,
+            request,
+            observed_approval,
+            path,
+        }
+    }
+
+    fn cleanup_scoped_qq_fixture(fixture: ScopedQqFixture) {
+        let path = fixture.path.clone();
+        drop(fixture);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn scoped_automatic_qq_send_is_allowed_at_high_risk_with_exact_evidence() {
+        let fixture = scoped_qq_fixture(vec!["200".into()], "200");
+
+        let decision = fixture
+            .gateway
+            .evaluate_with_role(&fixture.request, BuiltInRole::Owner, RiskLevel::High)
+            .unwrap();
+        assert!(matches!(decision, PolicyDecision::Allow(_)));
+        let result = fixture
+            .gateway
+            .execute_with_role(&fixture.request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+        assert!(matches!(result, SecurityExecutionOutcome::Executed { .. }));
+        assert_eq!(fixture.observed_approval.lock().as_slice(), &[Some(false)]);
+        cleanup_scoped_qq_fixture(fixture);
+    }
+
+    #[tokio::test]
+    async fn outside_automatic_scope_requires_approval_then_uses_one_shot_evidence() {
+        let fixture = scoped_qq_fixture(vec!["200".into()], "201");
+        let decision = fixture
+            .gateway
+            .evaluate_with_role(&fixture.request, BuiltInRole::Owner, RiskLevel::High)
+            .unwrap();
+        assert!(matches!(decision, PolicyDecision::RequireApproval(_)));
+        assert!(fixture.observed_approval.lock().is_empty());
+
+        let result = fixture
+            .gateway
+            .execute_approved_with_role(&fixture.request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+        assert!(matches!(result, SecurityExecutionOutcome::Executed { .. }));
+        assert_eq!(fixture.observed_approval.lock().as_slice(), &[Some(true)]);
+        cleanup_scoped_qq_fixture(fixture);
+    }
+
+    #[tokio::test]
+    async fn disabled_robot_policy_denies_even_a_consumed_approval() {
+        let fixture = scoped_qq_fixture(vec!["200".into()], "201");
+        let mut policy = fixture.db.robot_policy("qq-channel").unwrap();
+        policy.enabled = false;
+        fixture.db.save_robot_policy(&policy).unwrap();
+
+        let result = fixture
+            .gateway
+            .execute_approved_with_role(&fixture.request, BuiltInRole::Owner, RiskLevel::High)
+            .await
+            .unwrap();
+        assert!(matches!(result, SecurityExecutionOutcome::Denied { .. }));
+        assert!(fixture.observed_approval.lock().is_empty());
+        cleanup_scoped_qq_fixture(fixture);
+    }
+
+    #[tokio::test]
+    async fn robot_scope_saved_for_an_old_account_is_denied_after_account_change() {
+        let fixture = scoped_qq_fixture(vec!["200".into()], "200");
+        let mut policy = fixture.db.robot_policy("qq-channel").unwrap();
+        policy.account_id = "101".into();
+        fixture.db.save_robot_policy(&policy).unwrap();
+
+        let decision = fixture
+            .gateway
+            .evaluate_with_role(&fixture.request, BuiltInRole::Owner, RiskLevel::High)
+            .unwrap();
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+        assert!(fixture.observed_approval.lock().is_empty());
+        cleanup_scoped_qq_fixture(fixture);
+    }
+
+    #[tokio::test]
+    async fn explicit_messaging_deny_still_blocks_a_scoped_automatic_send() {
+        let fixture = scoped_qq_fixture(vec!["200".into()], "200");
+        fixture
+            .db
+            .replace_access_rules(&[AccessRule {
+                id: "deny-qq-send".into(),
+                scope: "default".into(),
+                subject_id: None,
+                permission_id: PermissionId::MessagingSend,
+                resource: None,
+                mode: AccessMode::Deny,
+            }])
+            .unwrap();
+
+        let decision = fixture
+            .gateway
+            .evaluate_with_role(&fixture.request, BuiltInRole::Owner, RiskLevel::High)
+            .unwrap();
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+        assert!(fixture.observed_approval.lock().is_empty());
+        cleanup_scoped_qq_fixture(fixture);
+    }
+
+    #[tokio::test]
+    async fn restricted_role_cannot_use_automatic_qq_scope() {
+        let fixture = scoped_qq_fixture(vec!["200".into()], "200");
+
+        let decision = fixture
+            .gateway
+            .evaluate_with_role(&fixture.request, BuiltInRole::Restricted, RiskLevel::High)
+            .unwrap();
+
+        assert!(matches!(decision, PolicyDecision::Deny(_)));
+        assert!(fixture.observed_approval.lock().is_empty());
+        cleanup_scoped_qq_fixture(fixture);
     }
 }

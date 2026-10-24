@@ -57,6 +57,14 @@ pub enum ResourceDescriptor {
     Subagent {
         name: String,
     },
+    ChannelMessage {
+        channel_id: String,
+        account_id: String,
+        run_id: String,
+        action: String,
+        peer_type: String,
+        peer_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -469,6 +477,64 @@ fn builtin_descriptor_profile(
             }
             _ => return Err(invalid_resources()),
         },
+        tool_name if tool_name.starts_with("qq_") => {
+            let expected = match tool_name {
+                "qq_account" => ("get_login_info", "account", PermissionId::MessagingRead),
+                "qq_friends" => ("get_friend_list", "friends", PermissionId::MessagingRead),
+                "qq_groups" => ("get_group_list", "groups", PermissionId::MessagingRead),
+                "qq_group_info" => ("get_group_info", "group", PermissionId::MessagingRead),
+                "qq_group_members" => (
+                    "get_group_member_list",
+                    "group",
+                    PermissionId::MessagingRead,
+                ),
+                "qq_recent" => ("get_recent_contact", "recent", PermissionId::MessagingRead),
+                "qq_private_history" => (
+                    "get_friend_msg_history",
+                    "private",
+                    PermissionId::MessagingRead,
+                ),
+                "qq_group_history" => (
+                    "get_group_msg_history",
+                    "group",
+                    PermissionId::MessagingRead,
+                ),
+                "qq_message" => ("get_msg", "message", PermissionId::MessagingRead),
+                "qq_send_private" => ("send_private_msg", "private", PermissionId::MessagingSend),
+                "qq_send_group" => ("send_group_msg", "group", PermissionId::MessagingSend),
+                _ => return Err(DescriptorError::UnknownTool(tool_name.to_string())),
+            };
+            match descriptor.resources.as_slice() {
+                [ResourceDescriptor::ChannelMessage {
+                    channel_id,
+                    account_id,
+                    run_id,
+                    action,
+                    peer_type,
+                    peer_id,
+                }] if !channel_id.trim().is_empty()
+                    && !account_id.trim().is_empty()
+                    && !run_id.trim().is_empty()
+                    && !peer_id.trim().is_empty()
+                    && (!matches!(tool_name, "qq_send_private" | "qq_send_group")
+                        || peer_id != "all")
+                    && action == expected.0
+                    && peer_type == expected.1 =>
+                {
+                    let (risk, side_effects) = if expected.2 == PermissionId::MessagingSend {
+                        (RiskLevel::High, vec![SideEffectKind::ExternalService])
+                    } else {
+                        (RiskLevel::Low, vec![])
+                    };
+                    profile(
+                        vec![permission(expected.2, ResourceScope::ChannelTarget)],
+                        risk,
+                        side_effects,
+                    )
+                }
+                _ => return Err(invalid_resources()),
+            }
+        }
         "read_file" | "write_file" | "edit_file" | "grep" | "glob" => {
             return Err(invalid_resources())
         }

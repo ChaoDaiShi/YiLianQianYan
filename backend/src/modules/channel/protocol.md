@@ -34,17 +34,22 @@ automatic substitute for another mode.
 - [HTTP authentication](https://github.com/botuniverse/onebot-11/blob/master/communication/authorization.md)
 - [Private-message API](https://github.com/botuniverse/onebot-11/blob/master/api/public.md#send_private_msg-发送私聊消息)
 
-Supports a separately operated OneBot 11 HTTP service, signed reverse-HTTP private
-text events, `X-Signature: sha1=...` over the exact raw body, self-ID matching,
-allowed sender IDs, and bearer-authenticated `send_private_msg`. It does not
-provide or install a QQ login implementation. Replies use text segments, and
-only status=ok, retcode=0, plus a returned message ID counts as sent.
+Supports a separately operated OneBot 11 HTTP service, signed reverse-HTTP text
+events, `X-Signature: sha1=...` over the exact raw body, self-ID matching,
+allowed sender IDs, and bearer-authenticated structured actions. It does not
+provide or install a QQ login implementation. QQ group ingress is limited to
+configured `allowed_groups`; the channel's `group_trigger` chooses whether the
+bot must be mentioned or all text messages are accepted. Member IDs remain
+separate from group IDs. Replies use text segments, and only status=ok,
+retcode=0, plus a returned platform message ID counts as delivered.
 
 Reverse WebSocket mode exposes `/api/channel-callbacks/:id/ws`, validates
 `Authorization: Bearer ...` and `X-Self-ID` before upgrading, and uses the same
-connection for events and `send_private_msg` actions. Each action has an `echo`
-correlation value. A dropped connection or timeout after dispatch is reported as
-unknown delivery, not a safe opportunity to repeat the request.
+connection for events and structured OneBot actions. Each action has an `echo`
+correlation value. HTTP and reverse-WebSocket action calls return only the
+platform's `data` after an explicit successful acknowledgement. A dropped
+connection or timeout after dispatch is reported as unknown delivery, not a safe
+opportunity to repeat the request.
 
 ## Weixin iLink
 

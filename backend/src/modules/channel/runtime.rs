@@ -36,14 +36,19 @@ impl ChannelRuntime {
         }
 
         match (channel.connection_mode.as_str(), channel.provider.as_str()) {
+            ("http", "wechat_onebot") => {
+                let message = "wechat_onebot只支持反向WebSocket模式";
+                server
+                    .db
+                    .set_channel_status(&channel.id, "error", Some(message))?;
+                Err(message.into())
+            }
             ("http", _) => server
                 .db
                 .set_channel_status(&channel.id, "configured", None),
-            ("reverse_websocket", "onebot11") => {
-                server
-                    .db
-                    .set_channel_status(&channel.id, "configured", None)
-            }
+            ("reverse_websocket", provider) if super::is_onebot_provider(provider) => server
+                .db
+                .set_channel_status(&channel.id, "configured", None),
             ("websocket", "feishu") | ("polling", "wechat_ilink") => {
                 let id = channel.id.clone();
                 let owned_channel = channel.clone();
@@ -151,10 +156,55 @@ impl ChannelRuntime {
         {
             return Err("OneBot反向WebSocket发送渠道不匹配".into());
         }
-        let peer_id = message
-            .sender_id
+        let target = message
+            .peer_id
             .parse::<i64>()
-            .map_err(|_| "OneBot私聊收件人ID无效")?;
+            .map_err(|_| "OneBot收件人ID无效")?;
+        if message.peer_type == "private" {
+            let session = self
+                .sessions
+                .lock()
+                .await
+                .get(&channel.id)
+                .cloned()
+                .ok_or_else(|| "OneBot反向WebSocket当前未连接".to_string())?;
+            return session.send_private_message(target, text, dispatched).await;
+        }
+        if message.peer_type != "group" {
+            return Err("OneBot消息目标类型无效".into());
+        }
+        let data = self
+            .call_onebot(
+                channel,
+                "send_group_msg",
+                serde_json::json!({
+                    "group_id": target,
+                    "message": [{ "type": "text", "data": { "text": text } }]
+                }),
+                dispatched,
+            )
+            .await?;
+        data.get("message_id")
+            .and_then(serde_json::Value::as_i64)
+            .map(|id| id.to_string())
+            .ok_or_else(|| "OneBot成功回执缺少message_id，送达状态未知".into())
+    }
+
+    /// Dispatch one structured OneBot action through the active reverse-
+    /// WebSocket session for this channel. HTTP actions are handled by the
+    /// protocol transport, so this method never switches transports.
+    pub async fn call_onebot(
+        &self,
+        channel: &Channel,
+        action: &str,
+        params: serde_json::Value,
+        dispatched: &AtomicBool,
+    ) -> Result<serde_json::Value, String> {
+        if !super::is_onebot_provider(&channel.provider)
+            || channel.connection_mode != "reverse_websocket"
+        {
+            return Err("OneBot反向WebSocket操作渠道不匹配".into());
+        }
         let session = self
             .sessions
             .lock()
@@ -162,9 +212,7 @@ impl ChannelRuntime {
             .get(&channel.id)
             .cloned()
             .ok_or_else(|| "OneBot反向WebSocket当前未连接".to_string())?;
-        session
-            .send_private_message(peer_id, text, dispatched)
-            .await
+        session.call_action(action, params, dispatched).await
     }
 
     pub(super) async fn register_onebot_session(

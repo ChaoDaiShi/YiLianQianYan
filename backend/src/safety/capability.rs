@@ -11,6 +11,7 @@ pub enum Capability {
     Skill,
     Agent,
     Mcp,
+    Messaging,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -28,6 +29,7 @@ pub enum Action {
     Plan,
     Invoke,
     Delegate,
+    Send,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -56,10 +58,14 @@ pub enum PermissionId {
     McpInvoke,
     #[serde(rename = "agent.delegate")]
     AgentDelegate,
+    #[serde(rename = "messaging.read")]
+    MessagingRead,
+    #[serde(rename = "messaging.send")]
+    MessagingSend,
 }
 
 impl PermissionId {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::ShellExecute,
@@ -72,6 +78,8 @@ impl PermissionId {
         Self::AgentPlan,
         Self::McpInvoke,
         Self::AgentDelegate,
+        Self::MessagingRead,
+        Self::MessagingSend,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -88,6 +96,8 @@ impl PermissionId {
             Self::AgentPlan => "agent.plan",
             Self::McpInvoke => "mcp.invoke",
             Self::AgentDelegate => "agent.delegate",
+            Self::MessagingRead => "messaging.read",
+            Self::MessagingSend => "messaging.send",
         }
     }
 
@@ -101,6 +111,7 @@ impl PermissionId {
             Self::SkillLoad => Capability::Skill,
             Self::AgentPlan | Self::AgentDelegate => Capability::Agent,
             Self::McpInvoke => Capability::Mcp,
+            Self::MessagingRead | Self::MessagingSend => Capability::Messaging,
         }
     }
 
@@ -118,6 +129,8 @@ impl PermissionId {
             Self::AgentPlan => Action::Plan,
             Self::McpInvoke => Action::Invoke,
             Self::AgentDelegate => Action::Delegate,
+            Self::MessagingRead => Action::Read,
+            Self::MessagingSend => Action::Send,
         }
     }
 
@@ -147,6 +160,7 @@ pub enum ResourceScope {
     AgentInternal,
     McpServer,
     Subagent,
+    ChannelTarget,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]

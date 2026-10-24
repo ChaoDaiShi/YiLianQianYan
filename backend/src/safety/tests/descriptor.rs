@@ -1,5 +1,6 @@
 use crate::safety::{
     describe_builtin_tool, DescriptorError, PermissionId, ResourceDescriptor, SideEffectKind,
+    ToolSecurityDescriptor,
 };
 use crate::tools::trait_def::RiskLevel;
 
@@ -39,6 +40,34 @@ fn process_kill_requires_an_explicit_pid() {
             ..
         })
     ));
+}
+
+#[test]
+fn qq_send_descriptor_binds_the_account_run_action_and_exact_peer() {
+    let descriptor = ToolSecurityDescriptor {
+        tool_name: "qq_send_private".into(),
+        requested_permissions: vec![
+            PermissionId::MessagingSend.in_scope(crate::safety::ResourceScope::ChannelTarget)
+        ],
+        resources: vec![ResourceDescriptor::ChannelMessage {
+            channel_id: "channel-1".into(),
+            account_id: "100".into(),
+            run_id: "run-1".into(),
+            action: "send_private_msg".into(),
+            peer_type: "private".into(),
+            peer_id: "200".into(),
+        }],
+        default_risk: RiskLevel::High,
+        side_effects: vec![SideEffectKind::ExternalService],
+    };
+
+    descriptor.validate_for_tool("qq_send_private").unwrap();
+
+    let mut forged = descriptor;
+    if let ResourceDescriptor::ChannelMessage { peer_id, .. } = &mut forged.resources[0] {
+        *peer_id = "all".into();
+    }
+    assert!(forged.validate_for_tool("qq_send_private").is_err());
 }
 
 #[test]

@@ -71,6 +71,7 @@ impl AppServer {
         }
         db.interrupt_knowledge_builds()?;
         db.interrupt_channel_runs()?;
+        db.interrupt_running_robots()?;
         db.initialize_skill_usage()?;
         let audit_recorder = AuditRecorder::new(db.clone_connection());
         let secret_resolver = Arc::new(SecretResolver::new(Arc::clone(&secret_store)));

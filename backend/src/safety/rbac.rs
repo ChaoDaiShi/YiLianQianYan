@@ -20,6 +20,8 @@ impl RolePolicy {
 
         match (role, permission) {
             (_, FilesystemRead | ProcessInspect | SkillLoad | AgentPlan) => Allow,
+            (Owner | Standard, MessagingRead | MessagingSend) => Allow,
+            (Restricted, MessagingRead | MessagingSend) => Deny,
             (Owner | Standard, FilesystemWrite | NetworkRequest) => Allow,
             (Restricted, FilesystemWrite | NetworkRequest) => Deny,
             (Owner | Standard, ShellExecute | ProcessControl) => RequireApproval,

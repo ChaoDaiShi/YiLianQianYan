@@ -167,7 +167,11 @@ pub(super) async fn regenerate(
         .channel_message(&id, &message)
         .map_err(failure)?
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "渠道消息不存在"))?;
-    if !channel.allowed_senders.contains(&current.sender_id) {
+    if !match current.peer_type.as_str() {
+        "private" => channel.allowed_senders.contains(&current.sender_id),
+        "group" => channel.allowed_groups.contains(&current.peer_id),
+        _ => false,
+    } {
         return Err(error(StatusCode::FORBIDDEN, "该联系人已不在允许名单内"));
     }
     if !server
@@ -217,9 +221,27 @@ pub(super) async fn check(
     channel.credentials_configured = credentials_ready(&server, &channel).await?;
     let mut checks = vec![
         json!({"label":"本机凭据","ok":channel.credentials_configured,"detail":if channel.credentials_configured{"所需凭据已存入本机凭据库"}else{"请补全凭据或完成扫码授权"}}),
-        json!({"label":"允许联系人","ok":!channel.allowed_senders.is_empty(),"detail":format!("已配置{}位允许联系人",channel.allowed_senders.len())}),
+        json!({"label":"接收范围","ok":!channel.allowed_senders.is_empty()||!channel.allowed_groups.is_empty(),"detail":format!("已配置{}位私聊联系人与{}个群",channel.allowed_senders.len(),channel.allowed_groups.len())}),
     ];
     if channel.credentials_configured {
+        if channel.provider == "onebot11"
+            && channel.connection_mode == "reverse_websocket"
+            && channel.enabled
+            && ["connected", "receiving"].contains(&channel.status.as_str())
+        {
+            let result = channel::robot::tools::call_action(
+                &server,
+                &channel,
+                "get_login_info",
+                json!({}),
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .await;
+            checks.push(match result {
+                Ok(data)=>{let actual=data["user_id"].as_i64().map(|id|id.to_string());let valid=actual.as_deref()==channel.self_id.as_deref();json!({"label":"平台账号认证","ok":valid,"detail":if valid{"实际QQ账号与配置一致"}else{"实际QQ账号与配置不一致"}})},
+                Err(error)=>json!({"label":"平台账号认证","ok":false,"detail":error})
+            });
+        }
         if channel.provider == "feishu"
             || (channel.provider == "onebot11" && channel.connection_mode == "http")
         {

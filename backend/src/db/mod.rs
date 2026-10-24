@@ -6,6 +6,7 @@ pub mod access_rules;
 mod artifact_provenance;
 pub mod automations;
 pub mod basic_services;
+pub mod channel_robot;
 pub mod channels;
 pub mod cloud;
 pub mod connector_messages;
@@ -100,7 +101,9 @@ impl Database {
         db.initialize_automations_schema()?;
         db.initialize_learning()?;
         db.initialize_channels()?;
+        db.initialize_channel_robots()?;
         db.initialize_conversation_presentation()?;
+        db.initialize_channel_peers()?;
         db.migrate_memory_governance()
             .map_err(rusqlite::Error::InvalidParameterName)?;
         db.initialize_knowledge_build_schema()?;

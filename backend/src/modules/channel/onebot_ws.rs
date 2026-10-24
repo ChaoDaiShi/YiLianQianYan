@@ -110,18 +110,40 @@ impl Session {
         text: &str,
         dispatched: &AtomicBool,
     ) -> Result<String, String> {
+        let data = self
+            .call_action(
+                "send_private_msg",
+                json!({
+                    "user_id": user_id,
+                    "message": [{ "type": "text", "data": { "text": text } }]
+                }),
+                dispatched,
+            )
+            .await?;
+        data.pointer("/message_id")
+            .and_then(Value::as_i64)
+            .map(|id| id.to_string())
+            .ok_or_else(|| "OneBot成功回执缺少message_id，送达状态未知".into())
+    }
+
+    pub(super) async fn call_action(
+        &self,
+        action: &str,
+        params: Value,
+        dispatched: &AtomicBool,
+    ) -> Result<Value, String> {
         if self.cancel.is_cancelled() {
-            return Err("OneBot反向WebSocket已关闭，未发送回复".into());
+            return Err("OneBot反向WebSocket已关闭，未发送操作".into());
         }
         let (echo, response) = self.echoes.register();
         let _pending = PendingEcho {
             registry: &self.echoes,
             echo: echo.clone(),
         };
-        let body = serde_json::to_string(&send_private_message_action(&echo, user_id, text))
+        let body = serde_json::to_string(&action_request(&echo, action, params))
             .map_err(|_| "OneBot发送请求编码失败".to_string())?;
         let mut sink = tokio::select! {
-            _ = self.cancel.cancelled() => return Err("OneBot反向WebSocket已关闭，未发送回复".into()),
+            _ = self.cancel.cancelled() => return Err("OneBot反向WebSocket已关闭，未发送操作".into()),
             sink = self.sink.lock() => sink,
         };
         if self.cancel.is_cancelled() {
@@ -145,18 +167,10 @@ impl Session {
             result = timeout(ACTION_RESPONSE_TIMEOUT, response) => match result {
                 Ok(Ok(value)) => value,
                 Ok(Err(_)) => return Err("OneBot反向WebSocket在回执前关闭，送达状态未知".into()),
-                Err(_) => return Err("OneBot send_private_msg回执超时，送达状态未知".into()),
+                Err(_) => return Err(format!("OneBot {action}回执超时，送达状态未知")),
             }
         };
-        match action_message_id(&result) {
-            Ok(message_id) => Ok(message_id),
-            Err(error) => {
-                if is_explicit_action_rejection(&result) {
-                    dispatched.store(false, Ordering::SeqCst);
-                }
-                Err(error)
-            }
-        }
+        protocol::onebot_action_data(action, &result, dispatched)
     }
 
     async fn send_pong(&self, payload: Vec<u8>) -> Result<(), String> {
@@ -197,17 +211,27 @@ fn echo_key(value: &Value) -> Option<String> {
     }
 }
 
-fn send_private_message_action(echo: &str, user_id: i64, text: &str) -> Value {
+fn action_request(echo: &str, action: &str, params: Value) -> Value {
     json!({
-        "action": "send_private_msg",
-        "params": {
-            "user_id": user_id,
-            "message": [{ "type": "text", "data": { "text": text } }]
-        },
-        "echo": echo
+        "action": action,
+        "params": params,
+        "echo": echo,
     })
 }
 
+#[cfg(test)]
+fn send_private_message_action(echo: &str, user_id: i64, text: &str) -> Value {
+    action_request(
+        echo,
+        "send_private_msg",
+        json!({
+            "user_id": user_id,
+            "message": [{ "type": "text", "data": { "text": text } }]
+        }),
+    )
+}
+
+#[cfg(test)]
 fn action_message_id(response: &Value) -> Result<String, String> {
     if response.get("status").and_then(Value::as_str) != Some("ok")
         || response.get("retcode").and_then(Value::as_i64) != Some(0)
@@ -219,14 +243,6 @@ fn action_message_id(response: &Value) -> Result<String, String> {
         .and_then(Value::as_i64)
         .map(|id| id.to_string())
         .ok_or_else(|| "OneBot成功回执缺少message_id，送达状态未知".into())
-}
-
-fn is_explicit_action_rejection(response: &Value) -> bool {
-    response.get("status").and_then(Value::as_str) == Some("failed")
-        || response
-            .get("retcode")
-            .and_then(Value::as_i64)
-            .is_some_and(|code| code != 0)
 }
 
 fn unsupported_onebot_event(channel: &Channel, event: &Value) -> Option<(String, String)> {
@@ -242,7 +258,30 @@ fn unsupported_onebot_event(channel: &Channel, event: &Value) -> Option<(String,
         return None;
     }
     match event.get("message_type").and_then(Value::as_str)? {
-        "group" => Some((sender, "OneBot群聊消息暂不支持".into())),
+        "group" => {
+            let group_id = event.get("group_id").and_then(Value::as_i64)?.to_string();
+            if !channel
+                .allowed_groups
+                .iter()
+                .any(|allowed| allowed == &group_id)
+            {
+                return None;
+            }
+            let message = event.get("message")?;
+            let contains_unsupported = match message {
+                Value::String(message) => {
+                    message.contains("[CQ:") && !message.contains(&format!("[CQ:at,qq={self_id}]"))
+                }
+                Value::Array(segments) => segments.iter().any(|segment| {
+                    !matches!(
+                        segment.get("type").and_then(Value::as_str),
+                        Some("text" | "at")
+                    )
+                }),
+                _ => false,
+            };
+            contains_unsupported.then(|| (sender, "OneBot群聊媒体或混合消息暂不支持".into()))
+        }
         "private" => {
             let message = event.get("message")?;
             let contains_non_text = match message {
@@ -270,7 +309,7 @@ pub async fn handler(
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "读取渠道失败").into_response(),
     };
     if !channel.enabled
-        || channel.provider != "onebot11"
+        || !super::is_onebot_provider(&channel.provider)
         || channel.connection_mode != "reverse_websocket"
     {
         return (StatusCode::CONFLICT, "渠道未启用OneBot反向WebSocket模式").into_response();
@@ -297,7 +336,7 @@ pub async fn handler(
         .await
     {
         Ok(token) => token,
-        Err(_) => return (StatusCode::UNAUTHORIZED, "OneBot access_token未配置").into_response(),
+        Err(_) => return (StatusCode::UNAUTHORIZED, "OneBot独立接入令牌未配置").into_response(),
     };
     if !authorization
         .is_some_and(|token| protocol::verify_token(token, expected_token.expose_secret()))
@@ -368,7 +407,25 @@ async fn read_session(
                         }
                         continue;
                     }
-                    match protocol::parse_onebot(channel, &value) {
+                    let parsed = if channel.provider == "wechat_onebot" {
+                        super::akasha::parse_event(channel, &value).map(|parsed| {
+                            parsed.map(|message| super::InboundMessage {
+                                event_id: message.event_id,
+                                external_message_id: message.external_message_id.unwrap_or_default(),
+                                peer_type: match message.peer_type {
+                                    super::akasha::AkashaPeerType::Private => "private".into(),
+                                    super::akasha::AkashaPeerType::Group => "group".into(),
+                                },
+                                peer_id: message.peer_id,
+                                sender_id: message.sender_id,
+                                content: message.content,
+                                context_token: None,
+                            })
+                        })
+                    } else {
+                        protocol::parse_onebot(channel, &value)
+                    };
+                    match parsed {
                         Ok(Some(inbound)) => {
                             if let Err(error) = super::receive(Arc::clone(server), channel, inbound).await {
                                 tracing::error!(channel_id=%channel.id, %error, "OneBot事件接收失败");

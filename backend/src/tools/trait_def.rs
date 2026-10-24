@@ -78,6 +78,43 @@ impl ToolExecutionContext {
             )
         })
     }
+
+    pub(crate) fn authorized_channel_message(
+        &self,
+        channel_id: &str,
+        account_id: &str,
+        run_id: &str,
+        action: &str,
+        peer_type: &str,
+        peer_id: &str,
+    ) -> Option<bool> {
+        self.authorized_resources
+            .iter()
+            .find_map(|resource| match resource {
+                crate::safety::grant::AuthorizedResource::ChannelMessage {
+                    channel_id: evidence_channel,
+                    account_id: evidence_account,
+                    run_id: evidence_run,
+                    action: evidence_action,
+                    peer_type: evidence_peer_type,
+                    peer_id: evidence_peer,
+                    one_shot_approval,
+                } if evidence_channel == channel_id
+                    && evidence_account == account_id
+                    && evidence_run == run_id
+                    && evidence_action == action
+                    && evidence_peer_type == peer_type
+                    && evidence_peer == peer_id =>
+                {
+                    Some(*one_shot_approval)
+                }
+                _ => None,
+            })
+    }
+
+    pub(crate) fn tool_call_id(&self) -> &str {
+        &self.tool_call_id
+    }
 }
 
 /// Risk level of a tool — used by the SafetyPolicy to decide permissions.
@@ -256,5 +293,46 @@ mod authorization_tests {
         assert!(context.authorized_desktop("open_application", Some("QQ")));
         assert!(!context.authorized_desktop("open_application", Some("WeChat")));
         assert!(!context.authorized_desktop("open_url", Some("QQ")));
+    }
+
+    #[test]
+    fn channel_message_evidence_is_bound_to_channel_run_action_and_peer() {
+        let context = ToolExecutionContext::new_with_resources(
+            std::sync::Arc::new(crate::isolation::ManagedProcessRegistry::new()),
+            "send-call-1",
+            vec![AuthorizedResource::ChannelMessage {
+                channel_id: "channel-a".into(),
+                account_id: "100".into(),
+                run_id: "run-a".into(),
+                action: "send_private_msg".into(),
+                peer_type: "private".into(),
+                peer_id: "200".into(),
+                one_shot_approval: false,
+            }],
+        );
+
+        assert_eq!(
+            context.authorized_channel_message(
+                "channel-a",
+                "100",
+                "run-a",
+                "send_private_msg",
+                "private",
+                "200"
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            context.authorized_channel_message(
+                "channel-a",
+                "100",
+                "run-a",
+                "send_private_msg",
+                "private",
+                "201"
+            ),
+            None
+        );
+        assert_eq!(context.tool_call_id(), "send-call-1");
     }
 }

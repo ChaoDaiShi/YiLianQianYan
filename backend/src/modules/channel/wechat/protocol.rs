@@ -445,6 +445,7 @@ pub(super) fn parse_message(value: &Value, bot_id: &str) -> Result<ParsedInbound
         event_id: external_message_id.clone(),
         external_message_id,
         peer_id: sender.to_owned(),
+        peer_type: "private".into(),
         sender_id: sender.to_owned(),
         content,
         context_token,

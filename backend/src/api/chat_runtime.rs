@@ -438,6 +438,7 @@ pub async fn prepare_with_model(
         model_pool_id: pool_id,
     };
     crate::modules::channel::restrict_runtime(&server.db, conversation, &mut runtime)?;
+    crate::modules::channel::robot::prepare_runtime(server, conversation, &mut runtime)?;
     Ok(runtime)
 }
 pub fn client(

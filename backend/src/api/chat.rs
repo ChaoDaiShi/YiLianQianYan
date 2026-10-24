@@ -902,7 +902,11 @@ pub async fn chat_handler(
     // Best-effort enhancement: any retrieval/embedding failure must not block chat.
     let mut memory_mode = "lexical";
     let mut query_embedding: Option<Vec<f32>> = None;
-    if !goal_bound && !channel_context && config.model.has_embedding() {
+    if !goal_bound
+        && !channel_context
+        && !(runtime.bindings.restrict_memory && runtime.bindings.restrict_knowledge)
+        && config.model.has_embedding()
+    {
         let llm = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
         match llm.embed(&message).await {
             Ok(vec) => {

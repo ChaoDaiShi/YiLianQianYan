@@ -1,8 +1,10 @@
+pub mod akasha;
 pub mod delivery;
 pub mod feishu_ws;
 pub mod onebot_ws;
 pub mod presets;
 pub mod protocol;
+pub mod robot;
 pub mod runtime;
 mod types;
 pub mod wechat;
@@ -11,6 +13,9 @@ use axum::response::IntoResponse;
 use futures::StreamExt;
 use std::sync::Arc;
 pub use types::*;
+pub fn is_onebot_provider(provider: &str) -> bool {
+    matches!(provider, "onebot11" | "wechat_onebot")
+}
 
 pub fn restrict_runtime(
     db: &Database,
@@ -53,11 +58,22 @@ pub async fn receive(
         .processing_gate(&format!("ingress:{}", channel.id));
     let _ingress = gate.lock().await;
     let current = server.db.channel(&channel.id)?.ok_or("渠道配置已删除")?;
-    if !current.enabled || !current.allowed_senders.contains(&inbound.sender_id) {
+    if !current.enabled {
+        return Ok(false);
+    }
+    if let Some(accepted) = robot::receive_owner(server.clone(), &current, &inbound).await? {
+        return Ok(accepted);
+    }
+    let allowed = match inbound.peer_type.as_str() {
+        "private" => current.allowed_senders.contains(&inbound.sender_id),
+        "group" => current.allowed_groups.contains(&inbound.peer_id),
+        _ => false,
+    };
+    if !allowed {
         return Ok(false);
     }
     if inbound.content.trim().is_empty() || inbound.content.chars().count() > 16000 {
-        return Err("渠道消息必须为1–16000字符的私聊文本".into());
+        return Err("渠道消息必须为1–16000字符的文本".into());
     }
     if server
         .db
@@ -115,7 +131,7 @@ pub fn record_unsupported(
         at: chrono::Utc::now().timestamp_millis(),
         kind: kind.into(),
         sender_id: sender.map(str::to_string),
-        detail: format!("收到{label}，当前渠道只处理允许联系人发来的私聊文本，此事件未调用模型。"),
+        detail: format!("收到{label}，当前渠道处理已配置接收范围内的文本，此事件未调用模型。"),
     };
     server.db.record_channel_event(&channel.id, &event)
 }
@@ -182,7 +198,11 @@ async fn run_inbound(server: &Arc<AppServer>, message: &ChannelMessage) -> Resul
                 ..Default::default()
             },
             conversation_id: Some(message.conversation_id.clone()),
-            message: message.content.clone(),
+            message: if message.peer_type == "group" {
+                format!("群成员 {}：{}", message.sender_id, message.content)
+            } else {
+                message.content.clone()
+            },
             resource_ids: Vec::new(),
             workflow_id: None,
             goal_ref: None,
@@ -220,6 +240,21 @@ pub async fn stop_processing(server: &AppServer, id: &str) -> Result<(), String>
     for session in server.db.channel_sessions(id)? {
         if let Some(cancel) = server.active_tasks.lock().get(&session.conversation_id) {
             cancel.cancel();
+        }
+    }
+    for mut run in server.db.robot_runs(id)? {
+        if run.active() {
+            if let Some(cancel) = server.active_tasks.lock().get(&run.conversation_id) {
+                cancel.cancel();
+            }
+            run.status = "stopped".into();
+            run.updated_at = chrono::Utc::now().timestamp_millis();
+            server.db.save_robot_run(&run)?;
+            let gate = server
+                .channel_runtime
+                .processing_gate(&format!("robot-action:{}", run.id));
+            let _pending = gate.lock().await;
+            server.db.interrupt_robot_actions(&run.id)?;
         }
     }
     server.db.interrupt_channel(id)

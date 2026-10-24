@@ -19,6 +19,8 @@ fn role_matrix_matches_the_approved_specification() {
         (AgentPlan, [Allow, Allow, Allow]),
         (McpInvoke, [RequireApproval, RequireApproval, Deny]),
         (AgentDelegate, [RequireApproval, RequireApproval, Deny]),
+        (MessagingRead, [Allow, Allow, Deny]),
+        (MessagingSend, [Allow, Allow, Deny]),
     ];
 
     for (permission, grants) in expected {

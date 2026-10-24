@@ -9,6 +9,12 @@ pub enum Schedule {
     Daily { time: String },
     Weekly { time: String, weekdays: Vec<u32> },
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AutomationTarget {
+    Workflow { graph_id: String },
+    AgentTurn { mission_id: String },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Automation {
@@ -16,6 +22,8 @@ pub struct Automation {
     pub revision: u64,
     pub name: String,
     pub workflow_graph_id: String,
+    #[serde(default)]
+    pub target: Option<AutomationTarget>,
     pub workspace_id: String,
     pub timezone: String,
     pub schedule: Schedule,
@@ -31,6 +39,8 @@ pub struct AutomationInput {
     pub expected_revision: Option<u64>,
     pub name: String,
     pub workflow_graph_id: String,
+    #[serde(default)]
+    pub target: Option<AutomationTarget>,
     pub workspace_id: String,
     pub timezone: String,
     pub schedule: Schedule,
@@ -49,6 +59,12 @@ pub struct Occurrence {
     pub workspace_id: String,
     pub workflow_graph_id: String,
     pub run_id: Option<String>,
+    #[serde(default)]
+    pub robot_run_id: Option<String>,
+    #[serde(default)]
+    pub robot_channel_id: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
     pub status: String,
     pub error: Option<String>,
     pub created_at: i64,

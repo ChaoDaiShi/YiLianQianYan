@@ -16,6 +16,10 @@ pub struct Channel {
     pub api_base_url: Option<String>,
     pub self_id: Option<String>,
     pub allowed_senders: Vec<String>,
+    #[serde(default)]
+    pub allowed_groups: Vec<String>,
+    #[serde(default = "mention_trigger")]
+    pub group_trigger: String,
     pub status: String,
     pub last_received_at: Option<i64>,
     pub last_error: Option<String>,
@@ -32,6 +36,7 @@ pub struct ChannelSession {
     pub id: String,
     pub channel_id: String,
     pub peer_id: String,
+    pub peer_type: String,
     pub conversation_id: String,
     pub created_at: i64,
 }
@@ -44,6 +49,8 @@ pub struct ChannelMessage {
     pub event_id: String,
     pub external_message_id: String,
     pub sender_id: String,
+    pub peer_type: String,
+    pub peer_id: String,
     pub content: String,
     pub draft_reply: Option<String>,
     pub status: String,
@@ -59,6 +66,7 @@ pub struct InboundMessage {
     pub event_id: String,
     pub external_message_id: String,
     pub peer_id: String,
+    pub peer_type: String,
     pub sender_id: String,
     pub content: String,
     pub context_token: Option<String>,
@@ -80,6 +88,10 @@ pub struct ChannelInput {
     pub api_base_url: Option<String>,
     pub self_id: Option<String>,
     pub allowed_senders: Vec<String>,
+    #[serde(default)]
+    pub allowed_groups: Vec<String>,
+    #[serde(default = "mention_trigger")]
+    pub group_trigger: String,
     pub secrets: Option<ChannelSecrets>,
 }
 
@@ -98,6 +110,9 @@ fn http_mode() -> String {
 
 fn manual_reply_mode() -> String {
     "manual".into()
+}
+fn mention_trigger() -> String {
+    "mention".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

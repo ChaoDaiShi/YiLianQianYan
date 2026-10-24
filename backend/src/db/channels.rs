@@ -13,7 +13,19 @@ const SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(1056,"1056_extern
      CREATE INDEX channel_messages_channel ON channel_messages(channel_id,created_at);
      CREATE INDEX channel_sessions_conversation ON channel_sessions(conversation_id);");
 const AUTOMATIC_REPLIES:ProductMigrationSpec=ProductMigrationSpec::new(1060,"1060_channel_automatic_replies",MigrationOwner::V1TaskWorld,"ALTER TABLE channel_messages ADD COLUMN send_mode TEXT; UPDATE channel_messages SET send_mode='manual' WHERE approved_at IS NOT NULL;");
-const MESSAGE_COLUMNS: &str = "id,channel_id,conversation_id,event_id,external_message_id,sender_id,content,draft_reply,status,error,reply_message_id,approved_at,created_at,updated_at,send_mode";
+const PEER_TYPES:ProductMigrationSpec=ProductMigrationSpec::new(1063,"1063_channel_peer_types",MigrationOwner::V1TaskWorld,
+    "CREATE TABLE channel_sessions_typed(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES external_channels(id),peer_id TEXT NOT NULL,peer_type TEXT NOT NULL DEFAULT 'private',conversation_id TEXT NOT NULL REFERENCES conversations(id),created_at INTEGER NOT NULL,UNIQUE(channel_id,peer_type,peer_id));
+     INSERT INTO channel_sessions_typed(id,channel_id,peer_id,conversation_id,created_at) SELECT id,channel_id,peer_id,conversation_id,created_at FROM channel_sessions;
+     DROP TABLE channel_sessions;
+     ALTER TABLE channel_sessions_typed RENAME TO channel_sessions;
+     CREATE INDEX channel_sessions_conversation ON channel_sessions(conversation_id);
+     ALTER TABLE channel_messages ADD COLUMN peer_type TEXT NOT NULL DEFAULT 'private';
+     ALTER TABLE channel_messages ADD COLUMN peer_id TEXT NOT NULL DEFAULT '';
+     UPDATE channel_messages SET peer_id=sender_id;
+     CREATE TRIGGER channel_session_origin AFTER INSERT ON channel_sessions BEGIN
+       INSERT OR REPLACE INTO settings(key,value) SELECT 'conversation_origin:'||NEW.conversation_id,json_object('kind','channel','provider',json_extract(payload,'$.provider'),'channel_name',json_extract(payload,'$.name')) FROM external_channels WHERE id=NEW.channel_id;
+     END;");
+const MESSAGE_COLUMNS: &str = "id,channel_id,conversation_id,event_id,external_message_id,sender_id,content,draft_reply,status,error,reply_message_id,approved_at,created_at,updated_at,send_mode,peer_type,peer_id";
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChannelMessage> {
     Ok(ChannelMessage {
         id: row.get(0)?,
@@ -31,6 +43,8 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChannelMessage> {
         created_at: row.get(12)?,
         updated_at: row.get(13)?,
         send_mode: row.get(14)?,
+        peer_type: row.get(15)?,
+        peer_id: row.get(16)?,
     })
 }
 impl Database {
@@ -38,6 +52,9 @@ impl Database {
         self.apply_product_migration(&SCHEMA)?;
         self.initialize_channel_presets()?;
         self.apply_product_migration(&AUTOMATIC_REPLIES)
+    }
+    pub fn initialize_channel_peers(&self) -> Result<(), rusqlite::Error> {
+        self.apply_product_migration(&PEER_TYPES)
     }
     pub fn channels(&self) -> Result<Vec<Channel>, String> {
         let conn = self.conn();
@@ -100,7 +117,7 @@ impl Database {
     }
     pub fn channel_sessions(&self, channel: &str) -> Result<Vec<ChannelSession>, String> {
         let conn = self.conn();
-        let mut statement=conn.prepare("SELECT id,channel_id,peer_id,conversation_id,created_at FROM channel_sessions WHERE channel_id=?1 ORDER BY created_at DESC").map_err(|e|e.to_string())?;
+        let mut statement=conn.prepare("SELECT id,channel_id,peer_id,conversation_id,created_at,peer_type FROM channel_sessions WHERE channel_id=?1 ORDER BY created_at DESC").map_err(|e|e.to_string())?;
         let rows = statement
             .query_map([channel], |r| {
                 Ok(ChannelSession {
@@ -109,6 +126,7 @@ impl Database {
                     peer_id: r.get(2)?,
                     conversation_id: r.get(3)?,
                     created_at: r.get(4)?,
+                    peer_type: r.get(5)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -145,8 +163,8 @@ impl Database {
         let now = chrono::Utc::now().timestamp_millis();
         let conversation: Option<String> = tx
             .query_row(
-                "SELECT conversation_id FROM channel_sessions WHERE channel_id=?1 AND peer_id=?2",
-                params![channel.id, inbound.peer_id],
+                "SELECT conversation_id FROM channel_sessions WHERE channel_id=?1 AND peer_id=?2 AND peer_type=?3",
+                params![channel.id, inbound.peer_id, inbound.peer_type],
                 |r| r.get(0),
             )
             .optional()
@@ -159,12 +177,12 @@ impl Database {
                 "INSERT INTO conversations(id,title,created_at,updated_at) VALUES(?1,?2,?3,?3)",
                 params![
                     conversation,
-                    format!("{} · {}", channel.name, inbound.sender_id),
+                    format!("{} · {}", channel.name, inbound.peer_id),
                     now
                 ],
             )
             .map_err(|e| e.to_string())?;
-            tx.execute("INSERT INTO channel_sessions(id,channel_id,peer_id,conversation_id,created_at) VALUES(?1,?2,?3,?4,?5)",params![uuid::Uuid::new_v4().to_string(),channel.id,inbound.peer_id,conversation,now]).map_err(|e|e.to_string())?;
+            tx.execute("INSERT INTO channel_sessions(id,channel_id,peer_id,conversation_id,created_at,peer_type) VALUES(?1,?2,?3,?4,?5,?6)",params![uuid::Uuid::new_v4().to_string(),channel.id,inbound.peer_id,conversation,now,inbound.peer_type]).map_err(|e|e.to_string())?;
             conversation
         };
         let message = ChannelMessage {
@@ -174,6 +192,8 @@ impl Database {
             event_id: inbound.event_id.clone(),
             external_message_id: inbound.external_message_id.clone(),
             sender_id: inbound.sender_id.clone(),
+            peer_type: inbound.peer_type.clone(),
+            peer_id: inbound.peer_id.clone(),
             content: inbound.content.clone(),
             draft_reply: None,
             status: "queued".into(),
@@ -184,7 +204,7 @@ impl Database {
             created_at: now,
             updated_at: now,
         };
-        tx.execute("INSERT INTO channel_messages(id,channel_id,conversation_id,event_id,external_message_id,sender_id,content,status,created_at,updated_at,send_mode) VALUES(?1,?2,?3,?4,?5,?6,?7,'queued',?8,?8,?9)",params![message.id,channel.id,message.conversation_id,message.event_id,message.external_message_id,message.sender_id,message.content,now,message.send_mode]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO channel_messages(id,channel_id,conversation_id,event_id,external_message_id,sender_id,content,status,created_at,updated_at,send_mode,peer_type,peer_id) VALUES(?1,?2,?3,?4,?5,?6,?7,'queued',?8,?8,?9,?10,?11)",params![message.id,channel.id,message.conversation_id,message.event_id,message.external_message_id,message.sender_id,message.content,now,message.send_mode,message.peer_type,message.peer_id]).map_err(|e|e.to_string())?;
         tx.execute("UPDATE external_channels SET payload=json_set(payload,'$.status','receiving','$.last_received_at',?2,'$.last_error',NULL,'$.updated_at',?2) WHERE id=?1",params![channel.id,now]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
         Ok((message, true))
@@ -364,6 +384,15 @@ impl Database {
             [id],
         )
         .map_err(|e| e.to_string())?;
+        for table in [
+            "channel_robot_actions",
+            "channel_robot_runs",
+            "channel_robot_missions",
+            "channel_robot_policies",
+        ] {
+            tx.execute(&format!("DELETE FROM {table} WHERE channel_id=?1"), [id])
+                .map_err(|e| e.to_string())?;
+        }
         tx.execute("DELETE FROM external_channels WHERE id=?1", [id])
             .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())
