@@ -1,6 +1,6 @@
 # 连接应用的机器人自主能力与消息工作台设计
 
-状态：待用户审阅。本文件描述拟实施行为，不代表功能已经落地。
+状态：用户于 2026-10-24 批准实施。默认探索好友和群，向指定联系人／群自动发言；微信项目已指定为 Akasha-WeChat。功能与验证结果另外记录。
 
 ## 1. 已保存的版本
 
@@ -78,7 +78,7 @@
 
 如果用户选择逐条审阅，继续使用现有审批流程。若发送目标超出当前自动授权，显示该目标的授权／审阅需求，不自行扩大范围。已经授权的自动回复保持自动，不因增加目标任务而回到每条批准。
 
-待用户决定的范围问题：默认采用指定目标自动发言、全部目标自动发言，还是逐条审阅。该选择尚未收到回答；不能用等待时长代替授权。
+用户已选择：默认探索好友和群，向指定联系人／群自动发言。指定名单之外保留明确审阅；不能把该选择扩展为默认向所有好友／群自动发言。
 
 实现上扩展现有消息权限与资源描述，使账号、目标类型、目标 ID、读／写动作成为网关可检查的数据。不能只给模型一段提示词，同时保留任意 QQ 发信通道。已有本机文件、进程、Shell 等工具不会因为收到一条 QQ 消息而自动对普通联系人开放。
 
@@ -153,11 +153,13 @@
 
 ## 10. OneBot 微信方案的判断
 
-用户所指具体项目仍待提供名称／链接，或明确由本轮选择。不同方案分别实施，不将 OneBot 11 和 12 混用。
+用户已指定 <https://github.com/alingalingling/Akasha-WeChat>。接入 provider 为 `wechat_onebot`，使用 OneBot 11 反向 WebSocket；保留现有微信 iLink 渠道。
 
-- OneBot 生态列出的 ComWeChatBotClient 使用 OneBot 12、旧版 Windows 微信与 COM／Hook，项目已归档。此次不自动安装旧微信、替换现有微信或执行 COM 注册。
-- OneBots 的微信 ClawBot 适配器通过 iLink 提供 OneBot 网关，可作为另一种接入路径研究；它与现有直连 iLink 部分重合，不能据此承诺任意微信好友／群和历史控制。
-- 若选定 OneBot 12 方案，新增明确的 provider、平台与字符串账号／目标 ID，不套用 QQ OneBot 11 的数值 ID、私聊动作和群语义。按具体实现支持的动作开展接入检查、收发与登录验收。
+- 上游是 WeFlow SSE → Python bridge → OneBot 11。我们的后端仍为 Rust，Python 只作为用户指定的外部桥接程序。
+- 当前上游用进程哈希映射微信 ID，并在实际 UIA 发信前返回空成功回执，且原版没有独立 OneBot token。需要提供明确桥接补丁：稳定 ID、独立 `onebot_access_token`、发送后回执；不把本应用的 OneBot token 和 WeFlow token混为一份配置。
+- Akasha 不提供 QQ 式好友／群／历史查询动作。微信接入不展示 QQ 探索工具。
+- 上游空回执和补丁后的 `ui_action_completed` 都没有微信服务器 message_id；应用分别说明桥接受理／UIA 完成，并保留送达未知，不编造平台回执或自动重发。
+- 本机目前没有运行中的 WeFlow API 或桌面微信进程。真实账号验收需要用户准备登录环境；代码、受控协议和 UI 验证可独立完成。
 
 微信子项目的完成标准是实际服务连接、登录状态、入站消息、明确回执的出站消息与手机端收件；单有模板或协议说明不足以通过。若选定方案存在登录前提，先向用户列出实际前提，不宣称所有个人微信账号均可直接接入。
 
@@ -177,9 +179,8 @@
 ## 12. 来源
 
 - NapCat API 兼容表：<https://napneko.github.io/develop/api>
-- OneBot 生态：<https://onebot.dev/ecosystem>
-- ComWeChatBotClient：<https://github.com/JustUndertaker/ComWeChatBotClient>
-- OneBots 微信 ClawBot：<https://onebots.pages.dev/config/adapter/wechat-clawbot>
+- Akasha-WeChat：<https://github.com/alingalingling/Akasha-WeChat>
+- WeFlow API：<https://github.com/hicccc77/WeFlow/blob/main/docs/HTTP-API.md>
 - 腾讯微信插件：<https://github.com/Tencent/openclaw-weixin>
 
 平台支持结论以所选实现、实际版本和真实接口返回为准。以上功能和验收项是拟实施设计，并非基线已有能力。
