@@ -31,9 +31,11 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .merge(crate::api::knowledge::router())
         .merge(crate::api::knowledge_build::router())
         .merge(crate::api::conversation_outputs::router())
+        .merge(crate::api::creations::router())
         .merge(crate::api::conversations::messages::router())
         .merge(crate::api::learning::router())
         .merge(crate::api::workspace_code::router())
+        .merge(crate::api::workspace_files::router())
         .merge(crate::api::channels::router())
         .route(
             "/api/automations",

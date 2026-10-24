@@ -25,6 +25,7 @@ pub(crate) mod conversation_inputs;
 pub(crate) mod conversation_modes;
 pub(crate) mod conversation_outputs;
 pub(crate) mod conversations;
+pub(crate) mod creations;
 pub(crate) mod events;
 pub(crate) mod knowledge;
 pub(crate) mod knowledge_build;
@@ -55,6 +56,7 @@ pub(crate) mod voice;
 pub(crate) mod workflow_runtime;
 pub(crate) mod workflows;
 pub(crate) mod workspace_code;
+pub(crate) mod workspace_files;
 pub(crate) mod workspace_git;
 pub(crate) mod workspaces;
 

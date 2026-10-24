@@ -19,6 +19,7 @@ pub mod conversation_outputs;
 pub mod conversation_presentation;
 pub mod conversation_turns;
 mod conversations;
+pub mod creations;
 pub mod knowledge;
 pub mod knowledge_build;
 pub mod learning;
@@ -100,6 +101,7 @@ impl Database {
         db.initialize_conversation_outputs()?;
         db.initialize_automations_schema()?;
         db.initialize_learning()?;
+        db.initialize_creations()?;
         db.initialize_channels()?;
         db.initialize_channel_robots()?;
         db.initialize_conversation_presentation()?;
