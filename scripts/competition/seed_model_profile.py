@@ -4,6 +4,7 @@ Credentials remain in the existing OS secret store. This never reads or exports
 secret values, and opens the source SQLite database read-only.
 """
 import json
+import os
 import pathlib
 import sqlite3
 import sys
@@ -27,7 +28,14 @@ if model is None:
 model = dict(model)
 if not model["api_key_ref"]:
     raise SystemExit("This test requires an existing OS-backed model credential")
-model["max_tokens"] = 2048
+upstream = urllib.parse.urlsplit(model["base_url"])
+if upstream.username or upstream.password or upstream.query:
+    raise SystemExit("The test requires a credential-free provider URL")
+upstream_base = model["base_url"]
+model["max_tokens"] = int(os.environ.get("YILIAN_SMOKE_MAX_OUTPUT_TOKENS", "512"))
+model["model"] = os.environ.get("YILIAN_SMOKE_MODEL", "deepseek-flash")
+if os.environ.get("YILIAN_SMOKE_PROXY_BASE"):
+    model["base_url"] = os.environ["YILIAN_SMOKE_PROXY_BASE"]
 model["temperature"] = 0
 model["invoke_timeout_ms"] = 60000
 target = sqlite3.connect(profile_db(destination_root))
@@ -40,5 +48,5 @@ target.execute(
 )
 target.commit()
 print(json.dumps({"model_id": model["id"], "provider": model["provider"], "model": model["model"],
-                  "host": urllib.parse.urlsplit(model["base_url"]).hostname,
+                  "host": upstream.hostname, "upstream_base_url": upstream_base,
                   "credentials": "existing_os_secret_reference", "secret_values_exported": False}, ensure_ascii=False))

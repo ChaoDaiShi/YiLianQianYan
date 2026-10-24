@@ -21,6 +21,7 @@ foreach ($editor in @(Get-Process -Name notepad -ErrorAction SilentlyContinue)) 
         (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Edit))
     )
     $controls = @()
+    $captureBounds = $null
     foreach ($element in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)) {
         $pattern = $null
         $value = $null
@@ -30,13 +31,14 @@ foreach ($editor in @(Get-Process -Name notepad -ErrorAction SilentlyContinue)) 
             $value = $pattern.Current.Value
         }
         $controls += @{control_type=$element.Current.ControlType.ProgrammaticName;text=$value;focused=$element.Current.HasKeyboardFocus}
+        if($element.Current.HasKeyboardFocus -and $element.Current.ControlType -eq [System.Windows.Automation.ControlType]::Document){$captureBounds=$element.Current.BoundingRectangle}
     }
     $screenshot = $null
-    if ($Capture -and $bounds.Width -gt 0 -and $bounds.Height -gt 0 -and -not $root.Current.IsOffscreen) {
-        $bitmap = New-Object System.Drawing.Bitmap([int]$bounds.Width,[int]$bounds.Height)
+    if ($Capture -and $captureBounds -and $captureBounds.Width -gt 0 -and $captureBounds.Height -gt 0 -and -not $root.Current.IsOffscreen) {
+        $bitmap = New-Object System.Drawing.Bitmap([int]$captureBounds.Width,[int]$captureBounds.Height)
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         try {
-            $graphics.CopyFromScreen([int]$bounds.X,[int]$bounds.Y,0,0,$bitmap.Size)
+            $graphics.CopyFromScreen([int]$captureBounds.X,[int]$captureBounds.Y,0,0,$bitmap.Size)
             $screenshot = Join-Path $OutputDirectory ($Phase + '-notepad-' + $editor.Id + '.png')
             $bitmap.Save($screenshot,[System.Drawing.Imaging.ImageFormat]::Png)
         } finally { $graphics.Dispose(); $bitmap.Dispose() }

@@ -317,6 +317,25 @@ struct EnigoTextInjector;
 impl TextInjector for EnigoTextInjector {
     fn type_text(&self, text: &str) -> Result<(), String> {
         let mut enigo = make_enigo()?;
+        #[cfg(windows)]
+        {
+            // Modern Notepad loses/repeats VK_PACKET characters when one large
+            // SendInput batch is queued. The dedicated-document readback probe
+            // reproduced that loss; one Unicode scalar per batch preserves it.
+            let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+            let mut encoded = [0; 4];
+            for character in normalized.chars() {
+                let result = match character {
+                    '\n' => enigo.key(Key::Return, Direction::Click),
+                    '\t' => enigo.key(Key::Tab, Direction::Click),
+                    _ => enigo.text(character.encode_utf8(&mut encoded)),
+                };
+                result.map_err(|error| format!("文本输入失败：{error}"))?;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(())
+        }
+        #[cfg(not(windows))]
         enigo
             .text(text)
             .map_err(|error| format!("文本输入失败：{error}"))
