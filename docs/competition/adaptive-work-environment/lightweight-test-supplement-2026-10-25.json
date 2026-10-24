@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-25",
+  "overall_status": "PASS",
+  "verified_scope": "One real-model Notepad task with explicit task revision notification, bound knowledge, actual keyboard input and saved-file readback",
+  "production_source_commit": "6e5e654436bb516545c8294a122da46a7ebf7dec",
+  "backend_executable_sha256": "a4433a0714d1671770e0ac4d43237787a7f45eeec0251427ac3435e0e4402e46",
+  "real_model": true,
+  "model": "deepseek-flash",
+  "thinking": "disabled",
+  "model_response_fixture": false,
+  "operator": "production_chat_agent",
+  "task_data": "controlled synthetic project facts and versioned task file",
+  "initial_diagnostic": {
+    "status": "FAIL",
+    "reason": "Correct document, but bulk Unicode input was corrupted; stopped before phase2",
+    "duration_ms": 10121,
+    "model_requests": 4,
+    "tool_calls": 3
+  },
+  "native_no_model_probe": {
+    "model_requests": 0,
+    "batch_matches": false,
+    "paced_10ms_matches": true,
+    "expected": "星桥 | 负责人林岚 | 2026-11-04 | B305 | NATIVE-ROUNDTRIP",
+    "batch_actual": "星桥 | 00000005 ",
+    "paced_actual": "星桥 | 负责人林岚 | 2026-11-04 | B305 | NATIVE-ROUNDTRIP"
+  },
+  "successful_retest": {
+    "status": "PASS",
+    "duration_ms": 16291,
+    "model_requests": 9,
+    "tool_calls": 7,
+    "approvals": 5,
+    "approval_actor": "task_authorized_bounded_test_harness",
+    "all_document_gates_passed": true,
+    "checks": [
+      "real_model_selected_tools_and_typed_knowledge_based_draft",
+      "explicit_environment_change_reread_and_desktop_revision",
+      "actual_file_saved_via_desktop_and_independently_read",
+      "old_facts_removed_and_new_constraints_satisfied"
+    ],
+    "window_text_equals_saved_file": true,
+    "output": {
+      "name": "adaptive-ba52c3cd9b10.txt",
+      "bytes": 94,
+      "sha256": "6205c1448f50d29b60098573757a1238c049d3231d230dc851a3d1d420a3d975",
+      "text": "星桥 | 负责人：林岚 | 截止：2026-11-04 | 地点：B305 | marker：ENV-V2-STARBRIDGE"
+    },
+    "screenshot": "evidence/desktop-supplement.png"
+  },
+  "cost": {
+    "aggregate_test_budget_cny": 0.3,
+    "first_run_actual_usage_peak_no_cache_upper_cny": 0.01672,
+    "retest_reserved_limit_cny": 0.28328,
+    "retest_reserved_cny": 0.239458,
+    "max_requests_per_run": 10,
+    "max_output_tokens_per_request": 512,
+    "actual_model_requests_total": 13,
+    "usage": {
+      "prompt_tokens": 26804,
+      "completion_tokens": 872,
+      "total_tokens": 27676,
+      "prompt_cache_hit_tokens": 14336,
+      "prompt_cache_miss_tokens": 12468
+    },
+    "price_source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+    "off_peak_cny_per_million": {
+      "input_cache_hit": 0.02,
+      "input_cache_miss": 1,
+      "output": 4
+    },
+    "estimated_actual_cny": 0.01624272,
+    "actual_usage_peak_no_cache_upper_cny": 0.060584,
+    "balance_before_display_cny": 3.89,
+    "balance_after_display_cny": 3.88,
+    "displayed_balance_delta_cny": 0.01,
+    "balance_display_precision_cny": 0.01,
+    "estimated_cost_is_not_an_exact_invoice": true
+  },
+  "validation": {
+    "cargo_fmt_check": "PASS",
+    "cargo_check": "PASS",
+    "input_module_rust_tests": {
+      "passed": 7,
+      "failed": 0
+    },
+    "node_scope_and_cost_tests": {
+      "passed": 4,
+      "failed": 0
+    },
+    "backend_build": "PASS"
+  },
+  "not_proven": [
+    "Automatic environment change detection without explicit notification",
+    "Dynamic optimal agent or software selection",
+    "General correctness of all GUI applications and input formats",
+    "Full P0 document ownership verification in the production keyboard tool"
+  ],
+  "evidence_roots": [
+    "F:\\tmp\\yilian-adaptive-competition-20261025-budget-run1",
+    "F:\\tmp\\yilian-adaptive-competition-20261025-budget-run2"
+  ]
+}
