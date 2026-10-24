@@ -4,13 +4,21 @@
   "baseline_commit": "8f861b892527bad4149290caccfd14a7b800262d",
   "overall_status": "FAIL",
   "test_kind": "real_model_real_windows_desktop",
-  "model": {"provider": "deepseek", "model": "deepseek-chat", "fixture": false},
+  "model": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "fixture": false
+  },
   "operator": "production_chat_react_agent",
   "knowledge": "One actual imported document, bound through its existing knowledge chunk identities",
   "environment_change": "Task JSON revision 1 to revision 2 between two conversation turns; explicit user event notified the agent",
   "automatic_environment_detection_tested": false,
   "multi_agent_optimization_tested": false,
-  "approvals": {"count": 9, "actor": "task_authorized_bounded_test_harness", "human_interactive_approval": false},
+  "approvals": {
+    "count": 9,
+    "actor": "task_authorized_bounded_test_harness",
+    "human_interactive_approval": false
+  },
   "metrics": {
     "duration_ms": 28383,
     "tool_start_count": 15,
@@ -21,19 +29,65 @@
     "monetary_cost": null
   },
   "checks": [
-    {"id": "live_model", "status": "PASS", "evidence": "Production SSE trace and persisted provider usage records"},
-    {"id": "knowledge_and_task_read", "status": "PASS", "evidence": "Draft contained facts from bound knowledge and revision-1 task data"},
-    {"id": "actual_desktop_input", "status": "PARTIAL", "evidence": "Notepad process/window and UI Automation text readback existed; document identity was not authorized"},
-    {"id": "document_ownership", "status": "FAIL", "evidence": "Notepad restored a pre-existing tab; app foreground verification did not establish test-document identity"},
-    {"id": "change_read", "status": "PASS", "evidence": "Second turn read the revision-2 task file and requested text with updated date, location and marker"},
-    {"id": "final_visible_content", "status": "FAIL", "evidence": "Independent UI Automation readback did not match the expected revised document"},
-    {"id": "saved_artifact", "status": "FAIL", "evidence": "The designated test output file did not exist"},
-    {"id": "loop_guard", "status": "PASS", "evidence": "Consecutive read_file calls were stopped by the existing loop guard"},
-    {"id": "unrelated_data_integrity", "status": "FAIL", "evidence": "The restored non-test document was modified and saved; a recovery investigation is recorded separately"}
+    {
+      "id": "live_model",
+      "status": "PASS",
+      "evidence": "Production SSE trace and persisted provider usage records"
+    },
+    {
+      "id": "knowledge_and_task_read",
+      "status": "PASS",
+      "evidence": "Draft contained facts from bound knowledge and revision-1 task data"
+    },
+    {
+      "id": "actual_desktop_input",
+      "status": "PARTIAL",
+      "evidence": "Notepad process/window and UI Automation text readback existed; document identity was not authorized"
+    },
+    {
+      "id": "document_ownership",
+      "status": "FAIL",
+      "evidence": "Notepad restored a pre-existing tab; app foreground verification did not establish test-document identity"
+    },
+    {
+      "id": "change_read",
+      "status": "PASS",
+      "evidence": "Second turn read the revision-2 task file and requested text with updated date, location and marker"
+    },
+    {
+      "id": "final_visible_content",
+      "status": "FAIL",
+      "evidence": "Independent UI Automation readback did not match the expected revised document"
+    },
+    {
+      "id": "saved_artifact",
+      "status": "FAIL",
+      "evidence": "The designated test output file did not exist"
+    },
+    {
+      "id": "loop_guard",
+      "status": "PASS",
+      "evidence": "Consecutive read_file calls were stopped by the existing loop guard"
+    },
+    {
+      "id": "unrelated_data_integrity",
+      "status": "FAIL",
+      "evidence": "The restored non-test document was modified and saved; a recovery investigation is recorded separately"
+    }
   ],
   "preflight_attempts": [
-    {"id": "run1", "status": "SETUP_FAILED", "reason": "The harness initially used document ID where the existing connector contract requires knowledge chunk ID", "model_calls": 0},
-    {"id": "run2", "status": "SETUP_FAILED", "reason": "The harness initially used an unsupported thinking mode value; corrected to standard", "model_calls": 0}
+    {
+      "id": "run1",
+      "status": "SETUP_FAILED",
+      "reason": "The harness initially used document ID where the existing connector contract requires knowledge chunk ID",
+      "model_calls": 0
+    },
+    {
+      "id": "run2",
+      "status": "SETUP_FAILED",
+      "reason": "The harness initially used an unsupported thinking mode value; corrected to standard",
+      "model_calls": 0
+    }
   ],
   "harness_revision_after_failure": {
     "dedicated_precreated_document": true,
@@ -44,14 +98,16 @@
     "desktop_rerun": "NOT_TESTED"
   },
   "recovery": {
-    "status": "PENDING_FULL_ORIGINAL",
+    "status": "USER_DECLINED_RECOVERY_NOT_RESTORED",
     "affected_file_after_test_bytes": 122,
     "original_prefix_preserved_chars": 7933,
     "affected_file_and_notepad_state_backed_up": true,
     "complete_original_found": false,
     "full_restore_verified": false,
     "user_notified": true,
-    "original_archive_path_requested": true
+    "original_archive_path_requested": true,
+    "user_response": "没有保留了，你也不用管",
+    "further_recovery_stopped": true
   },
   "evidence_handling": {
     "raw_directory": "F:/tmp/yilian-adaptive-competition-20261025-run3",
