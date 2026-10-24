@@ -19,7 +19,7 @@ export function ResourceCard({file,onRemove,status,error}:{file:AttachmentRefere
     return()=>{abort.abort();if(objectUrl)URL.revokeObjectURL(objectUrl);};
   },[file.id,image]);
   const Icon=image?ImageIcon:/\.docx$/i.test(file.name)?FileText:File;
-  return <div className="resource-card-shell">
+  return <div className="resource-card-shell" data-kind={image?"image":"file"}>
     <button type="button" className="resource-card" data-file-type={file.name.split(".").pop()?.toLowerCase()} aria-label={`预览附件 ${file.name}`} disabled={!file.id} onClick={()=>setOpen(true)}>
       <span className="resource-card-visual" data-kind={image?"image":"file"}>
         {url?<img src={url} alt={file.name} loading="lazy"/>:<Icon size={30} strokeWidth={1.4}/>}

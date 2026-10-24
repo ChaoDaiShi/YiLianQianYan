@@ -3,7 +3,7 @@ import { ensureKnowledgeCollection, importKnowledge, type KnowledgeCollection } 
 import type { ImportNotice, ImportProgress } from "./knowledgeImportModel";
 
 export const KNOWLEDGE_FILE_FORMATS = ".txt,.md,.markdown,.csv,.tsv,.json,.yaml,.yml,.pdf,.docx,.pptx,.xlsx,.rs,.ts,.tsx,.js,.py,.html,.css,.sql,.log,.toml,.xml";
-export function useKnowledgeImport(onComplete: () => Promise<void>) {
+export function useKnowledgeImport(onComplete: () => Promise<void>, collectionId?: string) {
   const [importing, setImporting] = useState(false);
   const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<ImportProgress>({ total: 0, current: "", rows: [], stopped: false });
@@ -36,8 +36,8 @@ export function useKnowledgeImport(onComplete: () => Promise<void>) {
         row = { name: file.name, path, status: "skipped", message: "文件类型不支持，未上传" };
       } else {
         try {
-          let location;
-          if (file.webkitRelativePath && file.webkitRelativePath.includes("/")) {
+          let location = collectionId ? { collection_id: collectionId, relative_path: path } : undefined;
+          if (!collectionId && file.webkitRelativePath && file.webkitRelativePath.includes("/")) {
             const folder = file.webkitRelativePath.split("/")[0];
             let requested = folders.get(folder);
             if (!requested) {

@@ -45,4 +45,8 @@ export const stylesheetText = [
   "ui-optimization/memory-knowledge.css",
   "ui-optimization/settings-system.css",
   "connector-workbench.css",
+  "ui-optimization/preview-completion.css",
+  "ui-optimization/management-preview.css",
+  "ui-optimization/learning-creation-preview.css",
+  "ui-optimization/workspace-preview.css",
 ].map(styleFile).join("\n");

@@ -42,6 +42,7 @@ export default function ChatPage() {
     getWorkspaceMode(window.innerWidth)
   );
   const [conversationDrawerOpen, setConversationDrawerOpen] = useState(false);
+  const [historyCollapsed, setHistoryCollapsed] = useState(true);
   const [executionDrawerOpen, setExecutionDrawerOpen] = useState(false);
   const [executionCollapsed, setExecutionCollapsed] = useState(true);
   const [activityMode,setActivityMode]=useState<ActivityMode>("chat");
@@ -128,7 +129,7 @@ export default function ChatPage() {
             if (next) setExecutionDrawerOpen(false);
             return next;
           });
-        }
+        } else setHistoryCollapsed((prev) => !prev);
       } else if (event.key === "j" || event.key === "J") {
         event.preventDefault();
         if (workspaceMode === "full") {
@@ -209,15 +210,16 @@ export default function ChatPage() {
       data-chat-view={conversationId ? "conversation" : "home"}
       data-mode={workspaceMode}
       style={{ gridTemplateColumns: workspaceMode === "full"
-        ? executionCollapsed ? "250px minmax(0, 1fr)" : "250px minmax(0, 1fr) 360px"
-        : workspaceMode === "compact" ? "240px minmax(0, 1fr)" : "minmax(0, 1fr)" }}
+        ? `${historyCollapsed ? "" : "250px "}minmax(0, 1fr)${executionCollapsed ? "" : " 360px"}`
+        : workspaceMode === "compact" && !historyCollapsed ? "240px minmax(0, 1fr)" : "minmax(0, 1fr)" }}
+      data-history-collapsed={historyCollapsed ? "true" : "false"}
       data-execution-collapsed={
         workspaceMode === "full" && executionCollapsed ? "true" : "false"
       }
     >
-      {workspaceMode !== "narrow" && (
+      {workspaceMode !== "narrow" && !historyCollapsed && (
         <div className="conversation-region min-h-0 border-r border-[var(--border)]">
-          {conversationSidebar()}
+          {conversationSidebar(() => setHistoryCollapsed(true))}
         </div>
       )}
 
@@ -239,7 +241,7 @@ export default function ChatPage() {
         conversationId={conversationId}
         onWorkspaceModeChange={handleActivityMode}
         onConversationChange={onConversationChange}
-        showConversationToggle={workspaceMode === "narrow"}
+        showConversationToggle={true}
         showExecutionToggle={false}
         headerActions={<nav className="chat-topbar-panels" aria-label="对话侧栏">
           {activeFamily && activeFamily.conversationIds.length > 1 && <select aria-label="对话路径" value={conversationId || activeFamily.id} className="max-w-36 rounded-lg bg-transparent p-1 text-xs" onChange={event => onConversationChange(event.target.value)}>
@@ -259,7 +261,7 @@ export default function ChatPage() {
         </nav>}
         conversationToggleRef={conversationToggleRef}
         executionToggleRef={executionToggleRef}
-        onToggleConversations={() => openDrawer("conversations")}
+        onToggleConversations={() => workspaceMode === "narrow" ? openDrawer("conversations") : setHistoryCollapsed(value => !value)}
         onToggleExecution={handleToggleExecution}
         onVoiceAnchorChange={onVoiceAnchorChange}
         conversationRefreshRevision={

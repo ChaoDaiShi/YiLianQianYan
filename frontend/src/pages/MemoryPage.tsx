@@ -12,7 +12,6 @@ import {
   formatMemoryTime,
   getMemoryCategoryPresentation,
   getMemorySourceLabel,
-  memoryCategoryCounts,
   MEMORY_CATEGORY_OPTIONS,
   truncateMemoryContent,
 } from "../features/memory/memoryCenterModel";
@@ -27,7 +26,6 @@ const SOURCE_OPTIONS = [
 export default function MemoryPage() {
   const {
     memories: activeMemories,
-    stats,
     isLoading,
     error,
     loadMemories,
@@ -42,6 +40,8 @@ export default function MemoryPage() {
 
   const [view, setView] = useState<"active" | "withdrawn">("active");
   const [withdrawn, setWithdrawn] = useState<MemoryRecord[]>([]);
+  const [withdrawnLoading, setWithdrawnLoading] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [withdrawnError, setWithdrawnError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
@@ -50,8 +50,10 @@ export default function MemoryPage() {
   const memories = view === "active" ? activeMemories : withdrawn.filter((memory) =>
     (!search.trim() || memory.content.includes(search.trim())) && (!filterCategory || memory.category === filterCategory) && (!filterSource || memory.source === filterSource));
   const loadWithdrawn = async () => {
+    setWithdrawnLoading(true);
     try { setWithdrawn(await listWithdrawnMemories()); setWithdrawnError(null); }
     catch (cause) { setWithdrawnError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setWithdrawnLoading(false); }
   };
   useEffect(() => { if (view === "withdrawn") void loadWithdrawn(); }, [view]);
 
@@ -95,7 +97,8 @@ export default function MemoryPage() {
     () => memories.find((memory) => memory.id === selectedId) ?? null,
     [memories, selectedId]
   );
-  const categoryCounts = memoryCategoryCounts(stats);
+  const listLoading = view === "active" ? isLoading : withdrawnLoading;
+  const listError = view === "active" ? error : withdrawnError;
 
   const hasActiveFilter = Boolean(search.trim() || filterCategory || filterSource);
 
@@ -191,6 +194,7 @@ export default function MemoryPage() {
           setSelectedId(remaining[nextIndex].id);
         }
         setDeleteError(null);
+        setDetailOpen(false);
         if (view === "withdrawn") await loadWithdrawn();
       }
     } catch (err) {
@@ -202,179 +206,43 @@ export default function MemoryPage() {
 
   return (
     <PageShell
-      title="记忆中心"
-      description="小昔涟长期保留的重要信息"
-      className="memory-page page-canvas ui-opt-memory"
-      actions={
-        <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>
-          <Plus className="h-4 w-4" />
-          添加记忆
-        </Button>
-      }
+      title="记忆"
+      description="你可以查看、修改，也可以让小昔涟忘记。"
+      variant="workspace"
+      className="memory-page page-canvas ui-opt-memory management-memory-page"
+      contentClassName="management-memory-content"
+      actions={<Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}><Plus className="h-4 w-4" />添加记忆</Button>}
     >
-      <div className="memory-page-body scrollbar-thin">
-        <MemoryOverview counts={categoryCounts} total={stats?.total ?? memories.length} onSelect={setFilterCategory} />
-
-        <div className="memory-filter-group" aria-label="记忆状态">
-          <button className="memory-filter-button" aria-pressed={view === "active"} onClick={() => setView("active")}>当前可用</button>
-          <button className="memory-filter-button" aria-pressed={view === "withdrawn"} onClick={() => setView("withdrawn")}>已撤回</button>
-        </div>
-        {withdrawnError && view === "withdrawn" && <p role="alert" className="text-xs text-[var(--danger)]">{withdrawnError}</p>}
-        <div className="memory-toolbar">
-          <label className="memory-search-field">
-            <Search className="h-4 w-4 shrink-0 text-[var(--text-faint)]" />
-            <span className="sr-only">搜索记忆</span>
-            <input
-              aria-label="搜索记忆"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索记忆…"
-            />
-            {search && (
-              <button type="button" onClick={() => setSearch("")} aria-label="清除记忆搜索" className="memory-clear-search">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </label>
-          <div className="memory-filter-group" aria-label="记忆分类筛选">
-            {MEMORY_CATEGORY_OPTIONS.map((option) => (
-              <button
-                type="button"
-                key={option.value || "all"}
-                aria-pressed={filterCategory === option.value}
-                onClick={() => setFilterCategory(option.value)}
-                className="memory-filter-button"
-              >
-                {option.label}
-              </button>
-            ))}
+      <div className="management-memory-workspace">
+        <label className="memory-search-field management-memory-search">
+          <Search className="h-4 w-4 shrink-0 text-[var(--text-faint)]" />
+          <span className="sr-only">搜索记忆</span><input aria-label="搜索记忆" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索记忆…" />
+          {search && <button type="button" onClick={() => setSearch("")} aria-label="清除记忆搜索" className="memory-clear-search"><X className="h-3.5 w-3.5" /></button>}
+        </label>
+        <div className="management-memory-toolbar">
+          <div className="management-status-tabs" aria-label="记忆状态">
+            <button type="button" aria-pressed={view === "active"} onClick={() => setView("active")}>当前可用</button>
+            <button type="button" aria-pressed={view === "withdrawn"} onClick={() => setView("withdrawn")}>已撤回</button>
           </div>
-          <label className="sr-only" htmlFor="memory-source-filter">记忆来源筛选</label>
-          <select
-            id="memory-source-filter"
-            value={filterSource}
-            onChange={(event) => setFilterSource(event.target.value)}
-            className="memory-source-filter"
-          >
-            {SOURCE_OPTIONS.map((option) => (
-              <option key={option.value || "all"} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <button type="button" onClick={reload} aria-label="刷新记忆列表" className="memory-icon-button"><RefreshCw className="h-4 w-4" /></button>
+          <details className="management-memory-filter"><summary>筛选{hasActiveFilter ? " · 已筛选" : ""}</summary><div>
+            <label>分类<select aria-label="记忆分类筛选" value={filterCategory} onChange={event => setFilterCategory(event.target.value)}>{MEMORY_CATEGORY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <label>来源<select aria-label="记忆来源筛选" value={filterSource} onChange={event => setFilterSource(event.target.value)}>{SOURCE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            {hasActiveFilter && <Button size="sm" variant="ghost" onClick={handleClearFilters}>清除筛选</Button>}
+          </div></details>
         </div>
-
-        <div className="memory-lower-grid">
-          <section className="memory-list-panel" aria-label="记忆列表">
-            <div className="memory-panel-header">
-              <div>
-                <h2>已保存的记忆</h2>
-                <p>{memories.length} 条当前记录</p>
-              </div>
-              <button type="button" onClick={reload} aria-label="刷新记忆列表" className="memory-icon-button">
-                <RefreshCw className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="memory-list-scroll scrollbar-thin">
-              {isLoading ? (
-                <MemoryListSkeleton />
-              ) : error ? (
-                <ErrorState
-                  title="记忆暂时无法加载"
-                  description={error}
-                  action={<Button variant="secondary" size="sm" onClick={reload}>重试</Button>}
-                  className="m-3"
-                />
-              ) : memories.length === 0 ? (
-                hasActiveFilter ? (
-                  <EmptyState
-                    icon={<Brain className="h-6 w-6" />}
-                    title="没有匹配的记忆记录"
-                    description="当前搜索或筛选条件下未找到匹配项，可以清除筛选重试。"
-                    action={
-                      <Button variant="secondary" size="sm" onClick={handleClearFilters}>
-                        清除筛选
-                      </Button>
-                    }
-                    className="min-h-[280px]"
-                  />
-                ) : (
-                  <EmptyState
-                    icon={<Brain className="h-6 w-6" />}
-                    title="这里暂时还没有记忆记录"
-                    description="小昔涟会在对话中自动提取，也可以手动添加一条真实记忆。"
-                    action={
-                      <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>
-                        <Plus className="h-4 w-4" />
-                        添加记忆
-                      </Button>
-                    }
-                    className="min-h-[280px]"
-                  />
-                )
-              ) : (
-                <div className="space-y-2 p-3">
-                  {memories.map((memory) => (
-                    <MemoryRow
-                      key={memory.id}
-                      memory={memory}
-                      selected={memory.id === selectedId}
-                      onSelect={() => setSelectedId(memory.id)}
-                      onEdit={() => handleOpenEdit(memory)}
-                      onDelete={() => handleDelete(memory)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="memory-detail-panel" aria-label="记忆详情">
-            {selectedMemory ? (
-              <MemoryDetail
-                memory={selectedMemory}
-                onEdit={() => handleOpenEdit(selectedMemory)}
-                onDelete={() => handleDelete(selectedMemory)}
-                isDeleting={isDeleting}
-                deleteError={deleteError}
-                onChanged={reload}
-                withdrawn={view === "withdrawn"}
-              />
-            ) : (
-              <EmptyState
-                icon={<Brain className="h-6 w-6" />}
-                title="选择一条记忆"
-                description="完整内容和真实字段会显示在这里。"
-                className="h-full min-h-[300px]"
-              />
-            )}
-          </section>
-        </div>
-
-        <details className="memory-maintenance-panel">
-          <summary>记忆维护</summary>
-          <div className="memory-maintenance-content">
-            <div>
-              <p className="text-sm font-medium">重建记忆索引</p>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">为缺少索引的记忆补充检索数据。</p>
-            </div>
-            <Button variant="secondary" size="sm" onClick={reindexMemoriesAction} disabled={isReindexing}>
-              <RefreshCw className={`h-3.5 w-3.5 ${isReindexing ? "animate-spin" : ""}`} />
-              {isReindexing ? "处理中…" : "重建索引"}
-            </Button>
-          </div>
-          {reindexResult && (
-            <p
-              className={`mt-3 text-xs ${reindexResult.ok ? "text-[var(--text-secondary)]" : "text-[var(--danger)]"}`}
-              role="status"
-            >
-              {reindexResult.ok
-                ? `本次处理 ${reindexResult.processed ?? 0} 条，成功 ${reindexResult.succeeded ?? 0} 条，失败 ${reindexResult.failed ?? 0} 条。`
-                : `重建失败：${reindexResult.error ?? "请求失败"}`}
-            </p>
-          )}
+        {deleteError && !detailOpen && <p role="alert" className="text-sm text-[var(--danger)]">{deleteError}</p>}
+        <section className="management-memory-list scrollbar-thin" aria-label="记忆列表">
+          {listLoading ? <MemoryListSkeleton /> : listError ? <ErrorState title="记忆暂时无法加载" description={listError} action={<Button variant="secondary" size="sm" onClick={reload}>重试</Button>} /> : memories.length === 0 ? hasActiveFilter ? <EmptyState icon={<Brain className="h-6 w-6" />} title="没有匹配的记忆记录" description="当前搜索或筛选条件下未找到匹配项。" action={<Button variant="secondary" size="sm" onClick={handleClearFilters}>清除筛选</Button>} /> : <EmptyState icon={<Brain className="h-6 w-6" />} title="这里暂时还没有记忆记录" description={view === "withdrawn" ? "撤回的记忆会保留在这里，不再用于检索。" : "小昔涟会在对话中提取，也可以手动添加。"} action={view === "active" ? <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>添加记忆</Button> : undefined} /> : memories.map(memory => <MemoryRow key={memory.id} memory={memory} selected={memory.id === selectedId} withdrawn={view === "withdrawn"} onSelect={() => { setSelectedId(memory.id); setDetailOpen(true); }} onEdit={() => handleOpenEdit(memory)} onDelete={() => handleDelete(memory)} />)}
+        </section>
+        <details className="memory-maintenance-panel management-memory-maintenance"><summary>记忆维护 · 当前列表 {memories.length} 条</summary>
+          <div className="memory-maintenance-content"><div><p className="text-sm font-medium">重建记忆索引</p><p className="mt-1 text-xs text-[var(--text-secondary)]">为缺少索引的记忆补充检索数据。</p></div><Button variant="secondary" size="sm" onClick={reindexMemoriesAction} disabled={isReindexing}><RefreshCw className={`h-3.5 w-3.5 ${isReindexing ? "animate-spin" : ""}`} />{isReindexing ? "处理中…" : "重建索引"}</Button></div>
+          {reindexResult && <p className={`mt-3 text-xs ${reindexResult.ok ? "text-[var(--text-secondary)]" : "text-[var(--danger)]"}`} role="status">{reindexResult.ok ? `本次处理 ${reindexResult.processed ?? 0} 条，成功 ${reindexResult.succeeded ?? 0} 条，失败 ${reindexResult.failed ?? 0} 条。` : `重建失败：${reindexResult.error ?? "请求失败"}`}</p>}
         </details>
       </div>
+      <Modal open={detailOpen && Boolean(selectedMemory) && !editingMemory && !showAddModal} onClose={() => setDetailOpen(false)} title="记忆详情与来源" size="lg" footer={<Button variant="secondary" onClick={() => setDetailOpen(false)}>关闭</Button>}>
+        {selectedMemory && <MemoryDetail memory={selectedMemory} onEdit={() => handleOpenEdit(selectedMemory)} onDelete={() => handleDelete(selectedMemory)} isDeleting={isDeleting} deleteError={deleteError} onChanged={() => { setDetailOpen(false); reload(); }} withdrawn={view === "withdrawn"} />}
+      </Modal>
 
       <Modal
         open={showAddModal}
@@ -457,37 +325,10 @@ export default function MemoryPage() {
   );
 }
 
-function MemoryOverview({ counts, total, onSelect }: { counts: Record<string, number>; total: number; onSelect: (category: string) => void }) {
-  return (
-    <section className="memory-overview" aria-label="记忆分类概览">
-      <div className="memory-overview-copy">
-        <span className="memory-overview-kicker">MEMORY OVERVIEW</span>
-        <h2>小昔涟记住了什么</h2>
-        <p>按真实分类浏览长期记忆，不表示记忆之间存在关系。</p>
-      </div>
-      <div className="memory-bubbles">
-        <button type="button" aria-label="查看全部记忆" onClick={() => onSelect("")} className="memory-bubble-center">
-          <Brain className="h-4 w-4" />
-          <strong>{total}</strong>
-          <span>条记忆</span>
-        </button>
-        <div className="memory-bubble-grid">
-          {MEMORY_CATEGORY_OPTIONS.filter((o) => o.value).map((opt, i) => (
-            <button type="button" key={opt.value} aria-label={`按${opt.label}筛选`} onClick={() => onSelect(opt.value)} className={`memory-bubble memory-bubble-${i}`}>
-              <span>{opt.label}</span>
-              <strong>{counts[opt.value] ?? 0}</strong>
-            </button>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function MemoryRow({
-  memory, selected, onSelect, onEdit, onDelete,
+  memory, selected, withdrawn, onSelect, onEdit, onDelete,
 }: {
-  memory: MemoryRecord; selected: boolean; onSelect: () => void; onEdit: () => void; onDelete: () => void;
+  memory: MemoryRecord; selected: boolean; withdrawn: boolean; onSelect: () => void; onEdit: () => void; onDelete: () => void;
 }) {
   const category = getMemoryCategoryPresentation(memory.category);
   const documentId = knowledgeDocumentForMemory(memory);
@@ -503,9 +344,11 @@ function MemoryRow({
           onSelect();
         }
       }}
-      className={`memory-row ${selected ? "memory-row-selected" : ""}`}
+      className={`memory-row management-memory-row ${selected ? "memory-row-selected" : ""}`}
+      aria-label={`查看记忆 ${truncateMemoryContent(memory.content, 40)}`}
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
+        <span className="management-memory-icon" aria-hidden="true"><Brain size={22} /></span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={categoryBadgeTone(memory.category)}>{category.label}</Badge>
@@ -517,7 +360,7 @@ function MemoryRow({
         <div className="memory-row-side">
           <Clock3 className="mt-1 h-3.5 w-3.5 shrink-0 text-[var(--text-faint)] memory-row-clock" />
           {!documentId && <div className="memory-row-actions">
-            <button type="button" aria-label="编辑记忆" title="编辑记忆" onClick={(e) => { e.stopPropagation(); onEdit(); }} onKeyDown={(e) => e.stopPropagation()} className="memory-row-action-btn">
+            <button type="button" aria-label="编辑记忆" title="编辑记忆" disabled={withdrawn} onClick={(e) => { e.stopPropagation(); onEdit(); }} onKeyDown={(e) => e.stopPropagation()} className="memory-row-action-btn">
               <Pencil className="h-3.5 w-3.5" />
             </button>
             <button type="button" aria-label="删除记忆" title="删除记忆" onClick={(e) => { e.stopPropagation(); onDelete(); }} onKeyDown={(e) => e.stopPropagation()} className="memory-row-action-btn memory-row-action-danger">

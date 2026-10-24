@@ -23,7 +23,7 @@ describe("System Center freeze", () => {
     expect(logsSource).toContain("aria-label");
     expect(settingsSource).toContain("aria-label");
     expect(systemSource).toContain("min-h-0");
-    expect(logsSource).toContain("Drawer");
+    expect(logsSource).toContain("Modal");
     expect(managerSource).toContain("aria-expanded");
   });
 });

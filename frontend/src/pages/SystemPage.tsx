@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import TokenUsagePanel from "../features/monitor/TokenUsagePanel";
 import MonitoringToolbox from "../components/system/MonitoringToolbox";
 import { useVisibleRefresh } from "../components/system/useVisibleRefresh";
@@ -60,6 +60,7 @@ function SystemMetricSkeleton() {
 
 export default function SystemPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [data, setData] = useState<SystemData | null>(null);
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [error, setError] = useState("");
@@ -104,8 +105,12 @@ export default function SystemPage() {
     >
 
       <div className="system-center-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 scrollbar-thin">
+        <section className="preview-monitor-overview" aria-label="服务状态概览"><h2>服务状态</h2><div><Server size={17} /><span>后端服务</span><SystemStatusBadge status={health?.status} label="Backend" /></div><div><Database size={17} /><span>本地数据库</span><SystemStatusBadge status={health?.database} label="Database" /></div></section>
         <TokenUsagePanel />
+        <details className="preview-monitor-details" open={location.search.includes("card=")}><summary>监控工具箱与审批</summary>
         <MonitoringToolbox data={data as unknown as Record<string, unknown> | null} health={health as unknown as Record<string, unknown> | null} />
+        </details>
+        <details className="preview-monitor-details"><summary>设备资源与运行详情</summary>
         {error && !data ? (
           <ErrorState
             title="系统状态暂时无法加载"
@@ -223,6 +228,7 @@ export default function SystemPage() {
             </SystemSection>
           </div>
         ) : null}
+        </details>
       </div>
     </PageShell>
   );

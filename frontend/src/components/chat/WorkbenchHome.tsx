@@ -206,6 +206,8 @@ export default function WorkbenchHome({
           onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
         />
 
+        <details className="home-suggestions">
+          <summary>试试这些任务</summary>
         <div className="home-quick-actions">
           {QUICK_ACTIONS.map((action) => {
             const Icon = action.icon;
@@ -231,6 +233,7 @@ export default function WorkbenchHome({
             );
           })}
         </div>
+        </details>
       </div>
     </div>
   );

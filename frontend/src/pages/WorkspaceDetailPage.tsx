@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Clock3, Edit3, FolderOpen, Plus, Trash2 } from "lucide-react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, BookOpen, Edit3, FolderOpen, MoreHorizontal, Palette, Plus, Send, Trash2 } from "lucide-react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   createTask,
   deleteWorkspace,
@@ -23,10 +23,8 @@ import {
   Panel,
   Skeleton,
   Textarea,
-  KeyValueRow,
-  StatTile,
   ListRow,
-  Section,
+  Tabs,
   FormField,
   showToast,
 } from "../components/ui";
@@ -36,19 +34,26 @@ import {
   getTaskStatusTone,
 } from "../features/tasks/taskPresentation";
 import { deriveTaskDisplayTitle } from "../components/chat/taskTitle";
-import { formatWorkspacePath } from "../features/tasks/workspacePresentation";
-import WorkspaceLearning from "../features/learning/WorkspaceLearning";
+import WorkspaceFilesPanel from "../features/workspace-preview/WorkspaceFilesPanel";
+import WorkspaceArtifacts from "../features/workspace-preview/WorkspaceArtifacts";
+import GitNodeManager from "../features/git/GitNodeManager";
+import { createConversation, setConversationWorkspaceMode } from "../api/conversations";
+import { requestResult } from "../core/api/http";
 
 export default function WorkspaceDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [showLearning, setShowLearning] = useState(false);
+  const [tab, setTab] = useState("files");
+  const [showGit, setShowGit] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
@@ -93,6 +98,7 @@ export default function WorkspaceDetailPage() {
   }, [id]);
 
   useEffect(() => {
+    setTab("files"); setShowGit(false); setStartError("");
     void reload();
   }, [reload]);
 
@@ -126,6 +132,26 @@ export default function WorkspaceDetailPage() {
     setUpdateError(null);
     setShowEdit(true);
   };
+
+  useEffect(() => {
+    if (workspace && searchParams.get("edit") === "1") {
+      handleOpenEdit();
+      const next = new URLSearchParams(searchParams); next.delete("edit"); setSearchParams(next, { replace: true });
+    }
+  }, [workspace, searchParams, setSearchParams]);
+
+  async function startConversation() {
+    if (!workspace || starting) return;
+    setStarting(true); setStartError("");
+    try {
+      const conversation = await createConversation(workspace.name);
+      const binding = await requestResult("PUT", `/api/conversations/${encodeURIComponent(conversation.id)}/workspace`, { workspace_id: id });
+      if (!binding.ok) throw new Error(binding.error);
+      await setConversationWorkspaceMode(conversation.id, "work");
+      navigate(`/chat/${encodeURIComponent(conversation.id)}`);
+    } catch (cause) { setStartError(cause instanceof Error ? cause.message : "对话创建失败"); }
+    finally { setStarting(false); }
+  }
 
   const handleUpdate = async () => {
     if (!editName.trim() || updating) return;
@@ -161,203 +187,47 @@ export default function WorkspaceDetailPage() {
 
   return (
     <PageShell
-      title={workspace?.name || "工作空间"}
-      description={workspace?.description || "查看任务使用的文件与上下文。"}
-      className="page-canvas ui-opt-workspaces flex h-full min-h-0 flex-col"
-      actions={
-        <div className="flex items-center gap-2">
-          <Link to="/workspaces">
-            <Button type="button" variant="ghost">
-              <ArrowLeft className="h-4 w-4" />
-              返回
-            </Button>
-          </Link>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={handleOpenEdit}
-            disabled={!workspace}
-            title="编辑工作空间"
-          >
-            <Edit3 className="h-4 w-4" />
-            编辑
-          </Button>
-          {workspace?.status !== "archived" && (
-            <Button
-              type="button"
-              variant="danger"
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={!workspace}
-              title="归档工作空间"
-            >
-              <Trash2 className="h-4 w-4" />
-              归档
-            </Button>
-          )}
-          <Button type="button" variant="secondary" onClick={() => setShowLearning(true)} disabled={!workspace}>资料学习</Button>
-          <Button type="button" onClick={() => setShowCreate(true)} disabled={!workspace}>
-            <Plus className="h-4 w-4" />
-            新建任务
-          </Button>
-        </div>
-      }
+      title={<div className="workspace-breadcrumb"><Link to="/workspaces">工作空间</Link><span>/</span><h1>{workspace?.name || "工作空间"}</h1></div>}
+      variant="workspace"
+      maxWidth="none"
+      className="page-canvas ui-opt-workspaces workspace-preview-page"
+      actions={<div className="workspace-detail-actions">
+        <Button type="button" onClick={() => void startConversation()} disabled={!workspace || workspace.status === "archived"} loading={starting}><Send size={16} />开始对话</Button>
+        <details className="workspace-row-menu workspace-detail-menu"><summary aria-label="工作空间操作"><MoreHorizontal size={19} /></summary><div>
+          <button type="button" onClick={handleOpenEdit} disabled={!workspace}><Edit3 size={14} />编辑空间</button>
+          {workspace?.status !== "archived" && <button type="button" onClick={() => setShowDeleteConfirm(true)} disabled={!workspace}><Trash2 size={14} />归档空间</button>}
+          <Link to="/workspaces"><ArrowLeft size={14} />返回空间列表</Link>
+        </div></details>
+      </div>}
     >
-      {error ? (
-        <div className="min-h-0 flex-1 p-4">
-          <ErrorState
-            title="工作空间暂时无法加载"
-            description={error}
-            action={
-              <Button size="sm" variant="secondary" onClick={() => void reload()}>
-                重新加载
-              </Button>
-            }
-          />
+      {error ? <div className="p-4"><ErrorState title="工作空间暂时无法加载" description={error} onRetry={() => void reload()} /></div> : !workspace ? <div className="p-5" role="status">正在读取工作空间…</div> : <>
+        <div className="workspace-detail-navigation">
+          <Tabs tabs={[{ id: "files", label: "文件" }, { id: "tasks", label: "任务", badge: tasks?.length }, { id: "artifacts", label: "成果" }]} activeId={tab} onChange={setTab} aria-label="工作空间内容" />
+          <nav aria-label="空间专项功能"><Link to={`/workspaces/${encodeURIComponent(id)}/learning`}><BookOpen size={15} />资料学习</Link><Link to={`/workspaces/${encodeURIComponent(id)}/creation`}><Palette size={15} />创作</Link></nav>
         </div>
-      ) : (
-        <>
-          <div className="mx-4 mt-4 shrink-0">
-            <Section title="空间概览">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <div className="workspace-folder-icon shrink-0">
-                    <FolderOpen className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h2 className="truncate text-base font-semibold text-[var(--text)]">
-                        {workspace?.name || "加载中…"}
-                      </h2>
-                      {workspace && (
-                        <Badge tone={workspace.status === "active" ? "success" : "default"}>
-                          {workspace.status === "active" ? "活跃" : "已归档"}
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="mt-2 max-w-lg">
-                      <KeyValueRow
-                        label="根路径"
-                        value={formatWorkspacePath(workspace?.root_path) || "未绑定本地目录"}
-                        copyable={workspace?.root_path || undefined}
-                        mono
-                      />
-                    </div>
-                  </div>
+        {startError && <div className="px-4 pt-3"><ErrorState title="对话未能开始" description={startError} /></div>}
+        <div className="workspace-active-panel" id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
+          {tab === "files" && <WorkspaceFilesPanel key={`${id}:${workspace.root_path}`} workspaceId={id} rootPath={workspace.root_path} onEdit={handleOpenEdit} onShowChanges={() => setShowGit(true)} />}
+          {tab === "artifacts" && <div className="workspace-results-scroll scrollbar-thin"><WorkspaceArtifacts workspaceId={id} /></div>}
+          {tab === "tasks" && <>
+            <div className="workspace-tasks-toolbar"><p>当前空间的任务与执行记录</p><Button size="sm" onClick={() => setShowCreate(true)} disabled={workspace.status === "archived"}><Plus size={15} />新建任务</Button></div>
+            {taskError && <ErrorState title="任务列表暂时无法加载" description={taskError} onRetry={() => void reload()} />}
+            <div className="workspace-preview-tasks">
+              <Panel padding={false} className="workspace-task-list-panel">
+                <div className="workspace-task-list scrollbar-thin">
+                  {tasks === null ? taskError ? <p className="workspace-tree-note">任务列表读取失败，请重新加载。</p> : <div className="space-y-3 p-4"><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /></div> : tasks.length === 0 ? <EmptyState icon={<FolderOpen size={22} />} title="还没有关联任务" description="创建任务后，执行记录和成果会保存在当前空间。" /> : <div role="listbox" aria-label="工作空间任务列表">
+                    {tasks.map(task => <ListRow key={task.id} selected={selectedId === task.id} onSelect={() => setSelectedId(task.id)} title={deriveTaskDisplayTitle(task.title)} meta={formatTaskDate(task.updated_at) || "时间未知"} trailing={<Badge tone={getTaskStatusTone(task.status)}>{getTaskStatusLabel(task.status)}</Badge>} className="min-h-[64px]" />)}
+                  </div>}
                 </div>
-                {workspace?.active_tasks !== undefined && (
-                  <div className="w-48 shrink-0">
-                    <StatTile
-                      label="进行中任务"
-                      value={workspace.active_tasks}
-                      icon={Clock3}
-                      tone={workspace.active_tasks > 0 ? "info" : "default"}
-                    />
-                  </div>
-                )}
-              </div>
-            </Section>
-          </div>
-
-          {taskError && (
-            <div className="mx-4 mt-3">
-              <ErrorState
-                title="任务列表暂时无法加载"
-                description={taskError}
-                action={
-                  <Button size="sm" variant="secondary" onClick={() => void reload()}>
-                    重新加载
-                  </Button>
-                }
-              />
+              </Panel>
+              <Panel padding={false} className="workspace-task-detail scrollbar-thin">{selectedTask ? <div className="p-4"><TaskDetailPanel task={selectedTask} workspaceName={workspace.name} onChanged={() => void reload()} /></div> : <EmptyState icon={<FolderOpen size={24} />} title="选择一个任务" description="从左侧选择任务，查看执行记录与真实成果。" />}</Panel>
             </div>
-          )}
-
-          <div className="workspace-detail-grid min-h-0 flex-1 gap-3 px-4 pb-4 pt-4">
-            <Panel padding={false} className="min-h-0 overflow-hidden">
-              <div className="flex h-full min-h-0 flex-col">
-                <div className="shrink-0 border-b border-[var(--border-soft)] px-4 py-3">
-                  <h2 className="text-sm font-semibold text-[var(--text)]">任务与产物</h2>
-                  <p className="mt-0.5 text-xs text-[var(--text-faint)]">浏览这个工作空间关联的真实任务记录</p>
-                </div>
-                <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2">
-                  {tasks === null ? (
-                    <div className="space-y-2 p-1">
-                      {Array.from({ length: 4 }).map((_, index) => (
-                        <div
-                          key={index}
-                          className="space-y-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] p-3"
-                        >
-                          <Skeleton className="h-4 w-3/4" />
-                          <Skeleton className="h-3 w-1/2" />
-                        </div>
-                      ))}
-                    </div>
-                  ) : tasks.length === 0 ? (
-                    <EmptyState
-                      icon={<FolderOpen className="h-5 w-5" />}
-                      title="还没有关联任务"
-                      description="创建一个任务后，执行记录和真实产物会显示在这里。"
-                      action={
-                        <Button size="sm" onClick={() => setShowCreate(true)}>
-                          新建任务
-                        </Button>
-                      }
-                      className="py-16"
-                    />
-                  ) : (
-                    <div
-                      className="space-y-1"
-                      role="listbox"
-                      aria-label="工作空间任务列表"
-                      aria-activedescendant={selectedId ? `ws-task-option-${selectedId}` : undefined}
-                    >
-                      {tasks.map((task) => (
-                        <ListRow
-                          key={task.id}
-                          selected={selectedId === task.id}
-                          onSelect={() => setSelectedId(task.id)}
-                          title={deriveTaskDisplayTitle(task.title)}
-                          meta={formatTaskDate(task.updated_at) || "时间未知"}
-                          trailing={
-                            <Badge tone={getTaskStatusTone(task.status)}>
-                              {getTaskStatusLabel(task.status)}
-                            </Badge>
-                          }
-                          statusBar={getTaskStatusTone(task.status)}
-                          className="min-h-[64px]"
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </Panel>
-
-            <Panel padding={false} className="workspace-detail-content min-h-0 overflow-y-auto">
-              {selectedTask ? (
-                <div className="p-3 sm:p-4">
-                  <TaskDetailPanel
-                    task={selectedTask}
-                    workspaceName={workspace?.name}
-                    onChanged={() => void reload()}
-                  />
-                </div>
-              ) : (
-                <EmptyState
-                  icon={<FolderOpen className="h-6 w-6" />}
-                  title="选择一个任务"
-                  description="在左侧浏览任务及其真实产物。"
-                  className="py-20"
-                />
-              )}
-            </Panel>
-          </div>
-        </>
-      )}
-
+          </>}
+        </div>
+      </>}
       {/* New Task Modal */}
-      <Modal open={showLearning} onClose={() => setShowLearning(false)} title="项目资料学习" size="xl">
-        {showLearning && <WorkspaceLearning workspaceId={id} />}
+      <Modal open={showGit} onClose={() => setShowGit(false)} title="修改对比与 Git 操作" size="xl">
+        <div className="workspace-git-dialog"><GitNodeManager visible={showGit} workspaceId={id} /></div>
       </Modal>
       <Modal
         open={showCreate}

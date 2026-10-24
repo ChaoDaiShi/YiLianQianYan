@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Cloud, Database, LogIn, LogOut, RefreshCw, ShieldCheck, UserCircle } from "lucide-react";
+import { ArrowRight, Cloud, Database, LogIn, LogOut, RefreshCw, ShieldCheck, UserCircle } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import {
   getCloudIdentity,
@@ -253,7 +253,17 @@ export default function AccountCenterPage() {
           {!loading && !state ? <EmptyState title="账号状态暂时不可用" description="本地核心功能不受影响，请稍后重试。" action={<Button variant="secondary" onClick={() => void refresh()}>重新载入</Button>} /> : null}
           {state && section === "account" ? <section className="cloud-section-stack" aria-labelledby="account-section-title">
             <div className="cloud-section-heading"><div><span>IDENTITY</span><h2 id="account-section-title">账号与设备</h2><p>{identityMeta?.description}</p></div><Button size="sm" variant="secondary" onClick={() => void refresh()}><RefreshCw />刷新</Button></div>
-            {identity?.status === "guest" || showSwitchLogin ? (
+            {identity?.status === "guest" && !showSwitchLogin ? <div className="preview-account-overview">
+              <div className="preview-account-avatar"><UserCircle size={44} /></div>
+              <h2>本地使用</h2><p>无需登录，也能使用本机工作空间</p>
+              <Button variant="secondary" onClick={() => setShowSwitchLogin(true)}><LogIn size={16} />登录账号</Button>
+              <div className="preview-account-options">
+                <button onClick={() => setSearchParams({ section: "sync" })}><Cloud /><span><strong>云同步</strong><small>由你选择同步内容</small></span><span>{syncMeta?.label}</span><ArrowRight size={16} /></button>
+                <button onClick={() => setSearchParams({ section: "privacy" })}><Database /><span><strong>本机数据与导出</strong><small>查看本机数据范围与可用导出方式</small></span><ArrowRight size={16} /></button>
+                <button onClick={() => setSearchParams({ section: "privacy" })}><ShieldCheck /><span><strong>隐私设置</strong><small>管理数据使用与模型服务</small></span><ArrowRight size={16} /></button>
+              </div>
+            </div> : null}
+            {showSwitchLogin ? (
               <div className="cloud-card cloud-auth-card">
                 <div className="flex items-center justify-between pb-2">
                   <Tabs
@@ -322,7 +332,7 @@ export default function AccountCenterPage() {
                 </div>
               </div>
             ) : null}
-            {identity?.status === "guest" ? <div className="cloud-card"><AccountProfilePanel guestMode lastLogoutReport={lastLogoutReport} /></div> : null}
+            {identity?.status === "guest" ? <details className="cloud-card preview-account-details"><summary>本机身份与数据详情</summary><AccountProfilePanel guestMode lastLogoutReport={lastLogoutReport} /></details> : null}
             {identity?.status !== "guest" ? <><div className="cloud-card">
               <div className="cloud-account-summary"><span className="cloud-account-avatar"><UserCircle /></span><div><h3>{identity?.email || "已登录账号"}</h3><p>本机身份 {identity?.local_identity_id}</p></div><Badge tone="success">会话有效</Badge></div>
               <dl className="cloud-data-list"><div><dt>当前设备</dt><dd>{identity?.device_id}</dd></div><div><dt>云端账号</dt><dd>{identity?.account_id}</dd></div><div><dt>密钥策略</dt><dd>登录凭据保存在系统凭据库；Provider 密钥保持本机专用</dd></div></dl>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { CalendarClock, History, Pause, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CalendarClock, Clock3, History, Info, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import PageShell from "../../components/layout/PageShell";
-import { Badge, Button, ConfirmDialog, EmptyState, Panel, showToast } from "../../components/ui";
+import { Badge, Button, ConfirmDialog, EmptyState, showToast } from "../../components/ui";
 import { listAutomations, deleteAutomation, runAutomation, setAutomationEnabled, type Automation } from "../../api/automations";
 import { listWorkflowGraphs, type WorkflowGraphRecord } from "../../api/workflows";
 import { listWorkspaces, type Workspace } from "../../api/workspaces";
@@ -16,6 +16,7 @@ function scheduleLabel(automation: Automation) {
 }
 
 export default function AutomationsPage() {
+  const [filter, setFilter] = useState<"all" | "enabled" | "paused">("all");
   const [items, setItems] = useState<Automation[]>([]);
   const [graphs, setGraphs] = useState<WorkflowGraphRecord[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -51,17 +52,32 @@ export default function AutomationsPage() {
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusyId(null); }
   }
-  return <PageShell title="时间任务" description="按计划运行工作流或机器人目标，查看执行记录" className="page-canvas" maxWidth="dashboard" actions={<><Button size="sm" variant="ghost" onClick={reload} aria-label="刷新时间任务"><RefreshCw size={15} /></Button><Button size="sm" onClick={() => setEditing(null)}><Plus size={15} />新建时间任务</Button></>}>
-    <div className="space-y-5">
+  const visibleItems = items.filter(item => filter === "all" || (filter === "enabled" ? item.enabled : !item.enabled));
+  return <PageShell title="定时任务" description="安排工作，按计划完成后回来查看结果。" variant="workspace" className="page-canvas management-automations-page" contentClassName="management-automations-content" actions={<><Button size="sm" variant="secondary" onClick={reload} aria-label="刷新定时任务"><RefreshCw size={15} />刷新</Button><Button size="sm" onClick={() => setEditing(null)}><Plus size={15} />新建任务</Button></>}>
+    <div className="management-automations-workspace">
+      <div className="management-status-tabs" aria-label="定时任务状态筛选">
+        {([{ id: "all", label: "全部" }, { id: "enabled", label: "已启用" }, { id: "paused", label: "已暂停" }] as const).map(tab => <button type="button" key={tab.id} aria-pressed={filter === tab.id} onClick={() => setFilter(tab.id)}>{tab.label}</button>)}
+      </div>
       {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
-      {loading ? <p role="status">正在读取时间任务…</p> : items.length === 0 ? <EmptyState icon={<CalendarClock size={30} />} title="安排第一次自动执行" description="选择工作流、工作空间上下文与执行时间。" action={<Button onClick={() => setEditing(null)}>新建时间任务</Button>} /> : <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">{items.map(item => <Panel key={item.id} className="space-y-4">
-        <div className="flex items-start gap-3"><CalendarClock size={21} className="text-[var(--accent-primary)] shrink-0 mt-0.5" /><div className="flex-1 min-w-0"><h2 className="font-semibold text-sm break-words">{item.name}</h2><p className="text-xs text-[var(--text-secondary)] mt-1">{scheduleLabel(item)} · {item.timezone}</p></div><Badge tone={item.enabled ? "success" : "default"}>{item.enabled ? "已启用" : "未启用"}</Badge></div>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs"><dt className="text-[var(--text-muted)]">执行目标</dt><dd>{item.target?.kind === "agent_turn" ? "QQ 机器人目标任务" : graphs.find(graph => graph.id === item.workflow_graph_id)?.name ?? item.workflow_graph_id}</dd><dt className="text-[var(--text-muted)]">工作空间上下文</dt><dd>{workspaces.find(workspace => workspace.id === item.workspace_id)?.name ?? item.workspace_id}</dd><dt className="text-[var(--text-muted)]">下次执行</dt><dd>{item.next_run_at ? new Date(item.next_run_at).toLocaleString("zh-CN", { timeZone: item.timezone }) : item.enabled ? "无下一次执行" : "—"}</dd></dl>
-        <div className="flex flex-wrap gap-1.5 border-t border-[var(--border-soft)] pt-3"><Button size="sm" variant="secondary" disabled={busyId !== null} onClick={() => void action(item, async () => { const result = await runAutomation(item.id); setHistory(item); if (result.occurrence.status === "failed") showToast(result.occurrence.error ?? "工作流启动失败", "error"); })}><Play size={13} />立即运行</Button><Button size="sm" variant="secondary" disabled={busyId !== null} onClick={() => void action(item, async () => { await setAutomationEnabled(item.id, !item.enabled, item.revision); })}>{item.enabled ? <Pause size={13} /> : <CalendarClock size={13} />}{item.enabled ? "暂停" : "启用"}</Button><Button size="sm" variant="ghost" onClick={() => setHistory(item)}><History size={13} />历史</Button><Button size="sm" variant="ghost" disabled={busyId !== null} onClick={() => setEditing(item)} aria-label={`编辑 ${item.name}`}><Pencil size={13} /></Button><Button size="sm" variant="ghost" className="ml-auto" disabled={busyId !== null} onClick={() => setDeleting(item)} aria-label={`删除 ${item.name}`}><Trash2 size={13} /></Button></div>
-      </Panel>)}</div>}
+      <section className="management-automation-list scrollbar-thin" aria-label="定时任务列表">
+        {loading ? <p role="status" className="p-5">正在读取定时任务…</p> : error && items.length === 0 ? null : items.length === 0 ? <EmptyState icon={<CalendarClock size={30} />} title="安排第一次自动执行" description="选择工作流、工作空间上下文与执行时间。" action={<Button onClick={() => setEditing(null)}>新建任务</Button>} /> : visibleItems.length === 0 ? <EmptyState title={filter === "enabled" ? "暂无已启用的任务" : "暂无已暂停的任务"} action={<Button variant="secondary" onClick={() => setFilter("all")}>查看全部任务</Button>} /> : visibleItems.map(item => <article key={item.id} className="management-automation-row">
+          <span className="management-automation-icon" aria-hidden="true"><CalendarClock size={23} /></span>
+          <div className="management-automation-name"><h2>{item.name}</h2><p>{item.target?.kind === "agent_turn" ? "QQ 机器人目标任务" : graphs.find(graph => graph.id === item.workflow_graph_id)?.name ?? item.workflow_graph_id}</p><small>工作空间：{workspaces.find(workspace => workspace.id === item.workspace_id)?.name ?? item.workspace_id}</small></div>
+          <div className="management-automation-time"><Clock3 size={18} aria-hidden="true" /><div><p>{scheduleLabel(item)} · {item.timezone === "Asia/Shanghai" ? "上海时间" : item.timezone}</p><small>下次执行：{item.next_run_at ? new Date(item.next_run_at).toLocaleString("zh-CN", { timeZone: item.timezone }) : item.enabled ? "无下一次执行" : "—"}</small></div></div>
+          <Badge tone={item.enabled ? "success" : "default"}>{item.enabled ? "已启用" : "已暂停"}</Badge>
+          <button type="button" className="management-automation-switch" role="switch" aria-checked={item.enabled} aria-label={`${item.enabled ? "暂停" : "启用"} ${item.name}`} disabled={busyId !== null} onClick={() => void action(item, async () => { await setAutomationEnabled(item.id, !item.enabled, item.revision); })}><span /></button>
+          <details className="management-automation-menu"><summary aria-label={`更多操作 ${item.name}`}><MoreHorizontal size={19} /></summary><div>
+            <Button size="sm" variant="ghost" disabled={busyId !== null} onClick={() => void action(item, async () => { const result = await runAutomation(item.id); setHistory(item); if (result.occurrence.status === "failed") showToast(result.occurrence.error ?? "工作流启动失败", "error"); })}><Play size={14} />立即运行</Button>
+            <Button size="sm" variant="ghost" onClick={() => setHistory(item)}><History size={14} />运行历史</Button>
+            <Button size="sm" variant="ghost" disabled={busyId !== null} onClick={() => setEditing(item)} aria-label={`编辑 ${item.name}`}><Pencil size={14} />编辑任务</Button>
+            <Button size="sm" variant="ghost" disabled={busyId !== null} onClick={() => setDeleting(item)} aria-label={`删除 ${item.name}`}><Trash2 size={14} />删除任务</Button>
+          </div></details>
+        </article>)}
+      </section>
+      <p className="management-automation-runtime-note"><Info size={16} aria-hidden="true" />定时任务需要应用保持运行。运行记录可在任务的“运行历史”中查看。</p>
     </div>
     {editing !== undefined && <AutomationEditor value={editing} graphs={graphs} workspaces={workspaces} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); reload(); }} />}
     {history && <AutomationHistory automation={history} onClose={() => setHistory(null)} />}
-    <ConfirmDialog open={Boolean(deleting)} title="删除时间任务" description={`删除“${deleting?.name ?? ""}”的执行计划？已有执行记录仍保留。`} tone="danger" confirmLabel="删除" onCancel={() => setDeleting(null)} onConfirm={async () => { if (!deleting) return; const item = deleting; setDeleting(null); await action(item, async () => { await deleteAutomation(item.id); }); }} />
+    <ConfirmDialog open={Boolean(deleting)} title="删除定时任务" description={`删除“${deleting?.name ?? ""}”的执行计划？已有执行记录仍保留。`} tone="danger" confirmLabel="删除" onCancel={() => setDeleting(null)} onConfirm={async () => { if (!deleting) return; const item = deleting; setDeleting(null); await action(item, async () => { await deleteAutomation(item.id); }); }} />
   </PageShell>;
 }

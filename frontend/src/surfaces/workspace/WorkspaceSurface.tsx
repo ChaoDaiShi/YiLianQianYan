@@ -14,6 +14,8 @@ const LogsPage = lazy(() => import("../../pages/LogsPage"));
 const SettingsPage = lazy(() => import("../../pages/SettingsPage"));
 const WorkspacesPage = lazy(() => import("../../pages/WorkspacesPage"));
 const WorkspaceDetailPage = lazy(() => import("../../pages/WorkspaceDetailPage"));
+const WorkspaceLearningPage = lazy(() => import("../../features/learning/WorkspaceLearningPage"));
+const WorkspaceCreationPage = lazy(() => import("../../features/creation/WorkspaceCreationPage"));
 const AgentsPage = lazy(() => import("../../pages/AgentsPage"));
 const CapabilitiesPage = lazy(() => import("../../pages/CapabilitiesPage"));
 const MemoryPage = lazy(() => import("../../pages/MemoryPage"));
@@ -39,6 +41,8 @@ export default function WorkspaceSurface() {
         <Route path="logs" element={<LogsPage />} />
         <Route path="workspaces" element={<WorkspacesPage />} />
         <Route path="workspaces/:id" element={<WorkspaceDetailPage />} />
+        <Route path="workspaces/:id/learning" element={<WorkspaceLearningPage />} />
+        <Route path="workspaces/:id/creation" element={<WorkspaceCreationPage />} />
         <Route path="agents" element={<AgentsPage />} />
         <Route path="capabilities" element={<CapabilitiesPage />} />
         <Route path="memory" element={<MemoryPage />} />

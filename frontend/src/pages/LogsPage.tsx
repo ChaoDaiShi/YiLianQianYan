@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, Clipboard, Copy, Pause, Play, RefreshCw, ScrollText, Trash2 } from "lucide-react";
+import { ArrowDown, Check, Clipboard, Copy, Download, Pause, Play, RefreshCw, ScrollText, Trash2 } from "lucide-react";
 import { getLogs, type LogEntry } from "../api/client";
 import {
-  Drawer,
+  Modal,
   EmptyState,
   ErrorState,
   Input,
@@ -226,6 +226,10 @@ export default function LogsPage() {
       contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
       actions={activeView === "system" ? (
         <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" disabled={!visibleEntries.length} onClick={() => {
+            const url = URL.createObjectURL(new Blob([JSON.stringify(visibleEntries, null, 2)], { type: "application/json;charset=utf-8" }));
+            const link = document.createElement("a"); link.href = url; link.download = "yilian-system-logs.json"; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}><Download className="h-3.5 w-3.5" />导出当前记录</Button>
           <Button variant="secondary" size="sm" onClick={() => void fetchLogs(true)} aria-label="刷新日志">
             <RefreshCw className="h-3.5 w-3.5" />刷新
           </Button>
@@ -338,7 +342,7 @@ export default function LogsPage() {
         </div>
       </div>
 
-      <Drawer open={selectedEntry !== null} side="right" title="日志详情" width={400} onClose={() => setSelectedEntry(null)}>
+      <Modal open={selectedEntry !== null} title="日志详情" size="lg" onClose={() => setSelectedEntry(null)}>
         {selectedEntry ? (
           <div className="system-log-detail space-y-4 p-4">
             <div className="divide-y divide-[var(--border-soft)] rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-1">
@@ -358,7 +362,7 @@ export default function LogsPage() {
             </section>
           </div>
         ) : null}
-      </Drawer>
+      </Modal>
       <ConfirmDialog
         open={confirmClearOpen}
         title="清空日志"

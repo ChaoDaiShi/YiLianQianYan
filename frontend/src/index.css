@@ -39,3 +39,7 @@
 @import "./styles/ui-optimization/memory-knowledge.css";
 @import "./styles/ui-optimization/settings-system.css";
 @import "./styles/connector-workbench.css";
+@import "./styles/ui-optimization/preview-completion.css";
+@import "./styles/ui-optimization/management-preview.css";
+@import "./styles/ui-optimization/learning-creation-preview.css";
+@import "./styles/ui-optimization/workspace-preview.css";

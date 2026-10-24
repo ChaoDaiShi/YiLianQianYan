@@ -17,7 +17,8 @@ describe("Capability Center freeze and responsive contract", () => {
 
   it("defines token-based capability surfaces with responsive internal scrolling", () => {
     expect(skillsSource).toContain("capability-page skills-page page-canvas");
-    expect(agentsSource).toContain("capability-card-grid");
+    expect(agentsSource).toContain("management-agent-list-scroll");
+    expect(agentsSource).toContain("management-agent-editor");
     expect(capabilitiesSource).toContain("capability-list-scroll");
     expect(capabilitiesSource).toContain("capability-split-layout");
   });
