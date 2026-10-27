@@ -1,0 +1,156 @@
+name: v1.2 desktop installers
+
+on:
+  push:
+    branches: ["build/v1.2-release"]
+    tags: ["v1.2.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-installers-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_BUILD_JOBS: "1"
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_STRIP: debuginfo
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  NODE_OPTIONS: --max-old-space-size=2048
+
+jobs:
+  macos:
+    name: macOS Apple Silicon (M1/M2/M3/M4)
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      APPLE_SIGNING_IDENTITY: "-"
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Record build environment
+        run: |
+          uname -a
+          sysctl hw.memsize
+          df -h .
+          rustc -Vv
+      - name: Install locked dependencies
+        run: |
+          npm ci
+          npm --prefix frontend ci
+      - name: Build Apple Silicon app and DMG
+        run: |
+          set -o pipefail
+          /usr/bin/time -l npm run tauri -- build --target aarch64-apple-darwin --bundles app,dmg -- --locked 2>&1 | tee "$RUNNER_TEMP/macos-build.txt"
+      - name: Verify DMG, signature, architecture and packaged startup
+        run: bash scripts/verify-macos-bundle.sh
+      - name: Collect installers
+        run: |
+          mkdir -p release-assets
+          cp target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release-assets/YiLianQianYan_1.2.0_macos_arm64.dmg
+          ditto -c -k --sequesterRsrc --keepParent target/aarch64-apple-darwin/release/bundle/macos/*.app release-assets/YiLianQianYan_1.2.0_macos_arm64.app.zip
+          cp docs/releases/v1.2-installation.md release-assets/INSTALLATION.md
+          (cd release-assets && shasum -a 256 *.dmg *.zip > SHA256SUMS-macos.txt)
+          du -sh target release-assets
+          df -h .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v1.2.0-macos-arm64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v1.2.0-macos-evidence
+          path: |
+            ${{ runner.temp }}/macos-build.txt
+            ${{ runner.temp }}/macos-smoke/*.txt
+            ${{ runner.temp }}/macos-smoke/*.json
+            ${{ runner.temp }}/macos-smoke/*.csv
+          retention-days: 30
+
+  windows:
+    name: Windows x64 installer
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install locked dependencies
+        run: |
+          npm ci
+          npm --prefix frontend ci
+      - name: Verify release metadata
+        shell: pwsh
+        run: ./scripts/verify-release-version.ps1 -ExpectedVersion 1.2.0
+      - name: Build NSIS installer
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Version 1.2.0 -SkipTests
+      - name: Verify silent installation and removal
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem target/release/bundle/nsis/*_1.2.0_x64-setup.exe
+          ./scripts/test-windows-installer.ps1 -InstallerPath $installer.FullName
+          New-Item -ItemType Directory release-assets | Out-Null
+          Copy-Item $installer.FullName release-assets/YiLianQianYan_1.2.0_windows_x64-setup.exe
+          $hash = (Get-FileHash release-assets/YiLianQianYan_1.2.0_windows_x64-setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  YiLianQianYan_1.2.0_windows_x64-setup.exe" | Set-Content release-assets/SHA256SUMS-windows.txt -Encoding utf8NoBOM
+          Copy-Item docs/releases/v1.2-installation.md release-assets/INSTALLATION.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v1.2.0-windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish installers
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v1.2.0-*
+          path: downloaded
+      - name: Publish v1.2 installers with verification notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          cp downloaded/v1.2.0-macos-arm64/* release-assets/
+          cp downloaded/v1.2.0-windows-x64/* release-assets/
+          cat docs/releases/v1.2-installation.md > release-notes.md
+          printf '\nBuild source: `%s`\nActions run: https://github.com/%s/actions/runs/%s\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v1.2.0"
+          fi
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "忆涟千言 v1.2.0" --notes-file release-notes.md --prerelease

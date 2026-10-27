@@ -1,97 +1,32 @@
 #!/bin/bash
-# ============================================================
-# 忆涟千言 macOS 构建脚本
-# YiLianQianYan macOS Build Script
-# ============================================================
-# Usage:
-#   chmod +x scripts/build-macos.sh
-#   ./scripts/build-macos.sh
-# ============================================================
-
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
-echo "=============================================="
-echo "  忆涟千言 macOS 构建"
-echo "  YiLianQianYan macOS Build"
-echo "=============================================="
-echo ""
-
-# Check prerequisites
-echo "[1/5] 检查构建环境..."
-
-# Check Node.js
-if ! command -v node &> /dev/null; then
-    echo "❌ Node.js 未安装，请先安装 Node.js 18+"
-    echo "   下载地址: https://nodejs.org/"
-    exit 1
-fi
-echo "   ✓ Node.js $(node --version)"
-
-# Check npm
-if ! command -v npm &> /dev/null; then
-    echo "❌ npm 未安装"
-    exit 1
-fi
-echo "   ✓ npm $(npm --version)"
-
-# Check Rust
-if ! command -v rustc &> /dev/null; then
-    echo "❌ Rust 未安装，请先安装 Rust"
-    echo "   安装命令: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    exit 1
-fi
-echo "   ✓ Rust $(rustc --version)"
-
-# Check Xcode command line tools
-if ! xcode-select -p &> /dev/null; then
-    echo "❌ Xcode Command Line Tools 未安装"
-    echo "   安装命令: xcode-select --install"
-    exit 1
-fi
-echo "   ✓ Xcode Command Line Tools"
-
-echo ""
-echo "[2/5] 安装前端依赖..."
-cd "$PROJECT_ROOT/frontend"
-npm ci
-echo "   ✓ 前端依赖安装完成"
-
-echo ""
-echo "[3/5] 安装 Tauri CLI..."
+# Developer build entrypoint. Recipients should install the GitHub-built DMG.
+set -euo pipefail
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
-npm ci
-echo "   ✓ Tauri CLI 安装完成"
-
-echo ""
-echo "[4/5] 构建 macOS 安装包..."
-echo "   目标: .app 和 .dmg"
-npm run tauri:build:macos
-echo "   ✓ 构建完成"
-
-echo ""
-echo "[5/5] 查找构建产物..."
-BUILD_DIR="$PROJECT_ROOT/target/release/bundle"
-echo ""
-echo "=============================================="
-echo "  构建完成！"
-echo "=============================================="
-echo ""
-echo "构建产物位置:"
-echo "  App 包:  $BUILD_DIR/macos/忆涟千言.app"
-echo "  DMG 安装包: $BUILD_DIR/dmg/忆涟千言_1.0.0-rc.2_<arch>.dmg"
-echo ""
-
-if [ -d "$BUILD_DIR" ]; then
-    echo "找到的构建文件:"
-    find "$BUILD_DIR" -type f \( -name "*.dmg" -o -name "*.app" \) 2>/dev/null | head -20
+if [[ "$(uname -s)" != Darwin ]]; then
+  echo "Build macOS installers on macOS or use the GitHub Actions release workflow." >&2
+  exit 1
 fi
-
-echo ""
-echo "提示:"
-echo "  - .app 是应用程序包，可以直接拖到 应用程序 文件夹安装"
-echo "  - .dmg 是磁盘镜像安装包，用于分发"
-echo "  - 如需 Apple 签名和公证，请配置签名证书后重新构建"
-echo ""
+if [[ "$(uname -m)" != arm64 ]]; then
+  echo "This release entrypoint targets Apple Silicon; use an arm64 Mac runner." >&2
+  exit 1
+fi
+for tool in node npm rustc cargo xcode-select; do
+  command -v "$tool" >/dev/null
+done
+xcode-select -p >/dev/null
+export CARGO_BUILD_JOBS=1
+export CARGO_INCREMENTAL=0
+export CARGO_PROFILE_RELEASE_DEBUG=0
+export CARGO_PROFILE_RELEASE_STRIP=debuginfo
+export CARGO_PROFILE_RELEASE_LTO=false
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+export NODE_OPTIONS=--max-old-space-size=2048
+export MACOSX_DEPLOYMENT_TARGET=12.0
+export APPLE_SIGNING_IDENTITY=-
+echo "Prefer the GitHub-built DMG for installation; local builds require significant free RAM and disk."
+echo "Building v$(node -p 'require("./package.json").version') for aarch64-apple-darwin"
+npm ci
+npm --prefix frontend ci
+npm run tauri -- build --target aarch64-apple-darwin --bundles app,dmg -- --locked
+echo "Installers: $PROJECT_ROOT/target/aarch64-apple-darwin/release/bundle"
