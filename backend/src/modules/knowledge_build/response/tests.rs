@@ -1,5 +1,9 @@
 use super::*;
-use crate::modules::knowledge_build::{QueryPlan, Synthesis, SYNTHESIS_PROMPT};
+use crate::modules::knowledge_build::{
+    prompts::{ASSESSMENT_PROMPT, CLAIMS_PROMPT, FOLLOWUP_PROMPT, STRUCTURE_PROMPT},
+    stages::{AssessmentsDraft, ClaimsDraft, StructureDraft},
+    QueryPlan,
+};
 use serde_json::json;
 
 fn completion(content: &str, finish: &str) -> ChatCompletionResponse {
@@ -79,43 +83,108 @@ fn truncated_filtered_empty_and_schema_invalid_outputs_have_distinct_safe_errors
     assert!(!extra.contains("PRIVATE_SOURCE_FIELD"));
 }
 
+fn example(prompt: &str) -> &str {
+    prompt.lines().find(|line| line.starts_with('{')).unwrap()
+}
+
 #[test]
-fn synthesis_example_has_complete_fields_and_consistent_graph_references() {
-    let example = SYNTHESIS_PROMPT
-        .lines()
-        .find(|line| line.starts_with("{\"result\""))
-        .unwrap();
-    let synthesis: Synthesis = parse(completion(example, "stop"), "综合", 16384).unwrap();
-    let ids = synthesis
-        .result
-        .nodes
-        .iter()
-        .map(|node| node.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    assert!(synthesis
-        .result
-        .edges
-        .iter()
-        .all(|edge| ids.contains(edge.from.as_str()) && ids.contains(edge.to.as_str())));
-    assert!(synthesis.result.contradictions.is_empty());
-    assert_eq!(synthesis.next_queries.len(), 4);
-    let mut missing: serde_json::Value = serde_json::from_str(example).unwrap();
-    missing.as_object_mut().unwrap().remove("next_queries");
+fn staged_prompt_examples_match_their_independent_contracts() {
+    let structure: StructureDraft = parse(
+        completion(example(STRUCTURE_PROMPT), "stop"),
+        "知识结构",
+        4096,
+    )
+    .unwrap();
+    assert_eq!(structure.nodes.len(), 2);
+    assert_eq!(
+        structure.nodes[1].parent_id.as_deref(),
+        Some(structure.nodes[0].id.as_str())
+    );
+    let claims: ClaimsDraft =
+        parse(completion(example(CLAIMS_PROMPT), "stop"), "论点", 4096).unwrap();
+    assert_eq!(claims.claims.len(), 1);
+    assert_eq!(claims.claims[0].evidence.len(), 1);
+    let assessments: AssessmentsDraft =
+        parse(completion(example(ASSESSMENT_PROMPT), "stop"), "来源", 4096).unwrap();
+    assert_eq!(assessments.source_assessments.len(), 1);
+    let query_example = FOLLOWUP_PROMPT
+        .split_once('{')
+        .unwrap()
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    let plan: QueryPlan = parse(
+        completion(&format!("{{{query_example}}}"), "stop"),
+        "查询",
+        512,
+    )
+    .unwrap();
+    assert_eq!(plan.queries.len(), 4);
+}
+
+#[test]
+fn stages_reject_misplaced_fields_instead_of_discarding_or_moving_them() {
+    let mut output: serde_json::Value = serde_json::from_str(example(STRUCTURE_PROMPT)).unwrap();
+    output["source_assessments"] = json!([]);
+    output["next_queries"] = json!([]);
+    let error = parse::<StructureDraft>(
+        completion(&output.to_string(), "stop"),
+        "第1轮知识结构",
+        4096,
+    )
+    .err()
+    .unwrap();
+    assert!(error.contains("未约定字段"));
     assert!(
-        parse::<Synthesis>(completion(&missing.to_string(), "stop"), "综合", 16384)
+        error.contains("仅允许字段 summary、nodes、edges、limitations"),
+        "{error}"
+    );
+    assert!(!error.contains("source_assessments"));
+    let mut claims: serde_json::Value = serde_json::from_str(example(CLAIMS_PROMPT)).unwrap();
+    claims["claims"][0]["status"] = json!("corroborated");
+    assert!(parse::<ClaimsDraft>(completion(&claims.to_string(), "stop"), "论点", 4096).is_err());
+    let mut assessments: serde_json::Value =
+        serde_json::from_str(example(ASSESSMENT_PROMPT)).unwrap();
+    assessments["result"] = json!({});
+    assert!(
+        parse::<AssessmentsDraft>(completion(&assessments.to_string(), "stop"), "来源", 4096)
+            .is_err()
+    );
+    let duplicated = r#"{"source_assessments":[],"source_assessments":[]}"#;
+    assert!(parse::<AssessmentsDraft>(completion(duplicated, "stop"), "来源", 4096).is_err());
+}
+
+#[test]
+fn staged_outputs_require_their_own_fields_and_arrays() {
+    let mut output: serde_json::Value = serde_json::from_str(example(CLAIMS_PROMPT)).unwrap();
+    output.as_object_mut().unwrap().remove("contradictions");
+    assert!(
+        parse::<ClaimsDraft>(completion(&output.to_string(), "stop"), "论点", 4096)
             .err()
             .unwrap()
-            .contains("缺少必填字段 next_queries")
+            .contains("缺少必填字段 contradictions")
     );
-    let mut missing: serde_json::Value = serde_json::from_str(example).unwrap();
-    missing["source_assessments"][0]
+    let mut output: serde_json::Value = serde_json::from_str(example(ASSESSMENT_PROMPT)).unwrap();
+    output["source_assessments"][0]
         .as_object_mut()
         .unwrap()
-        .remove("basis_quote");
+        .remove("basis_id");
     assert!(
-        parse::<Synthesis>(completion(&missing.to_string(), "stop"), "综合", 16384)
+        parse::<AssessmentsDraft>(completion(&output.to_string(), "stop"), "来源", 4096)
             .err()
             .unwrap()
-            .contains("缺少必填字段 basis_quote")
+            .contains("缺少必填字段 basis_id")
     );
+    let mut output: serde_json::Value = serde_json::from_str(example(STRUCTURE_PROMPT)).unwrap();
+    output["nodes"][0]["source_ids"] = json!("s1");
+    assert!(
+        parse::<StructureDraft>(completion(&output.to_string(), "stop"), "知识结构", 4096).is_err()
+    );
+}
+
+#[test]
+fn source_classification_selects_retained_evidence_instead_of_retyping_quotations() {
+    let output = r#"{"source_assessments":[{"source_id":"s6","source_type":"paper","reason":"材料给出了论文作者与年份","basis_id":"excerpt-1"}]}"#;
+    assert!(parse::<AssessmentsDraft>(completion(output, "stop"), "来源", 4096).is_ok());
 }

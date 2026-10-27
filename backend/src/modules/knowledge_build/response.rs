@@ -108,7 +108,30 @@ pub(super) fn parse<T: DeserializeOwned>(
                 "缺少必填字段".into()
             }
         } else if description.starts_with("unknown field") {
-            "包含未约定字段".into()
+            // Serde's expected field list comes from our Rust type. Do not echo
+            // the unknown field name, which is untrusted model/source content.
+            let fields = description
+                .rsplit_once(", expected ")
+                .map(|(_, expected)| {
+                    expected
+                        .split('`')
+                        .enumerate()
+                        .filter(|(index, _)| index % 2 == 1)
+                        .map(|(_, field)| field)
+                        .filter(|field| {
+                            !field.is_empty()
+                                && field.len() <= 64
+                                && field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        })
+                        .collect::<Vec<_>>()
+                        .join("、")
+                })
+                .unwrap_or_default();
+            if fields.is_empty() {
+                "包含未约定字段".into()
+            } else {
+                format!("包含未约定字段；此对象仅允许字段 {fields}")
+            }
         } else if description.starts_with("unknown variant") {
             "字段枚举值不符合约定".into()
         } else {

@@ -7,6 +7,7 @@ struct ResearchHttpTrace {
     syntheses: std::sync::Mutex<Vec<(String, usize)>>,
     learning_calls: std::sync::Mutex<Vec<String>>,
     fenced_syntheses: std::sync::Mutex<Vec<usize>>,
+    stages: std::sync::Mutex<Vec<(String, String, usize)>>,
     cancel_search_started: tokio::sync::Notify,
     release_cancel_search: tokio::sync::Notify,
 }
@@ -70,9 +71,14 @@ async fn research_mock_llm(
             "note_sources":[{"document_id":source["document_id"],"quote":quote}],
             "exercises":[{"question":"以下哪项来自所选资料？","options":[{"id":"a","label":quote},{"id":"b","label":"没有出现在资料中的内容"}],"correct_option_id":"a","explanation":quote,"sources":[{"document_id":source["document_id"],"quote":quote}]}]
         })
-    } else if let Some(sources) = input.get("sources") {
-        let sources: Vec<BuildSource> = serde_json::from_value(sources.clone()).unwrap();
-        let round = {
+    } else if let Some(stage) = input["stage"].as_str() {
+        let sources = input["sources"].as_array().cloned().unwrap_or_default();
+        trace
+            .stages
+            .lock()
+            .unwrap()
+            .push((topic.into(), stage.into(), sources.len()));
+        let round = if stage == "structure" {
             let mut syntheses = trace.syntheses.lock().unwrap();
             let round = syntheses
                 .iter()
@@ -81,30 +87,65 @@ async fn research_mock_llm(
                 + 1;
             syntheses.push((topic.into(), sources.len()));
             round
+        } else {
+            trace
+                .syntheses
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(existing, _)| existing == topic)
+                .count()
         };
-        let first = sources.first().unwrap();
-        let last = sources.last().unwrap();
-        json!({
-            "result":{
+        match stage {
+            "structure" => {
+                assert!(input.get("previous_result").is_none());
+                let first = sources.first().unwrap();
+                let last = sources.last().unwrap();
+                json!({
                 "summary":format!("{topic} 第{round}轮整理"),
                 "nodes":[
-                    {"id":"root","parent_id":null,"title":topic,"summary":first.excerpt,"source_ids":[first.id]},
-                    {"id":"child","parent_id":"root","title":"本轮新增资料","summary":last.excerpt,"source_ids":[last.id]}
+                    {"id":"root","parent_id":null,"title":topic,"summary":first["excerpt"],"source_ids":[first["id"]]},
+                    {"id":"child","parent_id":"root","title":"本轮新增资料","summary":last["excerpt"],"source_ids":[last["id"]]}
                 ],
-                "edges":[],
-                "claims":[{"id":"claim","text":first.excerpt,"status":"unverified","evidence":[{"source_id":first.id,"quote":first.excerpt,"stance":"supports"}]}],
-                "contradictions":[],"limitations":[]
-            },
-            "source_assessments":sources.iter().map(|source|json!({"source_id":source.id,"source_type":"textbook","reason":"标题标明教材章节","basis_quote":"教材章节"})).collect::<Vec<_>>(),
-            "next_queries":if input["last_round"] == true {Vec::<String>::new()} else {(0..4).map(|index|format!("{topic}::round-{round}::query-{index}")).collect()}
-        })
+                "edges":[],"limitations":[]
+                })
+            }
+            "claims" => {
+                assert!(input["structure"]["nodes"].is_array());
+                let first = sources.first().unwrap();
+                let quote_id = if topic == "fabricated-quote-fixture" {
+                    json!("nonexistent-evidence")
+                } else {
+                    first["quotes"][0]["id"].clone()
+                };
+                json!({"claims":[{"id":"claim","text":first["quotes"][0]["text"],"evidence":[{"source_id":first["id"],"quote_id":quote_id,"stance":"supports"}]}],"contradictions":[]})
+            }
+            "source_assessments" => json!({
+                "source_assessments":sources.iter().map(|source|json!({"source_id":source["id"],"source_type":"textbook","reason":"标题标明教材章节","basis_id":if topic == "invalid-assessment-fixture" {json!("nonexistent-basis")} else {source["basis"][0]["id"].clone()}})).collect::<Vec<_>>()
+            }),
+            "followup_queries" => {
+                assert!(input["result"]["claims"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|claim| claim["status"] == "single_source"));
+                json!({"queries":(0..4).map(|index|format!("{topic}::round-{round}::query-{index}")).collect::<Vec<_>>()})
+            }
+            _ => panic!("Unexpected synthesis stage"),
+        }
     } else {
         trace.plans.lock().unwrap().push(topic.into());
         json!({"queries":(0..4).map(|index|format!("{topic}::round-0::query-{index}")).collect::<Vec<_>>()})
     };
-    let synthesis = input.get("sources").is_some() && !learning_request;
+    let synthesis = input["stage"] == "structure";
     if synthesis && topic == "missing-field-fixture" {
-        payload.as_object_mut().unwrap().remove("next_queries");
+        payload.as_object_mut().unwrap().remove("nodes");
+    }
+    if synthesis && topic == "misplaced-field-fixture" {
+        payload["source_assessments"] = json!([]);
+    }
+    if synthesis && topic == "invalid-hierarchy-fixture" {
+        payload["nodes"][0]["parent_id"] = json!("child");
     }
     let (content, finish_reason) = if synthesis && topic == "truncated-fixture" {
         let mut content = payload.to_string();
@@ -292,6 +333,38 @@ async fn configured_http_research_runs_quick_and_deep_imports_real_text_and_canc
             .map(|(_, count)| *count)
             .collect::<Vec<_>>();
         assert_eq!(syntheses, synthesis_counts);
+        let stages: Vec<_> = trace
+            .stages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(topic, _, _)| topic == &marker)
+            .cloned()
+            .collect();
+        let expected_stages: Vec<_> = (0..mode.rounds())
+            .flat_map(|round| {
+                let count = if mode == BuildMode::Quick {
+                    12
+                } else {
+                    [13, 26, 40][round]
+                };
+                let new_count = if mode == BuildMode::Quick {
+                    12
+                } else {
+                    [13, 13, 14][round]
+                };
+                let mut stages = vec![
+                    (marker.clone(), "structure".to_string(), count),
+                    (marker.clone(), "claims".to_string(), count),
+                    (marker.clone(), "source_assessments".to_string(), new_count),
+                ];
+                if round + 1 < mode.rounds() {
+                    stages.push((marker.clone(), "followup_queries".to_string(), 0));
+                }
+                stages
+            })
+            .collect();
+        assert_eq!(stages, expected_stages);
         assert_eq!(
             trace
                 .plans
@@ -355,8 +428,12 @@ async fn configured_http_research_runs_quick_and_deep_imports_real_text_and_canc
     assert_eq!(*trace.fenced_syntheses.lock().unwrap(), vec![13, 26, 40]);
     for (topic, expected_error) in [
         ("truncated-fixture", "输出被截断"),
-        ("missing-field-fixture", "缺少必填字段 next_queries"),
+        ("missing-field-fixture", "缺少必填字段 nodes"),
         ("mixed-prose-fixture", "JSON语法无效"),
+        ("misplaced-field-fixture", "未约定字段"),
+        ("invalid-hierarchy-fixture", "循环"),
+        ("fabricated-quote-fixture", "缺失证据片段"),
+        ("invalid-assessment-fixture", "可在实际标题或摘录定位"),
     ] {
         let build = KnowledgeBuild::new(topic.into(), BuildMode::Deep);
         server.db.create_knowledge_build(&build).unwrap();
@@ -367,8 +444,25 @@ async fn configured_http_research_runs_quick_and_deep_imports_real_text_and_canc
         assert_eq!(failed.sources.len(), 13);
         assert_eq!(failed.progress.rounds_completed, 0);
         let error = failed.error.unwrap();
-        assert!(error.contains("第1轮综合"));
         assert!(error.contains(expected_error), "{error}");
+        let stages: Vec<_> = trace
+            .stages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, _, _)| name == topic)
+            .map(|(_, stage, _)| stage.clone())
+            .collect();
+        let expected = match topic {
+            "fabricated-quote-fixture" => vec!["structure", "claims"],
+            "invalid-assessment-fixture" => vec!["structure", "claims", "source_assessments"],
+            _ => vec!["structure"],
+        };
+        assert_eq!(
+            stages, expected,
+            "Failure must stop before the next stage or another model request"
+        );
+        assert!(failed.result.is_none());
         assert_eq!(
             trace
                 .syntheses

@@ -3,21 +3,21 @@ use std::collections::{HashMap, HashSet};
 
 /// Validate references against the actual retained search evidence. This proves
 /// quotation provenance, not the truth of a claim or editorial independence.
-pub fn validate_result(result: &mut BuildResult, sources: &[BuildSource]) -> Result<(), String> {
-    if result.summary.trim().is_empty()
-        || result.nodes.len() < 2
-        || result.nodes.len() > 80
-        || result.claims.is_empty()
-        || result.claims.len() > 80
-    {
-        return Err("模型未返回完整的有来源知识结构（2–80节点、1–80论点）".into());
+pub(super) fn validate_structure(
+    summary: &str,
+    nodes: &[KnowledgeNode],
+    edges: &[KnowledgeEdge],
+    sources: &[BuildSource],
+) -> Result<(), String> {
+    if summary.trim().is_empty() || nodes.len() < 2 || nodes.len() > 80 {
+        return Err("模型未返回完整的有来源知识结构（2–80节点）".into());
     }
     let source_map: HashMap<_, _> = sources
         .iter()
         .map(|source| (source.id.as_str(), source))
         .collect();
     let mut node_map = HashMap::new();
-    for node in &result.nodes {
+    for node in nodes {
         if node.id.trim().is_empty()
             || node.title.trim().is_empty()
             || node.summary.trim().is_empty()
@@ -34,10 +34,10 @@ pub fn validate_result(result: &mut BuildResult, sources: &[BuildSource]) -> Res
             return Err("知识节点引用了缺失来源".into());
         }
     }
-    if !result.nodes.iter().any(|node| node.parent_id.is_some()) {
+    if !nodes.iter().any(|node| node.parent_id.is_some()) {
         return Err("知识结构没有层级关系".into());
     }
-    for node in &result.nodes {
+    for node in nodes {
         let mut seen = HashSet::from([node.id.as_str()]);
         let mut parent = node.parent_id.as_deref();
         while let Some(id) = parent {
@@ -51,7 +51,7 @@ pub fn validate_result(result: &mut BuildResult, sources: &[BuildSource]) -> Res
                 .as_deref();
         }
     }
-    for edge in &result.edges {
+    for edge in edges {
         if edge.from == edge.to
             || !node_map.contains_key(edge.from.as_str())
             || !node_map.contains_key(edge.to.as_str())
@@ -59,6 +59,18 @@ pub fn validate_result(result: &mut BuildResult, sources: &[BuildSource]) -> Res
             return Err("知识图谱关系引用无效节点".into());
         }
     }
+    Ok(())
+}
+
+pub fn validate_result(result: &mut BuildResult, sources: &[BuildSource]) -> Result<(), String> {
+    validate_structure(&result.summary, &result.nodes, &result.edges, sources)?;
+    if result.claims.is_empty() || result.claims.len() > 80 {
+        return Err("模型未返回完整的有来源论点（1–80条）".into());
+    }
+    let source_map: HashMap<_, _> = sources
+        .iter()
+        .map(|source| (source.id.as_str(), source))
+        .collect();
     let mut claim_ids = HashSet::new();
     for claim in &mut result.claims {
         if claim.id.trim().is_empty()
