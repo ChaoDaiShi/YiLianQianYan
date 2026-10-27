@@ -1,5 +1,6 @@
+import WorkspaceIcon from "../components/ui/WorkspaceIcon";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Brain, Check, Copy, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Check, Copy, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { refreshSkillDiscovery } from "../api/skillDiscovery";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -271,7 +272,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                         }`}
                       >
                         <span className="capability-list-row-heading">
-                          <Brain className="h-4 w-4 shrink-0 text-[var(--accent-purple)]" />
+                          <WorkspaceIcon name="skill" size={20} className="shrink-0 text-[var(--accent-purple)]" />
                           <strong>{skill.display_name ?? skill.name}</strong>
                           {skill.compatibility && <Badge tone={skill.compatibility.runtime_ready ? "success" : "warning"}>{skill.compatibility.status === "external_host" ? "需外部宿主" : skill.compatibility.status === "adapted" ? "已适配工具" : "可用流程"}</Badge>}
                           {skill.editable ? (
@@ -302,7 +303,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                 <div className="capability-detail-heading">
                   <div>
                     <div className="capability-detail-title-line flex items-center gap-2 flex-wrap">
-                      <Brain className="h-5 w-5 text-[var(--accent-primary)]" />
+                      <WorkspaceIcon name="skill" size={20} className="text-[var(--accent-primary)]" />
                       <h2>{selectedSkill.display_name ?? selectedSkill.name}</h2>
                       <button
                         type="button"
@@ -454,7 +455,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
               </div>
             ) : (
               <EmptyState
-                icon={<Brain className="h-7 w-7" />}
+                icon={<WorkspaceIcon name="skill" size={28} />}
                 title="选择一个技能"
                 description="查看真实的 SKILL.md 内容，或新建工作区技能。"
                 action={

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="yl-supp-color-mcp-title">
+<title id="yl-supp-color-mcp-title">MCP — 忆涟千言</title>
+<g fill="none" stroke="#80628F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="2.5" y="8" width="6" height="8" rx="2" fill="#EA91B9"/>
+<rect x="15.5" y="8" width="6" height="8" rx="2" fill="#AD9BE9"/>
+<path d="M8.5 10h7M8.5 14h7M4.5 4.5V8M6.5 4.5V8M17.5 16v3.5M19.5 16v3.5" fill="none"/>
+</g>
+</svg>

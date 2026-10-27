@@ -1,5 +1,6 @@
+import WorkspaceIcon from "../ui/WorkspaceIcon";
 import { useCallback, useEffect, useState } from "react";
-import { History, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { Button, EmptyState, Spinner, Badge } from "../ui";
 import {
   listWorkflowRuns,
@@ -64,7 +65,7 @@ export default function WorkflowRecentRuns({
     <div className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 space-y-3">
       <div className="flex items-center justify-between gap-2 border-b border-[var(--border-soft)] pb-2">
         <div className="flex items-center gap-2">
-          <History className="w-4 h-4 text-[var(--text-secondary)]" />
+          <WorkspaceIcon name="run-history" size={24} variant="mono" className="text-[var(--text-secondary)]" />
           <h4 className="font-semibold text-sm">最近运行</h4>
         </div>
         <Button size="sm" variant="ghost" onClick={load} className="h-7 px-2 text-xs">
@@ -90,7 +91,7 @@ export default function WorkflowRecentRuns({
         </div>
       ) : runs.length === 0 ? (
         <EmptyState
-          icon={<span className="text-xl">🕘</span>}
+          icon={<WorkspaceIcon name="run-history" size={24} />}
           title="暂无运行记录"
           description="启动一个运行工作流后，这里会显示历史记录。"
           className="py-4"

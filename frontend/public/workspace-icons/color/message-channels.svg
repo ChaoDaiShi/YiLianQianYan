@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="yl-supp-color-message-channels-title">
+<title id="yl-supp-color-message-channels-title">消息渠道 — 忆涟千言</title>
+<g fill="none" stroke="#80628F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 8v4M5 12h14" fill="none"/>
+<rect x="9" y="3" width="6" height="5" rx="1.5" fill="#EA91B9"/>
+<rect x="2" y="16" width="6" height="5" rx="1.5" fill="#AD9BE9"/>
+<rect x="16" y="16" width="6" height="5" rx="1.5" fill="#AD9BE9"/>
+<path d="M5 12v4M19 12v4" fill="none"/>
+</g>
+</svg>

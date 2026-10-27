@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="yl-supp-color-models-services-title">
+<title id="yl-supp-color-models-services-title">模型服务 — 忆涟千言</title>
+<g fill="none" stroke="#80628F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M6.5 6.5l2.4 2.4M17.5 6.5l-2.4 2.4M12 18v0" fill="none"/>
+<circle cx="5" cy="5" r="2" fill="#EA91B9"/>
+<circle cx="19" cy="5" r="2" fill="#AD9BE9"/>
+<circle cx="12" cy="20" r="2" fill="#EA91B9"/>
+<path d="m12 7 5 3v5l-5 3-5-3v-5Z" fill="#AD9BE9"/>
+<path d="m7 10 5 3 5-3M12 13v5" fill="none"/>
+</g>
+</svg>

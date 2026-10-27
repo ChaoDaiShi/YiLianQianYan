@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="yl-supp-color-import-discover-title">
+<title id="yl-supp-color-import-discover-title">导入与本地发现 — 忆涟千言</title>
+<g fill="none" stroke="#80628F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M3 8V5.5A1.5 1.5 0 0 1 4.5 4H9l2 2h8.5A1.5 1.5 0 0 1 21 7.5V10" fill="#AD9BE9"/>
+<path d="M3 12v7a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 19v-4.5" fill="none"/>
+<path d="M11 10v6M8.5 13.5 11 16l2.5-2.5" fill="none"/>
+<circle cx="18" cy="11.5" r="2.5" fill="#EA91B9"/>
+<path d="m20 13.5 2 2" fill="none"/>
+</g>
+</svg>

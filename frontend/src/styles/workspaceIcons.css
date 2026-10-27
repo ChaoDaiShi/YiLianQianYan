@@ -1,0 +1,84 @@
+.workspace-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  line-height: 0;
+}
+
+.workspace-icon > img,
+.workspace-icon > svg {
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-icon--auto > .workspace-icon-mono,
+:root.dark .workspace-icon--auto > .workspace-icon-color {
+  display: none;
+}
+
+:root.dark .workspace-icon--auto > .workspace-icon-mono {
+  display: block;
+}
+
+.preview-more .navigation-entry-icon--workspace {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+}
+
+.workspace-list-folder .workspace-icon > svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+}
+
+.workspace-list-folder > .workspace-icon {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.preview-workspace-picker > button > .workspace-icon {
+  flex: 0 0 auto;
+}
+
+.capability-category-icon {
+  display: inline-flex;
+  width: 24px;
+  flex-shrink: 0;
+  justify-content: center;
+  color: var(--accent-purple);
+}
+
+.capability-category-heading--workspace {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.capability-category-heading--workspace > .workspace-icon {
+  color: var(--accent-purple);
+}
+
+.nav-rail-item .workspace-icon > svg,
+.connector-node-title .workspace-icon > svg {
+  width: 100%;
+  height: 100%;
+  color: inherit;
+}
+
+.connector-node-title > .workspace-icon {
+  overflow: visible;
+  color: var(--accent-purple);
+}
+
+.quick-setup-optional button > .workspace-icon {
+  flex: 0 0 auto;
+}
+
+.knowledge-collections > button > .workspace-icon {
+  flex: 0 0 auto;
+}

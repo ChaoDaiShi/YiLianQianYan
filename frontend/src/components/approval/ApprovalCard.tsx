@@ -1,5 +1,5 @@
+import WorkspaceIcon from "../ui/WorkspaceIcon";
 import { useEffect, useRef, useState } from "react";
-import { ShieldAlert, ShieldCheck } from "lucide-react";
 import type { PendingApproval } from "../../types/approval";
 import {
   attestVoiceApprovalDisplayed,
@@ -227,9 +227,9 @@ export default function ApprovalCard({
         }
       >
         {isCritical ? (
-          <ShieldAlert className="h-4 w-4 text-[var(--danger)]" />
+          <WorkspaceIcon name="approval" size={20} variant="mono" className="text-[var(--danger)]" />
         ) : (
-          <ShieldCheck className="h-4 w-4 text-[var(--accent-gold)]" />
+          <WorkspaceIcon name="approval" size={20} variant="mono" className="text-[var(--accent-gold)]" />
         )}
         <div>
           <p className="approval-card-title text-sm font-semibold text-[var(--text-primary)]">

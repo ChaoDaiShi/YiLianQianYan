@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { FolderOpen, Plus, Clipboard, ExternalLink, MoreHorizontal } from "lucide-react";
+import { Plus, Clipboard, ExternalLink, MoreHorizontal } from "lucide-react";
 import {
   Button,
   Input,
@@ -19,6 +19,7 @@ import {
 } from "../api/client";
 import { formatWorkspacePath } from "../features/tasks/workspacePresentation";
 import { formatTaskDate } from "../features/tasks/taskPresentation";
+import WorkspaceIcon from "../components/ui/WorkspaceIcon";
 import WorkspaceArtifacts from "../features/workspace-preview/WorkspaceArtifacts";
 
 export default function WorkspacesPage() {
@@ -146,7 +147,7 @@ export default function WorkspacesPage() {
           </div>
         ) : workspaces?.length === 0 ? (
           <EmptyState
-            icon={<FolderOpen className="h-6 w-6" />}
+            icon={<WorkspaceIcon name="workspace-switch" size={40} />}
             title="还没有工作空间"
             description="选择一个工作目录后，小涟可以在其中读取和处理文件。"
             action={
@@ -171,7 +172,7 @@ export default function WorkspacesPage() {
           <div className="workspace-folder-list">
             {filteredWorkspaces.map((workspace) => (
               <article key={workspace.id} className="workspace-folder-row">
-                <span className="workspace-list-folder"><FolderOpen size={30} strokeWidth={1.5} /></span>
+                <span className="workspace-list-folder"><WorkspaceIcon name="workspace-switch" size={42} /></span>
                 <div className="workspace-row-copy"><h3><Link to={`/workspaces/${workspace.id}`}>{workspace.name}</Link>{workspace.status === "archived" && <span className="workspace-archived-label">已归档</span>}</h3><p title={workspace.root_path || undefined}>{workspace.description || formatWorkspacePath(workspace.root_path) || "未绑定本地目录"}</p></div>
                 <span className="workspace-row-date">{workspace.updated_at ? `更新于 ${formatTaskDate(workspace.updated_at)}` : ""}</span>
                 <Link to={`/workspaces/${workspace.id}`} className="workspace-open-link"><ExternalLink size={16} />打开</Link>

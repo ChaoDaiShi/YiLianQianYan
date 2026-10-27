@@ -1,5 +1,6 @@
+import WorkspaceIcon from "../../components/ui/WorkspaceIcon";
 import { useCallback, useEffect, useState } from "react";
-import { CalendarClock, Clock3, History, Info, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Clock3, History, Info, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import PageShell from "../../components/layout/PageShell";
 import { Badge, Button, ConfirmDialog, EmptyState, showToast } from "../../components/ui";
 import { listAutomations, deleteAutomation, runAutomation, setAutomationEnabled, type Automation } from "../../api/automations";
@@ -60,8 +61,8 @@ export default function AutomationsPage() {
       </div>
       {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
       <section className="management-automation-list scrollbar-thin" aria-label="定时任务列表">
-        {loading ? <p role="status" className="p-5">正在读取定时任务…</p> : error && items.length === 0 ? null : items.length === 0 ? <EmptyState icon={<CalendarClock size={30} />} title="安排第一次自动执行" description="选择工作流、工作空间上下文与执行时间。" action={<Button onClick={() => setEditing(null)}>新建任务</Button>} /> : visibleItems.length === 0 ? <EmptyState title={filter === "enabled" ? "暂无已启用的任务" : "暂无已暂停的任务"} action={<Button variant="secondary" onClick={() => setFilter("all")}>查看全部任务</Button>} /> : visibleItems.map(item => <article key={item.id} className="management-automation-row">
-          <span className="management-automation-icon" aria-hidden="true"><CalendarClock size={23} /></span>
+        {loading ? <p role="status" className="p-5">正在读取定时任务…</p> : error && items.length === 0 ? null : items.length === 0 ? <EmptyState icon={<WorkspaceIcon name="task-calendar" size={30} />} title="安排第一次自动执行" description="选择工作流、工作空间上下文与执行时间。" action={<Button onClick={() => setEditing(null)}>新建任务</Button>} /> : visibleItems.length === 0 ? <EmptyState title={filter === "enabled" ? "暂无已启用的任务" : "暂无已暂停的任务"} action={<Button variant="secondary" onClick={() => setFilter("all")}>查看全部任务</Button>} /> : visibleItems.map(item => <article key={item.id} className="management-automation-row">
+          <span className="management-automation-icon" aria-hidden="true"><WorkspaceIcon name="task-calendar" size={24} /></span>
           <div className="management-automation-name"><h2>{item.name}</h2><p>{item.target?.kind === "agent_turn" ? "QQ 机器人目标任务" : graphs.find(graph => graph.id === item.workflow_graph_id)?.name ?? item.workflow_graph_id}</p><small>工作空间：{workspaces.find(workspace => workspace.id === item.workspace_id)?.name ?? item.workspace_id}</small></div>
           <div className="management-automation-time"><Clock3 size={18} aria-hidden="true" /><div><p>{scheduleLabel(item)} · {item.timezone === "Asia/Shanghai" ? "上海时间" : item.timezone}</p><small>下次执行：{item.next_run_at ? new Date(item.next_run_at).toLocaleString("zh-CN", { timeZone: item.timezone }) : item.enabled ? "无下一次执行" : "—"}</small></div></div>
           <Badge tone={item.enabled ? "success" : "default"}>{item.enabled ? "已启用" : "已暂停"}</Badge>

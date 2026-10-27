@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="yl-supp-color-agent-title">
+<title id="yl-supp-color-agent-title">智能体 — 忆涟千言</title>
+<g fill="none" stroke="#80628F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="4" y="7" width="16" height="13" rx="4" fill="#AD9BE9"/>
+<path d="M12 7V3.5M9.5 3.5h5M1.8 12v4M22.2 12v4M8 16h8" fill="none"/>
+<circle cx="8.5" cy="11.5" r="0.85" fill="#80628F" stroke="none"/>
+<circle cx="15.5" cy="11.5" r="0.85" fill="#80628F" stroke="none"/>
+</g>
+</svg>

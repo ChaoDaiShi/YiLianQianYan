@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="yl-supp-color-security-title">
+<title id="yl-supp-color-security-title">安全 — 忆涟千言</title>
+<g fill="none" stroke="#80628F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 2.5c3 2 6 2.5 8 3v6c0 5-4 8-8 10-4-2-8-5-8-10v-6c2-.5 5-1 8-3Z" fill="#AD9BE9"/>
+<path d="M9 11V9a3 3 0 0 1 6 0v2" fill="none"/>
+<rect x="8" y="11" width="8" height="6" rx="1.5" fill="#EA91B9"/>
+</g>
+</svg>

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "../../theme";
 import { NAV_ENTRIES } from "../layout/navRegistry";
+import WorkspaceIcon from "./WorkspaceIcon";
 
 interface CommandItem {
   id: string;
@@ -97,13 +98,12 @@ export default function CommandPalette() {
   const commands: CommandItem[] = useMemo(() => {
     // Derive navigation commands directly from single registry
     const navCmds: CommandItem[] = NAV_ENTRIES.map((entry) => {
-      const Icon = entry.icon;
       return {
         id: `nav-${entry.id}`,
         title: entry.label,
         category: "导航页面",
         description: entry.description,
-        icon: <Icon className="h-4 w-4 text-[var(--accent-primary)]" />,
+        icon: <WorkspaceIcon name={entry.workspaceIcon} size={24} variant="mono" className="text-[var(--text-secondary)]" />,
         shortcut: entry.shortcut,
         keywords: entry.keywords ? [...entry.keywords] : undefined,
         action: () => navigate(entry.to),

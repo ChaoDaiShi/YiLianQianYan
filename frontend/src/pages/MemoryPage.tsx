@@ -1,5 +1,6 @@
+import WorkspaceIcon from "../components/ui/WorkspaceIcon";
 import { useEffect, useMemo, useState } from "react";
-import { Brain, Clock3, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Clock3, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { MemoryRecord } from "../api/client";
 import { listWithdrawnMemories } from "../api/memory";
 import MemoryDetail from "../features/memory/MemoryDetail";
@@ -233,7 +234,7 @@ export default function MemoryPage() {
         </div>
         {deleteError && !detailOpen && <p role="alert" className="text-sm text-[var(--danger)]">{deleteError}</p>}
         <section className="management-memory-list scrollbar-thin" aria-label="记忆列表">
-          {listLoading ? <MemoryListSkeleton /> : listError ? <ErrorState title="记忆暂时无法加载" description={listError} action={<Button variant="secondary" size="sm" onClick={reload}>重试</Button>} /> : memories.length === 0 ? hasActiveFilter ? <EmptyState icon={<Brain className="h-6 w-6" />} title="没有匹配的记忆记录" description="当前搜索或筛选条件下未找到匹配项。" action={<Button variant="secondary" size="sm" onClick={handleClearFilters}>清除筛选</Button>} /> : <EmptyState icon={<Brain className="h-6 w-6" />} title="这里暂时还没有记忆记录" description={view === "withdrawn" ? "撤回的记忆会保留在这里，不再用于检索。" : "小涟会在对话中提取，也可以手动添加。"} action={view === "active" ? <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>添加记忆</Button> : undefined} /> : memories.map(memory => <MemoryRow key={memory.id} memory={memory} selected={memory.id === selectedId} withdrawn={view === "withdrawn"} onSelect={() => { setSelectedId(memory.id); setDetailOpen(true); }} onEdit={() => handleOpenEdit(memory)} onDelete={() => handleDelete(memory)} />)}
+          {listLoading ? <MemoryListSkeleton /> : listError ? <ErrorState title="记忆暂时无法加载" description={listError} action={<Button variant="secondary" size="sm" onClick={reload}>重试</Button>} /> : memories.length === 0 ? hasActiveFilter ? <EmptyState icon={<WorkspaceIcon name="memory-record" size={24} />} title="没有匹配的记忆记录" description="当前搜索或筛选条件下未找到匹配项。" action={<Button variant="secondary" size="sm" onClick={handleClearFilters}>清除筛选</Button>} /> : <EmptyState icon={<WorkspaceIcon name="memory-record" size={24} />} title="这里暂时还没有记忆记录" description={view === "withdrawn" ? "撤回的记忆会保留在这里，不再用于检索。" : "小涟会在对话中提取，也可以手动添加。"} action={view === "active" ? <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>添加记忆</Button> : undefined} /> : memories.map(memory => <MemoryRow key={memory.id} memory={memory} selected={memory.id === selectedId} withdrawn={view === "withdrawn"} onSelect={() => { setSelectedId(memory.id); setDetailOpen(true); }} onEdit={() => handleOpenEdit(memory)} onDelete={() => handleDelete(memory)} />)}
         </section>
         <details className="memory-maintenance-panel management-memory-maintenance"><summary>记忆维护 · 当前列表 {memories.length} 条</summary>
           <div className="memory-maintenance-content"><div><p className="text-sm font-medium">重建记忆索引</p><p className="mt-1 text-xs text-[var(--text-secondary)]">为缺少索引的记忆补充检索数据。</p></div><Button variant="secondary" size="sm" onClick={reindexMemoriesAction} disabled={isReindexing}><RefreshCw className={`h-3.5 w-3.5 ${isReindexing ? "animate-spin" : ""}`} />{isReindexing ? "处理中…" : "重建索引"}</Button></div>
@@ -348,7 +349,7 @@ function MemoryRow({
       aria-label={`查看记忆 ${truncateMemoryContent(memory.content, 40)}`}
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
-        <span className="management-memory-icon" aria-hidden="true"><Brain size={22} /></span>
+        <span className="management-memory-icon" aria-hidden="true"><WorkspaceIcon name="memory-record" size={22} /></span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={categoryBadgeTone(memory.category)}>{category.label}</Badge>

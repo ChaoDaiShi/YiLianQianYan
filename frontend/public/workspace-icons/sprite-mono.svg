@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg"><defs><symbol id="yl-mono-workspace-switch" viewBox="0 0 64 64"><g stroke-linecap="round" stroke-linejoin="round"><path d="M27 35 H12 Q7 35 7 30 V15 Q7 10 12 10 H32 Q37 10 37 15 V29" fill="none" stroke="currentColor" stroke-width="3" /><rect x="27" y="29" width="30" height="25" rx="5" fill="none" stroke="currentColor" stroke-width="3" /><path d="M43 12 H53 V22 M48 17 L53 12 M20 52 H10 V42 M10 52 L15 47" fill="none" stroke="currentColor" stroke-width="3" /></g></symbol><symbol id="yl-mono-task-calendar" viewBox="0 0 64 64"><g stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="14" width="46" height="41" rx="6" fill="none" stroke="currentColor" stroke-width="3" /><path d="M10 26 H54 M21 8 V20 M43 8 V20" fill="none" stroke="currentColor" stroke-width="3" /><rect x="17" y="33" width="10" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="3" /><path d="M35 35 H46 M35 43 H42" fill="none" stroke="currentColor" stroke-width="3" /><path d="M20 48 H26" fill="none" stroke="currentColor" stroke-width="3" /></g></symbol><symbol id="yl-mono-run-history" viewBox="0 0 64 64"><g stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="9" width="34" height="46" rx="5" fill="none" stroke="currentColor" stroke-width="3" /><path d="M18 19 H35 M18 28 H30 M18 37 H25" fill="none" stroke="currentColor" stroke-width="3" /><circle cx="44" cy="43" r="12" fill="none" stroke="currentColor" stroke-width="3" /><path d="M44 36 V43 L50 46" fill="none" stroke="currentColor" stroke-width="3" /></g></symbol><symbol id="yl-mono-memory-timeline" viewBox="0 0 64 64"><g stroke-linecap="round" stroke-linejoin="round"><path d="M16 8 V56" fill="none" stroke="currentColor" stroke-width="3" /><rect x="28" y="10" width="26" height="13" rx="4" fill="none" stroke="currentColor" stroke-width="3" /><rect x="28" y="38" width="26" height="13" rx="4" fill="none" stroke="currentColor" stroke-width="3" /><path d="M16 17 H28 M16 44 H28" fill="none" stroke="currentColor" stroke-width="3" /><circle cx="16" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="3" /><circle cx="16" cy="44" r="4" fill="none" stroke="currentColor" stroke-width="3" /><path d="M35 16.5 H46 M35 44.5 H46" fill="none" stroke="currentColor" stroke-width="3" /></g></symbol><symbol id="yl-mono-plugin-adapter" viewBox="0 0 64 64"><g stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="21" width="17" height="24" rx="5" fill="none" stroke="currentColor" stroke-width="3" /><rect x="40" y="21" width="17" height="24" rx="5" fill="none" stroke="currentColor" stroke-width="3" /><path d="M24 27 H40 M24 39 H40 M12 15 V21 M19 15 V21 M45 45 V52 M52 45 V52" fill="none" stroke="currentColor" stroke-width="3" /><circle cx="32" cy="33" r="4" fill="none" stroke="currentColor" stroke-width="3" /></g></symbol><symbol id="yl-mono-task-flow" viewBox="0 0 64 64"><g stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="9" width="19" height="14" rx="4" fill="none" stroke="currentColor" stroke-width="3" /><rect x="38" y="9" width="19" height="14" rx="4" fill="none" stroke="currentColor" stroke-width="3" /><rect x="22" y="42" width="20" height="14" rx="4" fill="none" stroke="currentColor" stroke-width="3" /><path d="M17 23 V31 H47 V23 M32 31 V42 M27 37 L32 42 37 37" fill="none" stroke="currentColor" stroke-width="3" /></g></symbol><symbol id="yl-mono-tool-catalog" viewBox="0 0 64 64"><g stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="8" width="46" height="48" rx="6" fill="none" stroke="currentColor" stroke-width="3" /><path d="M22 9 V55" fill="none" stroke="currentColor" stroke-width="3" /><rect x="29" y="16" width="17" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="3" /><rect x="29" y="29" width="17" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="3" /><path d="M30 46 H46 M14 19 H17 M14 33 H17 M14 46 H17" fill="none" stroke="currentColor" stroke-width="3" /></g></symbol><symbol id="yl-mono-home" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M3 10.5 12 3l9 7.5" fill="none" />
+<path d="M5 9v10a1.5 1.5 0 0 0 1.5 1.5H17.5A1.5 1.5 0 0 0 19 19V9" fill="none" />
+<path d="M9.5 20.5v-7h5v7" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-canvas" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="3.5" y="3.5" width="17" height="17" rx="2.5" fill="none" />
+<path d="M8 3.5v17M8 8h12.5" fill="none" />
+<path d="M11.5 16.5 16 12l2 2-4.5 4.5-2.5.5Z" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-capabilities" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1.5" fill="none" />
+<rect x="14" y="3.5" width="6.5" height="6.5" rx="1.5" fill="none" />
+<rect x="3.5" y="14" width="6.5" height="6.5" rx="1.5" fill="none" />
+<path d="M17.25 13.5v7.5M13.5 17.25H21" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-agent" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="4" y="7" width="16" height="13" rx="4" fill="none" />
+<path d="M12 7V3.5M9.5 3.5h5M1.8 12v4M22.2 12v4M8 16h8" fill="none" />
+<circle cx="8.5" cy="11.5" r="0.85" fill="currentColor" stroke="none" />
+<circle cx="15.5" cy="11.5" r="0.85" fill="currentColor" stroke="none" />
+</g>
+</symbol><symbol id="yl-mono-knowledge-base" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 6C9 4 6 4 3 4.5v14C6 18 9 18 12 20c3-2 6-2 9-1.5v-14C18 4 15 4 12 6Z" fill="none" />
+<path d="M12 6v14M6 8h3M6 11.5h3M15 8h3M15 11.5h3" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-monitor" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="2.5" y="4" width="19" height="13" rx="2" fill="none" />
+<path d="M5.5 11h3l2-4 3 7 2-3h3M12 17v4M8 21h8" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-account" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<circle cx="12" cy="12" r="9" fill="none" />
+<circle cx="12" cy="9" r="3" fill="none" />
+<path d="M5 17.5c1.5-5 12.5-5 14 0" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-message-channels" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 8v4M5 12h14" fill="none" />
+<rect x="9" y="3" width="6" height="5" rx="1.5" fill="none" />
+<rect x="2" y="16" width="6" height="5" rx="1.5" fill="none" />
+<rect x="16" y="16" width="6" height="5" rx="1.5" fill="none" />
+<path d="M5 12v4M19 12v4" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-learning" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M2 8 12 3l10 5-10 5Z" fill="none" />
+<path d="M6 10v6c3 3 9 3 12 0v-6M22 8v8" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-creation" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="m4 20 1-5L16 4a2.1 2.1 0 0 1 3 3L8 18Z" fill="none" />
+<path d="m14 6 3 3M5 15l3 3M15.5 15.5v6M12.5 18.5h6" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-skill" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M5 3.5h11a2 2 0 0 1 2 2v15H7a2 2 0 0 1-2-2Z" fill="none" />
+<path d="M5 16.5h13M12 6.5l-3 4h5l-3 4" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-mcp" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="2.5" y="8" width="6" height="8" rx="2" fill="none" />
+<rect x="15.5" y="8" width="6" height="8" rx="2" fill="none" />
+<path d="M8.5 10h7M8.5 14h7M4.5 4.5V8M6.5 4.5V8M17.5 16v3.5M19.5 16v3.5" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-import-discover" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M3 8V5.5A1.5 1.5 0 0 1 4.5 4H9l2 2h8.5A1.5 1.5 0 0 1 21 7.5V10" fill="none" />
+<path d="M3 12v7a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 19v-4.5" fill="none" />
+<path d="M11 10v6M8.5 13.5 11 16l2.5-2.5" fill="none" />
+<circle cx="18" cy="11.5" r="2.5" fill="none" />
+<path d="m20 13.5 2 2" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-more" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<circle cx="5" cy="12" r="1.65" fill="none" />
+<circle cx="12" cy="12" r="1.65" fill="none" />
+<circle cx="19" cy="12" r="1.65" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-memory-record" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M5 3.5h9l5 5V19a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19Z" fill="none" />
+<path d="M14 3.5v5h5M8 11h7M8 15h7M8 18h4" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-conversation" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M5 4.5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-5 3v-3H5a2 2 0 0 1-2-2v-10a2 2 0 0 1 2-2Z" fill="none" />
+<path d="M7 9h10M7 13h7" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-security" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 2.5c3 2 6 2.5 8 3v6c0 5-4 8-8 10-4-2-8-5-8-10v-6c2-.5 5-1 8-3Z" fill="none" />
+<path d="M9 11V9a3 3 0 0 1 6 0v2" fill="none" />
+<rect x="8" y="11" width="8" height="6" rx="1.5" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-approval" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="5" y="4.5" width="14" height="17" rx="2" fill="none" />
+<rect x="9" y="2.5" width="6" height="4" rx="1.2" fill="none" />
+<path d="m8 13 2.5 2.5L16 10" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-settings-hub" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M9.5 3h5l.5 2.5 2 .9 2.3-.8 2.5 4.3-1.8 1.6v2.3l1.8 1.6-2.5 4.3-2.3-.8-2 .9-.5 2.2h-5L9 19.8l-2-.9-2.3.8-2.5-4.3L4 13.8v-2.3L2.2 9.9l2.5-4.3 2.3.8 2-.9Z" fill="none" />
+<circle cx="12" cy="12" r="3.5" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-models-services" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M6.5 6.5l2.4 2.4M17.5 6.5l-2.4 2.4M12 18v0" fill="none" />
+<circle cx="5" cy="5" r="2" fill="none" />
+<circle cx="19" cy="5" r="2" fill="none" />
+<circle cx="12" cy="20" r="2" fill="none" />
+<path d="m12 7 5 3v5l-5 3-5-3v-5Z" fill="none" />
+<path d="m7 10 5 3 5-3M12 13v5" fill="none" />
+</g>
+</symbol><symbol id="yl-mono-extensions" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M4 5h5a3 3 0 1 1 6 0h4v5a3 3 0 1 1 0 6v5h-5a3 3 0 1 0-6 0H4v-6a3 3 0 1 0 0-6Z" fill="none" />
+</g>
+</symbol></defs></svg>

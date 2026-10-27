@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="yl-supp-color-canvas-title">
+<title id="yl-supp-color-canvas-title">画布 — 忆涟千言</title>
+<g fill="none" stroke="#80628F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<rect x="3.5" y="3.5" width="17" height="17" rx="2.5" fill="#FFF7FC"/>
+<path d="M8 3.5v17M8 8h12.5" fill="none"/>
+<path d="M11.5 16.5 16 12l2 2-4.5 4.5-2.5.5Z" fill="#EA91B9"/>
+</g>
+</svg>

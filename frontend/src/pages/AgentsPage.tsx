@@ -1,6 +1,7 @@
+import WorkspaceIcon from "../components/ui/WorkspaceIcon";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Bot, ChevronRight, Plus, Search, Users } from "lucide-react";
+import { ChevronRight, Plus, Search, Users } from "lucide-react";
 import { CapabilityMetaRow, CapabilityStatusBadge, formatAgentSource } from "../components/capabilities";
 import { AgentDefinition, AgentTeam, createAgent, listAgents, listTeams } from "../api/client";
 import PersonaEditor from "../features/agents/PersonaEditor";
@@ -61,12 +62,12 @@ export default function AgentsPage() {
         <label className="management-agent-search"><Search size={17} aria-hidden="true" /><input aria-label="搜索智能体" placeholder="搜索智能体…" value={search} onChange={event => setSearch(event.target.value)} /></label>
         <div className="management-agent-list-scroll scrollbar-thin" role="listbox" aria-label="智能体列表">
           {showDefault && <button type="button" className="management-agent-row" role="option" aria-selected={selectedId === "default"} onClick={() => selectAgent("default")}>
-            <span className="management-agent-avatar management-agent-default" aria-hidden="true"><Bot size={21} /></span>
+            <span className="management-agent-avatar management-agent-default" aria-hidden="true"><WorkspaceIcon name="agent" size={21} /></span>
             <span className="management-agent-row-copy"><strong>默认角色</strong><small>日常对话与工作的伙伴</small></span><ChevronRight size={16} aria-hidden="true" />
           </button>}
           {agents === null && !error && <div className="space-y-3 p-2" aria-label="正在加载智能体"><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div>}
           {filteredAgents.map(agent => <button type="button" key={agent.id} className="management-agent-row" role="option" aria-selected={selectedId === agent.id} onClick={() => selectAgent(agent.id)}>
-            <span className="management-agent-avatar" aria-hidden="true"><Bot size={21} /></span>
+            <span className="management-agent-avatar" aria-hidden="true"><WorkspaceIcon name="agent" size={21} /></span>
             <span className="management-agent-row-copy"><strong>{agent.name}</strong><small>{agent.description || "自定义工作角色"}</small></span><ChevronRight size={16} aria-hidden="true" />
           </button>)}
           {agents !== null && !showDefault && filteredAgents.length === 0 && <EmptyState title="没有匹配的智能体" description="换个名称或用途关键词试试。" />}
