@@ -13,6 +13,9 @@ import skillPathSettingsSource from "../features/settings/sections/SkillPathSett
 import voiceSettingsSource from "../features/settings/sections/VoiceSettings.tsx?raw";
 import modelManagerSource from "../features/llm/ModelManagerPanel.tsx?raw";
 import moduleSetupSource from "../components/system/ModuleSetup.tsx?raw";
+import firstRunSource from "../features/setup/FirstRunSetup.tsx?raw";
+import quickFormSource from "../features/setup/QuickModelForm.tsx?raw";
+import appShellSource from "../components/layout/AppShell.tsx?raw";
 import setupWizardSource from "./SetupWizardPage.tsx?raw";
 import settingsNavigationSource from "../features/settings/model/settingsNavigation.ts?raw";
 import settingsStyleSource from "../styles/settings.css?raw";
@@ -138,11 +141,12 @@ describe("Settings contract", () => {
   });
 
   it("routes first-run setup to one guided wizard without requiring voice", () => {
-    expect(moduleSetupSource).toContain('navigate("/setup")');
-    expect(setupWizardSource).toContain("v1.1 首次配置");
-    expect(setupWizardSource).toContain("getProviderReadiness");
-    expect(setupWizardSource).toContain("文字智能功能需要一个可用模型");
+    expect(appShellSource).toContain("<FirstRunSetup><Outlet /></FirstRunSetup>");
+    expect(firstRunSource).toContain('<Navigate to="/setup" replace />');
+    expect(moduleSetupSource).not.toContain('navigate("/setup")');
+    expect(setupWizardSource).toContain("连接你的第一个模型");
+    expect(quickFormSource).toContain("保存并测试连接");
     expect(setupWizardSource).toContain("语音能力可以稍后配置");
-    expect(setupWizardSource).toContain("稍后完成");
+    expect(setupWizardSource).toContain("稍后配置");
   });
 });

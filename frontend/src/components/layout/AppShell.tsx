@@ -7,6 +7,7 @@ import RouteLoadingSurface from "./RouteLoadingSurface";
 import RouteErrorBoundary from "./RouteErrorBoundary";
 import { useUiNavigationShortcuts } from "./useUiNavigationShortcuts";
 import { CommandPalette, CyreneToast } from "../ui";
+import FirstRunSetup from "../../features/setup/FirstRunSetup";
 
 export default function AppShell() {
   const { theme, resolvedScheme } = useTheme();
@@ -56,7 +57,7 @@ export default function AppShell() {
       <main className={`${APP_CONTENT_VIEWPORT_CLASS_NAME} workspace-region relative z-10`}>
         <Suspense fallback={<RouteLoadingSurface />}>
           <RouteErrorBoundary>
-            <Outlet />
+            <FirstRunSetup><Outlet /></FirstRunSetup>
           </RouteErrorBoundary>
         </Suspense>
       </main>

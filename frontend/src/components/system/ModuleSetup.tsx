@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
 import { Button, Modal } from "../ui";
 import { NAV_GROUPS } from "../layout/navGroups";
 import { MANDATORY_NAV, TRUSTED_MODULES, type ProductPreferences } from "./productPreferences";
@@ -39,16 +38,9 @@ export function ModuleSettingsEditor({ onClose, onSaved }: { onClose: () => void
 }
 
 export default function ModuleSetup() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { preferences, loaded } = useProductPreferences();
+  const { preferences } = useProductPreferences();
   const [open, setOpen] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  useEffect(() => {
-    const deferred = window.sessionStorage.getItem("yilian.setup.deferred") === "true";
-    if (loaded && !preferences.setup_completed && !dismissed && !deferred && location.pathname !== "/setup") navigate("/setup");
-  }, [dismissed, loaded, location.pathname, navigate, preferences.setup_completed]);
-  const close = () => { setDismissed(true); setOpen(false); };
+  const close = () => setOpen(false);
   return <>
     <button type="button" className="shrink-0 rounded-lg p-1 text-[10px] hover:bg-white/10" aria-label="配置系统模块与导航" onClick={() => setOpen(true)}>定制导航</button>
     <Modal open={open} onClose={close} title={preferences.setup_completed ? "系统模块与导航" : "选择可选系统模块"}>
