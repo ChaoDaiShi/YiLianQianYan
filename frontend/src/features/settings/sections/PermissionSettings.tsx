@@ -24,7 +24,7 @@ export default function PermissionSettings({
   return (
     <>
       <section className="settings-card settings-card--wide">
-        <header className="settings-card-header"><div><h3>操作权限</h3><p>选择小昔涟执行操作时需要向你请求批准的时机。</p></div></header>
+        <header className="settings-card-header"><div><h3>操作权限</h3><p>选择小涟执行操作时需要向你请求批准的时机。</p></div></header>
         <div className="settings-card-body">
           <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="审批模式">
             {approvalModes.map(mode => <label key={mode.value} className={`cursor-pointer rounded-xl border p-4 ${config.permissions.mode === mode.value ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border-soft)]"}`}>

@@ -23,7 +23,7 @@ export function resolveAgentStatus({
 }
 
 export const AGENT_STATUS_LABELS: Record<AgentStatus, string> = {
-  idle: "小昔涟正在等待你的指令",
+  idle: "小涟正在等待你的指令",
   running: "正在为你处理任务……",
   approval: "有一步需要你的确认",
   finished: "已经处理好了",

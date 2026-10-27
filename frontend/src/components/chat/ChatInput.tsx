@@ -167,7 +167,7 @@ export default function ChatInput({
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={event => { const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith("image/")); if (files.length) { event.preventDefault(); addFiles(files); } }}
-          placeholder={workspaceMode === "chat" ? "和小昔涟聊聊…" : workspaceMode === "work" ? "描述你希望完成的工作…" : "写下想法，开始创造…"}
+          placeholder={workspaceMode === "chat" ? "和小涟聊聊…" : workspaceMode === "work" ? "描述你希望完成的工作…" : "写下想法，开始创造…"}
           aria-label="聊天输入"
           rows={1}
           disabled={isLoading || disabled}

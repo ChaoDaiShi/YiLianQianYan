@@ -171,7 +171,7 @@ export default function WorkbenchHome({
             <div className="home-character-petals" aria-hidden="true" />
             <img
               src="/cyrene-home-character.png"
-              alt="小昔涟"
+              alt="小涟"
               className="home-character-image h-[168px] w-[168px] object-contain"
             />
           </button>

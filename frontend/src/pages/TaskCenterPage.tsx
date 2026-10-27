@@ -230,7 +230,7 @@ export default function TaskCenterPage() {
   return (
     <PageShell
       title="任务中心"
-      description="管理小昔涟执行过的任务和当前进度"
+      description="管理小涟执行过的任务和当前进度"
       variant="workspace"
       className="task-center-page page-canvas ui-opt-tasks"
       contentClassName="p-4 gap-3 flex flex-col min-h-0"
@@ -434,7 +434,7 @@ export default function TaskCenterPage() {
             <EmptyState
               icon={<ListTodo className="h-6 w-6" />}
               title="还没有任务记录"
-              description="告诉小昔涟你想完成什么，执行过的任务会逐渐出现在这里。"
+              description="告诉小涟你想完成什么，执行过的任务会逐渐出现在这里。"
               action={
                 <Button type="button" onClick={() => navigate("/chat")}>
                   开始一个任务

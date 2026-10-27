@@ -84,7 +84,7 @@ export async function connectorWorkbench({page,frontendPort,backendPort,controlT
   await page.getByRole("dialog").last().locator('button[aria-label^="关闭"]').click();
   await page.goto(`${origin}/chat/${conversation.id}`);
   assert.equal((await page.getByRole("button",{name:"与小涟语音对话",exact:true}).innerText()).trim(),"");
-  await page.getByPlaceholder("告诉小昔涟你想完成什么……").fill("请回复一句简短的话，不调用工具。");
+  await page.getByPlaceholder("告诉小涟你想完成什么……").fill("请回复一句简短的话，不调用工具。");
   const chatResponse=page.waitForResponse(response=>response.url()===base+"/api/chat"&&response.request().method()==="POST");
   await page.getByRole("button",{name:"发送消息",exact:true}).click();
   const response=await chatResponse;assert.ok(response.ok());const stream=await response.text();

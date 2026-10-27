@@ -35,7 +35,7 @@ export default function AgentsPage() {
   const selectedAgent = useMemo(() => agents?.find(agent => agent.id === selectedId) ?? null, [agents, selectedId]);
   const query = search.trim().toLowerCase();
   const filteredAgents = agents?.filter(agent => `${agent.name} ${agent.description}`.toLowerCase().includes(query)) ?? [];
-  const showDefault = !query || "默认角色 日常工作伙伴 小昔涟".includes(query);
+  const showDefault = !query || "默认角色 日常工作伙伴 小涟".includes(query);
   const selectAgent = (id: string) => { setSelectedId(id); setSearchParams({ agent: id }); };
   const handleOpenCreate = () => { setCreateError(null); setShowCreate(true); };
   const handleCreate = async () => {

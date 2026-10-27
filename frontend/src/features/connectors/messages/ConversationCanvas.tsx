@@ -26,7 +26,7 @@ function ConversationSpeech({ data, selected }: NodeProps<SpeechNode>) {
   return <article className="message-branch-node" data-role={message.role} data-selected={selected} data-path={data.onPath} data-status={message.status}>
     <Handle id="previous" type="target" position={Position.Top} /><Handle id="branch-target" type="target" position={Position.Left} />
     <div className="canvas-node-context"><span>{data.origin}</span><span title={data.title}>{data.title}</span></div>
-    <header><strong>{message.role === "user" ? "我的提问" : "小昔涟的回答"}</strong><span>{message.role === "user" ? "提问" : statusLabels[message.status] ?? message.status}</span></header>
+    <header><strong>{message.role === "user" ? "我的提问" : "小涟的回答"}</strong><span>{message.role === "user" ? "提问" : statusLabels[message.status] ?? message.status}</span></header>
     <p>{message.content || "（无正文）"}</p>
     {!!message.attachments?.length&&<span className="canvas-node-attachments"><Paperclip size={12}/>{message.attachments.length} 个附件</span>}
     {message.reasoning && <span className="conversation-canvas-reasoning-label">含思考过程</span>}

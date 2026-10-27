@@ -6,7 +6,7 @@ describe("Monitor contract", () => {
     expect(source).toContain("getSystemInfo");
     expect(source).toContain("healthCheck");
     expect(source).toContain("SystemStatusBadge");
-    expect(source).not.toContain("小昔涟在线");
+    expect(source).not.toContain("小涟在线");
     expect(source).not.toContain("Agent 在线");
     expect(source).not.toContain("MCP 在线");
   });

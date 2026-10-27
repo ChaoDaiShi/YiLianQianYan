@@ -207,7 +207,7 @@ export default function MemoryPage() {
   return (
     <PageShell
       title="记忆"
-      description="你可以查看、修改，也可以让小昔涟忘记。"
+      description="你可以查看、修改，也可以让小涟忘记。"
       variant="workspace"
       className="memory-page page-canvas ui-opt-memory management-memory-page"
       contentClassName="management-memory-content"
@@ -233,7 +233,7 @@ export default function MemoryPage() {
         </div>
         {deleteError && !detailOpen && <p role="alert" className="text-sm text-[var(--danger)]">{deleteError}</p>}
         <section className="management-memory-list scrollbar-thin" aria-label="记忆列表">
-          {listLoading ? <MemoryListSkeleton /> : listError ? <ErrorState title="记忆暂时无法加载" description={listError} action={<Button variant="secondary" size="sm" onClick={reload}>重试</Button>} /> : memories.length === 0 ? hasActiveFilter ? <EmptyState icon={<Brain className="h-6 w-6" />} title="没有匹配的记忆记录" description="当前搜索或筛选条件下未找到匹配项。" action={<Button variant="secondary" size="sm" onClick={handleClearFilters}>清除筛选</Button>} /> : <EmptyState icon={<Brain className="h-6 w-6" />} title="这里暂时还没有记忆记录" description={view === "withdrawn" ? "撤回的记忆会保留在这里，不再用于检索。" : "小昔涟会在对话中提取，也可以手动添加。"} action={view === "active" ? <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>添加记忆</Button> : undefined} /> : memories.map(memory => <MemoryRow key={memory.id} memory={memory} selected={memory.id === selectedId} withdrawn={view === "withdrawn"} onSelect={() => { setSelectedId(memory.id); setDetailOpen(true); }} onEdit={() => handleOpenEdit(memory)} onDelete={() => handleDelete(memory)} />)}
+          {listLoading ? <MemoryListSkeleton /> : listError ? <ErrorState title="记忆暂时无法加载" description={listError} action={<Button variant="secondary" size="sm" onClick={reload}>重试</Button>} /> : memories.length === 0 ? hasActiveFilter ? <EmptyState icon={<Brain className="h-6 w-6" />} title="没有匹配的记忆记录" description="当前搜索或筛选条件下未找到匹配项。" action={<Button variant="secondary" size="sm" onClick={handleClearFilters}>清除筛选</Button>} /> : <EmptyState icon={<Brain className="h-6 w-6" />} title="这里暂时还没有记忆记录" description={view === "withdrawn" ? "撤回的记忆会保留在这里，不再用于检索。" : "小涟会在对话中提取，也可以手动添加。"} action={view === "active" ? <Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}>添加记忆</Button> : undefined} /> : memories.map(memory => <MemoryRow key={memory.id} memory={memory} selected={memory.id === selectedId} withdrawn={view === "withdrawn"} onSelect={() => { setSelectedId(memory.id); setDetailOpen(true); }} onEdit={() => handleOpenEdit(memory)} onDelete={() => handleDelete(memory)} />)}
         </section>
         <details className="memory-maintenance-panel management-memory-maintenance"><summary>记忆维护 · 当前列表 {memories.length} 条</summary>
           <div className="memory-maintenance-content"><div><p className="text-sm font-medium">重建记忆索引</p><p className="mt-1 text-xs text-[var(--text-secondary)]">为缺少索引的记忆补充检索数据。</p></div><Button variant="secondary" size="sm" onClick={reindexMemoriesAction} disabled={isReindexing}><RefreshCw className={`h-3.5 w-3.5 ${isReindexing ? "animate-spin" : ""}`} />{isReindexing ? "处理中…" : "重建索引"}</Button></div>

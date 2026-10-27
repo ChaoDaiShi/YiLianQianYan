@@ -193,7 +193,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
   return (
     <ManagementFrame embedded={embedded} variant="workspace"
       title="技能"
-      description="管理小昔涟可以使用的技能能力。"
+      description="管理小涟可以使用的技能能力。"
       className="capability-page skills-page page-canvas ui-opt-capabilities ui-opt-skills"
       contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
       actions={

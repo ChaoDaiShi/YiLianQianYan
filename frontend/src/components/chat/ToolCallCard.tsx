@@ -208,7 +208,7 @@ export default function ToolCallCard({
                 : effectiveStatus === "success"
                   ? formatToolResultSummary(result)
                   : effectiveStatus === "blocked"
-                    ? "小昔涟正在等待你的许可"
+                    ? "小涟正在等待你的许可"
                     : errorPresentation?.message ||
                       "这个操作没有成功，请展开错误日志了解原因。"}
           </span>

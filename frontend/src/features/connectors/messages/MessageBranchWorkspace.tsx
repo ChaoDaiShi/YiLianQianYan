@@ -21,7 +21,7 @@ function Speech({ data, selected }: NodeProps<SpeechNode>) {
   const message = data.message;
   return <article className="message-branch-node" data-role={message.role} data-selected={selected} data-path={data.onPath}>
     <Handle type="target" position={Position.Top} />
-    <header><strong>{message.role === "user" ? "我的提问" : "小昔涟的回答"}</strong><span>{message.status === "streaming" ? "正在回复" : message.role === "assistant" ? "回答" : "提问"}</span></header>
+    <header><strong>{message.role === "user" ? "我的提问" : "小涟的回答"}</strong><span>{message.status === "streaming" ? "正在回复" : message.role === "assistant" ? "回答" : "提问"}</span></header>
     <p>{message.content || (message.status === "streaming" ? "等待模型回复…" : "（无正文）")}</p>
     {message.role === "assistant" && !message.id.startsWith("pending-") && <button type="button" className="message-branch-node-action nodrag nopan" aria-label="从此回答继续提问" disabled={data.busy} onClick={event => { event.stopPropagation(); data.onBranch(); }}><GitBranch size={11} />继续提问</button>}
     {message.error && <small role="alert">{message.error}</small>}

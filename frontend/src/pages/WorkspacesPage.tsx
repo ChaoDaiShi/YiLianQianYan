@@ -148,7 +148,7 @@ export default function WorkspacesPage() {
           <EmptyState
             icon={<FolderOpen className="h-6 w-6" />}
             title="还没有工作空间"
-            description="选择一个工作目录后，小昔涟可以在其中读取和处理文件。"
+            description="选择一个工作目录后，小涟可以在其中读取和处理文件。"
             action={
               <Button onClick={handleOpenCreate}>
                 <Plus className="h-4 w-4" />

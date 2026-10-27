@@ -119,7 +119,7 @@ export default function MessageList({
             {!streaming.content && !streaming.reasoning && streaming.toolCalls.length === 0 && (
               <div className="conversation-streaming-wait flex items-center gap-3 px-1 py-3" aria-label="正在生成">
                 <span className="text-xs text-[var(--text-secondary)]">
-                  正在接收小昔涟的回复…
+                  正在接收小涟的回复…
                 </span>
                 <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent-primary)]" />
               </div>
