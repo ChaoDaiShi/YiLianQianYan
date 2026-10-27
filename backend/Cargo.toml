@@ -69,6 +69,30 @@ dirs = "5"
 keyring = "4"
 secrecy = "0.10"
 
+# Cross-platform desktop capability dependencies.
+# These are consumed by code that is compiled on Windows, macOS and Linux;
+# keeping them in the Windows-only section below made the macOS build fail
+# with unresolved `enigo`, `xcap`, `image`, `base64` and `sysinfo` imports.
+
+# Input simulation (mouse + keyboard)
+enigo = { version = "0.3", features = ["serde"] }
+
+# Screenshot
+xcap = "0.3"
+
+# Image encoding for screenshot and rendered deliverables (PNG/JPEG)
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Base64 encoding
+base64 = "0.22"
+
+# System information
+sysinfo = "0.31"
+
+# OneBot v11 mandates HMAC-SHA1 for signed HTTP event callbacks.
+hmac = "0.12"
+sha1 = "0.10"
+
 # Windows OS-assisted process isolation (privilege-reduced token + Job Object)
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -81,22 +105,3 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_IO",
     "Win32_UI_WindowsAndMessaging",
 ] }
-
-# Input simulation (mouse + keyboard)
-enigo = { version = "0.3", features = ["serde"] }
-
-# Screenshot
-xcap = "0.3"
-
-# Image encoding for screenshot (PNG/JPEG)
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-
-# Base64 encoding
-base64 = "0.22"
-
-# OneBot v11 mandates HMAC-SHA1 for signed HTTP event callbacks.
-hmac = "0.12"
-sha1 = "0.10"
-
-# System information
-sysinfo = "0.31"
