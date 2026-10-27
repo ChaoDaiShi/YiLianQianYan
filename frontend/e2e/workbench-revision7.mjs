@@ -151,7 +151,9 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     assert.equal(await gitToggle.getAttribute("aria-pressed"),"false");
     assert.equal(await page.locator("#chat-execution-panel").count(),0);
     const layout=await page.locator(".ui-opt-chat").evaluate(el=>{const chat=el.querySelector(".chat-region");const parent=el.getBoundingClientRect(),box=chat.getBoundingClientRect();return {tracks:getComputedStyle(el).gridTemplateColumns,rightGap:parent.right-box.right,width:box.width};});
-    assert.ok(layout.rightGap<=1,JSON.stringify(layout));assert.equal(layout.tracks.split(" ").length,2);
+    assert.ok(layout.rightGap<=1,JSON.stringify(layout));
+    assert.equal(await page.locator(".ui-opt-chat").getAttribute("data-history-collapsed"), "true");
+    assert.equal(layout.tracks.split(" ").length,1);
     facts.layout=layout;facts.checks.push("work_mode_keeps_git_collapsed_and_no_right_reserved_gap");
     await screenshot("chat-no-right-gap");
     const gitRequests=[];const trackGit=request=>{if(new URL(request.url()).pathname==="/api/workspace-git")gitRequests.push(request.url());};page.on("request",trackGit);
@@ -188,6 +190,9 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     assert.notEqual(independentId, rootId);
     await navigate(`/connectors?conversation=${rootId}`);
     let overview = await eventually(() => api("GET", "/api/message-canvas"), result => result.conversations.length === 2, "two actual independent conversations");
+    const familyFilter = page.getByRole("combobox", { name: "定位画布对话", exact: true });
+    await eventually(() => familyFilter.inputValue(), value => value === rootId, "deep link selects its conversation family");
+    await familyFilter.selectOption("");
     await eventually(() => page.locator(".react-flow__node-conversationSpeech").count(), count => count === overview.conversations.reduce((total, conversation) => total + conversation.nodes.length, 0), "actual message forest nodes");
     assert.equal(await page.locator('.conversation-canvas-group, .react-flow__node-conversationGroup').count(), 0);
     assert.equal(await page.locator(".react-flow__node").count(), overview.conversations.flatMap(conversation => conversation.nodes).length);
@@ -211,7 +216,7 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     const independent = overview.conversations.find(conversation => conversation.id === independentId);
     assert.equal(independent.nodes[0].parent_id, null);
     assert.equal(await page.locator(`[data-id="message:${independent.nodes[0].id}"]`).count(), 0);
-    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await page.getByRole("button", { name: "取消创建分支", exact: true }).click();
     await page.getByRole("button", { name: "关闭消息详情", exact: true }).click();
     await page.getByRole("button", { name: "适应画布", exact: true }).click();
     await screenshot("message-forest-alternative-path");
@@ -245,6 +250,7 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     await navigate(`/chat/${branch.id}`);
     await page.getByRole("combobox", { name: "对话路径", exact: true }).waitFor();
     assert.equal(await page.getByRole("combobox", { name: "对话路径", exact: true }).locator("option").count(), 2);
+    await page.getByRole("button", { name: "打开任务列表", exact: true }).click();
     await eventually(() => page.locator(".conversation-row").count(), count => count === 2, "sidebar lists two families rather than three execution conversations");
     assert.ok(!(await page.locator(".conversation-message-user").allTextContents()).some(value => value.includes(LATER_QUESTION)));
     await page.getByRole("combobox", { name: "对话路径", exact: true }).selectOption(rootId);

@@ -65,6 +65,13 @@ pub fn zone_allows(zone: NetworkZone, host: &str) -> bool {
 }
 
 pub fn classify_ip(ip: std::net::IpAddr) -> NetworkZone {
+    // IPv4-mapped IPv6 addresses reach IPv4 destinations and must inherit
+    // their zone; Ipv6Addr::is_loopback() only recognizes ::1.
+    if let std::net::IpAddr::V6(ipv6) = ip {
+        if let Some(ipv4) = ipv6.to_ipv4_mapped() {
+            return classify_ip(std::net::IpAddr::V4(ipv4));
+        }
+    }
     match ip {
         std::net::IpAddr::V4(ip) if ip.is_loopback() => NetworkZone::Loopback,
         std::net::IpAddr::V4(ip)

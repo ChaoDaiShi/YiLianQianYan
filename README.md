@@ -39,6 +39,8 @@ cargo run
 
 ### 2. 启动前端
 
+使用 Node.js 22 或 24（CI 使用 Node.js 22）；前端构建使用 Vite 6，测试使用 Vitest 4。
+
 ```powershell
 cd frontend
 npm install
@@ -248,7 +250,7 @@ v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「
   - Grant CRUD API（protected）+ `/api/security/isolation/status`（诚实：process containment Active；OS filesystem/network namespace **未实现**，非容器级隔离）。
   - Windows hardening：受限令牌必须验证为严格降权；管道句柄继承失败即阻断；Job Object 真实回归覆盖孙进程树；优雅退出会清理 ManagedProcessRegistry。
   - ProcessTool 只能终止 Gateway 注册的 managed child，拒绝后端自身 PID 与未知宿主 PID；Bash/HTTP 直达 Tool Registry 的执行路径 fail closed。
-  - HTTP 只允许经 Gateway 的固定 DNS 地址请求；解析结果必须全部属于目标 NetworkZone，重定向关闭，敏感请求/响应头与 URL query 不进入可见结果。
+  - HTTP 只允许经 Gateway 的固定 DNS 地址请求；解析结果必须全部属于目标 NetworkZone，IPv4 映射 IPv6 地址按其实际 IPv4 地址分类，重定向关闭。请求 URL 的 query 不进入显示地址或网络错误文本，敏感请求/响应头被过滤；响应体读取中断或超时明确返回工具失败，不以空正文报告成功。
   - 每次资源授权评估写入 `grant_evaluated` 审计事件，审计上下文只保留类型化、脱敏证据；审计持久化失败时在副作用前 fail closed。
   - Settings「权限」页面提供 Filesystem/Network/Process/Shell 授权创建、删除、风险提示与真实隔离状态；不宣传 Full Sandbox。
 

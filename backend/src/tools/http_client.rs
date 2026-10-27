@@ -230,7 +230,15 @@ impl HttpRequestTool {
             Ok(response) => {
                 let status = response.status();
                 let headers = safe_response_headers(response.headers());
-                let body = response.text().await.unwrap_or_default();
+                let body = match response.text().await {
+                    Ok(body) => body,
+                    Err(error) => {
+                        return ToolResult::error(format!(
+                            "HTTP响应体读取失败: {}",
+                            error.without_url()
+                        ));
+                    }
+                };
                 let body_display = truncate_chars(&body, 10000);
                 let body_display = if body.chars().count() > 10000 {
                     format!(
@@ -250,7 +258,7 @@ impl HttpRequestTool {
                     body_display
                 ))
             }
-            Err(error) => ToolResult::error(format!("HTTP请求失败: {error}")),
+            Err(error) => ToolResult::error(format!("HTTP请求失败: {}", error.without_url())),
         }
     }
 }
@@ -258,6 +266,7 @@ impl HttpRequestTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod regressions;
     use crate::tools::trait_def::ToolExecutionContext;
     use async_trait::async_trait;
     use axum::{http::HeaderMap, response::IntoResponse, routing::get, Router};
