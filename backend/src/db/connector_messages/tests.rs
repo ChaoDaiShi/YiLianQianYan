@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn message_graph_retains_assistant_history_reasoning_without_attributing_it_to_user() {
+    let db = Database::new(std::path::Path::new(":memory:")).unwrap();
+    let (canvas, root) = seed(&db);
+    append(&db, &root, "inspector-u", "user", "Question", 1);
+    append(&db, &root, "inspector-a", "assistant", "Answer", 2);
+    db.conn().execute("INSERT INTO settings(key,value) VALUES('chat_turn_reasoning:inspector-u','turn-level thought'),('chat_reasoning:inspector-a','actual answer thought')", []).unwrap();
+    db.create_connector_message_graph(&canvas, &root).unwrap();
+    let graph = db.connector_message_graph(&canvas, &root).unwrap();
+    let user = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == "inspector-u")
+        .unwrap();
+    let answer = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == "inspector-a")
+        .unwrap();
+    assert!(user.reasoning.is_none());
+    assert_eq!(answer.reasoning.as_deref(), Some("actual answer thought"));
+    let overview = db.message_canvas_overview().unwrap();
+    let same_answer = overview
+        .conversations
+        .iter()
+        .flat_map(|item| &item.nodes)
+        .find(|node| node.id == answer.id)
+        .unwrap();
+    assert_eq!(same_answer.reasoning, answer.reasoning);
+}
+
+#[test]
 fn former_frame_and_relative_message_coordinates_project_to_absolute_message_positions() {
     let db = Database::new(std::path::Path::new(":memory:")).unwrap();
     let source = db.create_conversation("Layout source").unwrap().id;

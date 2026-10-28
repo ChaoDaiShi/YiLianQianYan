@@ -35,12 +35,24 @@ export function layoutMessageTree(nodes: TreeEntry[]): Record<string, MessagePos
   for (const node of nodes) children.set(node.parent_id, [...(children.get(node.parent_id) ?? []), node]);
   const result: Record<string, MessagePosition> = {};
   function place(node: TreeEntry, column: number, depth: number): number {
-    result[node.id] = { x: 48 + column * 324, y: 40 + depth * 160 };
+    result[node.id] = { x: 48 + column * 324, y: 40 + depth * 192 };
     let nextColumn = column;
     for (const child of children.get(node.id) ?? []) nextColumn = place(child, nextColumn, depth + 1);
     return Math.max(column + 1, nextColumn);
   }
   let column = 0;
-  for (const root of children.get(null) ?? []) column = place(root, column, 0);
+  for (const root of children.get(null) ?? []) column = place(root, column, 0) + 2;
+  return result;
+}
+
+/** Preserve existing positions and allocate space for new messages without overlaps. */
+export function placeNewMessages(automatic: Record<string, MessagePosition>, existing: Record<string, MessagePosition>): Record<string, MessagePosition> {
+  const result = { ...existing };
+  for (const [id, point] of Object.entries(automatic)) {
+    if (result[id]) continue;
+    const candidate = { ...point };
+    while (Object.values(result).some(other => Math.abs(other.x - candidate.x) < 320 && Math.abs(other.y - candidate.y) < 188)) candidate.x += 324;
+    result[id] = candidate;
+  }
   return result;
 }

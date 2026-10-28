@@ -77,25 +77,35 @@ async fn overview_layout(
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct OverviewBranch {
     conversation_id: String,
     parent_node_id: String,
     message: String,
+    #[serde(default)]
+    resource_ids: Vec<String>,
+    #[serde(flatten)]
+    options: super::chat::options::ChatRequestOptions,
 }
 
 async fn overview_branch(
     State(server): State<Arc<AppServer>>,
     Json(body): Json<OverviewBranch>,
 ) -> ApiResult<Response> {
-    if body.message.trim().is_empty() {
+    if body.message.trim().is_empty() && body.resource_ids.is_empty() {
         return Err(bad("消息内容不能为空".into()));
     }
     let conversation = server
         .db
         .fork_message_canvas_conversation(&body.conversation_id, &body.parent_node_id)
         .map_err(bad)?;
-    execute_turn(server, conversation, body.message).await
+    execute_turn(
+        server,
+        conversation,
+        body.message,
+        body.resource_ids,
+        body.options,
+    )
+    .await
 }
 
 async fn sources(
@@ -193,10 +203,13 @@ async fn layout(
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Turn {
     parent_node_id: Option<String>,
     message: String,
+    #[serde(default)]
+    resource_ids: Vec<String>,
+    #[serde(flatten)]
+    options: super::chat::options::ChatRequestOptions,
 }
 
 async fn turn(
@@ -204,29 +217,48 @@ async fn turn(
     Path((canvas, root)): Path<(String, String)>,
     Json(body): Json<Turn>,
 ) -> ApiResult<Response> {
-    if body.message.trim().is_empty() {
+    if body.message.trim().is_empty() && body.resource_ids.is_empty() {
         return Err(bad("消息内容不能为空".into()));
     }
     let conversation = server
         .db
         .fork_connector_message(&canvas, &root, body.parent_node_id.as_deref())
         .map_err(bad)?;
-    execute_turn(server, conversation, body.message).await
+    execute_turn(
+        server,
+        conversation,
+        body.message,
+        body.resource_ids,
+        body.options,
+    )
+    .await
 }
 
 async fn execute_turn(
     server: Arc<AppServer>,
     conversation: String,
     message: String,
+    resource_ids: Vec<String>,
+    options: super::chat::options::ChatRequestOptions,
 ) -> ApiResult<Response> {
-    let options = server.db.load_chat_options(&conversation).map_err(bad)?;
+    if !resource_ids.is_empty() {
+        server
+            .db
+            .bind_resources(
+                &crate::db::ResourceTarget::Conversation {
+                    conversation_id: conversation.clone(),
+                },
+                &resource_ids,
+            )
+            .map_err(bad)?;
+    }
     let result = super::chat::chat_handler(
         State(server.clone()),
         Json(super::chat::ChatRequest {
             options,
             conversation_id: Some(conversation.clone()),
             message,
-            resource_ids: Vec::new(),
+            resource_ids,
             workflow_id: None,
             goal_ref: None,
         }),

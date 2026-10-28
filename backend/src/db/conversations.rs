@@ -123,7 +123,7 @@ pub struct MessageRow {
     pub created_at: i64,
 }
 
-fn reasoning_map(
+pub(super) fn reasoning_map(
     conn: &rusqlite::Connection,
     conversation: &str,
     prefix: &str,

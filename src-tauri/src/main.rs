@@ -143,6 +143,42 @@ fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn configure_initial_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let window = app.get_webview_window("main").ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "main window is unavailable")
+    })?;
+    let monitor = match window.current_monitor()? {
+        Some(monitor) => monitor,
+        None => window.primary_monitor()?.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "primary monitor is unavailable",
+            )
+        })?,
+    };
+    let work_area = monitor.work_area();
+    let scale = monitor.scale_factor();
+    let inner = window.inner_size()?;
+    let outer = window.outer_size()?;
+    let frame_width = (f64::from(outer.width) - f64::from(inner.width)) / scale;
+    let frame_height = (f64::from(outer.height) - f64::from(inner.height)) / scale;
+    let width = (f64::from(work_area.size.width) * 0.9 / scale - frame_width)
+        .max(800.0)
+        .min(1440.0);
+    let height = (f64::from(work_area.size.height) * 0.9 / scale - frame_height)
+        .max(600.0)
+        .min(900.0);
+    window.set_size(tauri::LogicalSize::new(width, height))?;
+    let outer = window.outer_size()?;
+    let x = i64::from(work_area.position.x)
+        + (i64::from(work_area.size.width) - i64::from(outer.width)) / 2;
+    let y = i64::from(work_area.position.y)
+        + (i64::from(work_area.size.height) - i64::from(outer.height)) / 2;
+    window.set_position(tauri::PhysicalPosition::new(x as i32, y as i32))?;
+    window.show()?;
+    Ok(())
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -244,7 +280,8 @@ fn main() {
                     .emit_to("main", "floating:closed", window.label());
             }
         })
-        .setup(|_app| {
+        .setup(|app| {
+            configure_initial_main_window(app)?;
             tracing::info!("Tauri desktop window ready, backend on http://127.0.0.1:9420");
             Ok(())
         })

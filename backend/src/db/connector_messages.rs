@@ -175,6 +175,12 @@ fn graph_on(
     };
     for (run, prefix) in runs {
         let mut parent = run.parent_node_id.clone();
+        let reasoning = super::conversations::reasoning_map(
+            conn,
+            &run.conversation_id,
+            "chat_reasoning:",
+            "assistant",
+        )?;
         for message in messages(conn, &run.conversation_id)?
             .into_iter()
             .skip(prefix)
@@ -189,7 +195,7 @@ fn graph_on(
                 created_at: message.created_at,
                 status: run.status.clone(),
                 error: run.error.clone(),
-                reasoning: None,
+                reasoning: reasoning.get(&message.id).cloned(),
             });
             parent = Some(message.id);
         }
