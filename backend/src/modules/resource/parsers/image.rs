@@ -6,10 +6,10 @@
 //! sniffed, so a file cannot pick its own decoder.
 
 pub(crate) fn dimensions(mime: &str, bytes: &[u8]) -> Result<(u32, u32), String> {
-    let expected = if mime == "image/png" {
-        image::ImageFormat::Png
-    } else {
-        image::ImageFormat::Jpeg
+    let expected = match mime {
+        "image/png" => image::ImageFormat::Png,
+        "image/jpeg" => image::ImageFormat::Jpeg,
+        _ => return Err("不支持的图片格式".into()),
     };
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), expected);
     let mut limits = image::Limits::default();

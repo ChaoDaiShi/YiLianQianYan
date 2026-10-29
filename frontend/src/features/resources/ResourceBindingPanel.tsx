@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { bindResources, getResource, listResourceBindings, listResources, unbindResource, type Resource, type ResourceBinding, type ResourceTarget } from "../../api/resources";
-import { ResourcePreviewDisclosure } from "./ResourceAttachments";
+import { ResourceCard } from "./ResourceCard";
 
 export default function ResourceBindingPanel({ target }: { target: ResourceTarget }) {
   const key = JSON.stringify(target);
@@ -28,7 +28,7 @@ export default function ResourceBindingPanel({ target }: { target: ResourceTarge
     <button type="button" disabled={busy || !selected.length || selected.length > 8} onClick={() => void run(() => bindResources(target, selected))}>绑定所选资源</button>
     {!bindings.length ? <p>尚未绑定输入资源</p> : <ul className="space-y-2">{bindings.map(binding => <li key={binding.id}>
       <div className="flex justify-between"><span>{binding.resource?.name || "资源记录缺失"}</span><button type="button" disabled={busy} onClick={() => void run(() => unbindResource(binding.id))}>解除绑定</button></div>
-      <ResourcePreviewDisclosure resourceId={binding.resource_id} />
+      {binding.resource&&<ResourceCard file={{id:binding.resource_id,name:binding.resource.name,mime_type:binding.resource.mime_type,size:binding.resource.size}}/>}
     </li>)}</ul>}
   </section>;
 }

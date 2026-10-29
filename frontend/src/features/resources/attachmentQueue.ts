@@ -7,16 +7,21 @@ export interface AttachmentQueueOptions {
 }
 export const MAX_ATTACHMENTS = 8;
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-const EXTENSIONS = new Set(["txt", "md", "markdown", "csv", "tsv", "rs", "ts", "tsx", "js", "jsx", "json", "py", "css", "html", "yaml", "yml", "toml", "xml", "sql", "log", "png", "jpg", "jpeg", "pdf", "docx", "pptx", "xlsx"]);
+const EXTENSIONS = new Set(["txt", "md", "markdown", "csv", "tsv", "rs", "ts", "tsx", "js", "jsx", "json", "py", "css", "html", "yaml", "yml", "toml", "xml", "sql", "log", "png", "jpg", "jpeg", "gif", "webp", "pdf", "rtf", "doc", "ppt", "xls", "zip", "mp3", "wav", "ogg", "mp4", "webm", "docx", "pptx", "xlsx"]);
 
 export function validateAttachment(file: Pick<File, "name" | "size" | "type">): string | null {
   if (!file.size || file.size > MAX_ATTACHMENT_BYTES) return "文件须为 1 字节至 25 MiB";
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (!EXTENSIONS.has(extension)) return "暂不支持此文件类型";
   const declared = file.type.split(";")[0].trim().toLowerCase();
-  const expected: Record<string,string> = { png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",pdf:"application/pdf",docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",pptx:"application/vnd.openxmlformats-officedocument.presentationml.presentation",xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+  const expected: Record<string,string[]> = {
+    png:["image/png"], jpg:["image/jpeg"], jpeg:["image/jpeg"], gif:["image/gif"], webp:["image/webp"], pdf:["application/pdf"],
+    rtf:["application/rtf", "text/rtf", "application/msword"], doc:["application/msword"], ppt:["application/vnd.ms-powerpoint"], xls:["application/vnd.ms-excel"], zip:["application/zip", "application/x-zip-compressed"],
+    mp3:["audio/mpeg"], wav:["audio/wav", "audio/x-wav"], ogg:["audio/ogg"], mp4:["video/mp4"], webm:["video/webm"],
+    docx:["application/vnd.openxmlformats-officedocument.wordprocessingml.document"], pptx:["application/vnd.openxmlformats-officedocument.presentationml.presentation"], xlsx:["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+  };
   if (declared && declared !== "application/octet-stream") {
-    if (expected[extension] ? declared !== expected[extension] : !(declared.startsWith("text/") || ["application/json","application/xml","application/javascript"].includes(declared))) return "文件类型与 MIME 不一致";
+    if (expected[extension] ? !expected[extension].includes(declared) : !(declared.startsWith("text/") || ["application/json","application/xml","application/javascript"].includes(declared))) return "文件类型与 MIME 不一致";
   }
   if (file.name.length > 255 || /[\u0000-\u001f]/.test(file.name)) return "文件名无效";
   return null;

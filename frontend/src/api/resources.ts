@@ -53,6 +53,24 @@ export interface ResourcePreview {
   width: number | null;
   height: number | null;
   error?: string;
+  presentation?: PreviewPresentation | null;
+}
+
+export interface PreviewBlock {
+  kind: "paragraph" | "heading" | "table" | "image";
+  text?: string;
+  level?: number;
+  runs?: { text: string; bold?: boolean; italic?: boolean; underline?: boolean }[];
+  rows?: string[][];
+  src?: string;
+  alt?: string;
+}
+export interface PreviewPresentation {
+  blocks: PreviewBlock[];
+  sheets: { name: string; rows: string[][] }[];
+  slides: { number: number; blocks: PreviewBlock[] }[];
+  entries: { name: string; size: number; directory: boolean }[];
+  page_count?: number;
 }
 
 export type ResourceTarget = { kind: "conversation"; conversation_id: string } | { kind: "task"; task_id: string } | { kind: "graph"; graph_id: string } | { kind: "node"; graph_id: string; node_id: string };

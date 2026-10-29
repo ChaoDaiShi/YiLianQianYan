@@ -9,6 +9,12 @@ pub fn extract_document_text(name: &str, mime: &str, bytes: &[u8]) -> Result<Str
     let text = match mime.as_str() {
         mime if mime.starts_with("text/") => parsers::text::parse(bytes)?,
         "application/pdf" => parsers::pdf::parse_with_limit(bytes, usize::MAX)?,
+        "application/rtf" => parsers::rtf::parse(bytes)?
+            .blocks
+            .into_iter()
+            .filter_map(|block| block.text)
+            .collect::<Vec<_>>()
+            .join("\n"),
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
             parsers::docx::parse_with_limit(bytes, usize::MAX)?
         }

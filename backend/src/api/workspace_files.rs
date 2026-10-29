@@ -8,6 +8,7 @@ use std::{
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -178,6 +179,72 @@ fn read_text(root: &FilePath, relative: &str) -> Result<TextFile, ApiError> {
     })
 }
 
+fn read_binary(
+    root: &FilePath,
+    relative: &str,
+    preview: bool,
+) -> Result<(String, Vec<u8>), ApiError> {
+    let file = resolve(root, relative)?;
+    if !file.is_file() {
+        return Err((StatusCode::BAD_REQUEST, "请选择一个文件".into()));
+    }
+    if preview
+        && file.metadata().map_err(io_error)?.len()
+            > crate::modules::resource::MAX_INPUT_BYTES as u64
+    {
+        return Err((StatusCode::PAYLOAD_TOO_LARGE, "文件大小超过预览限制".into()));
+    }
+    let name = file
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    Ok((name, fs::read(file).map_err(io_error)?))
+}
+
+async fn file_preview(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<crate::modules::resource::ResourcePreview>, ApiError> {
+    let root = workspace_root(&server, id)?;
+    tokio::task::spawn_blocking(move || {
+        let (name, bytes) = read_binary(&root, &query.path, true)?;
+        Ok(Json(crate::modules::resource::extract_preview(
+            &name,
+            "application/octet-stream",
+            &bytes,
+        )))
+    })
+    .await
+    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+}
+
+async fn file_content(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Response, ApiError> {
+    let root = workspace_root(&server, id)?;
+    tokio::task::spawn_blocking(move || {
+        let (name, bytes) = read_binary(&root, &query.path, false)?;
+        let mime =
+            crate::modules::resource::validate_upload(&name, "application/octet-stream", 1, 1)
+                .unwrap_or_else(|_| "application/octet-stream".into());
+        Ok((
+            [
+                (axum::http::header::CONTENT_TYPE, mime),
+                (axum::http::header::CONTENT_DISPOSITION, "attachment".into()),
+                (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+            ],
+            bytes,
+        )
+            .into_response())
+    })
+    .await
+    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+}
+
 async fn files(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
@@ -206,6 +273,14 @@ pub fn router() -> axum::Router<Arc<AppServer>> {
     axum::Router::new()
         .route("/api/workspaces/:id/files", axum::routing::get(files))
         .route("/api/workspaces/:id/file", axum::routing::get(file))
+        .route(
+            "/api/workspaces/:id/file/preview",
+            axum::routing::get(file_preview),
+        )
+        .route(
+            "/api/workspaces/:id/file/content",
+            axum::routing::get(file_content),
+        )
 }
 
 #[cfg(test)]
@@ -292,6 +367,59 @@ mod tests {
         let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(document["content"], "# 项目\n真实文件内容\n");
         assert_eq!(document["path"], "README.md");
+    }
+
+    #[tokio::test]
+    async fn workspace_file_preview_and_content_use_original_docx_bytes() {
+        use std::io::Write;
+        let fixture = Fixture::new();
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(br#"<w:document xmlns:w="w"><w:body><w:p><w:r><w:t>Workspace document tail</w:t></w:r></w:p></w:body></w:document>"#).unwrap();
+        let original = zip.finish().unwrap().into_inner();
+        fs::write(fixture.0.join("project/report.docx"), &original).unwrap();
+        let (server, id) = fixture.server();
+        let (status, json) = call(
+            server.clone(),
+            &format!("/api/workspaces/{id}/file/preview?path=report.docx"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let preview: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        assert_eq!(preview["status"], "ready");
+        assert_eq!(preview["kind"], "docx");
+        assert_eq!(
+            preview["presentation"]["blocks"][0]["text"],
+            "Workspace document tail"
+        );
+        let response = router()
+            .with_state(server)
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/workspaces/{id}/file/content?path=report.docx"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[axum::http::header::CONTENT_TYPE],
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        assert_eq!(
+            to_bytes(response.into_body(), 2 * 1024 * 1024)
+                .await
+                .unwrap()
+                .as_ref(),
+            original.as_slice()
+        );
     }
 
     #[tokio::test]

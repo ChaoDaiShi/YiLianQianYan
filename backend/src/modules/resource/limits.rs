@@ -43,6 +43,18 @@ pub fn validate_upload(
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "pdf" => "application/pdf",
+        "rtf" => "application/rtf",
+        "doc" => "application/msword",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "xls" => "application/vnd.ms-excel",
+        "zip" => "application/zip",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -60,7 +72,15 @@ pub fn validate_upload(
                 supplied.as_str(),
                 "application/json" | "application/xml" | "application/javascript"
             ));
+    let known_alias = matches!(
+        (canonical, supplied.as_str()),
+        ("application/rtf", "text/rtf")
+            | ("application/rtf", "application/msword")
+            | ("audio/wav", "audio/x-wav")
+            | ("application/zip", "application/x-zip-compressed")
+    );
     if !supplied.is_empty()
+        && !known_alias
         && supplied != "application/octet-stream"
         && supplied != canonical
         && !text_compatible
@@ -80,6 +100,10 @@ mod tests {
         assert!(validate_upload("a.txt", "text/plain", 1, 9).is_err());
         assert!(validate_upload("a.exe", "application/octet-stream", 1, 1).is_err());
         assert!(validate_upload("a.png", "text/plain", 1, 1).is_err());
+        assert_eq!(
+            validate_upload("document.rtf", "application/msword", 1, 1).unwrap(),
+            "application/rtf"
+        );
         assert_eq!(
             validate_upload("a.rs", "application/octet-stream", 1, 1).unwrap(),
             "text/plain"

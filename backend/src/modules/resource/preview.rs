@@ -8,7 +8,7 @@ use crate::shared::resource::ResourceService;
 
 use super::{
     limits::{validate_upload, MAX_PREVIEW_CHARS},
-    model::ResourcePreview,
+    model::{Presentation, ResourcePreview},
     parsers,
 };
 
@@ -33,6 +33,7 @@ pub fn extract_preview(name: &str, mime: &str, bytes: &[u8]) -> ResourcePreview 
         width: None,
         height: None,
         error: None,
+        presentation: None,
     };
     let mime = match validate_upload(name, mime, bytes.len(), 1) {
         Ok(mime) => mime,
@@ -47,30 +48,103 @@ pub fn extract_preview(name: &str, mime: &str, bytes: &[u8]) -> ResourcePreview 
         parsers::text::parse(bytes).map(Some)
     } else if mime.starts_with("image/") {
         preview.kind = "image".into();
-        parsers::image::dimensions(&mime, bytes).map(|(width, height)| {
-            preview.width = Some(width);
-            preview.height = Some(height);
-            None
-        })
+        if mime == "image/gif" || mime == "image/webp" {
+            Ok(None)
+        } else {
+            parsers::image::dimensions(&mime, bytes).map(|(width, height)| {
+                preview.width = Some(width);
+                preview.height = Some(height);
+                None
+            })
+        }
+    } else if mime.starts_with("audio/") || mime.starts_with("video/") {
+        preview.kind = if mime.starts_with("audio/") {
+            "audio"
+        } else {
+            "video"
+        }
+        .into();
+        Ok(None)
     } else if mime == "application/pdf" {
         preview.kind = "pdf".into();
-        match parsers::pdf::parse(bytes) {
-            Ok(text) if text.trim().is_empty() => {
-                preview.status = "unsupported".into();
-                preview.error = Some("PDF 无文本层；扫描件 OCR 暂不支持".into());
-                return preview;
-            }
-            other => other.map(Some),
-        }
+        parsers::pdf::page_count(bytes).and_then(|count| {
+            preview.presentation = Some(Presentation {
+                page_count: Some(count),
+                ..Default::default()
+            });
+            parsers::pdf::parse(bytes).map(Some)
+        })
     } else if mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" {
         preview.kind = "pptx".into();
-        parsers::pptx::parse(bytes).map(Some)
-    } else if name.to_ascii_lowercase().ends_with(".docx") {
+        parsers::structured::slides(bytes).and_then(|p| {
+            preview.presentation = Some(p);
+            parsers::pptx::parse(bytes).map(Some)
+        })
+    } else if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
         preview.kind = "docx".into();
-        parsers::docx::parse(bytes).map(Some)
-    } else {
+        parsers::structured::word(bytes).and_then(|p| {
+            preview.presentation = Some(p);
+            parsers::docx::parse(bytes).map(Some)
+        })
+    } else if mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
         preview.kind = "xlsx".into();
-        parsers::xlsx::parse(bytes).map(Some)
+        parsers::structured::workbook(bytes, false).and_then(|p| {
+            preview.presentation = Some(p);
+            parsers::xlsx::parse(bytes).map(Some)
+        })
+    } else if mime == "application/vnd.ms-excel" {
+        preview.kind = "xls".into();
+        parsers::structured::workbook(bytes, true).map(|p| {
+            let text = p
+                .sheets
+                .iter()
+                .map(|sheet| {
+                    format!(
+                        "[{}]\n{}",
+                        sheet.name,
+                        sheet
+                            .rows
+                            .iter()
+                            .map(|r| r.join("\t"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            preview.presentation = Some(p);
+            Some(text)
+        })
+    } else if mime == "application/rtf" {
+        preview.kind = "rtf".into();
+        parsers::rtf::parse(bytes).map(|p| {
+            let text = p
+                .blocks
+                .iter()
+                .filter_map(|block| block.text.as_deref())
+                .collect::<Vec<_>>()
+                .join("\n");
+            preview.presentation = Some(p);
+            Some(text)
+        })
+    } else if mime == "application/zip" {
+        preview.kind = "zip".into();
+        parsers::structured::zip_list(bytes).map(|p| {
+            preview.presentation = Some(p);
+            None
+        })
+    } else {
+        preview.kind = match mime.as_str() {
+            "application/msword" => "doc",
+            "application/vnd.ms-powerpoint" => "ppt",
+            "application/vnd.ms-excel" => "xls",
+            "application/rtf" => "rtf",
+            _ => "unknown",
+        }
+        .into();
+        preview.status = "unsupported".into();
+        preview.error = Some("此格式暂不支持内容解析".into());
+        return preview;
     };
     match extracted {
         Ok(text) => {
@@ -88,6 +162,56 @@ pub fn extract_preview(name: &str, mime: &str, bytes: &[u8]) -> ResourcePreview 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn docx_structure_preserves_heading_runs_table_and_tail() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        let xml = format!(
+            r#"<w:document xmlns:w="w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>Heading</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>{}Tail</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#,
+            "a".repeat(MAX_PREVIEW_CHARS)
+        );
+        zip.write_all(xml.as_bytes()).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let preview = extract_preview(
+            "test.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            &bytes,
+        );
+        let blocks = preview.presentation.unwrap().blocks;
+        assert_eq!(blocks[0].kind, "heading");
+        assert!(blocks[0].runs.as_ref().unwrap()[0].bold);
+        assert!(blocks[0].runs.as_ref().unwrap()[0].italic);
+        assert!(blocks[1].rows.as_ref().unwrap()[0][0].ends_with("Tail"));
+    }
+
+    #[test]
+    fn rtf_preview_decodes_unicode_codepage_styles_and_groups() {
+        let input = br"{\rtf1\ansi\ansicpg936{\fonttbl{\f0 FONT-NOT-BODY;}}\uc1 \u20013?\u25991? \'d6\'d0\'ce\'c4\par \b Bold\b0 \i italic\i0 \{brace\} \\ \par TAIL}";
+        let preview = extract_preview("sample.rtf", "application/rtf", input);
+        assert_eq!(preview.status, "ready", "{:?}", preview.error);
+        let blocks = preview.presentation.unwrap().blocks;
+        assert_eq!(blocks[0].text.as_deref(), Some("中文 中文"));
+        assert!(blocks[1]
+            .runs
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|run| run.bold && run.text.contains("Bold")));
+        assert!(blocks[1]
+            .runs
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|run| run.italic && run.text.contains("italic")));
+        assert!(blocks[1].text.as_ref().unwrap().contains("{brace} \\"));
+        assert_eq!(blocks[2].text.as_deref(), Some("TAIL"));
+    }
 
     #[test]
     fn bounded_text_csv_and_code_previews_are_real_and_utf8_safe() {
@@ -142,6 +266,10 @@ mod tests {
             &xlsx,
         );
         assert_eq!(preview.status, "ready", "{:?}", preview.error);
+        assert_eq!(
+            preview.presentation.as_ref().unwrap().sheets[0].rows[0],
+            vec!["Actual cell", "42"]
+        );
         assert!(preview.text.unwrap().contains("42"));
         let dangerous = archive(&[(
             "word/document.xml",
@@ -187,10 +315,11 @@ mod tests {
         }
         let preview = extract_preview("text.pdf", "application/pdf", &pdf(true));
         assert_eq!(preview.status, "ready");
+        assert_eq!(preview.presentation.as_ref().unwrap().page_count, Some(1));
         assert!(preview.text.unwrap().contains("Actual PDF text"));
         assert_eq!(
             extract_preview("scan.pdf", "application/pdf", &pdf(false)).status,
-            "unsupported"
+            "ready"
         );
     }
 

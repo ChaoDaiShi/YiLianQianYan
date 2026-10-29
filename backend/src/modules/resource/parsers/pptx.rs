@@ -12,13 +12,13 @@ pub(crate) struct SlideText {
     pub notes: String,
 }
 #[derive(Debug)]
-struct Relationship {
-    target: String,
-    kind: String,
-    external: bool,
+pub(super) struct Relationship {
+    pub(super) target: String,
+    pub(super) kind: String,
+    pub(super) external: bool,
 }
 
-fn elements(xml: &[u8], name: &[u8]) -> Result<Vec<HashMap<String, String>>, String> {
+pub(super) fn elements(xml: &[u8], name: &[u8]) -> Result<Vec<HashMap<String, String>>, String> {
     let mut reader = quick_xml::Reader::from_reader(xml);
     let mut found = Vec::new();
     let mut depth = 0usize;
@@ -56,7 +56,7 @@ fn elements(xml: &[u8], name: &[u8]) -> Result<Vec<HashMap<String, String>>, Str
     }
     Ok(found)
 }
-fn relationships(xml: &[u8]) -> Result<HashMap<String, Relationship>, String> {
+pub(super) fn relationships(xml: &[u8]) -> Result<HashMap<String, Relationship>, String> {
     let mut map = HashMap::new();
     for attributes in elements(xml, b"Relationship")? {
         let id = attributes.get("Id").ok_or("演示文稿关系缺少ID")?.clone();
@@ -79,7 +79,7 @@ fn relationships(xml: &[u8]) -> Result<HashMap<String, Relationship>, String> {
     }
     Ok(map)
 }
-fn part_path(source: &str, target: &str) -> Result<String, String> {
+pub(super) fn part_path(source: &str, target: &str) -> Result<String, String> {
     if target.contains('\\') || target.contains(':') || target.contains('#') || target.contains('?')
     {
         return Err("演示文稿部件路径无效".into());
@@ -108,7 +108,7 @@ fn part_path(source: &str, target: &str) -> Result<String, String> {
     }
     Ok(parts.join("/"))
 }
-fn rels_path(part: &str) -> String {
+pub(super) fn rels_path(part: &str) -> String {
     let (parent, name) = part.rsplit_once('/').unwrap_or(("", part));
     if parent.is_empty() {
         format!("_rels/{name}.rels")

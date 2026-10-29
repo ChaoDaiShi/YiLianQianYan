@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Download, FileText, Folder, GitBranch, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { listWorkspaceFiles, readWorkspaceFile, type WorkspaceFileEntry, type WorkspaceTextFile } from "../../api/workspaceFiles";
+import { getWorkspaceFileContent, listWorkspaceFiles, readWorkspaceFile, type WorkspaceFileEntry, type WorkspaceTextFile } from "../../api/workspaceFiles";
 import { getWorkspaceGit, type WorkspaceGitStatus } from "../../api/workspaceGit";
 import { Button, EmptyState, ErrorState } from "../../components/ui";
+import { ResourcePreviewPane } from "../resources/ResourcePreviewDialog";
+
+export const isBinaryPreviewFile = (path: string) => /\.(docx?|xlsx?|pptx?|pdf|rtf|zip|png|jpe?g|gif|webp|mp3|wav|ogg|mp4|webm)$/i.test(path);
 
 interface Props {
   workspaceId: string;
@@ -25,6 +28,10 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
   const [git, setGit] = useState<WorkspaceGitStatus | null>(null);
   const [gitError, setGitError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [documentMetadata, setDocumentMetadata] = useState<{ path: string; label: string } | null>(null);
+  const onDocumentMetadata = useCallback((label: string) => setDocumentMetadata({ path: selectedPath, label }), [selectedPath]);
+  const binarySelected = isBinaryPreviewFile(selectedPath);
+  const selectedEntry = Object.values(directories).flat().find(entry => entry.path === selectedPath);
 
   const loadDirectory = useCallback(async (path: string) => {
     setLoading(current => new Set(current).add(path));
@@ -54,6 +61,7 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
 
   useEffect(() => {
     if (!selectedPath) return;
+    if (binarySelected) { setFile(null); setFileError(""); setReading(false); return; }
     let active = true;
     setFile(null); setFileError(""); setReading(true);
     void readWorkspaceFile(workspaceId, selectedPath).then(result => {
@@ -62,7 +70,7 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
       setReading(false);
     });
     return () => { active = false; };
-  }, [workspaceId, selectedPath, revision]);
+  }, [workspaceId, selectedPath, revision, binarySelected]);
 
   function toggle(entry: WorkspaceFileEntry) {
     setExpanded(current => {
@@ -73,11 +81,14 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
     if (!directories[entry.path] && !loading.has(entry.path)) void loadDirectory(entry.path);
   }
 
-  function download() {
+  async function download() {
     if (!file) return;
-    const url = URL.createObjectURL(new Blob([file.content], { type: "text/plain;charset=utf-8" }));
-    const link = document.createElement("a"); link.href = url; link.download = file.name; link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try {
+      const bytes = await getWorkspaceFileContent(workspaceId, file.path);
+      const url = URL.createObjectURL(bytes);
+      const link = document.createElement("a"); link.href = url; link.download = file.name; link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) { setFileError(error instanceof Error ? error.message : "下载文件失败"); }
   }
 
   function tree(path: string, depth: number) {
@@ -115,9 +126,9 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
       <p className="workspace-file-root" title={rootPath}>{rootPath}</p>
     </aside>
     <section className="workspace-file-preview" aria-label="文件预览">
-      <header className="workspace-preview-toolbar"><div className="workspace-preview-mode"><span>预览</span><button type="button" onClick={onShowChanges}>修改对比</button></div>{file && <Button variant="ghost" size="sm" onClick={download}><Download size={15} />下载文件</Button>}</header>
-      <div className="workspace-preview-content scrollbar-thin">
-        {reading ? <p className="workspace-tree-note" role="status">正在读取文件…</p> : fileError ? <ErrorState title="文件暂不能预览" description={fileError} /> : !file ? <EmptyState icon={<FileText size={24} />} title="选择一个文件" description="从左侧项目文件中选择文本或 Markdown 文件阅读。" /> : <>
+      <header className="workspace-preview-toolbar"><div className="workspace-preview-mode"><span>预览</span><button type="button" onClick={onShowChanges}>修改对比</button></div>{binarySelected&&<><span className="workspace-preview-active-file" title={selectedPath}>{selectedPath}</span>{documentMetadata?.path === selectedPath && <span className="workspace-preview-file-meta">{documentMetadata.label}</span>}</>}{file && <Button variant="ghost" size="sm" onClick={() => void download()}><Download size={15} />下载文件</Button>}</header>
+      <div className="workspace-preview-content scrollbar-thin" data-mode={binarySelected?"document":"text"}>
+        {binarySelected ? <ResourcePreviewPane key={`${workspaceId}:${selectedPath}:${revision}`} file={{name:selectedPath.split(/[\\/]/).pop()!,size:selectedEntry?.size}} source={{kind:"workspace",workspaceId,path:selectedPath}} onMetadataChange={onDocumentMetadata}/> : reading ? <p className="workspace-tree-note" role="status">正在读取文件…</p> : fileError ? <ErrorState title="文件暂不能预览" description={fileError} /> : !file ? <EmptyState icon={<FileText size={24} />} title="选择一个文件" description="从左侧项目文件中选择文件阅读。" /> : <>
           <p className="workspace-preview-filename"><FileText size={14} />{file.path}<span>{file.size < 1024 ? `${file.size} B` : `${(file.size / 1024).toFixed(1)} KB`}</span></p>
           {/\.(md|markdown)$/i.test(file.name) ? <article className="workspace-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{file.content}</ReactMarkdown></article> : <pre className="workspace-text-preview">{file.content || "（空文件）"}</pre>}
         </>}

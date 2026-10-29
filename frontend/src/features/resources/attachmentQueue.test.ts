@@ -44,6 +44,22 @@ describe("bounded attachment queue", () => {
     expect(queue.snapshot().every(item => item.state === "failed")).toBe(true);
     expect(deps.upload).not.toHaveBeenCalled();
   });
+  it("uploads supported ZIP, RTF and WAV files with their browser MIME types", async () => {
+    const deps = options(); const queue = new AttachmentQueue(deps);
+    queue.add([file("archive.zip", 5, "application/x-zip-compressed"), file("document.rtf", 5, "application/msword"), file("audio.wav", 5, "audio/wav")]);
+    await queue.process();
+    expect(deps.upload).toHaveBeenCalledTimes(3);
+    expect(queue.snapshot().map(item => item.state)).toEqual(["ready", "ready", "ready"]);
+  });
+  it("retains the backend unsupported result for legacy Office files", async () => {
+    const deps = options(); deps.preview.mockResolvedValue({ status: "unsupported" });
+    const queue = new AttachmentQueue(deps);
+    queue.add([file("legacy.doc", 5, "application/msword"), file("legacy.ppt", 5, "application/vnd.ms-powerpoint")]);
+    await queue.process();
+    expect(deps.upload).toHaveBeenCalledTimes(2);
+    expect(queue.snapshot().map(item => item.state)).toEqual(["failed", "failed"]);
+    expect(queue.readyIds()).toEqual([]);
+  });
   it("removed uploads cannot revive or acquire bindings from late responses", async () => {
     let resolve!: (value: { id: string }) => void;
     const deps = options(); deps.upload.mockImplementation(() => new Promise(done => { resolve = done; }));

@@ -132,3 +132,12 @@
   .workspace-breadcrumb { gap: 8px; }
   .workspace-breadcrumb h1 { font-size: 16px; }
 }
+
+.workspace-preview-content[data-mode="document"] {display:flex;flex-direction:column;min-width:0;padding:0;overflow:hidden;}
+.workspace-preview-active-file {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary);}
+.workspace-preview-file-meta {flex:0 0 auto;margin-left:auto;white-space:nowrap;font-size:12px;color:var(--text-secondary);}
+.workspace-preview-mode {flex:0 0 auto;}
+.workspace-file-preview .resource-preview-toolbar {gap:8px;padding:8px 12px;}
+.workspace-file-preview .resource-preview-body {padding:12px;}
+.workspace-file-preview .resource-preview-footer {padding:8px 12px;}
+.workspace-file-preview .resource-preview-pdf {min-height:0;}

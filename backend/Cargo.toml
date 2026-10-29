@@ -38,6 +38,8 @@ url = "2"
 pdf-extract = "=0.12.0"
 calamine = { version = "=0.36.1", default-features = false }
 quick-xml = "=0.41.0"
+# RTF character-set decoding; already used transitively by calamine.
+codepage = "=0.1.3"
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 open = { version = "5.4", features = ["shellexecute-on-windows"] }
 

@@ -6872,6 +6872,7 @@ dependencies = [
  "calamine",
  "chrono",
  "chrono-tz",
+ "codepage",
  "dirs 5.0.1",
  "enigo",
  "futures",

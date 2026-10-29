@@ -2,8 +2,7 @@
 //!
 //! An Office file is a ZIP archive, so opening one is an untrusted-input
 //! problem: entry count, per-entry size and total expanded size are all capped
-//! before any entry is decompressed. Only XML parts are kept — embedded media
-//! is never expanded.
+//! before any entry is decompressed. XML parts and embedded Office media are kept.
 
 use std::io::{Cursor, Read};
 
@@ -30,7 +29,10 @@ pub(crate) fn zip_entries(
         if file.size() > MAX_ENTRY_BYTES || total > MAX_EXPANDED_BYTES {
             return Err("文档展开大小超过限制".into());
         }
-        if !file.name().ends_with(".xml") && !file.name().ends_with(".rels") {
+        if !file.name().ends_with(".xml")
+            && !file.name().ends_with(".rels")
+            && !(file.name().starts_with("word/media/") || file.name().starts_with("ppt/media/"))
+        {
             continue;
         }
         let name = file.name().to_string();

@@ -15,6 +15,18 @@ impl<'a> pdf_extract::ConvertToFmt for &'a mut LimitedText {
     }
 }
 
+pub(crate) fn page_count(bytes: &[u8]) -> Result<usize, String> {
+    let document = pdf_extract::Document::load_mem(bytes).map_err(|_| "无法解析 PDF")?;
+    if document.is_encrypted() {
+        return Err("不支持加密 PDF".into());
+    }
+    let count = document.get_pages().len();
+    if count > 128 || document.objects.len() > 50_000 {
+        return Err("PDF 页数或对象数量超过限制".into());
+    }
+    Ok(count)
+}
+
 pub(crate) fn parse(bytes: &[u8]) -> Result<String, String> {
     parse_with_limit(bytes, MAX_PREVIEW_CHARS)
 }
