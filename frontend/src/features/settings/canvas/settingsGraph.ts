@@ -2,10 +2,10 @@ import type {ConnectorNode,ConnectorView,ConnectorViewport} from "../../../api/c
 import type {SettingPreset,SettingsCanvasState} from "../../../api/settingsCanvas";
 export const SETTING_PREFIX="setting:";
 export const SETTING_GROUP_PREFIX="setting-group:";
-export const SETTINGS_NODE_SIZE={width:220,height:80,gap:16} as const;
+export const SETTINGS_NODE_SIZE={width:180,height:64,gap:12} as const;
 export interface SettingsGroup {id:string;label:string;description:string;representative:string;side:SettingPreset["side"];presetIds:readonly string[]}
 export const SETTINGS_GROUPS:readonly SettingsGroup[]=[
- {id:"models",label:"模型与服务",description:"对话、搜索、图像与向量服务",representative:"model",side:"right",presetIds:["model","search","vision","image","embedding"]},
+ {id:"models",label:"模型与服务",description:"对话、搜索、图像与向量服务",representative:"model",side:"right",presetIds:["model","search","vision","image","embedding","model-pools"]},
  {id:"voice",label:"语音",description:"语音识别与语音合成",representative:"stt",side:"right",presetIds:["stt","tts"]},
  {id:"agent",label:"智能体与上下文",description:"智能体行为与长对话管理",representative:"agent",side:"left",presetIds:["agent","compaction"]},
  {id:"security",label:"安全",description:"权限审批与执行沙箱",representative:"permissions",side:"top",presetIds:["permissions","sandbox"]},
@@ -27,22 +27,22 @@ export function mergeSettingsGroupLayout(state:SettingsCanvasState,graph:Connect
 }
 export function composeSettingsGraph(view:ConnectorView|null,state:SettingsCanvasState,presets:SettingPreset[]):ConnectorView {
  const agentId=view?.agent_id??"settings-global";
- const center=view?.nodes.find(node=>node.kind==="agent")??{id:`agent:${agentId}`,kind:"agent",entity_id:agentId,label:"忆涟设置",x:360,y:186};
+ const center=view?.nodes.find(node=>node.kind==="agent")??{id:`agent:${agentId}`,kind:"agent",entity_id:agentId,label:"忆涟设置",x:300,y:160};
  const nodes:ConnectorNode[]=view?[...view.nodes]:[center];
  const bindings=view?[...view.bindings]:[];
  if(view){nodes.push({id:`constraint:${agentId}`,entity_id:agentId,kind:"constraint",label:"权限与范围",x:center.x,y:center.y-128});bindings.push({id:`derived:constraint:${agentId}`,kind:"derived_constraint",source_id:`constraint:${agentId}`,target_id:center.id});}
  const groups=settingsGroups(presets).filter(group=>group.presets.some(preset=>state.connected_node_ids.includes(preset.id)));
- const occupied=nodes.map(node=>({x:node.x,y:node.y,width:SETTINGS_NODE_SIZE.width,height:node.kind==="agent"?142:SETTINGS_NODE_SIZE.height}));
+ const occupied=nodes.map(node=>({x:node.x,y:node.y,width:node.kind==="agent"?104:SETTINGS_NODE_SIZE.width,height:node.kind==="agent"?104:SETTINGS_NODE_SIZE.height}));
  const overlaps=(point:{x:number;y:number})=>occupied.some(box=>point.x<box.x+box.width+SETTINGS_NODE_SIZE.gap&&point.x+SETTINGS_NODE_SIZE.width+SETTINGS_NODE_SIZE.gap>box.x&&point.y<box.y+box.height+SETTINGS_NODE_SIZE.gap&&point.y+SETTINGS_NODE_SIZE.height+SETTINGS_NODE_SIZE.gap>box.y);
  const categoryPositions=new Map<string,{x:number;y:number}>();
- const offsets:Record<string,{x:number;y:number}>={models:{x:300,y:-60},voice:{x:300,y:60},agent:{x:-300,y:-60},interface:{x:-300,y:60},security:{x:0,y:-180},extensions:{x:0,y:180}};
+ const offsets:Record<string,{x:number;y:number}>={models:{x:148,y:-24},voice:{x:148,y:60},agent:{x:-224,y:-24},interface:{x:-224,y:60},security:{x:-38,y:-108},extensions:{x:-38,y:148}};
  for(const group of groups){
   const saved=state.nodes.find(point=>point.id===`group:${group.id}`)??state.nodes.find(point=>point.id===group.representative);
   if(saved){categoryPositions.set(group.id,{x:saved.x,y:saved.y});occupied.push({x:saved.x,y:saved.y,width:SETTINGS_NODE_SIZE.width,height:SETTINGS_NODE_SIZE.height});}
  }
  for(const group of groups){
   let position=categoryPositions.get(group.id);let slot=0;
-  while(!position){const offset=offsets[group.id];const next={x:center.x+offset.x+slot*(group.side==="left"?-292:292),y:center.y+offset.y};
+  while(!position){const offset=offsets[group.id];const next={x:center.x+offset.x+slot*(group.side==="left"?-216:216),y:center.y+offset.y};
    if(!overlaps(next))position=next;slot++;
   }
   categoryPositions.set(group.id,position);occupied.push({...position,width:SETTINGS_NODE_SIZE.width,height:SETTINGS_NODE_SIZE.height});
@@ -67,9 +67,9 @@ export function composeSettingsGraph(view:ConnectorView|null,state:SettingsCanva
   const category=categoryPositions.get(group.id)!;
   const visible=group.presets.filter(preset=>state.connected_node_ids.includes(preset.id));
   const direction=group.side==="left"?-1:1;
-  let column=category.x+direction*292;
-  const rowY=(index:number)=>category.y+(index-(visible.length-1)/2)*98;
-  while(visible.some((preset,index)=>!leafPositions.has(preset.id)&&overlaps({x:column,y:rowY(index)})))column+=direction*292;
+  let column=category.x+direction*216;
+  const rowY=(index:number)=>category.y+(index-(visible.length-1)/2)*76;
+  while(visible.some((preset,index)=>!leafPositions.has(preset.id)&&overlaps({x:column,y:rowY(index)})))column+=direction*216;
   for(const [index,preset] of visible.entries()){
    const position=leafPositions.get(preset.id)??{x:column,y:rowY(index)};
    occupied.push({...position,width:SETTINGS_NODE_SIZE.width,height:SETTINGS_NODE_SIZE.height});

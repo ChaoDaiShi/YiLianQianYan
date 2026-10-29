@@ -20,9 +20,10 @@ import SkillPathSettings from "../sections/SkillPathSettings";
 import VoiceSettings from "../sections/VoiceSettings";
 import { SearchPanel } from "../sections/BasicConfiguration";
 import BasicServicePanel from "../sections/BasicServicePanel";
+import ModelPoolPanel from "../../llm/ModelPoolPanel";
 
 const editorTitles: Record<string, string> = {
-  model: "对话模型与模型池", stt: "语音识别", tts: "语音合成", search: "联网搜索",
+  model: "对话模型", "model-pools": "高级模型池", stt: "语音识别", tts: "语音合成", search: "联网搜索",
   vision: "图像识别", image: "图像生成", embedding: "向量模型", agent: "身份与工作区",
   compaction: "上下文压缩", permissions: "权限与审批", sandbox: "执行沙箱",
   extensions: "技能目录", appearance: "外观与背景", navigation: "系统模块与导航",
@@ -291,6 +292,8 @@ function SettingsEditor({ nodeKey, onClose, onSaved }: SettingsEditorDialogProps
       case "stt":
       case "tts":
         return <VoiceSettings side={nodeKey} dirty={isUnsaved} config={config} updateVoiceField={updateVoiceField} replaceVoiceKey={replaceVoiceKey} onReplaceVoiceKey={(side) => setReplaceVoiceKey((current) => ({ ...current, [side]: true }))} onClearVoiceSecret={clearVoiceSecret} readiness={providerReadiness} testing={testingProvider} results={providerTestResults} onVerify={(kind) => void testProvider(kind)} onPreviewTts={() => void previewTts()} />;
+      case "model-pools":
+        return <div className="space-y-5"><ModelPoolPanel serviceKind="chat"/><ModelPoolPanel serviceKind="vision"/><ModelPoolPanel serviceKind="image"/></div>;
       case "search":
         return <SearchPanel />;
       case "vision":

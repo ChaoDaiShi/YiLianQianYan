@@ -16,6 +16,26 @@ use base64::Engine;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
+mod selection;
+
+const VISION_IMAGE_REQUIRED: &str =
+    "识图需要显式提供当前对话已绑定图片的 resource_id 或图片 image_url；仅有文字提示不能用于识图。";
+fn validate_vision_input(args: &Value) -> Result<(), &'static str> {
+    let resource_id = args
+        .get("resource_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let image_url = args
+        .get("image_url")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    match (resource_id, image_url) {
+        (None, None) => Err(VISION_IMAGE_REQUIRED),
+        (Some(_), Some(_)) => Err("resource_id 与 image_url 只能提供一个"),
+        _ => Ok(()),
+    }
+}
+
 static OUTPUT_INGEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 pub struct BasicServiceTool {
     db: Database,
@@ -57,76 +77,6 @@ impl BasicServiceTool {
         self.on_route = Some(callback);
         self
     }
-    fn selected(&self) -> Result<(Option<ModelPool>, Vec<BasicServiceProfile>), String> {
-        let explicit = if let Some(agent) = &self.agent_id {
-            let binding = self
-                .db
-                .resolve_connector_bindings(agent)?
-                .into_iter()
-                .find(|b| {
-                    b.kind == "agent_model" && b.service_kind.as_deref() == Some(self.kind.as_str())
-                });
-            if let Some(b) = binding {
-                Some((
-                    b.model_source.ok_or("模型来源缺失")?,
-                    b.target_id
-                        .strip_prefix("model:")
-                        .ok_or("模型引用无效")?
-                        .to_owned(),
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        let (source, id) = if let Some(explicit) = explicit {
-            explicit
-        } else if let Some(pool) = self
-            .db
-            .get_model_pool_binding(&format!("service:{}", self.kind))?
-        {
-            ("pool".into(), pool)
-        } else {
-            (
-                "profile".into(),
-                self.db
-                    .get_basic_service_default(&self.kind)?
-                    .ok_or("请先设置该用途的默认来源")?,
-            )
-        };
-        if source == "profile" {
-            let profile = self
-                .db
-                .get_basic_service_profile(&id)?
-                .ok_or("服务档案已删除")?;
-            if profile.service_kind != self.kind {
-                return Err("服务用途不匹配".into());
-            }
-            return Ok((None, vec![profile]));
-        }
-        if source != "pool" {
-            return Err("服务来源无效".into());
-        }
-        let pool = self.db.get_model_pool(&id)?.ok_or("模型池已删除")?;
-        if !pool.enabled || pool.service_kind != self.kind {
-            return Err("模型池未启用或用途不匹配".into());
-        }
-        let mut profiles = Vec::new();
-        for tier in &pool.tiers {
-            for id in &tier.profile_ids {
-                let p = self
-                    .db
-                    .get_basic_service_profile(id)?
-                    .ok_or("池候选档案已删除")?;
-                if p.service_kind != self.kind {
-                    return Err("池候选用途不匹配".into());
-                }
-                profiles.push(p);
-            }
-        }
-        Ok((Some(pool), profiles))
-    }
     fn endpoint(&self, p: &BasicServiceProfile) -> Result<String, String> {
         let a = self
             .db
@@ -152,8 +102,15 @@ impl BasicServiceTool {
     }
 
     fn vision_image(&self, args: &Value) -> Result<Option<String>, String> {
-        let resource_id = args.get("resource_id").and_then(Value::as_str);
-        let image_url = args.get("image_url").and_then(Value::as_str);
+        validate_vision_input(args).map_err(str::to_owned)?;
+        let resource_id = args
+            .get("resource_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let image_url = args
+            .get("image_url")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
         if resource_id.is_some() && image_url.is_some() {
             return Err("resource_id与image_url只能提供一个".into());
         }
@@ -347,6 +304,10 @@ impl Tool for BasicServiceTool {
         }
     }
     fn security_descriptor(&self, args: &Value) -> Result<ToolSecurityDescriptor, DescriptorError> {
+        if self.kind == "vision" {
+            validate_vision_input(args)
+                .map_err(|message| DescriptorError::InvalidDescriptor(message.into()))?;
+        }
         if self.kind == "image" {
             if let Some(id) = args.get("output_id").and_then(Value::as_str) {
                 let output = self
@@ -409,6 +370,17 @@ impl Tool for BasicServiceTool {
         args: Value,
         context: &ToolExecutionContext,
     ) -> ToolResult {
+        if self.kind == "vision" {
+            if let Err(message) = validate_vision_input(&args) {
+                let code = if message == VISION_IMAGE_REQUIRED {
+                    "VISION_IMAGE_REQUIRED"
+                } else {
+                    "VISION_IMAGE_CONFLICT"
+                };
+                return ToolResult::error(message)
+                    .with_structured(Some(json!({"service_kind":"vision", "code":code})));
+            }
+        }
         if self.kind == "image" {
             if self.conversation_id.is_empty() || self.resource_service.is_none() {
                 return ToolResult::error("生图需要当前对话与资源服务上下文");
@@ -576,8 +548,14 @@ impl Tool for BasicServiceTool {
                 };
                 ToolResult::success_with_structured(text, Some(result))
             }
-            Err(e) => ToolResult::error(e.to_string())
-                .with_structured(Some(json!({"model_routes":events.into_inner().unwrap()}))),
+            Err(e) => {
+                let code = e.diagnostic_code();
+                let diagnostic = code.map(|_| e.to_string());
+                ToolResult::error(e.user_message(&self.kind)).with_structured(Some(json!({
+                    "service_kind": self.kind, "code": code, "diagnostic": diagnostic,
+                    "model_routes": events.into_inner().unwrap()
+                })))
+            }
         }
     }
 }

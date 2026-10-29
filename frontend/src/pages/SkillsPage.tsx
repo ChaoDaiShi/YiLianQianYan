@@ -2,7 +2,8 @@ import WorkspaceIcon from "../components/ui/WorkspaceIcon";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { refreshSkillDiscovery } from "../api/skillDiscovery";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import "../features/skills/skillsWorkspace.css";
 import {
   createSkill,
   deleteSkill,
@@ -26,11 +27,14 @@ import {
 import ManagementFrame from "../features/capabilities/ManagementFrame";
 import { validateSkillDraft } from "../features/skills/skillForm";
 
+type CatalogSkill = SkillSummary & { is_bundled?: boolean; root_dir: string };
+
 type EditorMode = "create" | "edit" | null;
 
 export default function SkillsPage({ embedded = false, initialSkill }: { embedded?: boolean; initialSkill?: string } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const navigate = useNavigate();
+  const [skills, setSkills] = useState<CatalogSkill[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [skillContent, setSkillContent] = useState("");
   const [fullTextOpen, setFullTextOpen] = useState(false);
@@ -40,8 +44,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [search, setSearch] = useState("");
-  const [sourceFilter, setSourceFilter] = useState("all");
-  const [showHostSkills, setShowHostSkills] = useState(false);
+  const [sourceFilter, setSourceFilter] = useState("bundled");
   const [editorMode, setEditorMode] = useState<EditorMode>(null);
   const [formName, setFormName] = useState("");
   const [formContent, setFormContent] = useState("");
@@ -56,7 +59,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
     setLoading(true);
     setError("");
     const result = await listSkills();
-    if (result.ok) setSkills(result.data);
+    if (result.ok) setSkills(result.data as CatalogSkill[]);
     else setError(result.error || "技能列表暂时无法加载。");
     setLoading(false);
   }, []);
@@ -95,21 +98,20 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
     if (skill) {
       requestedSkillRef.current = requested;
       setSearch(""); setSourceFilter("all");
-      if (!skill.compatibility?.runtime_ready) setShowHostSkills(true);
       void openSkill(skill);
     }
   }, [initialSkill, openSkill, searchParams, skills]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const visible = skills.filter(skill => (showHostSkills || skill.compatibility?.runtime_ready === true) && (sourceFilter === "all" || (skill.source ?? "未标注来源") === sourceFilter));
+    const visible = skills.filter(skill => sourceFilter === "all" || (sourceFilter === "bundled" ? skill.is_bundled === true : sourceFilter === "other" ? !skill.is_bundled : (skill.source ?? "未标注来源") === sourceFilter));
     if (!query) return visible;
     return visible.filter((skill) =>
       [skill.name, skill.description, skill.path, skill.source ?? "", skill.display_name ?? ""].some((value) =>
         value.toLowerCase().includes(query)
       )
     );
-  }, [skills, search, showHostSkills, sourceFilter]);
+  }, [skills, search, sourceFilter]);
 
   const selectedSkill = skills.find((skill) => skill.name === selectedName) ?? null;
 
@@ -164,6 +166,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
       return;
     }
     setSelectedName(validation.value.name);
+    setSourceFilter("all");
     setSkillContent(validation.value.content);
     setEditorMode(null);
     await reload();
@@ -197,24 +200,11 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
       description="管理小涟可以使用的技能能力。"
       className="capability-page skills-page page-canvas ui-opt-capabilities ui-opt-skills"
       contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
-      actions={
-        <>
-        <Button variant="secondary" onClick={() => void refreshDiscovery()} disabled={refreshing}>
-          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-          {refreshing ? "正在发现" : "刷新发现"}
-        </Button>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          新增技能
-        </Button>
-        </>
-      }
     >
       <div className="capability-page-body capability-page-body-split skills-page-body">
-        <div className="capability-workbench-toolbar"><Input aria-label="搜索技能" placeholder="搜索技能名称或说明…" value={search} onChange={event=>setSearch(event.target.value)}/><select aria-label="技能来源筛选" className="settings-select" value={sourceFilter} onChange={event=>setSourceFilter(event.target.value)}><option value="all">全部来源</option>{[...new Set(skills.map(skill=>skill.source??"未标注来源"))].map(source=><option key={source} value={source}>{source}</option>)}</select><select aria-label="技能状态筛选" className="settings-select" value={showHostSkills?"all":"ready"} onChange={event=>{const all=event.target.value==="all";setShowHostSkills(all);if(!all&&selectedSkill&&!selectedSkill.compatibility?.runtime_ready){requestIdRef.current++;setSelectedName(null);setSkillContent("");setDetailLoading(false);}}}><option value="ready">本机可用</option><option value="all">全部（含宿主专用）</option></select><span className="capability-list-caption" aria-label="技能可用数量">可用 {skills.filter(skill=>skill.compatibility?.runtime_ready===true).length}</span></div>
+        <div className="capability-workbench-toolbar skills-workbench-toolbar"><Input aria-label="搜索技能" placeholder="搜索技能名称或说明…" value={search} onChange={event=>setSearch(event.target.value)}/><select aria-label="技能来源筛选" className="settings-select" value={sourceFilter} onChange={event=>setSourceFilter(event.target.value)}><option value="bundled">官方内置</option><option value="other">其他来源</option><option value="all">全部来源</option>{[...new Set(skills.filter(skill=>!skill.is_bundled).map(skill=>skill.source??"未标注来源"))].map(source=><option key={source} value={source}>{source}</option>)}</select><span className="capability-list-caption">{filtered.length} 个技能</span><div className="skills-workbench-actions"><Button size="sm" variant="secondary" onClick={() => void refreshDiscovery()} disabled={refreshing}><RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "正在发现" : "刷新发现"}</Button><Button size="sm" variant="secondary" onClick={() => navigate("/capabilities?category=import&import_tab=discovery")}>发现与导入</Button><Button size="sm" onClick={openCreate}><Plus className="h-3.5 w-3.5" />新增技能</Button></div></div>
         <div className="capability-split-layout skills-split-layout">
           <aside className="capability-list-panel" aria-label="技能列表">
-            <p className="capability-list-caption">{filtered.length} 个技能</p>
             <div className="capability-list-scroll scrollbar-thin">
               {loading ? (
                 <div className="capability-skeleton-stack" aria-label="正在加载技能">
@@ -247,8 +237,8 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                 />
               ) : filtered.length === 0 ? (
                 <EmptyState
-                  title={search.trim() ? "没有匹配的技能" : "当前没有可用技能流程"}
-                  description={search.trim() ? `未找到与“${search}”匹配的技能名称或路径。` : "可以新建本项目技能流程，或勾选显示宿主专用技能查看其依赖与适配说明。"}
+                  title={search.trim() ? "没有匹配的技能" : "当前来源没有技能"}
+                  description={search.trim() ? `未找到与“${search}”匹配的技能名称或路径。` : "切换来源查看其他技能，或使用发现与导入。"}
                   action={
                     search.trim() ? <Button size="sm" variant="secondary" onClick={() => setSearch("")}>
                       清除搜索
@@ -331,6 +321,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    {!selectedSkill.is_bundled && !selectedSkill.editable && <Button size="sm" variant="secondary" onClick={() => navigate(`/capabilities?${new URLSearchParams({category:"import",import_tab:"packages",import_directory:selectedSkill.root_dir,import_name:selectedSkill.display_name ?? selectedSkill.name})}`)}>检查并导入</Button>}
                     {selectedSkill.compatibility?.status === "external_host" && <Button size="sm" variant="secondary" disabled={detailLoading || Boolean(detailError)} onClick={() => {setEditorMode("create");setFormName(`adapted-${selectedSkill.name.split(":").pop()}`);setFormContent(skillContent);setFormError("请将原文的宿主调用改为本项目可用工具，确认脚本与引用的实际路径；直接保存原文不会解除宿主依赖。");}}>适配为工作区技能</Button>}
                     {selectedSkill.editable ? (
                       <>

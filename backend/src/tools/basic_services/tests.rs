@@ -217,3 +217,164 @@ fn agent_specific_profile_is_resolved_before_default() {
         "https://example.invalid/v1/images/generations"
     );
 }
+#[tokio::test]
+async fn vision_missing_image_is_reported_before_service_selection_or_authorization() {
+    let (existing, service) = output_tool();
+    let tool = BasicServiceTool::new(
+        existing.db.clone_connection(),
+        existing.resolver.clone(),
+        "vision",
+    )
+    .with_conversation_id(existing.conversation_id.clone())
+    .with_resource_service(service);
+    let args = json!({"prompt":"请描述图片"});
+    assert!(tool
+        .security_descriptor(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("resource_id"));
+    let context = ToolExecutionContext::new_with_resources(
+        Arc::new(crate::isolation::ManagedProcessRegistry::new()),
+        "missing",
+        vec![],
+    );
+    let result = tool.execute_with_context(args, &context).await;
+    assert!(!result.ok);
+    assert_eq!(
+        result.structured.as_ref().unwrap()["code"],
+        "VISION_IMAGE_REQUIRED"
+    );
+    assert!(result.content.contains("当前对话"));
+    assert!(result.content.contains("image_url"));
+}
+
+#[tokio::test]
+async fn vision_uses_selected_account_and_bound_real_image_in_local_request() {
+    use crate::db::{basic_services::BasicServiceInput, model_pools::ProviderAccount};
+    use crate::integrations::secret::{InMemorySecretStore, SecretRef, SecretStore};
+    use crate::safety::grant::{AuthorizedResource, NetworkZone};
+    let (existing, service) = output_tool();
+    let bytes = image_fixture();
+    let expected = bytes.clone();
+    let app = axum::Router::new().route(
+        "/chat/completions",
+        axum::routing::post(
+            move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| {
+                let expected = expected.clone();
+                async move {
+                    assert_eq!(
+                        headers[axum::http::header::AUTHORIZATION],
+                        "Bearer local-vision-fixture"
+                    );
+                    assert_eq!(body["model"], "vision-fixture");
+                    let url = body["messages"][0]["content"][1]["image_url"]["url"]
+                        .as_str()
+                        .unwrap();
+                    let data = url.strip_prefix("data:image/png;base64,").unwrap();
+                    assert_eq!(
+                        base64::engine::general_purpose::STANDARD
+                            .decode(data)
+                            .unwrap(),
+                        expected
+                    );
+                    axum::Json(json!({"choices":[{"message":{"content":"真实测试图片"}}]}))
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    existing.db.init_basic_services().unwrap();
+    existing.db.init_provider_accounts().unwrap();
+    for (id, credential) in [
+        ("other-account", "llm.other"),
+        ("vision-account", "llm.vision"),
+    ] {
+        existing
+            .db
+            .save_provider_account(&ProviderAccount {
+                id: id.into(),
+                provider_id: "fixture".into(),
+                label: id.into(),
+                base_url: format!("http://{address}"),
+                credential_id: Some(credential.into()),
+                profile_ids: vec![],
+            })
+            .unwrap();
+    }
+    existing
+        .db
+        .save_basic_service_profile(
+            "vision-profile",
+            BasicServiceInput {
+                label: "vision".into(),
+                provider_account_id: "vision-account".into(),
+                service_kind: "vision".into(),
+                model: "vision-fixture".into(),
+                adapter: "openai".into(),
+                parameters: json!({}),
+                expected_revision: None,
+            },
+        )
+        .unwrap();
+    existing
+        .db
+        .set_basic_service_default("vision", "vision-profile")
+        .unwrap();
+    let store = Arc::new(InMemorySecretStore::new());
+    store
+        .put(
+            &SecretRef::new("llm.vision"),
+            secrecy::SecretString::from("local-vision-fixture"),
+        )
+        .await
+        .unwrap();
+    store
+        .put(
+            &SecretRef::new("llm.other"),
+            secrecy::SecretString::from("other-fixture"),
+        )
+        .await
+        .unwrap();
+    let output = existing
+        .db
+        .create_conversation_image_output(
+            &existing.conversation_id,
+            "image-fixture",
+            "fixture",
+            None,
+            None,
+        )
+        .unwrap();
+    let saved = existing.persist_image(&output, bytes).await.unwrap();
+    let tool = BasicServiceTool::new(
+        existing.db.clone_connection(),
+        Arc::new(SecretResolver::new(store)),
+        "vision",
+    )
+    .with_conversation_id(existing.conversation_id.clone())
+    .with_resource_service(service);
+    let context = ToolExecutionContext::new_with_resources(
+        Arc::new(crate::isolation::ManagedProcessRegistry::new()),
+        "vision-fixture",
+        vec![AuthorizedResource::Network {
+            scheme: "http".into(),
+            host: "127.0.0.1".into(),
+            port: address.port(),
+            method: "POST".into(),
+            zone: NetworkZone::Loopback,
+            grant_id: None,
+            one_shot_approval: true,
+        }],
+    );
+    let result = tool
+        .execute_with_context(
+            json!({"prompt":"描述图片", "resource_id":saved.resource_id.unwrap()}),
+            &context,
+        )
+        .await;
+    assert!(result.ok, "{}", result.content);
+    assert_eq!(result.content, "真实测试图片");
+    server.abort();
+}

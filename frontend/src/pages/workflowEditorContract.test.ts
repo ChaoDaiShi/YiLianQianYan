@@ -29,7 +29,9 @@ describe("workflow editor page contract", () => {
     expect(workflowEditorSource).toContain("workflow-editor-main");
     expect(workflowEditorSource).toContain("workflow-editor-inspector");
     expect(workflowEditorSource).toContain("workflow-canvas-viewport scrollbar-thin");
-    expect(workflowEditorSource).toContain("minHeight: layout.height");
+    expect(workflowEditorSource).toContain("workflow-canvas-stage");
+    expect(workflowEditorSource).toContain("width: canvasWidth * zoom, height: canvasHeight * zoom");
+    expect(workflowEditorSource).toContain("width: canvasWidth, height: canvasHeight");
   });
 
   it("does not add a second workflow runtime or persisted canvas schema", () => {

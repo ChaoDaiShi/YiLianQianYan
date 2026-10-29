@@ -135,18 +135,20 @@ fn deep_round_queries_must_actually_expand_research() {
     assert_eq!(BuildMode::Quick.rounds(), 1);
     assert_eq!(BuildMode::Deep.rounds(), 3);
     assert_eq!(BuildMode::Quick.source_limit(), 12);
-    assert_eq!(BuildMode::Deep.source_limit(), 40);
+    assert_eq!(BuildMode::Deep.source_limit(), 48);
     let previous = vec!["栈 官方定义".into()];
     assert!(parse_queries(
         vec![" 栈 官方定义 ".into(), "B".into(), "C".into(), "D".into()],
-        &previous
+        &previous,
+        4
     )
     .is_err());
-    assert!(parse_queries(vec!["A".into(), "a".into(), "C".into(), "D".into()], &[]).is_err());
+    assert!(parse_queries(vec!["A".into(), "a".into(), "C".into(), "D".into()], &[], 4).is_err());
     assert_eq!(
         parse_queries(
             vec!["A".into(), "B".into(), "C".into(), "D".into()],
-            &previous
+            &previous,
+            4
         )
         .unwrap()
         .len(),
@@ -167,8 +169,8 @@ fn search_hit(url: String) -> crate::modules::cloud::search::SearchResult {
 fn oversized_search_responses_reserve_new_sources_for_every_deep_query_and_round() {
     let mut build = KnowledgeBuild::new("数据结构".into(), BuildMode::Deep);
     let mut urls = HashSet::new();
-    for (round, cumulative_limit) in [13, 26, 40].into_iter().enumerate() {
-        for query_index in 0..4 {
+    for (round, cumulative_limit) in [16, 32, 48].into_iter().enumerate() {
+        for query_index in 0..6 {
             let query = format!("round-{round}-query-{query_index}");
             let budget = query_source_budget(build.mode, round, query_index, build.sources.len());
             assert!(budget > 0, "later queries must retain collection capacity");
@@ -192,7 +194,7 @@ fn oversized_search_responses_reserve_new_sources_for_every_deep_query_and_round
         }
         assert_eq!(build.sources.len(), cumulative_limit);
     }
-    assert_eq!(urls.len(), 40);
+    assert_eq!(urls.len(), 48);
 }
 
 #[test]
@@ -232,17 +234,16 @@ fn duplicate_and_invalid_sources_do_not_consume_query_budget() {
 fn unused_query_slots_are_redistributed_without_using_later_round_reservations() {
     let mut build = KnowledgeBuild::new("数据结构".into(), BuildMode::Deep);
     let mut urls = HashSet::new();
-    assert_eq!(query_source_budget(build.mode, 0, 0, 0), 4);
+    assert_eq!(query_source_budget(build.mode, 0, 0, 0), 3);
     collect_sources(
         &mut build,
         &mut urls,
         "sparse",
         vec![search_hit("https://sources.example/only-one".into())],
-        4,
+        3,
     );
-    for query_index in 1..4 {
+    for query_index in 1..6 {
         let budget = query_source_budget(build.mode, 0, query_index, build.sources.len());
-        assert_eq!(budget, 4);
         let hits = (0..10)
             .map(|index| {
                 search_hit(format!(
@@ -252,10 +253,10 @@ fn unused_query_slots_are_redistributed_without_using_later_round_reservations()
             .collect();
         collect_sources(&mut build, &mut urls, "fill-gap", hits, budget);
     }
-    assert_eq!(build.sources.len(), 13);
+    assert_eq!(build.sources.len(), 16);
     assert_eq!(
         query_source_budget(build.mode, 1, 0, build.sources.len()),
-        4
+        3
     );
     assert_eq!(query_source_budget(BuildMode::Quick, 0, 0, 0), 3);
 }

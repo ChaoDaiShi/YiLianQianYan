@@ -281,8 +281,8 @@
 
 .conversation-chat .tool-card-details {
   border-color: var(--border-soft);
-  background: var(--code-bg);
-  color: var(--code-text);
+  background: var(--surface-solid);
+  color: var(--text-primary);
 }
 
 .conversation-chat .tool-card-details dt {
@@ -294,8 +294,14 @@
 }
 
 .conversation-chat .tool-card-details dd[class*="bg-[var"] {
-  background: rgba(255, 255, 255, 0.08) !important;
+  background: var(--surface-muted) !important;
 }
+
+.conversation-chat .tool-card-details pre { background: var(--surface-muted);color: var(--text-primary); }
+.tool-card-summary.tool-card-error-summary { color:var(--danger-fg);white-space:normal;overflow-wrap:anywhere;line-height:1.6; }
+.tool-card-guidance { padding:0 12px 8px 24px; }
+.tool-card-guidance a { display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent-soft-fg);font-size:12px; }
+.tool-card-guidance a:focus-visible { outline:2px solid var(--focus-outline);outline-offset:2px; }
 
 .conversation-chat .conversation-approval-card {
   border-color: var(--warning-border);

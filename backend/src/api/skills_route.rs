@@ -32,7 +32,8 @@ pub async fn list_skills(State(server): State<Arc<AppServer>>) -> Json<Vec<serde
                 "source_kind": s.source_kind,
                 "source_root": s.source_root.to_string_lossy(),
                 "compatibility":s.compatibility,
-                "editable": managed.as_ref().is_some_and(|store| store.is_editable(&s.path)),
+                "is_bundled": s.source_kind == "bundled",
+                "editable": s.source_kind != "bundled" && managed.as_ref().is_some_and(|store| store.is_editable(&s.path)),
             })
         })
         .collect();
@@ -60,7 +61,7 @@ pub async fn load_skill(
                     "source_kind": skill.source_kind,
                     "source_root": skill.source_root.to_string_lossy(),
                     "compatibility":skill.compatibility,
-                    "editable": managed.as_ref().is_some_and(|store| store.is_editable(&skill.path)),
+                    "editable": skill.source_kind != "bundled" && managed.as_ref().is_some_and(|store| store.is_editable(&skill.path)),
                 }))
             }
             Err(e) => return Json(serde_json::json!({"error": e})),
@@ -127,11 +128,54 @@ fn managed_store(
     })
 }
 
+fn reject_bundled_target(
+    server: &AppServer,
+    store: &crate::modules::memory_skill::store::ManagedSkillStore,
+    name: &str,
+) -> Result<(), (StatusCode, String)> {
+    let discovery = server.skill_discovery.read();
+    let Some(source) = discovery
+        .sources()
+        .iter()
+        .find(|source| source.kind == "bundled")
+    else {
+        return Ok(());
+    };
+    let (Ok(managed_root), Ok(bundled_root)) =
+        (store.root().canonicalize(), source.path.canonicalize())
+    else {
+        return Ok(());
+    };
+    let candidate = managed_root.join(name);
+    let candidate_resolved = candidate.canonicalize().unwrap_or(candidate);
+    for bundled_name in ["code-reviewer", "doc-writer", "python-expert"] {
+        let directory = bundled_root.join(bundled_name);
+        let directory_resolved = directory.canonicalize().unwrap_or(directory);
+        if candidate_resolved == directory_resolved {
+            return Err((StatusCode::FORBIDDEN, "内置技能不可修改".into()));
+        }
+    }
+    Ok(())
+}
+
+fn reject_bundled_record(server: &AppServer, name: &str) -> Result<(), (StatusCode, String)> {
+    if server
+        .skill_discovery
+        .read()
+        .get(name)
+        .is_some_and(|skill| skill.source_kind == "bundled")
+    {
+        return Err((StatusCode::FORBIDDEN, "内置技能不可修改".into()));
+    }
+    Ok(())
+}
+
 pub async fn create_skill(
     State(server): State<Arc<AppServer>>,
     Json(body): Json<CreateSkillRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let store = managed_store(&server)?;
+    reject_bundled_target(&server, &store, &body.name)?;
     let path = store
         .create(&body.name, &body.content)
         .map_err(management_error)?;
@@ -149,6 +193,9 @@ pub async fn update_skill(
     Json(body): Json<UpdateSkillRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let store = managed_store(&server)?;
+    reject_bundled_record(&server, &current_name)?;
+    reject_bundled_target(&server, &store, &current_name)?;
+    reject_bundled_target(&server, &store, &body.name)?;
     let path = store
         .update(&current_name, &body.name, &body.content)
         .map_err(management_error)?;
@@ -171,6 +218,8 @@ pub async fn delete_skill(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let store = managed_store(&server)?;
+    reject_bundled_record(&server, &name)?;
+    reject_bundled_target(&server, &store, &name)?;
     store.delete(&name).map_err(management_error)?;
     server
         .db

@@ -176,6 +176,7 @@ pub fn configured_search_endpoint(
         "tavily" => ("/search", "POST"),
         "brave" => ("/res/v1/web/search", "GET"),
         "bocha" => ("/v1/web-search", "POST"),
+        "deepseek" => ("/tools/search", "POST"),
         _ => {
             return Err(SearchError {
                 kind: SearchFailureKind::InvalidRequest,
@@ -210,6 +211,12 @@ pub async fn search_configured(
             kind: SearchFailureKind::Authentication,
             status: None,
         })?;
+    if provider == "deepseek" && request.query.chars().count() > 128 {
+        return Err(SearchError {
+            kind: SearchFailureKind::InvalidRequest,
+            status: None,
+        });
+    }
     let (endpoint, method) = configured_search_endpoint(provider, &base)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -227,6 +234,8 @@ pub async fn search_configured(
     } else {
         let body = if provider == "tavily" {
             serde_json::json!({"query":request.query,"max_results":request.max_results,"search_depth":"basic"})
+        } else if provider == "deepseek" {
+            serde_json::json!({"query":request.query,"count":request.max_results,"need_content":true})
         } else {
             serde_json::json!({"query":request.query,"count":request.max_results,"summary":true})
         };
@@ -248,7 +257,7 @@ pub async fn search_configured(
     }
     let value: serde_json::Value = response.json().await.map_err(|_| fail())?;
     let entries = match provider {
-        "tavily" => value.get("results"),
+        "tavily" | "deepseek" => value.get("results"),
         "brave" => value.pointer("/web/results"),
         "bocha" => value.pointer("/data/webPages/value"),
         _ => None,
@@ -269,6 +278,7 @@ pub async fn search_configured(
             .get(match provider {
                 "tavily" => "content",
                 "brave" => "description",
+                "deepseek" => "snippet",
                 _ => "summary",
             })
             .and_then(serde_json::Value::as_str)
@@ -277,7 +287,14 @@ pub async fn search_configured(
             title: title.into(),
             url: url.into(),
             snippet,
-            content: None,
+            content: if provider == "deepseek" {
+                entry
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            } else {
+                None
+            },
         });
     }
     Ok(SearchResponse {
@@ -291,6 +308,49 @@ pub async fn search_configured(
         search_time_ms: start.elapsed().as_millis() as u64,
     })
 }
+
+/// Fetch one page through DeepSeek's standalone Fetch API using the selected credential.
+pub async fn fetch_deepseek(
+    base: &str,
+    store: Arc<dyn SecretStore>,
+    secret_ref: crate::integrations::secret::SecretRef,
+    url: &str,
+) -> Result<serde_json::Value, SearchError> {
+    let fail = || SearchError {
+        kind: SearchFailureKind::Provider,
+        status: None,
+    };
+    let key = store
+        .get(&secret_ref)
+        .await
+        .map_err(|_| fail())?
+        .ok_or(SearchError {
+            kind: SearchFailureKind::Authentication,
+            status: None,
+        })?;
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|_| fail())?
+        .post(format!("{}/tools/fetch", base.trim_end_matches('/')))
+        .bearer_auth(key.expose_secret())
+        .json(&serde_json::json!({"url":url}))
+        .send()
+        .await
+        .map_err(|_| SearchError {
+            kind: SearchFailureKind::Unavailable,
+            status: None,
+        })?;
+    let status = response.status().as_u16();
+    if !response.status().is_success() {
+        return Err(SearchError {
+            kind: classify_anysearch_status(status),
+            status: Some(status),
+        });
+    }
+    response.json().await.map_err(|_| fail())
+}
+
 #[cfg(test)]
 mod configured_tests {
     use super::*;

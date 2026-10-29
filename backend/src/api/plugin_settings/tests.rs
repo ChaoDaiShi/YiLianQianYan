@@ -96,7 +96,7 @@ async fn plugin_settings_follow_enable_state_and_persist_typed_values() {
             .as_array()
             .unwrap()
             .len(),
-        14
+        15
     );
     let values = json!({"values":{"enabled":false,"mode":"normal"}});
     assert_eq!(

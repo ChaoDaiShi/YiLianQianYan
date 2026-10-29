@@ -50,7 +50,7 @@ async fn settings_canvas_routes_persist_ui_only_and_reject_unknown_scopes() {
     let before = serde_json::to_value(&*server.config.read()).unwrap();
     let (status, initial) = send(server.clone(), &token, Method::GET, &path, Value::Null).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(initial["presets"].as_array().unwrap().len(), 14);
+    assert_eq!(initial["presets"].as_array().unwrap().len(), 15);
     assert_eq!(
         initial["state"]["connected_node_ids"],
         serde_json::to_value(SettingsCanvasState::default().connected_node_ids).unwrap()

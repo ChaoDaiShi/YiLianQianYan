@@ -280,3 +280,101 @@ mod cancellation_tests {
         server.abort();
     }
 }
+#[cfg(test)]
+mod vision_diagnostic_tests {
+    use super::*;
+    use crate::db::model_pools::ProviderAccount;
+    use crate::integrations::secret::{
+        InMemorySecretStore, SecretRef, SecretStore, SecretStoreError, SecretStoreStatus,
+    };
+    struct Unavailable;
+    #[async_trait::async_trait]
+    impl SecretStore for Unavailable {
+        async fn put(
+            &self,
+            _: &SecretRef,
+            _: secrecy::SecretString,
+        ) -> Result<(), SecretStoreError> {
+            Err(SecretStoreError::Unavailable)
+        }
+        async fn get(
+            &self,
+            _: &SecretRef,
+        ) -> Result<Option<secrecy::SecretString>, SecretStoreError> {
+            Err(SecretStoreError::Unavailable)
+        }
+        async fn delete(&self, _: &SecretRef) -> Result<(), SecretStoreError> {
+            Err(SecretStoreError::Unavailable)
+        }
+        async fn status(&self) -> SecretStoreStatus {
+            SecretStoreStatus::Unavailable
+        }
+    }
+    fn profile() -> BasicServiceProfile {
+        BasicServiceProfile {
+            id: "vision".into(),
+            label: "vision".into(),
+            provider_account_id: "chosen".into(),
+            service_kind: "vision".into(),
+            model: "test".into(),
+            adapter: "openai".into(),
+            parameters: json!({}),
+            revision: 1,
+            test: None,
+        }
+    }
+    fn db(credential_id: Option<&str>) -> Database {
+        let db = Database::new(std::path::Path::new(":memory:")).unwrap();
+        db.init_provider_accounts().unwrap();
+        db.save_provider_account(&ProviderAccount {
+            id: "chosen".into(),
+            provider_id: "fixture".into(),
+            label: "chosen".into(),
+            base_url: "http://127.0.0.1:9".into(),
+            credential_id: credential_id.map(str::to_owned),
+            profile_ids: vec![],
+        })
+        .unwrap();
+        db
+    }
+    fn request() -> BasicServiceRequest {
+        BasicServiceRequest {
+            prompt: "describe".into(),
+            image_url: Some("data:image/png;base64,iVBORw0KGgo=".into()),
+        }
+    }
+    #[tokio::test]
+    async fn chosen_missing_key_and_unavailable_store_have_distinct_diagnostics() {
+        let missing = invoke_profile(
+            &db(None),
+            &SecretResolver::new(Arc::new(InMemorySecretStore::new())),
+            &profile(),
+            request(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing.diagnostic_code(), Some("BASIC_SERVICE_NO_API_KEY"));
+        assert!(missing.user_message("vision").contains("图像理解服务"));
+        assert!(missing.user_message("vision").contains("厂商账户"));
+        let unavailable = invoke_profile(
+            &db(Some("llm.chosen")),
+            &SecretResolver::new(Arc::new(Unavailable)),
+            &profile(),
+            request(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            unavailable.diagnostic_code(),
+            Some("BASIC_SERVICE_SECRET_UNAVAILABLE")
+        );
+        assert!(unavailable.user_message("vision").contains("凭据库"));
+        assert_eq!(
+            crate::integrations::llm::model_pool::classify(match &unavailable {
+                BasicServiceError::Availability(error) => error,
+                _ => panic!(),
+            }),
+            Some(crate::integrations::llm::model_pool::FailureReason::Authentication)
+        );
+    }
+}

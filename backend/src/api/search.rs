@@ -13,6 +13,8 @@ pub struct SearchConfigUpdate {
     provider: Option<String>,
     base_url: Option<String>,
     api_key: Option<String>,
+    provider_account_id: Option<String>,
+    credential_mode: Option<String>,
     #[serde(default)]
     clear_api_key: bool,
 }
@@ -31,12 +33,30 @@ pub async fn config_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let (provider, base_url, secret_ref) =
         server.db.cloud_search_config().map_err(database_error)?;
-    let configured = if let Some(secret_ref) = secret_ref {
-        matches!(server.secret_store.get(&secret_ref).await, Ok(Some(_)))
+    let configured = if let Some(ref secret_ref) = secret_ref {
+        matches!(server.secret_store.get(secret_ref).await, Ok(Some(_)))
     } else {
         false
     };
+    let account_id = if let Some(secret) = secret_ref.as_ref() {
+        server
+            .db
+            .list_provider_accounts()
+            .map_err(|_| {
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "search_config_unavailable",
+                    "搜索配置暂时不可用",
+                )
+            })?
+            .into_iter()
+            .find(|account| account.credential_id.as_deref() == Some(secret.key.as_str()))
+            .map(|account| account.id)
+    } else {
+        None
+    };
     Ok(Json(serde_json::json!({
+        "provider_account_id": account_id,
         "provider": provider,
         "base_url": base_url,
         "configured": configured,
@@ -57,7 +77,10 @@ pub async fn update_config_handler(
         .trim_end_matches('/');
     validate_base_url(base_url)?;
     let provider = update.provider.as_deref().unwrap_or(&current_provider);
-    if !matches!(provider, "anysearch" | "tavily" | "brave" | "bocha") {
+    if !matches!(
+        provider,
+        "anysearch" | "tavily" | "brave" | "bocha" | "deepseek"
+    ) {
         return Err(api_error(
             StatusCode::BAD_REQUEST,
             "invalid_provider",
@@ -74,7 +97,39 @@ pub async fn update_config_handler(
     } else {
         Some(target.clone())
     };
-    if update.clear_api_key {
+    if update.credential_mode.as_deref() == Some("direct") {
+        secret_ref = Some(target.clone());
+    }
+    if let Some(account_id) = update
+        .provider_account_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+    {
+        let account = server
+            .db
+            .list_provider_accounts()
+            .map_err(|_| {
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "search_config_failed",
+                    "账户读取失败",
+                )
+            })?
+            .into_iter()
+            .find(|a| a.id == account_id && a.provider_id == provider)
+            .ok_or_else(|| {
+                api_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_account",
+                    "账户与搜索厂商不匹配",
+                )
+            })?;
+        secret_ref = Some(crate::integrations::secret::SecretRef::new(
+            account.credential_id.ok_or_else(|| {
+                api_error(StatusCode::BAD_REQUEST, "invalid_account", "账户没有凭据")
+            })?,
+        ));
+    } else if update.clear_api_key {
         server
             .secret_store
             .delete(&target)

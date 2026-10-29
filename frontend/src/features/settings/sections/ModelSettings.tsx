@@ -1,6 +1,7 @@
+import { useState } from "react";
 import type { ProviderConnectionKind } from "../../../api/providerConnection";
 import type { AppConfig, ProviderReadinessProjection } from "../../../types";
-import ModelPoolPanel from "../../llm/ModelPoolPanel";
+import QuickModelSetup from "../../llm/QuickModelSetup";
 import { ModelManagerPanel } from "../../llm";
 import { secretSourceLabel } from "../model/mapping";
 import ProviderReadinessCard from "./ProviderReadinessCard";
@@ -28,12 +29,14 @@ export default function ModelSettings({
   results,
   onVerify,
 }: ModelSettingsProps) {
+  const [modelRevision, setModelRevision] = useState(0);
   return (
     <div className="space-y-4">
-      <ModelPoolPanel modelManager={<ModelManagerPanel
+      <QuickModelSetup onSaved={() => setModelRevision(value => value + 1)} />
+      <details className="u2-disclosure"><summary>管理已有模型与旧配置</summary><div className="pt-4"><ModelManagerPanel key={modelRevision}
         actions={<ProviderReadinessCard dirty={dirty} readiness={readiness} kinds={["model"]} testing={testing} results={results} onVerify={onVerify} />}
         legacyModel={{ config, updateField, clearSecret, secretSourceLabel, secretRefreshToken }}
-      />} />
+      /></div></details>
     </div>
   );
 }

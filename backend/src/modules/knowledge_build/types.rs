@@ -14,10 +14,16 @@ impl BuildMode {
             Self::Deep => 3,
         }
     }
+    pub fn queries_per_round(self) -> usize {
+        match self {
+            Self::Quick => 4,
+            Self::Deep => 6,
+        }
+    }
     pub fn source_limit(self) -> usize {
         match self {
             Self::Quick => 12,
-            Self::Deep => 40,
+            Self::Deep => 48,
         }
     }
 }
@@ -141,7 +147,7 @@ impl KnowledgeBuild {
             progress: BuildProgress {
                 stage: "等待检索".into(),
                 queries_completed: 0,
-                queries_total: 4 * mode.rounds(),
+                queries_total: mode.queries_per_round() * mode.rounds(),
                 sources_collected: 0,
                 rounds_completed: 0,
                 rounds_total: mode.rounds(),

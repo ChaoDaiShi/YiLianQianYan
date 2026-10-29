@@ -1,0 +1,48 @@
+/* Compact working surfaces: preserve readable text and actual control hit areas. */
+.app-shell .page-canvas .page-header { min-height:52px;padding:8px 18px;gap:12px; }
+.app-shell .page-canvas .page-header h1 { font-size:18px;line-height:26px; }
+.app-shell .page-canvas .page-description { font-size:12px; }
+.management-agents-content,.management-memory-content,.management-automations-content { padding:14px 18px;gap:12px; }
+.management-agents-layout { gap:12px; }
+.management-agent-list { padding:10px; }
+.management-agent-row { gap:9px;padding:10px;margin-bottom:4px; }
+.management-agent-search { padding:7px 10px; }
+.management-agent-editor { padding:16px; }
+.management-automation-row { padding:12px 14px;gap:12px; }
+.capability-workbench .capability-workbench-body { padding:0 14px 14px;gap:12px; }
+.capability-workbench-main { padding:12px;gap:10px; }
+.capability-category-nav { padding:8px;gap:4px; }
+.capability-category-nav button { padding:8px 10px;min-height:38px; }
+.capability-category-heading h2 { font-size:18px;line-height:24px; }
+.capability-category-heading p { margin-top:3px;line-height:1.5; }
+.capability-workbench-toolbar { gap:8px;align-items:center; }
+.capability-resource-split { gap:12px; }
+.capability-resource-list { padding:8px; }
+.capability-resource-row { padding:10px 12px;margin-bottom:6px;gap:5px; }
+.capability-resource-detail { padding:12px 16px; }
+.capability-resource-detail > h3 { font-size:18px;margin-bottom:8px; }
+.capability-resource-detail > p { margin:8px 0;line-height:1.65; }
+.capability-resource-detail > div,.capability-resource-detail > section { margin-top:12px; }
+.capability-import-form { gap:12px;padding:12px 2px; }
+.preview-more.navigation-page { padding:18px 22px; }
+.preview-more .navigation-card-grid { gap:12px; }
+.preview-more .navigation-entry { min-height:84px;padding:14px 18px; }
+.preview-more .navigation-entry h3 { font-size:15px; }
+.preview-more .navigation-entry p { margin-top:4px;line-height:1.5; }
+.preview-plugin-section { margin-top:18px; }
+.workflow-editor-header { padding:10px 14px;gap:10px; }
+.workflow-editor-library,.workflow-editor-inspector { padding:12px; }
+.workflow-library-item { padding:10px; }
+.workflow-panel-heading { padding:10px 12px; }
+.workflow-canvas-stage { position:relative; }
+.workflow-canvas-node { touch-action:none; }
+@media (min-width:1100px) {
+  .capability-workbench .capability-workbench-body { grid-template-columns:180px minmax(0,1fr); }
+  .workflow-editor-columns { grid-template-columns:190px minmax(0,1fr) 270px; }
+}
+@media (max-width:700px) {
+  .app-shell .page-canvas .page-header { padding:8px 12px;gap:8px; }
+  .management-agents-content,.management-memory-content,.management-automations-content { padding:10px 12px; }
+  .capability-workbench .capability-workbench-body { padding:0 10px 10px;gap:8px; }
+  .preview-more.navigation-page { padding:12px; }
+}

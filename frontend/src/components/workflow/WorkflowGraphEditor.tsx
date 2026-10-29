@@ -148,6 +148,9 @@ export default function WorkflowGraphEditor({
   };
 
   const [customOffsets, setCustomOffsets] = useState<Record<string, { x: number; y: number }>>({});
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const canvasWidth = Math.max(layout.width, ...layout.nodes.map(item => (customOffsets[item.id]?.x ?? item.x) + 214));
+  const canvasHeight = Math.max(layout.height, ...layout.nodes.map(item => (customOffsets[item.id]?.y ?? item.y) + 136));
   const draggingNodeRef = useRef<{ id: string; startPointerX: number; startPointerY: number; initialX: number; initialY: number; moved: boolean } | null>(null);
 
   const addNode = (kind: WorkflowNodeKind, dropLocation?: { x: number; y: number }) => {
@@ -247,10 +250,11 @@ export default function WorkflowGraphEditor({
   const handleZoomOut = () => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10));
   const handleZoomReset = () => setZoom(1);
   const handleZoomFit = () => {
-    if (layout.width > 0 && layout.height > 0) {
-      const fitScale = Math.min(1.2, Math.max(0.6, 600 / Math.max(layout.width, layout.height)));
-      setZoom(Math.round(fitScale * 10) / 10);
-    }
+    const viewport = canvasViewportRef.current;
+    if (!viewport) return;
+    const fitScale = Math.min(1.2, Math.max(0.5, Math.min((viewport.clientWidth - 24) / canvasWidth, (viewport.clientHeight - 24) / canvasHeight)));
+    setZoom(Math.round(fitScale * 100) / 100);
+    viewport.scrollTo({ left: 0, top: 0 });
   };
 
   return (
@@ -283,7 +287,7 @@ export default function WorkflowGraphEditor({
         <aside className="workflow-editor-library scrollbar-thin">
           <section>
             <div className="workflow-editor-section-title">节点库</div>
-            <p className="workflow-editor-section-hint">添加真实可执行节点到画布</p>
+            <p className="workflow-editor-section-hint">拖入画布添加节点，也可点击添加</p>
             <div className="mt-3 space-y-2">
               {WORKFLOW_NODE_KINDS.map((kind) => {
                 const presentation = getNodePresentation(kind);
@@ -332,6 +336,7 @@ export default function WorkflowGraphEditor({
             </div>
             <div
               className="workflow-canvas-viewport scrollbar-thin"
+              ref={canvasViewportRef}
               onDragOver={(event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "copy";
@@ -344,13 +349,13 @@ export default function WorkflowGraphEditor({
                 const rect = viewport.getBoundingClientRect();
                 const rawX = event.clientX - rect.left + viewport.scrollLeft;
                 const rawY = event.clientY - rect.top + viewport.scrollTop;
-                const dropX = Math.max(20, Math.round(rawX / zoom));
-                const dropY = Math.max(20, Math.round(rawY / zoom));
+                const dropX = Math.max(20, Math.round(rawX / zoom - 95));
+                const dropY = Math.max(20, Math.round(rawY / zoom - 56));
                 addNode(kind, { x: dropX, y: dropY });
               }}
             >
-              {layout.nodes.length === 0 ? <EmptyState icon={<GitBranch className="h-6 w-6" />} title="画布还是空的" description="从左侧节点库添加一个真实节点，开始搭建工作流。" className="min-h-[360px]" /> : <div className="workflow-canvas" style={{ width: layout.width * zoom, minHeight: layout.height * zoom, transform: `scale(${zoom})`, transformOrigin: "top left" }}>
-                <svg className="workflow-canvas-edges" width={layout.width} height={layout.height} aria-hidden="true">
+              {layout.nodes.length === 0 ? <EmptyState icon={<GitBranch className="h-6 w-6" />} title="画布还是空的" description="拖入左侧节点即可开始搭建，也可以点击节点类型。" className="min-h-[240px]" /> : <div className="workflow-canvas-stage" style={{ width: canvasWidth * zoom, height: canvasHeight * zoom }}><div className="workflow-canvas" style={{ width: canvasWidth, height: canvasHeight, transform: `scale(${zoom})`, transformOrigin: "top left" }}>
+                <svg className="workflow-canvas-edges" width={canvasWidth} height={canvasHeight} aria-hidden="true">
                   <defs>
                     <marker id="workflow-edge-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
                       <path d="M0,0 L8,4 L0,8 z" fill="var(--text-faint)" />
@@ -439,7 +444,7 @@ export default function WorkflowGraphEditor({
                     </button>
                   );
                 })}
-              </div>}
+              </div></div>}
             </div>
           </section>
 

@@ -115,7 +115,7 @@ async fn configured_http_research_runs_quick_and_deep_imports_real_text_and_canc
 
     for (mode, prefix, query_count, synthesis_counts) in [
         (BuildMode::Quick, "quick", 4, vec![12usize]),
-        (BuildMode::Deep, "deep", 12, vec![13usize, 26, 40]),
+        (BuildMode::Deep, "deep", 18, vec![16usize, 32, 48]),
     ] {
         let marker = format!("{prefix}-unique-{}", uuid::Uuid::new_v4());
         let build = KnowledgeBuild::new(marker.clone(), mode);
@@ -180,12 +180,12 @@ async fn configured_http_research_runs_quick_and_deep_imports_real_text_and_canc
                 let count = if mode == BuildMode::Quick {
                     12
                 } else {
-                    [13, 26, 40][round]
+                    [16, 32, 48][round]
                 };
                 let new_count = if mode == BuildMode::Quick {
                     12
                 } else {
-                    [13, 13, 14][round]
+                    [16, 16, 16][round]
                 };
                 let mut stages = vec![
                     (marker.clone(), "structure".to_string(), count),
@@ -259,7 +259,7 @@ async fn configured_http_research_runs_quick_and_deep_imports_real_text_and_canc
         }
     }
 
-    assert_eq!(*trace.fenced_syntheses.lock().unwrap(), vec![13, 26, 40]);
+    assert_eq!(*trace.fenced_syntheses.lock().unwrap(), vec![16, 32, 48]);
     for (topic, expected_error) in [
         ("truncated-fixture", "输出被截断"),
         ("missing-field-fixture", "缺少必填字段 nodes"),
@@ -274,8 +274,8 @@ async fn configured_http_research_runs_quick_and_deep_imports_real_text_and_canc
         run(Arc::clone(&server), build.clone()).await;
         let failed = server.db.knowledge_build(&build.id).unwrap().unwrap();
         assert_eq!(failed.status, "failed");
-        assert_eq!(failed.progress.queries_completed, 4);
-        assert_eq!(failed.sources.len(), 13);
+        assert_eq!(failed.progress.queries_completed, 6);
+        assert_eq!(failed.sources.len(), 16);
         assert_eq!(failed.progress.rounds_completed, 0);
         let error = failed.error.unwrap();
         assert!(error.contains(expected_error), "{error}");
@@ -315,7 +315,7 @@ async fn configured_http_research_runs_quick_and_deep_imports_real_text_and_canc
                 .iter()
                 .filter(|(query, _)| query.starts_with(topic))
                 .count(),
-            4
+            6
         );
     }
 

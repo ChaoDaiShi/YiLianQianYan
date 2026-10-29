@@ -140,8 +140,9 @@ fn settings_canvas_rejects_unknown_duplicate_nonfinite_and_out_of_range_layout()
 fn settings_canvas_catalog_is_complete_and_put_accepts_only_ui_state() {
     let presets = settings_canvas_presets().unwrap();
     let ids: HashSet<_> = presets.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(presets.len(), 14);
-    assert_eq!(ids.len(), 14);
+    assert_eq!(presets.len(), 15);
+    assert_eq!(ids.len(), 15);
+    assert!(ids.contains("model-pools"));
     for preset in &presets {
         assert!(!preset.label.is_empty() && !preset.description.is_empty());
         assert!(["left", "right", "top", "bottom"].contains(&preset.side.as_str()));

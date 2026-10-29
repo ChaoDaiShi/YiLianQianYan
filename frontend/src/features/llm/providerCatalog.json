@@ -43,13 +43,15 @@
     "id": "deepseek",
     "label": "DeepSeek",
     "baseUrl": "https://api.deepseek.com/v1",
-    "model": "deepseek-chat",
+    "model": "deepseek-flash",
     "official_docs_url": "https://api-docs.deepseek.com/",
     "category": "official",
     "services": [
-      "chat"
+      "chat",
+      "vision",
+      "search"
     ],
-    "last_checked": "2026-10-21",
+    "last_checked": "2026-10-28",
     "regions": [
       {
         "id": "configured",
@@ -66,7 +68,9 @@
       }
     ],
     "adapter_by_service": {
-      "chat": "openai"
+      "chat": "openai",
+      "vision": "openai",
+      "search": "deepseek"
     }
   },
   "qwen": {

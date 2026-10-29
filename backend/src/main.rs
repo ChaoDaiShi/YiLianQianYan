@@ -11,6 +11,12 @@ async fn main() {
         )
         .init();
 
+    #[cfg(debug_assertions)]
+    std::env::set_var(
+        "YILIAN_BUNDLED_SKILLS",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../skills"),
+    );
+
     let addr = std::env::var("YILIAN_HOST").unwrap_or_else(|_| "127.0.0.1:9420".to_string());
     yilian_backend::serve(&addr).await;
 }

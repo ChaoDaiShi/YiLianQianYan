@@ -104,6 +104,7 @@ export default function KnowledgeBuildPanel({ open, onClose, onImported, initial
     <div className="knowledge-build">
       <div className="knowledge-build-compose">
         <div className="knowledge-build-compose-heading"><span>想建立哪方面的知识？</span><div className="knowledge-build-modes" role="group" aria-label="研究深度">{(["quick", "deep"] as const).map(value => <button type="button" key={value} aria-pressed={mode === value} onClick={() => setMode(value)}>{value === "quick" ? "快速" : "深度"}</button>)}</div></div>
+        <p className="knowledge-library-hint">{mode === "deep" ? "深度研究：3 轮、18 条互补检索，最多保留 48 个来源；DeepSeek 搜索会读取部分页面，材料最多保留每个来源的前 3000 字符。" : "快速研究：1 轮、4 条检索，最多保留 12 个来源。"}</p>
         <Textarea aria-label="知识构建主题" value={topic} onChange={event => setTopic(event.target.value)} rows={4} placeholder="例如：构建数据结构知识体系，覆盖复杂度、线性结构、树和图，对比适用条件与常见误区" />
         <div className="knowledge-build-controls">
           <Button disabled={busy || !topic.trim()} loading={busy} onClick={() => void create()}><Sparkles size={15} />开始构建</Button>

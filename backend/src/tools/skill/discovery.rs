@@ -25,11 +25,13 @@ impl SkillDiscovery {
     pub fn discover(directories: &[String], workspace_root: &str) -> Self {
         let home = dirs::home_dir();
         let codex_home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
-        Self::discover_with_roots(
+        let bundled = std::env::var_os("YILIAN_BUNDLED_SKILLS").map(PathBuf::from);
+        Self::discover_with_bundled_roots(
             directories,
             Path::new(workspace_root),
             home.as_deref(),
             codex_home.as_deref(),
+            bundled.as_deref(),
         )
     }
     /// Explicit environment roots keep fixtures independent of installed user skills.
@@ -39,7 +41,25 @@ impl SkillDiscovery {
         home: Option<&Path>,
         codex_home: Option<&Path>,
     ) -> Self {
+        Self::discover_with_bundled_roots(directories, workspace, home, codex_home, None)
+    }
+    fn discover_with_bundled_roots(
+        directories: &[String],
+        workspace: &Path,
+        home: Option<&Path>,
+        codex_home: Option<&Path>,
+        bundled: Option<&Path>,
+    ) -> Self {
         let mut sources = Vec::new();
+        if let Some(path) = bundled {
+            add_source(
+                &mut sources,
+                "bundled".into(),
+                "忆涟千言内置".into(),
+                path.to_path_buf(),
+                "bundled",
+            );
+        }
         for (index, directory) in directories.iter().enumerate() {
             let path = PathBuf::from(directory);
             add_source(
@@ -120,7 +140,23 @@ impl SkillDiscovery {
             source.exists = source.path.is_dir();
             if source.exists && source.error.is_none() {
                 let mut visited = HashSet::new();
-                if let Err(error) =
+                if source.kind == "bundled" {
+                    for name in ["code-reviewer", "doc-writer", "python-expert"] {
+                        let directory = source.path.join(name);
+                        if directory.join("SKILL.md").is_file() {
+                            if let Err(error) = discovery.scan(
+                                &directory,
+                                1,
+                                &source,
+                                &mut visited,
+                                &mut seen_files,
+                            ) {
+                                source.error = Some(error);
+                                break;
+                            }
+                        }
+                    }
+                } else if let Err(error) =
                     discovery.scan(&source.path, 0, &source, &mut visited, &mut seen_files)
                 {
                     source.error = Some(error);

@@ -10,6 +10,7 @@ import { Badge, Button, EmptyState, ErrorState, Modal, Skeleton, Textarea } from
 import { knowledgeDocumentForMemory } from "../features/memory/knowledgeMemory";
 import {
   categoryBadgeTone,
+  memoryCategoryCounts,
   formatMemoryTime,
   getMemoryCategoryPresentation,
   getMemorySourceLabel,
@@ -27,6 +28,7 @@ const SOURCE_OPTIONS = [
 export default function MemoryPage() {
   const {
     memories: activeMemories,
+    stats,
     isLoading,
     error,
     loadMemories,
@@ -215,6 +217,11 @@ export default function MemoryPage() {
       actions={<Button size="sm" onClick={() => { setShowAddModal(true); setAddError(null); }}><Plus className="h-4 w-4" />添加记忆</Button>}
     >
       <div className="management-memory-workspace">
+        <section aria-label="记忆分类概览" className="flex flex-wrap items-center gap-2 text-sm">
+          <strong>记忆概览</strong>
+          <button type="button" className="memory-filter-button" aria-pressed={view === "active" && !filterCategory} onClick={() => { setView("active"); setFilterCategory(""); }}>全部 {stats ? stats.total : "—"}</button>
+          {MEMORY_CATEGORY_OPTIONS.filter(option => option.value).map(option => <button key={option.value} type="button" className="memory-filter-button" aria-pressed={view === "active" && filterCategory === option.value} onClick={() => { setView("active"); setFilterCategory(option.value); }}>{option.label} {stats ? memoryCategoryCounts(stats)[option.value] : "—"}</button>)}
+        </section>
         <label className="memory-search-field management-memory-search">
           <Search className="h-4 w-4 shrink-0 text-[var(--text-faint)]" />
           <span className="sr-only">搜索记忆</span><input aria-label="搜索记忆" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索记忆…" />

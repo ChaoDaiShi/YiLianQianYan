@@ -7,6 +7,7 @@ const SETTINGS_ICONS: Record<string, string> = {
   "group:interface": "interface",
   "group:extensions": "extensions",
   model: "chat-model",
+  "model-pools": "models-services",
   stt: "speech-recognition",
   tts: "speech-synthesis",
   search: "web-search",

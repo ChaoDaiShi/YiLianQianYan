@@ -17,6 +17,30 @@ pub enum BasicServiceError {
     #[error("{0}")]
     Availability(crate::integrations::llm::client::LlmError),
 }
+impl BasicServiceError {
+    pub fn diagnostic_code(&self) -> Option<&'static str> {
+        use crate::integrations::llm::client::LlmError;
+        match self {
+            Self::Availability(LlmError::NoApiKey) => Some("BASIC_SERVICE_NO_API_KEY"),
+            Self::Availability(LlmError::SecretUnavailable) => {
+                Some("BASIC_SERVICE_SECRET_UNAVAILABLE")
+            }
+            _ => None,
+        }
+    }
+    pub fn user_message(&self, kind: &str) -> String {
+        let service = if kind == "vision" {
+            "图像理解"
+        } else {
+            "图像生成"
+        };
+        match self.diagnostic_code() {
+            Some("BASIC_SERVICE_NO_API_KEY") => format!("{service}服务所选厂商账户没有可用 API Key。请前往设置 → 模型与服务 → {service}，确认所选账户，并为该账户配置 API Key。"),
+            Some("BASIC_SERVICE_SECRET_UNAVAILABLE") => format!("{service}服务无法读取所选厂商账户的凭据：系统凭据库不可用。请检查系统凭据库，并前往设置 → 模型与服务 → {service}确认所选账户。"),
+            _ => self.to_string(),
+        }
+    }
+}
 impl From<String> for BasicServiceError {
     fn from(value: String) -> Self {
         Self::Configuration(value)
@@ -44,6 +68,14 @@ async fn invoke_profile_inner(
 ) -> Result<Value, BasicServiceError> {
     if request.prompt.trim().is_empty() {
         return Err("请输入请求内容".into());
+    }
+    if p.service_kind == "vision"
+        && request
+            .image_url
+            .as_deref()
+            .is_none_or(|url| url.trim().is_empty())
+    {
+        return Err("识图需要显式提供当前对话已绑定图片的 resource_id 或图片 image_url".into());
     }
     let account = db
         .list_provider_accounts()?
@@ -314,7 +346,16 @@ pub async fn invoke_service_pool(
                     if reason.is_none() {
                         return Err(error);
                     }
-                    failures.push(format!("{}: {:?}", id, reason));
+                    if error.diagnostic_code().is_some() {
+                        failures.push(format!(
+                            "{}: {:?}；{}",
+                            id,
+                            reason,
+                            error.user_message(&p.service_kind)
+                        ));
+                    } else {
+                        failures.push(format!("{}: {:?}", id, reason));
+                    }
                     previous = Some((id.clone(), tier + 1));
                 }
             }

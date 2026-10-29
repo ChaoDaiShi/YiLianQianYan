@@ -129,13 +129,13 @@ pub(super) async fn research_mock_llm(
                     .unwrap()
                     .iter()
                     .all(|claim| claim["status"] == "single_source"));
-                json!({"queries":(0..4).map(|index|format!("{topic}::round-{round}::query-{index}")).collect::<Vec<_>>()})
+                json!({"queries":(0..input["query_count"].as_u64().unwrap()).map(|index|format!("{topic}::round-{round}::query-{index}")).collect::<Vec<_>>()})
             }
             _ => panic!("Unexpected synthesis stage"),
         }
     } else {
         trace.plans.lock().unwrap().push(topic.into());
-        json!({"queries":(0..4).map(|index|format!("{topic}::round-0::query-{index}")).collect::<Vec<_>>()})
+        json!({"queries":(0..input["query_count"].as_u64().unwrap()).map(|index|format!("{topic}::round-0::query-{index}")).collect::<Vec<_>>()})
     };
     let synthesis = input["stage"] == "structure";
     if synthesis && topic == "missing-field-fixture" {

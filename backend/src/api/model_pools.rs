@@ -93,8 +93,42 @@ async fn bind(
         .map_err(error)?;
     Ok(Json(b))
 }
-async fn accounts(State(s): State<Arc<AppServer>>) -> Result<Json<Vec<ProviderAccount>>, Error> {
-    s.db.list_provider_accounts().map(Json).map_err(error)
+#[derive(serde::Serialize)]
+struct AccountView {
+    #[serde(flatten)]
+    account: ProviderAccount,
+    credential_status: &'static str,
+    credential_configured: bool,
+}
+async fn account_view(s: &AppServer, account: ProviderAccount) -> AccountView {
+    let required = !matches!(account.provider_id.as_str(), "ollama" | "lmstudio");
+    let credential = match account.credential_id.as_ref() {
+        Some(id) => {
+            s.secret_resolver
+                .resolve_ref(&crate::integrations::secret::SecretRef::new(id.clone()))
+                .await
+        }
+        None => Ok(None),
+    };
+    let (credential_status, credential_configured) = match credential {
+        Ok(Some(_)) => ("configured", true),
+        Ok(None) if !required => ("not_required", false),
+        Ok(None) => ("missing", false),
+        Err(_) => ("unavailable", false),
+    };
+    AccountView {
+        account,
+        credential_status,
+        credential_configured,
+    }
+}
+async fn accounts(State(s): State<Arc<AppServer>>) -> Result<Json<Vec<AccountView>>, Error> {
+    let accounts = s.db.list_provider_accounts().map_err(error)?;
+    let mut views = Vec::with_capacity(accounts.len());
+    for account in accounts {
+        views.push(account_view(&s, account).await);
+    }
+    Ok(Json(views))
 }
 #[derive(Deserialize)]
 struct AccountInput {
@@ -102,6 +136,8 @@ struct AccountInput {
     account: ProviderAccount,
     #[serde(default)]
     credential_action: Option<String>,
+    #[serde(default)]
+    credential_model_id: Option<String>,
     #[serde(default)]
     credential_fields: std::collections::HashMap<String, String>,
 }
@@ -121,13 +157,13 @@ async fn persist_account(s: &AppServer, mut a: AccountInput) -> Result<ProviderA
             .map_err(error)?
             .into_iter()
             .find(|old| old.id == a.account.id);
-    let key = old
-        .as_ref()
-        .and_then(|o| o.credential_id.clone())
-        .unwrap_or_else(|| format!("llm.account.{}", a.account.id));
-    let secret_ref = crate::integrations::secret::SecretRef::new(key.clone());
-    match a.credential_action.as_deref().unwrap_or("keep") {
+    let existing_key = old.as_ref().and_then(|o| o.credential_id.clone());
+    // Reuse is an explicit configuration operation. Runtime resolution still
+    // reads exactly the selected account and never searches other models.
+    a.account.credential_id = match a.credential_action.as_deref().unwrap_or("keep") {
         "replace" => {
+            let key = existing_key.unwrap_or_else(|| format!("llm.account.{}", a.account.id));
+            let secret_ref = crate::integrations::secret::SecretRef::new(key.clone());
             let value = a
                 .credential_fields
                 .get("api_key")
@@ -137,33 +173,72 @@ async fn persist_account(s: &AppServer, mut a: AccountInput) -> Result<ProviderA
                 .put(&secret_ref, secrecy::SecretString::from(value.clone()))
                 .await
                 .map_err(|_| error("凭据库不可用".into()))?;
+            Some(key)
         }
-        "clear" => s
-            .secret_store
-            .delete(&secret_ref)
-            .await
-            .map_err(|_| error("凭据清除失败".into()))?,
-        "keep" => {}
+        "clear" => {
+            if let Some(key) = &existing_key {
+                s.secret_store
+                    .delete(&crate::integrations::secret::SecretRef::new(key.clone()))
+                    .await
+                    .map_err(|_| error("凭据清除失败".into()))?;
+            }
+            existing_key
+        }
+        "keep" => existing_key,
+        "reuse_model" => {
+            let id = a
+                .credential_model_id
+                .as_deref()
+                .filter(|id| !id.trim().is_empty())
+                .ok_or_else(|| error("请选择要复用凭据的模型".into()))?;
+            let model =
+                s.db.get_llm_model(id)
+                    .map_err(error)?
+                    .ok_or_else(|| error("所选凭据来源模型不存在".into()))?;
+            if model.provider != a.account.provider_id
+                || model.base_url.trim().trim_end_matches('/')
+                    != a.account.base_url.trim().trim_end_matches('/')
+            {
+                return Err(error("只能复用同一服务商和 API 地址的模型凭据".into()));
+            }
+            let reference = crate::integrations::secret::SecretRef::new(model.api_key_ref.clone());
+            if s.secret_resolver
+                .resolve_ref(&reference)
+                .await
+                .map_err(|_| error("凭据库不可用".into()))?
+                .is_none()
+            {
+                return Err(error(
+                    "所选模型没有可复用的已保存凭据，请填写 API Key".into(),
+                ));
+            }
+            Some(model.api_key_ref)
+        }
         _ => return Err(error("无效凭据操作".into())),
-    }
-    a.account.credential_id = Some(key);
+    };
     s.db.save_provider_account(&a.account).map_err(error)?;
     Ok(a.account)
 }
+
+#[cfg(test)]
+#[path = "model_pools/credential_tests.rs"]
+mod credential_tests;
 async fn save_account(
     State(s): State<Arc<AppServer>>,
     Json(mut a): Json<AccountInput>,
-) -> Result<Json<ProviderAccount>, Error> {
+) -> Result<Json<AccountView>, Error> {
     a.account.id = uuid::Uuid::new_v4().to_string();
-    persist_account(&s, a).await.map(Json)
+    let account = persist_account(&s, a).await?;
+    Ok(Json(account_view(&s, account).await))
 }
 async fn update_account(
     State(s): State<Arc<AppServer>>,
     Path(id): Path<String>,
     Json(mut a): Json<AccountInput>,
-) -> Result<Json<ProviderAccount>, Error> {
+) -> Result<Json<AccountView>, Error> {
     a.account.id = id;
-    persist_account(&s, a).await.map(Json)
+    let account = persist_account(&s, a).await?;
+    Ok(Json(account_view(&s, account).await))
 }
 async fn remove_account(
     State(s): State<Arc<AppServer>>,

@@ -13,3 +13,30 @@
 
 .settings-icon{display:block;flex-shrink:0;object-fit:contain;pointer-events:none;user-select:none}
 .settings-manager-node>.settings-icon{margin-top:2px}
+
+.settings-canvas-stage .connector-node { min-height:64px;border-radius:11px; }
+.settings-canvas-stage .connector-node[class*="setting_"] { height:64px;min-height:64px; }
+.settings-canvas-stage .connector-node-title { gap:7px;font-size:12px;line-height:18px; }
+.settings-canvas-stage .connector-node p { margin-top:3px;font-size:10px;line-height:14px; }
+.settings-canvas-stage .connector-node.agent { height:104px;min-height:104px;display:flex;align-items:center;justify-content:center; }
+.settings-canvas-stage .connector-node.agent .connector-node-title { flex-direction:column;gap:7px;font-size:13px;line-height:18px;text-align:center; }
+.settings-canvas-stage .connector-node.agent .connector-node-title > span:not(.workspace-icon) { max-width:84px;white-space:normal; }
+.settings-canvas-stage .connector-node.agent > p { display:none; }
+.settings-node-manager.is-collapsed { width:38px; }
+.settings-node-manager.is-open { width:280px; }
+.settings-node-manager-toggle { min-height:40px;padding:10px 6px; }
+.settings-node-manager-scroll { padding:10px; }
+.settings-manager-group > summary { min-height:40px; }
+.settings-manager-node { padding:9px 0;gap:8px; }
+.settings-manager-node p { line-height:1.5;margin-top:3px; }
+.settings-manager-node-actions { margin-top:6px; }
+.settings-scope-label select { padding:6px 8px; }
+.settings-canvas-page .page-header { gap:10px; }
+.settings-canvas-page .page-header > div:last-child { flex-wrap:wrap;justify-content:flex-end;gap:6px; }
+@media (max-width:900px) {
+  .settings-canvas-page .page-header { flex-wrap:wrap; }
+  .settings-canvas-page .page-header > div:first-child { flex-basis:100%; }
+  .settings-canvas-page .page-header > div:last-child { width:100%;min-width:0;flex-shrink:1;justify-content:flex-start; }
+  .settings-scope-label { min-width:0; }
+  .settings-scope-label select { max-width:150px; }
+}

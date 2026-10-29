@@ -251,6 +251,7 @@ fn builtin_descriptor_profile(
                 if matches!(
                     (url.as_str(), method.as_str()),
                     ("https://api.anysearch.com/v1/search", "POST")
+                        | ("https://api.deepseek.com/v1/tools/search", "POST")
                         | ("https://api.tavily.com/search", "POST")
                         | ("https://api.search.brave.com/res/v1/web/search", "GET")
                         | ("https://api.bochaai.com/v1/web-search", "POST")

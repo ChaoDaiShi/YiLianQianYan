@@ -1,0 +1,12 @@
+.skills-page-body .skills-workbench-toolbar { gap: 8px; justify-content: flex-start; }
+.skills-page-body .skills-workbench-toolbar > div:first-child { flex: 1 1 140px; min-width: 140px; max-width: 320px; }
+.skills-page-body .skills-workbench-toolbar > .settings-select { width: auto; flex: 0 1 120px; min-width: 100px; height:34px;min-height:34px;padding:5px 8px;margin:0; }
+.skills-page-body .skills-workbench-toolbar .capability-list-caption { margin: 0;padding:0;white-space:nowrap; }
+.skills-page-body .skills-workbench-toolbar .ui-input { height:34px;min-height:34px;padding:6px 10px; }
+.skills-page-body .skills-workbench-actions .ui-button { height:34px;min-height:34px; }
+@media (max-width: 600px) {
+  .skills-page-body .skills-workbench-toolbar > div:first-child { flex: 1 1 100%; }
+}
+
+.skills-page-body .skills-workbench-toolbar > .skills-workbench-actions { display:flex;align-items:center;gap:6px;max-width:none;flex:0 0 auto;margin-left:auto; }
+@media (max-width:600px) { .skills-page-body .skills-workbench-toolbar > .skills-workbench-actions { flex-wrap:wrap;margin-left:0; } }

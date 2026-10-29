@@ -32,6 +32,7 @@ impl AiSearchTool {
         let official = matches!(
             (provider.as_str(), url.as_str()),
             ("anysearch", "https://api.anysearch.com/v1/search")
+                | ("deepseek", "https://api.deepseek.com/v1/tools/search")
                 | ("tavily", "https://api.tavily.com/search")
                 | ("brave", "https://api.search.brave.com/res/v1/web/search")
                 | ("bocha", "https://api.bochaai.com/v1/web-search")
