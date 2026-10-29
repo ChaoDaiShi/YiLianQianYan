@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Check, Copy, Trash2, Undo2, Volume2 } from "lucide-react";
+import { Check, Copy, GitBranch, Trash2, Undo2, Volume2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "../../types";
@@ -14,6 +14,7 @@ export interface MessageBubbleProps {
   onSpeak?: (text: string) => void;
   onRollback?: (message: Message) => void;
   onDelete?: (message: Message) => void;
+  onBranch?: (message: Message) => void;
   actionsDisabled?: boolean;
 }
 
@@ -26,11 +27,12 @@ export function areMessageBubblePropsEqual(
     previous.onSpeak === next.onSpeak &&
     previous.onRollback === next.onRollback &&
     previous.onDelete === next.onDelete &&
+    previous.onBranch === next.onBranch &&
     previous.actionsDisabled === next.actionsDisabled
   );
 }
 
-function MessageBubble({ message, onSpeak, onRollback, onDelete, actionsDisabled = false }: MessageBubbleProps) {
+function MessageBubble({ message, onSpeak, onRollback, onDelete, onBranch, actionsDisabled = false }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle");
@@ -92,7 +94,7 @@ function MessageBubble({ message, onSpeak, onRollback, onDelete, actionsDisabled
       >
         <div className={"conversation-message-stack " + (isUser ? "conversation-message-stack-user" : "conversation-message-stack-assistant")}>
           {isUser&&message.attachments?.length?<div className="conversation-message-attachments"><ResourceCards files={message.attachments}/></div>:null}
-        <div
+        {!(isUser && !message.content && message.attachments?.length) && <div
           className={
             "conversation-message-content relative min-w-0 text-sm leading-7 " +
             (isUser
@@ -103,7 +105,7 @@ function MessageBubble({ message, onSpeak, onRollback, onDelete, actionsDisabled
           {!isUser && <MessageProcess process={message.process}/>}
           {!isUser&&message.attachments?.length ? <ResourceCards files={message.attachments}/> : null}
           {isUser ? (
-            <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
             <div className="conversation-markdown prose prose-sm max-w-none">
               <ReactMarkdown
@@ -130,6 +132,9 @@ function MessageBubble({ message, onSpeak, onRollback, onDelete, actionsDisabled
           )}
           {!isUser && message.content && (
             <div className="conversation-message-actions mt-3 flex flex-wrap items-center gap-1" role="group" aria-label="回答操作">
+              {onBranch && <button type="button" onClick={()=>onBranch(message)} disabled={actionsDisabled}
+                className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-2 py-1.5 text-xs text-[var(--accent-soft-fg)] disabled:opacity-50"
+                title="保留当前路径，从这条回答新建分支" aria-label="从这条回答新建分支"><GitBranch className="h-3.5 w-3.5"/>新建分支</button>}
               <button
                 type="button"
                 onClick={() => onSpeak?.(message.content)}
@@ -171,7 +176,7 @@ function MessageBubble({ message, onSpeak, onRollback, onDelete, actionsDisabled
               ><Trash2 className="h-3.5 w-3.5" /></button>}
             </div>
           )}
-        </div>
+        </div>}
         </div>
       </div>
 

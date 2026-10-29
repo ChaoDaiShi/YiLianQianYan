@@ -112,7 +112,7 @@ export default function ChatInput({
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
-    const nextHeight = workspaceMode === "chat" ? Math.max(24, Math.min(textarea.scrollHeight, 120)) : Math.max(52, Math.min(textarea.scrollHeight, 150));
+    const nextHeight = workspaceMode === "chat" ? Math.max(24, Math.min(textarea.scrollHeight, 120)) : Math.max(36, Math.min(textarea.scrollHeight, 128));
     textarea.style.height = `${nextHeight}px`;
   }, [input, workspaceMode]);
 
@@ -120,7 +120,7 @@ export default function ChatInput({
   const canSend = Boolean(queue && (input.trim() || queue.readyIds().length)) && !pendingAttachments && !isLoading && !disabled && !sending;
   const send = async () => {
     if (!queue || !canSend || sendInFlight.current) return;
-    const text = input.trim() || "请查看我附加的文件。";
+    const text = input.trim();
     sendInFlight.current = true; setSending(true); setResourceNotice("");
     try {
       const accepted = await onSend(text, queue.readyIds(), buildChatRequestOptions(modelId, thinking, workspaceMode));

@@ -221,6 +221,7 @@ impl Database {
             })
             .ok_or("请选择当前会话中的助手回答作为分支起点")?;
         history.truncate(index + 1);
+        let parent = original_branch_parent(&tx, conversation, index)?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
         tx.execute(
@@ -277,5 +278,39 @@ impl Database {
         tx.execute("INSERT INTO message_canvas_branches(conversation_id,parent_node_id,prefix_count) VALUES(?1,?2,?3)", params![id,parent,history.len() as i64]).map_err(err)?;
         tx.commit().map_err(err)?;
         Ok(id)
+    }
+}
+
+/// Copied context retains its protocol order. Anchor a fork from inherited
+/// history to the original visible answer rather than an invisible copied ID.
+fn original_branch_parent(
+    conn: &rusqlite::Connection,
+    conversation: &str,
+    index: usize,
+) -> Result<String, String> {
+    let mut source = conversation.to_owned();
+    loop {
+        let inherited: Option<(usize, String)> = conn
+            .query_row(
+                "SELECT b.prefix_count,m.conversation_id FROM message_canvas_branches b
+             JOIN messages m ON m.id=b.parent_node_id WHERE b.conversation_id=?1
+             UNION ALL SELECT b.prefix_count,m.conversation_id FROM connector_message_runs b
+             JOIN messages m ON m.id=b.parent_node_id WHERE b.conversation_id=?1
+             AND b.conversation_id<>b.root_conversation_id LIMIT 1",
+                [&source],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(err)?;
+        if let Some((prefix, parent)) = inherited {
+            if index < prefix {
+                source = parent;
+                continue;
+            }
+        }
+        return messages(conn, &source)?
+            .get(index)
+            .map(|message| message.id.clone())
+            .ok_or_else(|| "分支起点对应的原始消息不存在".into());
     }
 }

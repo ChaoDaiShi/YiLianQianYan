@@ -66,11 +66,11 @@ export default function ConnectorsPage() {
   }
 
   const activeCanvas = canvases.find(canvas => canvas.id === activeId);
-  return <PageShell title="画布" description="从真实消息展开对话树，沿回答探索另一条路径" variant="workspace" contentClassName="p-0 min-h-0 overflow-hidden" actions={<>
+  return <PageShell title="画布" description="每个对话组独立显示，在当前路径末尾续聊或从历史回答新建分支" variant="workspace" contentClassName="p-0 min-h-0 overflow-hidden" actions={<>
     <select aria-label="当前画布" className="settings-select max-w-48" disabled={busy} value={activeCanvas?.id ?? ""} onChange={event => {
       const next = new URLSearchParams(params); next.delete("conversation"); setParams(next);
       setError(""); setActiveId(event.target.value || null);
-    }}><option value="">全部对话</option>{canvases.map(canvas => <option key={canvas.id} value={canvas.id}>{canvas.name}</option>)}</select>
+    }}><option value="">对话组画布</option>{canvases.map(canvas => <option key={canvas.id} value={canvas.id}>{canvas.name}</option>)}</select>
     <Button size="sm" aria-label="新建画布" className="whitespace-nowrap" disabled={loading} onClick={openNewCanvas}>新建画布</Button>
     <Button size="sm" aria-label="管理全部画布" className="whitespace-nowrap" variant="secondary" onClick={() => { setDeleteTarget(null); setManagerOpen(true); }}>管理全部画布</Button>
     <Button size="sm" aria-label="删除当前画布" className="whitespace-nowrap" variant="danger" disabled={!activeCanvas || loading || busy} onClick={() => { if (activeCanvas) { setDeleteTarget({ id: activeCanvas.id, name: activeCanvas.name }); setManagerOpen(true); } }}>删除当前画布</Button>

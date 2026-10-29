@@ -150,7 +150,14 @@ impl Database {
             .iter()
             .position(|row| row.id == message)
             .ok_or("message_not_found")?;
-        if !visible(&rows[target]) {
+        let has_attachments: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM message_attachments WHERE message_id=?1)",
+                [&rows[target].id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if !visible(&rows[target]) && !(rows[target].role == "user" && has_attachments) {
             return Err("message_not_visible".into());
         }
         if rollback && rows[target].role != "user" {
@@ -199,7 +206,7 @@ impl Database {
                 }
             }
             if removed.contains(&index) {
-                if !visible(row) {
+                if !visible(row) && !(index == target && row.role == "user" && has_attachments) {
                     removed_protocol_count += 1;
                 }
                 tx.execute(

@@ -16,6 +16,8 @@ const TOOL_LABELS: Record<string, string> = {
   write_todos: "更新计划",
   process: "进程管理",
   screenshot: "截取屏幕",
+  vision_analysis: "图像理解",
+  image_generation: "图像生成",
   mouse: "鼠标操作",
   keyboard: "键盘操作",
   upscale_image: "放大图片",

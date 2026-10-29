@@ -102,6 +102,35 @@ describe("conversation runtime ownership", () => {
     expect(runtime.snapshot("a").messages.map((message) => message.id)).toEqual(["previous-user"]);
   });
 
+  it("retains the exact rejected attachment-only request and options without selecting old history", async () => {
+    const previous = { ...conversation("completed"), messages: [{ id: "old", role: "user", content: "old question", created_at: 1 }] };
+    const { runtime, emit } = setup(previous);
+    await runtime.refresh("a");
+    const attachments = [{ id: "resource", name: "image.png", mime_type: "image/png" }];
+    runtime.send("a", "", "workflow", { model_profile_id: "chosen", thinking_mode: "thinking", workspace_mode: "work", resource_ids: ["resource"] }, attachments);
+    emit({ type: "error", error: "rejected", request_rejected: true });
+    emit({ type: "stream_end" });
+    await runtime.refresh("a");
+    expect(runtime.snapshot("a").retryMessageId).toBeNull();
+    expect(runtime.snapshot("a").lastSubmission).toEqual({ text: "", workflowId: "workflow", options: { model_profile_id: "chosen", thinking_mode: "thinking", workspace_mode: "work", resource_ids: ["resource"] }, attachments });
+  });
+  it("retains an unaccepted new request after pre-connection failure and older failed history", async () => {
+    const previous = { ...conversation("failed"), messages: [{ id: "old", role: "user", content: "old question", created_at: 1 }] };
+    const { runtime, emit } = setup(previous);
+    await runtime.refresh("a");
+    runtime.send("a", "new question");
+    emit({ type: "error", error: "connection failed" });
+    emit({ type: "stream_end" });
+    await runtime.refresh("a");
+    expect(runtime.snapshot("a").retryMessageId).toBeNull();
+    expect(runtime.snapshot("a").lastSubmission?.text).toBe("new question");
+  });
+  it("reconstructs a persisted attachment-only failed message for explicit retry after reload", async () => {
+    const { runtime } = setup({ ...conversation("failed"), messages: [{ id: "failed-user", role: "user", content: "", attachments: [{ id: "resource", name: "photo.png" }], created_at: 1 }] });
+    await runtime.refresh("a");
+    expect(runtime.snapshot("a").retryMessageId).toBe("failed-user");
+    expect(runtime.snapshot("a").lastSubmission?.attachments[0].id).toBe("resource");
+  });
   it("identifies the failed persisted user message for retry after reloading", async () => {
     const { runtime } = setup({ ...conversation("failed"), run_error: "provider rejected", messages: [{ id: "failed-user", role: "user", content: "查看系统服务", created_at: 1 }] });
     await runtime.refresh("a");

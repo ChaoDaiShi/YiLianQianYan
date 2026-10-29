@@ -7,22 +7,21 @@ import {visibleConnectorNodes,planConnectorDeletion} from "./connectorModel";
 import {connectorBindingHandles,connectorPort,isConnectorConnection} from "./connectorPorts";
 import SettingsIcon,{settingsIconName} from "../settings/components/SettingsIcon";
 import "@xyflow/react/dist/style.css";
-type NodeData={showLabels:boolean;density:string;item:ConnectorNode;onEdit:(node:ConnectorNode)=>void};type FlowNode=Node<NodeData,"connector">;
+type NodeData={settingsLayout:boolean;showLabels:boolean;density:string;item:ConnectorNode;onEdit:(node:ConnectorNode)=>void};type FlowNode=Node<NodeData,"connector">;
 const resourceIcons:Partial<Record<string,WorkspaceIconName>>={agent:"agent",conversation:"conversation",constraint:"security",memory:"memory-record",knowledge:"knowledge-base",model:"models-services",tool:"tool-catalog",plugin:"extensions",skill:"skill",workflow:"task-flow",mcp:"mcp"};
 function ResourceNode({data,selected}:NodeProps<FlowNode>){const node=data.item;const settingIcon=node.kind.startsWith("setting_")||node.entity_id==="settings-global"?settingsIconName(node.entity_id):undefined;const resourceIcon=node.kind.startsWith("setting_")||node.entity_id==="settings-global"?undefined:resourceIcons[node.kind];const Icon=node.kind.startsWith("setting_")||node.entity_id==="settings-global"?Settings2:Boxes;const port=connectorPort(node.kind);const mutable=node.entity_id!=="settings-global"&&!node.kind.startsWith("setting_");
- return <div className={`connector-node ${node.kind}`} data-selected={selected} aria-expanded={node.settings_expanded} data-settings-group={node.entity_id.startsWith("group:")?node.entity_id.slice(6):undefined} style={{width:data.density==="comfortable"?260:220,padding:data.density==="comfortable"?20:14}} role="button" tabIndex={0} aria-label={`编辑${node.label}`} onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();data.onEdit(node);}}}>
- {node.kind==="agent"?<><Handle isConnectable={mutable} id="constraint-in" type="target" position={Position.Top} title="约束"/><Handle isConnectable={mutable} id="context-out" type="source" position={Position.Bottom} title="记忆与知识"/><Handle isConnectable={mutable} id="conversation-in" type="target" position={Position.Left} title="对话"/><Handle isConnectable={mutable} id="capability-out" type="source" position={Position.Right} title="工具、模型与能力"/></>:port==="top"?<Handle id="constraint-out" type="source" position={Position.Bottom} isConnectable={false}/>:port==="bottom"?<Handle isConnectable={mutable} id="context-in" type="target" position={Position.Top}/>:port==="left"?<Handle isConnectable={mutable} id="conversation-out" type="source" position={Position.Right}/>:<Handle isConnectable={mutable} id="capability-in" type="target" position={Position.Left}/>}{node.kind.startsWith("setting_")&&<><Handle id="setting-out" type="source" position={port==="left"?Position.Left:Position.Right} isConnectable={false}/><Handle id="setting-in" type="target" position={port==="left"?Position.Right:Position.Left} isConnectable={false}/></>}<div className="connector-node-title">{settingIcon?<SettingsIcon name={settingIcon}/>:resourceIcon?<WorkspaceIcon name={resourceIcon} size={24} variant="mono"/>:<Icon/>}{data.showLabels&&<span>{node.label}</span>}</div><p>{node.entity_id==="settings-global"?"应用配置 · 点击管理设置节点":node.settings_expanded!==undefined?(node.settings_expanded?"点击收起设置项":"点击展开设置项"):node.kind.startsWith("setting_")?"设置子功能 · 点击配置":node.kind==="agent"?"上约束 · 下记忆 · 左对话 · 右能力":node.kind==="constraint"?"权限与资源范围":node.kind==="model"?(node.model_source==="pool"?"分级模型池 · 点击管理":"模型档案 · 点击修改绑定"):"点击查看与修改"}</p></div>;
+ return <div className={`connector-node ${node.kind}`} data-selected={selected} aria-expanded={node.settings_expanded} data-settings-group={node.entity_id.startsWith("group:")?node.entity_id.slice(6):undefined} style={{width:data.settingsLayout?(node.kind==="agent"?104:180):data.density==="comfortable"?260:220,padding:data.settingsLayout?10:data.density==="comfortable"?20:14}} role="button" tabIndex={0} aria-label={`编辑${node.label}`} onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();data.onEdit(node);}}}>
+ {node.kind==="agent"?<><Handle isConnectable={mutable} id="constraint-in" type="target" position={Position.Top} title="约束"/><Handle isConnectable={mutable} id="context-out" type="source" position={Position.Bottom} title="记忆与知识"/><Handle isConnectable={mutable} id="conversation-in" type="target" position={Position.Left} title="对话"/><Handle isConnectable={mutable} id="capability-out" type="source" position={Position.Right} title="工具、模型与能力"/></>:port==="top"?<Handle id="constraint-out" type="source" position={Position.Bottom} isConnectable={false}/>:port==="bottom"?<Handle isConnectable={mutable} id="context-in" type="target" position={Position.Top}/>:port==="left"?<Handle isConnectable={mutable} id="conversation-out" type="source" position={Position.Right}/>:<Handle isConnectable={mutable} id="capability-in" type="target" position={Position.Left}/>}{node.kind.startsWith("setting_")&&<><Handle id="setting-out" type="source" position={port==="left"?Position.Left:Position.Right} isConnectable={false}/><Handle id="setting-in" type="target" position={port==="left"?Position.Right:Position.Left} isConnectable={false}/></>}<div className="connector-node-title">{settingIcon?<SettingsIcon name={settingIcon} size={data.settingsLayout&&node.kind!=="agent"?28:32}/>:resourceIcon?<WorkspaceIcon name={resourceIcon} size={data.settingsLayout&&node.kind==="agent"?32:24} variant="mono"/>:<Icon/>}{data.showLabels&&<span>{node.label}</span>}</div><p>{node.entity_id==="settings-global"?"应用配置 · 点击管理设置节点":node.settings_expanded!==undefined?(node.settings_expanded?"点击收起设置项":"点击展开设置项"):node.kind.startsWith("setting_")?"设置子功能 · 点击配置":node.kind==="agent"?"上约束 · 下记忆 · 左对话 · 右能力":node.kind==="constraint"?"权限与资源范围":node.kind==="model"?(node.model_source==="pool"?"分级模型池 · 点击管理":"模型档案 · 点击修改绑定"):"点击查看与修改"}</p></div>;
 }
 const nodeTypes={connector:ResourceNode};
-const initialFitOptions={maxZoom:1,padding:.14};
+const initialFitOptions={maxZoom:1.35,padding:.08};
 type FocusRequest={revision:number;nodeIds:string[]};
 function ConnectorCamera({expectedNodes,layoutKey,focusRequest}:{expectedNodes:FlowNode[];layoutKey?:string;focusRequest?:FocusRequest}){
  const {fitView,viewportInitialized}=useReactFlow<FlowNode>();
  const initialized=useNodesInitialized();
- const applied=useRef<{layoutKey?:string;revision?:number}>({layoutKey,revision:undefined});
- const explicit=focusRequest&&focusRequest.revision!==applied.current.revision;
- const categories=expectedNodes.filter(node=>node.data.item.entity_id.startsWith("group:"));
- const overview=categories.length?expectedNodes.filter(node=>node.data.item.kind==="agent"||node.data.item.entity_id.startsWith("group:")):expectedNodes;
+ const applied=useRef<{layoutKey?:string;revision?:number}|null>(null);
+ const explicit=focusRequest&&focusRequest.revision!==applied.current?.revision;
+ const overview=expectedNodes;
  const targetIds=explicit?focusRequest.nodeIds:overview.map(node=>node.id);
  const targetKey=targetIds.join("\0");
  const expected=new Map(expectedNodes.map(node=>[node.id,node]));
@@ -31,19 +30,19 @@ function ConnectorCamera({expectedNodes,layoutKey,focusRequest}:{expectedNodes:F
   return !!actual&&!!projected&&!!actual.measured.width&&!!actual.measured.height&&actual.position.x===projected.position.x&&actual.position.y===projected.position.y;
  }));
  useEffect(()=>{
-  if(!viewportInitialized||!initialized||!ready||(applied.current.layoutKey===layoutKey&&applied.current.revision===focusRequest?.revision))return;
+  if(!viewportInitialized||!initialized||!ready||(applied.current!==null&&applied.current.layoutKey===layoutKey&&applied.current.revision===focusRequest?.revision))return;
   let cancelled=false;
-  void fitView({nodes:targetIds.map(id=>({id})),padding:.18,maxZoom:1,minZoom:.25,duration:220}).then(success=>{
+  void fitView({nodes:targetIds.map(id=>({id})),padding:.08,maxZoom:1.35,minZoom:.25,duration:220}).then(success=>{
    if(success&&!cancelled)applied.current={layoutKey,revision:focusRequest?.revision};
   });
   return()=>{cancelled=true;};
  },[viewportInitialized,initialized,ready,layoutKey,focusRequest?.revision,targetKey,fitView]);
  return null;
 }
-export default function ConnectorCanvas({view,onEdit,onConnect,onSave,onHide,onUnbind,layoutKey,focusRequest}:{view:ConnectorView;onEdit:(node:ConnectorNode)=>void;onConnect:(connection:Connection)=>void;onSave:(nodes:Array<{id:string;x:number;y:number}>,viewport:ConnectorViewport)=>void;onHide:(ids:string[])=>void;onUnbind:(ids:string[])=>void;layoutKey?:string;focusRequest?:{revision:number;nodeIds:string[]}}){
- const initialView=useMemo(()=>({viewport:view.viewport,fit:view.viewport.x===0&&view.viewport.y===0&&view.viewport.zoom===1}),[view.canvas_id]);
+export default function ConnectorCanvas({view,onEdit,onConnect,onSave,onHide,onUnbind,layoutKey,focusRequest,settingsLayout=false}:{settingsLayout?:boolean;view:ConnectorView;onEdit:(node:ConnectorNode)=>void;onConnect:(connection:Connection)=>void;onSave:(nodes:Array<{id:string;x:number;y:number}>,viewport:ConnectorViewport)=>void;onHide:(ids:string[])=>void;onUnbind:(ids:string[])=>void;layoutKey?:string;focusRequest?:{revision:number;nodeIds:string[]}}){
+ const initialView=useMemo(()=>({viewport:view.viewport,fit:settingsLayout||(view.viewport.x===0&&view.viewport.y===0&&view.viewport.zoom===1)}),[view.canvas_id]);
  const measured=useRef<Record<string,{width:number;height:number}>>({});
- const projected=useMemo(()=>visibleConnectorNodes(view.nodes,view.display).map(item=>({id:item.id,type:"connector" as const,position:{x:item.x,y:item.y},measured:measured.current[item.id],draggable:item.kind!=="constraint"&&item.entity_id!=="settings-global",deletable:item.kind!=="agent",data:{item,onEdit,showLabels:view.display.show_labels,density:view.display.density}})),[view,onEdit]);
+ const projected=useMemo(()=>visibleConnectorNodes(view.nodes,view.display).map(item=>({id:item.id,type:"connector" as const,position:{x:item.x,y:item.y},measured:measured.current[item.id],draggable:item.kind!=="constraint"&&item.entity_id!=="settings-global",deletable:item.kind!=="agent",data:{item,onEdit,settingsLayout,showLabels:view.display.show_labels,density:view.display.density}})),[view,onEdit,settingsLayout]);
  const [selectedEdgeIds,setSelectedEdgeIds]=useState<string[]>([]);
  const [nodes,setNodes]=useState<FlowNode[]>(projected);const nodesRef=useRef(nodes);nodesRef.current=nodes;const viewportRef=useRef(view.viewport);
  useEffect(()=>{setNodes(projected);nodesRef.current=projected;},[projected]);

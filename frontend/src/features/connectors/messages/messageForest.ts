@@ -1,4 +1,4 @@
-import { layoutMessageTree } from "./messageTree";
+import { layoutMessageTree, type MessagePosition } from "./messageTree";
 
 interface ConversationEntry {
   id: string;
@@ -30,4 +30,16 @@ export function conversationFamilies(conversations: ConversationEntry[]): Conver
 
 export function layoutMessageForest(conversations: ConversationEntry[]) {
   return layoutMessageTree(conversations.flatMap(conversation => conversation.nodes));
+}
+
+/** Separate groups share a viewport, never a collision or layout space. */
+export function layoutConversationGroups(conversations: ConversationEntry[]): Record<string, MessagePosition> {
+  return Object.assign({}, ...conversationFamilies(conversations).map(family =>
+    layoutMessageForest(conversations.filter(entry => family.conversationIds.includes(entry.id)))
+  ));
+}
+
+export function conversationGroupEntries<T extends ConversationEntry>(conversations: T[], familyId: string): T[] {
+  const family = conversationFamilies(conversations).find(entry => entry.id === familyId);
+  return conversations.filter(entry => family?.conversationIds.includes(entry.id));
 }

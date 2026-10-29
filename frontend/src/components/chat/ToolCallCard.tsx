@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import {
   BookOpen,
   Camera,
@@ -7,6 +8,7 @@ import {
   ChevronUp,
   CircleX,
   Cog,
+  Eye,
   FileText,
   FolderSearch,
   Globe,
@@ -57,6 +59,7 @@ const TOOL_ICONS: Record<string, React.ReactNode> = {
   write_todos: <ListTodo className="h-4 w-4" />,
   process: <Cog className="h-4 w-4" />,
   screenshot: <Camera className="h-4 w-4" />,
+  vision_analysis: <Eye className="h-4 w-4" />,
   mouse: <MousePointer className="h-4 w-4" />,
   keyboard: <Keyboard className="h-4 w-4" />,
 };
@@ -157,7 +160,7 @@ export default function ToolCallCard({
           : null;
   const errorPresentation =
     effectiveStatus === "error" && result
-      ? presentExecutionError(result)
+      ? presentExecutionError(result, name)
       : null;
 
   return (
@@ -186,7 +189,7 @@ export default function ToolCallCard({
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className={(compact ? "text-xs font-normal" : "text-sm font-medium") + " text-[var(--text-primary)]"}>
-              {verificationStatus === "failed" ? "验证失败" : formatToolStatus(effectiveStatus)}
+              {effectiveStatus === "error" ? formatToolStatus(effectiveStatus) : verificationStatus === "failed" ? "验证失败" : formatToolStatus(effectiveStatus)}
             </span>
             <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
               {label}
@@ -198,8 +201,8 @@ export default function ToolCallCard({
               />
             )}
           </span>
-          <span className={"tool-card-summary block truncate text-xs text-[var(--text-secondary)] " + (compact ? "mt-0.5" : "mt-1")}>
-            {verificationStatus === "failed"
+          <span className={"tool-card-summary block text-xs text-[var(--text-secondary)] " + (errorPresentation ? "tool-card-error-summary " : "truncate ") + (compact ? "mt-0.5" : "mt-1")}>
+            {errorPresentation ? errorPresentation.message : verificationStatus === "failed"
               ? verificationReason
                 ? `验证失败：${verificationReason}`
                 : "操作执行完毕，但结果未能通过验证"
@@ -209,8 +212,7 @@ export default function ToolCallCard({
                   ? formatToolResultSummary(result)
                   : effectiveStatus === "blocked"
                     ? "小涟正在等待你的许可"
-                    : errorPresentation?.message ||
-                      "这个操作没有成功，请展开错误日志了解原因。"}
+                    : "这个操作没有成功，请展开错误日志了解原因。"}
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2 text-[var(--text-faint)]">
@@ -222,6 +224,8 @@ export default function ToolCallCard({
           )}
         </span>
       </button>
+
+      {errorPresentation?.action && <div className="tool-card-guidance"><Link to={errorPresentation.action.href}><Cog className="h-3.5 w-3.5"/>{errorPresentation.action.label}</Link></div>}
 
       {expanded && (
         <div

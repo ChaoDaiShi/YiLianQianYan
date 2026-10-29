@@ -683,7 +683,7 @@ pub async fn chat_handler(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)>
 {
     let message = req.message.trim().to_string();
-    if message.is_empty() {
+    if message.is_empty() && req.resource_ids.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "消息内容不能为空"})),
@@ -1025,7 +1025,11 @@ pub async fn chat_handler(
     })?;
 
     // Auto-title: use first user message (trim to 40 chars)
-    let title = truncate_chars(&message, 40);
+    let title = if message.is_empty() {
+        "附件对话".to_string()
+    } else {
+        truncate_chars(&message, 40)
+    };
     let _ = db.update_conversation_title(&conv_id, &title);
 
     if let Some(run) = goal_run.as_ref() {
@@ -1033,7 +1037,11 @@ pub async fn chat_handler(
     }
 
     // Add the current user message to the LLM context exactly once.
-    agent_state.add_user_message(message.clone());
+    agent_state.add_user_message(if message.is_empty() {
+        "请查看本次附加的文件。图片请使用图像分析工具读取内容。".to_string()
+    } else {
+        message.clone()
+    });
 
     // Log chat request
     let msg_preview = truncate_chars(&message, 60);

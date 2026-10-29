@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { GitBranch, MessageSquare, Monitor, Plus, Radio, Search, Trash2, X } from "lucide-react";
 import { buildHistoryEntries, originDescription } from "./conversationHistoryModel";
 import "./conversationHistory.css";
-import { deleteConversation, listConversations } from "../../api/client";
+import { deleteConversation } from "../../api/client";
 import type { ConversationSummary } from "../../types";
-import { Button, EmptyState } from "../ui";
+import { Button, ConfirmDialog, EmptyState } from "../ui";
+import { notifyConversationHistoryChanged } from "./conversationHistoryEvents";
 import { deriveTaskDisplayTitle, looksLikeCommand } from "./taskTitle";
 import type { ConversationFamily } from "../../features/connectors/messages/messageForest";
 
@@ -15,6 +16,9 @@ interface Props {
   onClose?: () => void;
   families?: ConversationFamily[];
   onShowBranches?: (id:string)=>void;
+  conversations: ConversationSummary[];
+  historyError: string;
+  historyLoading: boolean;
 }
 
 export default function ConversationSidebar({
@@ -24,31 +28,16 @@ export default function ConversationSidebar({
   onClose,
   families = [],
   onShowBranches,
+  conversations,
+  historyError,
+  historyLoading,
 }: Props) {
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [query, setQuery] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
+  const [deleteError, setDeleteError] = useState("");
   const [source,setSource]=useState<"desktop"|"channel">("desktop");
   const activeSource=conversations.find(conversation=>conversation.id===activeId)?.origin?.kind;
   useEffect(()=>{if(activeSource)setSource(activeSource);},[activeId,activeSource]);
-
-  useEffect(() => {
-    let mounted = true;
-    const refresh = () => {
-      listConversations()
-        .then((items) => {
-          if (mounted && items) setConversations(items);
-        })
-        .catch((error) => {
-          console.error("刷新任务列表失败:", error);
-        });
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 5000);
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-    };
-  }, []);
 
   const entries=useMemo(()=>buildHistoryEntries(conversations,families,query),[conversations,families,query]);
   const filtered=useMemo(()=>entries.filter(entry=>(entry.origin?.kind||"desktop")===source),[entries,source]);
@@ -66,12 +55,12 @@ export default function ConversationSidebar({
   const removeConversation = async (conversation: ConversationSummary) => {
     try {
       await deleteConversation(conversation.id);
-      setConversations((current) =>
-        current.filter((item) => item.id !== conversation.id)
-      );
+      setDeleteTarget(null); setDeleteError("");
+      notifyConversationHistoryChanged();
       if (activeId === conversation.id) createNew();
     } catch (error) {
-      console.error("删除任务失败:", error);
+      setDeleteTarget(null);
+      setDeleteError(error instanceof Error ? error.message : "删除对话失败");
     }
   };
 
@@ -138,13 +127,13 @@ export default function ConversationSidebar({
           <span className="history-row-title">{displayTitle}</span>
           {conversation.origin?.kind==="channel"&&<span className="history-row-source" title={conversation.origin.channel_name}>{originDescription(conversation.origin)}</span>}
         </button>
-        {family&&family.conversationIds.length>1&&<button type="button" className="history-branch-button" aria-label={`查看${displayTitle}的${family.conversationIds.length}条对话路径`} title={`${family.conversationIds.length} 条路径 · 查看分支`} onClick={()=>onShowBranches?.(family.id)}><GitBranch size={15}/><span>{family.conversationIds.length}</span></button>}
+        {family&&<button type="button" className="history-branch-button" aria-label={`查看${displayTitle}的${family.conversationIds.length}条对话路径`} title={`${family.conversationIds.length} 条路径 · 管理或新建分支`} onClick={()=>onShowBranches?.(family.id)}><GitBranch size={15}/><span>{family.conversationIds.length}</span></button>}
         <button
           type="button"
-          onClick={() => void removeConversation(conversation)}
+          onClick={() => { setDeleteError(""); setDeleteTarget(conversation); }}
           className="conversation-row-action rounded p-1 text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-          title="删除任务"
-          aria-label={`删除${displayTitle}`}
+          title={family && family.conversationIds.length > 1 ? "删除主线，保留其他分支" : "删除对话"}
+          aria-label={family && family.conversationIds.length > 1 ? `删除${displayTitle}的主线` : `删除${displayTitle}`}
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
@@ -203,7 +192,9 @@ export default function ConversationSidebar({
       </div>
 
       <div className="conversation-list scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2">
-        {filtered.length === 0 ? (
+        {deleteError && <p role="alert">{deleteError}</p>}
+        {historyError && <p role="alert">读取对话历史失败：{historyError}</p>}
+        {historyLoading ? <p role="status">正在读取对话历史…</p> : filtered.length === 0 && !historyError ? (
           <EmptyState
             title={query ? "没有匹配的对话" : source==="channel"?"暂无渠道对话":"暂无桌面对话"}
             description={query ? "尝试更换搜索词或来源" : source==="channel"?"QQ、微信和飞书消息会记录在这里":"从上方新建一个任务"}
@@ -242,6 +233,7 @@ export default function ConversationSidebar({
           </div>
         )}
       </div>
+      <ConfirmDialog open={!!deleteTarget} title="删除对话" tone="danger" confirmLabel="删除对话" description={deleteTarget && families.find(family => family.id === deleteTarget.id && family.conversationIds.length > 1) ? `将删除“${deriveTaskDisplayTitle(deleteTarget.title)}”这条主线及其消息。其他分支会保留，并按剩余关系显示。` : `将删除“${deriveTaskDisplayTitle(deleteTarget?.title)}”这条对话及其消息。`} onConfirm={() => deleteTarget ? removeConversation(deleteTarget) : undefined} onCancel={() => setDeleteTarget(null)} />
     </aside>
   );
 }

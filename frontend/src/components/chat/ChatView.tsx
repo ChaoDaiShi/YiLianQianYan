@@ -1,3 +1,4 @@
+import { notifyConversationHistoryChanged } from "./conversationHistoryEvents";
 import {
   useCallback,
   useEffect,
@@ -38,6 +39,7 @@ import ChatInput, { type RestoredComposerDraft } from "./ChatInput";
 import UserInputCard from "./UserInputCard";
 import ChatHeader from "./ChatHeader";
 import MessageList, { type StreamingState } from "./MessageList";
+import { createConversationBranch } from "../../api/conversations";
 import WorkbenchHome from "./WorkbenchHome";
 import ModelRouteNotice, { modelRouteReasonLabel } from "../../features/llm/ModelRouteNotice";
 import { showToast } from "../ui";
@@ -109,6 +111,7 @@ export default function ChatView({
   const [suggestedText, setSuggestedText] = useState("");
   const [restoredDraft, setRestoredDraft] = useState<RestoredComposerDraft | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [branching, setBranching] = useState(false);
   const retryInFlight = useRef(false);
   const persistedMessageIds = useMemo(() => new Set(runtime.conversation?.messages.map((message) => message.id) ?? []), [runtime.conversation]);
   const [modelUnavailable, setModelUnavailable] = useState(false);
@@ -228,8 +231,8 @@ export default function ChatView({
   }, []);
 
   const handleSend = useCallback(
-    async (text: string, resourceIds: string[] = [], options?: ChatRequestOptions) => {
-      if (!text.trim() || isLoading || runtime.historyMutation || pendingApprovals.length > 0 || pendingInputs.length > 0) return false;
+    async (text: string, resourceIds: string[] = [], options?: ChatRequestOptions, workflowId?: string | null) => {
+      if ((!text.trim() && !resourceIds.length) || isLoading || runtime.historyMutation || branching || pendingApprovals.length > 0 || pendingInputs.length > 0) return false;
       let ticket = ownership.capture();
       if (!options?.model_profile_id) {
         const readiness = await getChatModelReadiness(currentConvId);
@@ -237,11 +240,20 @@ export default function ChatView({
         if (!readiness?.available) { setModelUnavailable(true); return false; }
       }
       setModelUnavailable(false);
+      const resources = await Promise.all(resourceIds.map(id => getResource(id)));
+      if (!ownership.current(ticket)) return false;
+      if (resources.some(resource => !resource)) throw new Error("附件元数据读取失败，请重新发送");
+      const attachments = resources.map(resource => ({ id: resource!.id, name: resource!.name, mime_type: resource!.mime_type, size: resource!.size }));
       let targetId = currentConvId;
+      let promotedDraft = false;
       if (!targetId) {
-        const created = await createConversation(text.trim().slice(0, 80));
+        const created = await createConversation(text.trim().slice(0, 80) || "附件对话");
         if (!ownership.current(ticket)) return false;
         targetId = created.id;
+        // The composer recreates its attachment queue when its conversation changes.
+        // Preserve the submitted draft until the new conversation accepts it.
+        setRestoredDraft({ id: crypto.randomUUID(), text, resources: attachments });
+        promotedDraft = true;
         ownership.promote(targetId);
         ticket = ownership.capture();
         setCurrentConvId(targetId);
@@ -261,14 +273,10 @@ export default function ChatView({
       if (!ownership.current(ticket)) return false;
       shouldFollowMessagesRef.current = true;
       setLocalError(null);
-      const resources=await Promise.all(resourceIds.map(id=>getResource(id)));
-      if (!ownership.current(ticket)) return false;
-      if(resources.some(resource=>!resource))throw new Error("附件元数据读取失败，请重新发送");
-      const attachments=resources.map(resource=>({id:resource!.id,name:resource!.name,mime_type:resource!.mime_type,size:resource!.size}));
-      const accepted = chatRuntime.send(targetId, text, activeWorkflow?.id, {...options,resource_ids:resourceIds}, attachments);
-      if (accepted) setRestoredDraft(null);
+      const accepted = chatRuntime.send(targetId, text, workflowId === undefined ? activeWorkflow?.id : workflowId, {...options,resource_ids:resourceIds}, attachments);
+      if (accepted) setRestoredDraft(promotedDraft ? { id: crypto.randomUUID(), text: "", resources: [] } : null);
       return accepted;
-    }, [activeWorkflow, currentConvId, isLoading, runtime.historyMutation, pendingApprovals.length, pendingInputs.length, onConversationChange, ownership, restoredDraft]
+    }, [activeWorkflow, currentConvId, isLoading, runtime.historyMutation, pendingApprovals.length, pendingInputs.length, onConversationChange, ownership, restoredDraft, branching]
   );
 
   const handleRollback = useCallback((message: Message) => {
@@ -277,6 +285,7 @@ export default function ChatView({
     setLocalError(null);
     void chatRuntime.rollback(currentConvId, message.id).then((result) => {
       if (!ownership.current(ticket)) return;
+      notifyConversationHistoryChanged();
       setSuggestedText("");
       setRestoredDraft({ id: crypto.randomUUID(), text: result.draft.text, resources: result.draft.resources });
       shouldFollowMessagesRef.current = true;
@@ -285,11 +294,24 @@ export default function ChatView({
     });
   }, [currentConvId, ownership]);
 
+  const handleBranch = useCallback((message: Message) => {
+    if (!currentConvId || branching || isLoading || runtime.live || runtime.historyMutation) return;
+    const ticket = ownership.capture();
+    setBranching(true); setLocalError(null);
+    void createConversationBranch(currentConvId, message.id).then(created => {
+      if (ownership.current(ticket)) onConversationChange(created.id);
+    }).catch((cause: unknown) => {
+      if (ownership.current(ticket)) setLocalError(cause instanceof Error ? cause.message : String(cause));
+    }).finally(() => setBranching(false));
+  }, [currentConvId, branching, isLoading, runtime.live, runtime.historyMutation, ownership, onConversationChange]);
+
   const handleDeleteMessage = useCallback((message: Message) => {
     if (!currentConvId) return;
     const ticket = ownership.capture();
     setLocalError(null);
-    void chatRuntime.deleteMessage(currentConvId, message.id).catch((cause: unknown) => {
+    void chatRuntime.deleteMessage(currentConvId, message.id).then(() => {
+      notifyConversationHistoryChanged();
+    }).catch((cause: unknown) => {
       if (ownership.current(ticket)) setLocalError(cause instanceof Error ? cause.message : String(cause));
     });
   }, [currentConvId, ownership]);
@@ -311,29 +333,34 @@ export default function ChatView({
   }, [runtime.affectedUserMessageId]);
 
   const handleRetry = useCallback(() => {
-    if (!runtime.lastSubmittedText.trim() || isLoading || runtime.live || retryInFlight.current || runtime.historyMutation) return;
+    const submission = runtime.lastSubmission;
+    if (!submission || (!submission.text.trim() && !submission.attachments.length) || isLoading || runtime.live || retryInFlight.current || runtime.historyMutation || pendingApprovals.length || pendingInputs.length) return;
     const ticket = ownership.capture();
     retryInFlight.current = true;
     setRetrying(true);
     setLocalError(null);
     void (async () => {
-      let text = runtime.lastSubmittedText;
-      let resourceIds: string[] = [];
+      let text = submission.text;
+      let resourceIds = submission.attachments.map((resource) => resource.id);
       if (currentConvId && runtime.retryMessageId) {
         const result = await chatRuntime.rollback(currentConvId, runtime.retryMessageId);
         if (!ownership.current(ticket)) return;
+        notifyConversationHistoryChanged();
         text = result.draft.text;
         resourceIds = result.draft.resources.map((resource) => resource.id);
         setSuggestedText("");
         setRestoredDraft({ id: crypto.randomUUID(), text, resources: result.draft.resources });
+        // Historical turns do not persist model, thinking, or workflow options.
+        // Restore the input for the user to choose them instead of inventing them.
+        if (!submission.options) return;
       }
       if (!ownership.current(ticket)) return;
-      const accepted = await handleSend(text, resourceIds);
+      const accepted = await handleSend(text, resourceIds, submission.options, submission.workflowId ?? null);
       if (accepted && ownership.current(ticket)) setRestoredDraft({ id: crypto.randomUUID(), text: "", resources: [] });
     })().catch((cause: unknown) => {
       if (ownership.current(ticket)) setLocalError(cause instanceof Error ? cause.message : String(cause));
     }).finally(() => { retryInFlight.current = false; setRetrying(false); });
-  }, [handleSend, isLoading, runtime.live, runtime.lastSubmittedText, runtime.retryMessageId, runtime.historyMutation, currentConvId, ownership]);
+  }, [handleSend, isLoading, runtime.live, runtime.lastSubmission, runtime.retryMessageId, runtime.historyMutation, currentConvId, ownership, pendingApprovals.length, pendingInputs.length]);
 
   const handleStop = useCallback(async () => {
     if (currentConvId) await chatRuntime.stop(currentConvId);
@@ -438,13 +465,15 @@ export default function ChatView({
               scrollContainerRef={messagesScrollRef}
               onScroll={handleMessageScroll}
               error={error}
-              onRetry={!runtime.live && !runtime.historyMutation && !runtime.affectedUserMessageId && !retrying ? handleRetry : undefined}
+              onRetry={!isLoading && !runtime.live && !runtime.historyMutation && !runtime.affectedUserMessageId && !retrying && !pendingApprovals.length && !pendingInputs.length && runtime.lastSubmission && (runtime.lastSubmission.text.trim() || runtime.lastSubmission.attachments.length) ? handleRetry : undefined}
+              retryLabel={runtime.retryMessageId ? runtime.lastSubmission?.options ? "回退并重试" : "回退并恢复输入" : "重新尝试"}
               onLocateMessage={runtime.affectedUserMessageId && persistedMessageIds.has(runtime.affectedUserMessageId) ? handleLocateMessage : undefined}
               onSpeak={onManualSpeech}
               onRollback={handleRollback}
               onDelete={handleDeleteMessage}
+              onBranch={handleBranch}
               persistedMessageIds={persistedMessageIds}
-              actionsDisabled={isLoading || runtime.live || Boolean(runtime.historyMutation) || retrying}
+              actionsDisabled={isLoading || runtime.live || Boolean(runtime.historyMutation) || retrying || branching || pendingApprovals.length > 0 || pendingInputs.length > 0}
             />
 
             {!isNearBottomState && (
@@ -462,7 +491,10 @@ export default function ChatView({
           </div>
 
           <footer className="conversation-composer shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
+            <div className="conversation-composer-column">
+            <p className="mb-1 px-2 text-xs text-[var(--text-muted)]">{branching ? "正在创建分支…" : "从当前路径的最新消息继续 · 历史回答可新建分支"}</p>
             <ChatInput
+              key={currentConvId ?? "draft"}
               workspaceMode={runtime.workspaceMode}
               onWorkspaceModeChange={handleWorkspaceMode}
               modeChanging={runtime.modeChanging}
@@ -474,10 +506,11 @@ export default function ChatView({
               suggestedText={suggestedText}
               onTextUsed={() => setSuggestedText("")}
               restoredDraft={restoredDraft}
-              disabled={Boolean(runtime.historyMutation) || retrying}
+              disabled={Boolean(runtime.historyMutation) || retrying || branching}
               chatVoiceControls={chatVoiceControls}
               onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
             />
+            </div>
           </footer>
         </>
       )}

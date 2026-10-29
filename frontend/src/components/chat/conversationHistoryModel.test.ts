@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildHistoryEntries, originLabel } from "./conversationHistoryModel";
+import { conversationFamilies } from "../../features/connectors/messages/messageForest";
 
 describe("conversation history sources and branch families", () => {
   it("keeps a channel family together and preserves its most recent activity", () => {
@@ -15,5 +16,20 @@ describe("conversation history sources and branch families", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].id).toBe("a");
     expect(originLabel(entries[0].origin)).toBe("桌面");
+  });
+  it("keeps an empty fork in its authoritative overview family", () => {
+    const overview = [
+      { id: "root", title: "主线", created_at: 1, updated_at: 1, nodes: [{ id: "answer", parent_id: null }], branch: null },
+      { id: "fork", title: "空分支", created_at: 2, updated_at: 2, nodes: [], branch: { parent_node_id: "answer" } },
+    ];
+    const entries = buildHistoryEntries(overview, conversationFamilies(overview));
+    expect(entries.map(entry => entry.id)).toEqual(["root"]);
+    expect(entries[0].pathCount).toBe(2);
+  });
+  it("shows retained paths after the root and its branch links are deleted", () => {
+    const remaining = [{ id: "fork", title: "保留的分支", created_at: 2, updated_at: 2, nodes: [{ id: "copy", parent_id: null }], branch: null }];
+    const entries = buildHistoryEntries(remaining, conversationFamilies(remaining));
+    expect(entries.map(entry => entry.id)).toEqual(["fork"]);
+    expect(entries[0].pathCount).toBe(1);
   });
 });

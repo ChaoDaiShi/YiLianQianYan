@@ -18,15 +18,17 @@ interface MessageListProps {
   onScroll?: React.UIEventHandler<HTMLDivElement>;
   error?: string | null;
   onRetry?: () => void;
+  retryLabel?: string;
   onLocateMessage?: () => void;
   onSpeak?: (text: string) => void;
   onRollback?: (message: Message) => void;
   onDelete?: (message: Message) => void;
+  onBranch?: (message: Message) => void;
   actionsDisabled?: boolean;
   persistedMessageIds?: ReadonlySet<string>;
 }
 
-function ErrorNotice({ error, onRetry, onLocateMessage }: { error: string; onRetry?: () => void; onLocateMessage?: () => void }) {
+function ErrorNotice({ error, onRetry, onLocateMessage, retryLabel }: { error: string; onRetry?: () => void; onLocateMessage?: () => void; retryLabel?: string }) {
   const presentation = presentExecutionError(error);
 
   return (
@@ -51,7 +53,7 @@ function ErrorNotice({ error, onRetry, onLocateMessage }: { error: string; onRet
                 onClick={onRetry}
                 className="rounded-[var(--radius-sm)] bg-[var(--danger)] px-3 py-1.5 text-xs font-medium text-[var(--danger-fg)] transition-colors hover:opacity-90"
               >
-                重新尝试
+                {retryLabel || "重新尝试"}
               </button>
             )}
             <details className="text-xs text-[var(--text-secondary)]">
@@ -81,10 +83,12 @@ export default function MessageList({
   onScroll,
   error,
   onRetry,
+  retryLabel,
   onLocateMessage,
   onSpeak,
   onRollback,
   onDelete,
+  onBranch,
   actionsDisabled,
   persistedMessageIds,
 }: MessageListProps) {
@@ -102,13 +106,14 @@ export default function MessageList({
             onSpeak={onSpeak}
             onRollback={onRollback}
             onDelete={onDelete}
+            onBranch={onBranch}
             actionsDisabled={actionsDisabled || Boolean(persistedMessageIds && !persistedMessageIds.has(message.id))}
           />
         ))}
 
         {streaming && (
           <div className="conversation-streaming-state mb-4 animate-msg-in">
-            <MessageProcess process={{ reasoning: streaming.reasoning, tools: streaming.toolCalls.map(record => ({ ...record, execution: record })) }}/>
+            <MessageProcess streaming process={{ reasoning: streaming.reasoning, tools: streaming.toolCalls.map(record => ({ ...record, execution: record })) }}/>
 
             {streaming.content && (
               <div className="conversation-streaming-message conversation-message-assistant min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
@@ -127,7 +132,7 @@ export default function MessageList({
           </div>
         )}
 
-        {error && <ErrorNotice error={error} onRetry={onRetry} onLocateMessage={onLocateMessage} />}
+        {error && <ErrorNotice error={error} onRetry={onRetry} onLocateMessage={onLocateMessage} retryLabel={retryLabel} />}
       </div>
     </div>
   );

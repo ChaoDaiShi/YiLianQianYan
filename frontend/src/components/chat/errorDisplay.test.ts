@@ -51,4 +51,26 @@ describe("human-readable execution errors", () => {
     );
     expect(error.technical).toContain("module.ts:10");
   });
+
+  it("identifies missing vision credentials and keeps the original log", () => {
+    const error=presentExecutionError("No API key configured","vision_analysis");
+    expect(error.message).toContain("图像理解服务所选厂商账户尚未配置 API 密钥");
+    expect(error.technical).toBe("No API key configured");
+    expect(error.action).toEqual({label:"检查图像理解配置",href:"/settings?section=vision"});
+  });
+
+  it("keeps a precise structured service message and directs it to the matching settings", () => {
+    const message="图像生成服务所选厂商账户没有可用 API Key，请确认所选账户。";
+    const error=presentExecutionError({code:"BASIC_SERVICE_NO_API_KEY",message},"image_generation");
+    expect(error.message).toBe(message);
+    expect(error.action?.href).toBe("/settings?section=image");
+  });
+
+  it("distinguishes unavailable secret storage from an absent image", () => {
+    expect(presentExecutionError({code:"BASIC_SERVICE_SECRET_UNAVAILABLE",message:"SecretUnavailable"},"vision_analysis").message).toContain("系统凭据库暂不可用");
+    expect(presentExecutionError("secret store unavailable","vision_analysis").message).toContain("系统凭据库暂不可用");
+    const error=presentExecutionError("识图需要显式提供 resource_id 或 image_url；仅有文字不能识图。","vision_analysis");
+    expect(error.message).toContain("仅有文字不能识图");
+    expect(error.action).toBeUndefined();
+  });
 });

@@ -10,6 +10,7 @@
 
 /* Central reading and input alignment: max 860px */
 .ui-opt-chat .conversation-message-list-inner,
+.ui-opt-chat .conversation-composer-column,
 .ui-opt-chat .conversation-composer-inner {
   width: min(100%, 860px);
   margin-inline: auto;
@@ -130,6 +131,7 @@
 }
 
 .ui-opt-chat .conversation-composer {
+  padding-inline: clamp(1rem, 4vw, 2.25rem);
   padding-bottom: max(16px, env(safe-area-inset-bottom, 16px));
 }
 

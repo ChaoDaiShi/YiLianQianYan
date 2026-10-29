@@ -2,6 +2,7 @@ export interface ErrorPresentation {
   message: string;
   technical: string;
   code?: string;
+  action?: { label: string; href: string };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -48,6 +49,12 @@ function findCode(value: unknown): string | undefined {
 
 function understandableMessage(reason: string, code?: string): string {
   const value = `${code || ""} ${reason}`.toLowerCase();
+  if (/no api key configured|basic_service_no_api_key/.test(value)) {
+    return /\p{Script=Han}/u.test(reason) ? reason : "当前服务尚未配置 API 密钥，请检查所选厂商账户的凭据。";
+  }
+  if (/secretunavailable|secret[ _-]*store[ _-]*unavailable|basic_service_secret_unavailable/.test(value)) {
+    return /\p{Script=Han}/u.test(reason) ? reason : "系统凭据库暂不可用，无法读取当前服务的密钥，请检查系统凭据服务后重试。";
+  }
   if (/econnrefused|connection refused|failed to fetch|networkerror/.test(value)) {
     return "无法连接到服务，请确认后端或目标应用正在运行后重试。";
   }
@@ -81,15 +88,25 @@ function understandableMessage(reason: string, code?: string): string {
   return "任务执行未成功，请查看错误日志了解具体原因后重试。";
 }
 
-export function presentExecutionError(raw: unknown): ErrorPresentation {
+export function presentExecutionError(raw: unknown, toolName?: string): ErrorPresentation {
   const parsed = parseRaw(raw);
   const reason = findText(parsed) || "";
   const code = findCode(parsed);
   const technical =
     typeof raw === "string" ? raw : JSON.stringify(raw ?? "", null, 2);
+  const missingKey = /no api key configured|basic_service_no_api_key|没有可用 api key|尚未配置.*(?:api|密钥)/i.test(`${code || ""} ${reason}`);
+  const unavailableStore = /secretunavailable|secret[ _-]*store[ _-]*unavailable|basic_service_secret_unavailable|系统凭据库.*不可用/i.test(`${code || ""} ${reason}`);
+  const service = toolName === "vision_analysis" ? { label: "图像理解", section: "vision" }
+    : toolName === "image_generation" ? { label: "图像生成", section: "image" } : null;
+  const message = missingKey && service && !/\p{Script=Han}/u.test(reason)
+    ? `${service.label}服务所选厂商账户尚未配置 API 密钥，请前往${service.label}设置检查账户凭据。`
+    : understandableMessage(reason, code);
   return {
-    message: understandableMessage(reason, code),
+    message,
     technical,
     ...(code ? { code } : {}),
+    ...(service && (missingKey || unavailableStore) ? { action: {
+      label: `检查${service.label}配置`, href: `/settings?section=${service.section}`,
+    } } : {}),
   };
 }

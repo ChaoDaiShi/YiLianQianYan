@@ -28,6 +28,7 @@ pub fn router() -> Router<Arc<AppServer>> {
         .route("/api/message-canvas", get(overview))
         .route("/api/message-canvas/layout", put(overview_layout))
         .route("/api/message-canvas/branches", post(overview_branch))
+        .route("/api/conversations/:conversation/branches", post(fork))
         .route("/api/connectors/:canvas/message-sources", get(sources))
         .route(
             "/api/connectors/:canvas/messages/:root",
@@ -74,6 +75,23 @@ async fn overview_layout(
 ) -> ApiResult<Json<Value>> {
     server.db.save_message_canvas_layout(&body).map_err(bad)?;
     Ok(Json(json!({"status":"saved"})))
+}
+
+#[derive(Deserialize)]
+struct ForkRequest {
+    parent_node_id: String,
+}
+
+async fn fork(
+    State(server): State<Arc<AppServer>>,
+    Path(conversation): Path<String>,
+    Json(body): Json<ForkRequest>,
+) -> ApiResult<Json<Value>> {
+    let id = server
+        .db
+        .fork_message_canvas_conversation(&conversation, &body.parent_node_id)
+        .map_err(bad)?;
+    Ok(Json(json!({"id": id})))
 }
 
 #[derive(Deserialize)]

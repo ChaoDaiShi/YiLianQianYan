@@ -56,13 +56,13 @@
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode="work"] .composer-card,
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode="create"] .composer-card {
   grid-template-areas: "feedback feedback feedback" "input input input" "mode . actions";
-  min-height: 110px;
-  row-gap: 5px;
-  padding: 10px 12px 8px;
+  min-height: 92px;
+  row-gap: 0;
+  padding: 8px 12px;
   border-radius: 18px;
 }
 .compact-composer[data-workspace-mode="work"] .composer-textarea,.compact-composer[data-workspace-mode="create"] .composer-textarea,
-.workbench-grid .home-composer.compact-composer[data-workspace-mode="work"] textarea,.workbench-grid .home-composer.compact-composer[data-workspace-mode="create"] textarea { min-height: 52px; max-height: 150px; }
+.workbench-grid .home-composer.compact-composer[data-workspace-mode="work"] textarea,.workbench-grid .home-composer.compact-composer[data-workspace-mode="create"] textarea { min-height: 36px; max-height: 128px; }
 .composer-popover-backdrop { position: fixed; inset: 0; z-index: 119; border: 0; padding: 0; background: transparent; cursor: default; }
 .composer-popover { position: fixed; z-index: 120; width: 296px; max-width: calc(100vw - 24px); max-height: 70vh; overflow: auto; padding: 8px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--surface-solid); box-shadow: var(--shadow-float); color: var(--text-primary); }
 .composer-menu-options { display: grid; gap: 3px; }

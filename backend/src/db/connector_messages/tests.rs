@@ -1,4 +1,6 @@
 use super::*;
+#[path = "fork_tests.rs"]
+mod fork_tests;
 
 #[test]
 fn message_graph_retains_assistant_history_reasoning_without_attributing_it_to_user() {

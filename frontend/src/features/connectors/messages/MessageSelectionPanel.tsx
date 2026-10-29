@@ -27,6 +27,6 @@ export default function MessageSelectionPanel({ message, title, origin, busy, on
       {pending && !message.content && !message.reasoning && <p className="message-selection-waiting" role="status">正在等待模型输出…</p>}
       {message.error && <p className="message-selection-error" role="alert">{message.error}</p>}
     </div>
-    <footer>{assistant && !pending && <Button variant="secondary" size="sm" disabled={busy} onClick={onBranch}><GitBranch size={14}/>从这条回答继续</Button>}{!pending && <Link to={`/chat/${message.conversation_id}`}>打开完整对话</Link>}</footer>
+    <footer>{assistant && !pending && <Button variant="secondary" size="sm" disabled={busy} onClick={onBranch}><GitBranch size={14}/>从这条回答新建分支</Button>}{!pending && <Link to={`/chat/${message.conversation_id}`}>打开完整对话</Link>}</footer>
   </aside>;
 }

@@ -14,13 +14,13 @@ describe("selected message inspector", () => {
     expect(html).toContain("A long paragraph remains available in the inspector.");
     expect(html).toContain("Actual model reasoning");
     expect(html).toContain('href="/chat/conversation-1"');
-    expect(html).toContain("从这条回答继续");
+    expect(html).toContain("从这条回答新建分支");
     expect(html).toContain('aria-label="关闭消息详情"');
   });
   it("does not attribute turn-level model reasoning to a user message", () => {
     const html = render({ ...message, id: "question-1", role: "user", content: "The actual question" });
     expect(html).toContain("The actual question");
     expect(html).not.toContain("Actual model reasoning");
-    expect(html).not.toContain("从这条回答继续");
+    expect(html).not.toContain("从这条回答新建分支");
   });
 });

@@ -10,7 +10,7 @@ export function projectConversationMessages(conversation: Conversation): Message
     if (!group.length) return;
     const user = group.find(message => message.role === "user");
     const calls = new Map<string, ProcessToolCall>();
-    const visible: Message[] = group.filter(message => message.content.trim().length > 0 && (message.role === "user" || message.role === "assistant" || message.role === "tool" && message.content.startsWith("data:image/"))).map(message => ({ ...message, tool_calls: undefined }));
+    const visible: Message[] = group.filter(message => (message.content.trim().length > 0 || (message.role === "user" && !!message.attachments?.length)) && (message.role === "user" || message.role === "assistant" || message.role === "tool" && message.content.startsWith("data:image/"))).map(message => ({ ...message, tool_calls: undefined }));
     for (const message of group) {
       const raw = message.tool_calls as unknown;
       const tools = typeof raw === "string" ? JSON.parse(raw) : raw;

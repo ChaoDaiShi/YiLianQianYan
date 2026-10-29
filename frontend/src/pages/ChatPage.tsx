@@ -21,6 +21,7 @@ import { getTaskGraphDetail } from "../api/taskWorld";
 import { resolveCurrentTaskDestination } from "../components/chat/currentTaskEntry";
 import { getMessageCanvas, type MessageCanvasConversation } from "../api/connectorMessages";
 import { conversationFamilies } from "../features/connectors/messages/messageForest";
+import { CONVERSATION_HISTORY_CHANGED } from "../components/chat/conversationHistoryEvents";
 
 export default function ChatPage() {
   const { id } = useParams();
@@ -49,15 +50,31 @@ export default function ChatPage() {
   const [gitOpen,setGitOpen]=useState(false);
   const [familyEntries, setFamilyEntries] = useState<MessageCanvasConversation[]>([]);
   const [familyError, setFamilyError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const historyRequest = useRef(0);
   const [branchFamilyId,setBranchFamilyId]=useState<string|null>(null);
   const families = useMemo(() => conversationFamilies(familyEntries), [familyEntries]);
   const activeFamily = families.find(family => conversationId && family.conversationIds.includes(conversationId));
+  const refreshHistory = useCallback(async () => {
+    const request = ++historyRequest.current;
+    try {
+      const overview = await getMessageCanvas();
+      if (request === historyRequest.current) {
+        setFamilyEntries(overview.conversations); setFamilyError("");
+        if (conversationId && !overview.conversations.some(conversation => conversation.id === conversationId)) navigate("/chat", { replace: true });
+      }
+    }
+    catch (error) { if (request === historyRequest.current) setFamilyError(error instanceof Error ? error.message : String(error)); }
+    finally { if (request === historyRequest.current) setHistoryLoading(false); }
+  }, [conversationId, navigate]);
   useEffect(() => {
     let active = true;
-    const refresh = () => { void getMessageCanvas().then(overview => { if (active) { setFamilyEntries(overview.conversations); setFamilyError(""); } }).catch(error => { if (active) setFamilyError(String(error)); }); };
-    refresh(); const timer = window.setInterval(refresh, 5000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, []);
+    const refresh = () => { if (active) void refreshHistory(); };
+    refresh(); window.addEventListener(CONVERSATION_HISTORY_CHANGED, refresh);
+    const timer = window.setInterval(refresh, 5000);
+    return () => { active = false; historyRequest.current++; window.removeEventListener(CONVERSATION_HISTORY_CHANGED, refresh); window.clearInterval(timer); };
+  }, [conversationId, refreshHistory]);
+  useEffect(() => { if (conversationRefresh) void refreshHistory(); }, [conversationRefresh, refreshHistory]);
   const handleActivityMode = useCallback((mode: ActivityMode) => setActivityMode(mode), []);
   useLayoutEffect(() => {
     setGitOpen(false);
@@ -193,6 +210,9 @@ export default function ChatPage() {
   const conversationSidebar = (onClose?: () => void) => (
     <ConversationSidebar
       families={families}
+      conversations={familyEntries}
+      historyError={familyError}
+      historyLoading={historyLoading}
       onShowBranches={setBranchFamilyId}
       activeId={conversationId}
       onSelect={(nextId) => onConversationChange(nextId)}
@@ -244,6 +264,7 @@ export default function ChatPage() {
         showConversationToggle={true}
         showExecutionToggle={false}
         headerActions={<nav className="chat-topbar-panels" aria-label="对话侧栏">
+          {activeFamily && <button type="button" aria-label="管理对话分支" onClick={()=>setBranchFamilyId(activeFamily.id)}><GitBranch size={15}/><span>分支</span></button>}
           {activeFamily && activeFamily.conversationIds.length > 1 && <select aria-label="对话路径" value={conversationId || activeFamily.id} className="max-w-36 rounded-lg bg-transparent p-1 text-xs" onChange={event => onConversationChange(event.target.value)}>
             {activeFamily.conversationIds.map((path, index) => <option key={path} value={path}>{path === activeFamily.id ? "主线" : `路径 ${index + 1}`} · {familyEntries.find(entry => entry.id === path)?.title}</option>)}
           </select>}

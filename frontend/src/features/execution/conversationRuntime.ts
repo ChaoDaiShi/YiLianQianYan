@@ -25,6 +25,12 @@ interface RuntimeDependencies {
   setWorkspaceMode: (id: string, mode: WorkspaceMode) => Promise<{ mode: WorkspaceMode }>;
   onApprovals?: (id: string, approvals: PendingApproval[]) => void;
 }
+export interface SubmittedTurn {
+  text: string;
+  workflowId?: string | null;
+  options?: ChatRequestOptions;
+  attachments: AttachmentReference[];
+}
 export interface ConversationRuntimeSnapshot {
   messages: Message[];
   run: AgentRunState;
@@ -32,6 +38,7 @@ export interface ConversationRuntimeSnapshot {
   error: string | null;
   finished: boolean;
   lastSubmittedText: string;
+  lastSubmission: SubmittedTurn | null;
   retryMessageId: string | null;
   historyMutation: string | null;
   affectedUserMessageId: string | null;
@@ -69,7 +76,7 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
     if (!value) {
       value = {
         snapshot: { messages: [], run: createInitialAgentRunState(id), loading: false, error: null,
-          finished: false, lastSubmittedText: "", retryMessageId: null, historyMutation: null, affectedUserMessageId: null, modelRoute: null, conversation: null, pendingApprovals: [], pendingInputs: [], resolving: {},
+          finished: false, lastSubmittedText: "", lastSubmission: null, retryMessageId: null, historyMutation: null, affectedUserMessageId: null, modelRoute: null, conversation: null, pendingApprovals: [], pendingInputs: [], resolving: {},
           workspaceMode: "chat", modeChanging: false, modeError: null, modeNotice: null, live: false },
         listeners: new Set(), revision: 0, refreshVersion: 0, streaming: false, streamError: null,
         submittedAt: null, previousRunStartedAt: null, accepted: false, requestRejected: false, optimisticMessageId: null, poll: null,
@@ -136,10 +143,15 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
       if (status === "completed" && !value.requestRejected && (value.accepted || persistedCurrentRun)) value.streamError = null;
       run = { ...run, connection: failed ? "error" : status === "idle" ? "idle" : "connected",
         terminal, terminalError: failed ? conversation.run_error || "执行已中断" : null };
+      const pendingSubmission = value.submittedAt !== null && (value.requestRejected || (!value.accepted && !persistedCurrentRun));
+      const completedCurrentRun = status === "completed" && !value.requestRejected && (value.accepted || persistedCurrentRun);
+      const lastSubmission = completedCurrentRun ? null : pendingSubmission ? value.snapshot.lastSubmission : failed && latestUser && !value.snapshot.lastSubmission
+        ? { text: latestUser.content, attachments: latestUser.attachments ?? [] } : value.snapshot.lastSubmission;
       publish(id, { conversation, run, messages: projectConversationMessages(conversation), live: false,
         workspaceMode: conversation.workspace_mode ?? value.snapshot.workspaceMode,
         loading: status === "running", error: value.streamError || run.terminalError, pendingApprovals, pendingInputs, retryMessageId,
-        lastSubmittedText: value.requestRejected ? value.snapshot.lastSubmittedText : latestUser?.content || value.snapshot.lastSubmittedText,
+        lastSubmittedText: pendingSubmission ? value.snapshot.lastSubmittedText : latestUser?.content ?? value.snapshot.lastSubmittedText,
+        lastSubmission,
         finished: status === "completed" && !value.streamError, resolving: {} });
     } catch (error) {
       if (revision === value.revision && version === value.refreshVersion) {
@@ -253,6 +265,7 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
         pendingApprovals: value.snapshot.pendingApprovals.filter((approval) => approvalIds.has(approval.approval_id)),
         pendingInputs: conversation.run_status === "waiting_input" ? value.snapshot.pendingInputs : [],
         lastSubmittedText: [...conversation.messages].reverse().find((message) => message.role === "user")?.content ?? "",
+        lastSubmission: null,
         workspaceMode: conversation.workspace_mode ?? value.snapshot.workspaceMode,
       });
       await refresh(id, true);
@@ -312,7 +325,7 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
       value.optimisticMessageId = messageId;
       publish(id, { run: { ...createInitialAgentRunState(id), connection: "connecting" }, modelRoute: null,
         workspaceMode: requestOptions.workspace_mode,
-        lastSubmittedText: text, messages: [...value.snapshot.messages, { id: messageId, role: "user", content: text, created_at: Date.now(), attachments }] });
+        lastSubmittedText: text, lastSubmission: { text, workflowId, options: requestOptions, attachments: attachments ?? [] }, messages: [...value.snapshot.messages, { id: messageId, role: "user", content: text, created_at: Date.now(), attachments }] });
       dependencies.sendMessage(text, id, (incoming) => { if (revision === value.revision) event(id, incoming); }, workflowId, requestOptions);
       return true;
     },

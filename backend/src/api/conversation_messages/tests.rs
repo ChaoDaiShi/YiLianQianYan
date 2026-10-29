@@ -189,3 +189,55 @@ async fn rollback_cancels_old_approval_restores_draft_and_preserves_real_resourc
         "cancelled"
     );
 }
+#[tokio::test]
+async fn rollback_attachment_only_user_restores_the_original_resource() {
+    let server = server();
+    let conversation = server.db.create_conversation("attachment only").unwrap().id;
+    let mut message = user("attachment-user", &conversation, 1);
+    message.content.clear();
+    server.db.accept_conversation_turn(&message).unwrap();
+    let resource = server
+        .resource_service
+        .ingest("fixture.txt", "text/plain", b"fixture bytes", json!({}))
+        .unwrap();
+    server
+        .db
+        .bind_resources(
+            &ResourceTarget::Conversation {
+                conversation_id: conversation.clone(),
+            },
+            &[resource.id.clone()],
+        )
+        .unwrap();
+    server.db.conn().execute("INSERT INTO message_attachments(message_id,resource_id,position) VALUES('attachment-user',?1,0)", [&resource.id]).unwrap();
+    server
+        .db
+        .set_conversation_run_status(&conversation, ConversationRunStatus::Failed, Some("failed"))
+        .unwrap();
+    let response = router()
+        .with_state(server.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/conversations/{conversation}/messages/attachment-user/rollback"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["draft"]["text"], "");
+    assert_eq!(body["draft"]["resources"][0]["id"], resource.id);
+    assert_eq!(
+        server.resource_service.read_bytes(&resource.id).unwrap(),
+        b"fixture bytes"
+    );
+}

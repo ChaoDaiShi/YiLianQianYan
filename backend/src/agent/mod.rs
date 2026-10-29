@@ -7,5 +7,6 @@ pub mod memory;
 pub mod observation;
 pub mod state;
 pub(crate) mod subagent_runtime;
+mod tool_loop;
 pub mod user_input;
 pub mod verifier;

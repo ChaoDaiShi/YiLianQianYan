@@ -1,4 +1,6 @@
 use super::*;
+#[path = "fork_tests.rs"]
+mod fork_tests;
 use crate::{
     db::MessageRow,
     safety::{ControlSession, CONTROL_SESSION_HEADER},

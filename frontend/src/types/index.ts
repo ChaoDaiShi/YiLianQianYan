@@ -207,6 +207,7 @@ export interface LlmModel {
 }
 
 export interface LlmModelPayload {
+  provider_account_id?: string;
   provider: string;
   label: string;
   model: string;

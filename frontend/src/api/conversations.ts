@@ -44,6 +44,12 @@ export async function createConversation(title?: string): Promise<ConversationSu
   return result.data;
 }
 
+export async function createConversationBranch(conversationId: string, parentMessageId: string): Promise<{ id: string }> {
+  const result = await requestResult<{ id: string }>("POST", `/api/conversations/${encodeURIComponent(conversationId)}/branches`, { parent_node_id: parentMessageId }, true);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
 export async function loadConversation(id: string): Promise<Conversation> {
   const result = await requestResult<Conversation>("GET", `/api/conversations/${id}`);
   if (!result.ok) throw new Error(result.error);

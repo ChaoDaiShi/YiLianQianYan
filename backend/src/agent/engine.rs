@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::completion_guard::{evaluate_completion, CompletionCheck};
 use super::state::AgentState;
+use super::tool_loop::ToolLoopGuard;
 use super::verifier::replan_message;
 use crate::app::state::LogBuffer;
 use crate::config::types::AppConfig;
@@ -113,7 +114,6 @@ pub enum RunOutcome {
 }
 
 const MAX_ITERATIONS: usize = 20;
-const MAX_CONSECUTIVE_SAME_TOOL: usize = 3;
 const MAX_COMPLETION_REPLANS: usize = 2;
 
 fn record_reasoning_delta(
@@ -264,6 +264,7 @@ pub(crate) fn record_external_tool_accounting(
 
 async fn dispatch_tool_call(
     state: &mut AgentState,
+    loop_guard: &mut ToolLoopGuard,
     security_gateway: &SecurityExecutionGateway,
     approval_store: &ApprovalStore,
     conversation_id: &str,
@@ -455,12 +456,22 @@ async fn dispatch_tool_call(
                 ),
             );
 
+            let failure = (!tool_result.ok || !verification.success).then(|| {
+                serde_json::json!({
+                    "tool_ok": tool_result.ok,
+                    "output": tool_result.content,
+                    "verification_success": verification.success,
+                    "verification_reason": verification.reason,
+                    "observation": verification.observation,
+                })
+            });
             if verification.should_replan {
                 state.add_tool_result(
                     tool_call.id.clone(),
                     tool_call.function.name.clone(),
                     replan_message(&tool_call.function.name, &verification.reason),
                 );
+                loop_guard.observe(&tool_call.function.name, args, failure)?;
                 return Ok(ToolDispatchOutcome::Replan);
             }
 
@@ -478,6 +489,7 @@ async fn dispatch_tool_call(
                     tool_result.content.clone()
                 }),
             );
+            loop_guard.observe(&tool_call.function.name, args, failure)?;
             Ok(ToolDispatchOutcome::Continue)
         }
         Ok(SecurityExecutionOutcome::RequiresApproval { risk_level, reason }) => {
@@ -541,6 +553,11 @@ async fn dispatch_tool_call(
                     tool_call.function.name, reason
                 ),
             );
+            loop_guard.observe(
+                &tool_call.function.name,
+                args,
+                Some(serde_json::json!({"denied": reason})),
+            )?;
             Ok(ToolDispatchOutcome::Continue)
         }
         Err(error) => {
@@ -580,6 +597,11 @@ async fn dispatch_tool_call(
                     tool_call.function.name, error
                 ),
             );
+            loop_guard.observe(
+                &tool_call.function.name,
+                args,
+                Some(serde_json::json!({"gateway_error": error.to_string()})),
+            )?;
             Ok(ToolDispatchOutcome::Continue)
         }
     }
@@ -684,8 +706,7 @@ async fn run_react_loop_inner(
 ) -> Result<RunOutcome, String> {
     let tools_openai = tool_registry.to_openai_tools();
     let mut iteration = 0;
-    let mut last_tool_name = String::new();
-    let mut consecutive_same_tool = 0usize;
+    let mut loop_guard = ToolLoopGuard::default();
     let mut completion_replans = 0usize;
     let reasoning_journal = parking_lot::Mutex::new(String::new());
     let mut compacted_context = state.compaction_checkpoint.clone();
@@ -704,7 +725,9 @@ async fn run_react_loop_inner(
 
         iteration += 1;
         if iteration > MAX_ITERATIONS {
-            return Err("已达到最大工具调用次数限制".to_string());
+            return Err(format!(
+                "已达到本轮 {MAX_ITERATIONS} 轮执行上限，任务尚未完成"
+            ));
         }
 
         // ── THINK: Call LLM with streaming ──
@@ -904,25 +927,12 @@ async fn run_react_loop_inner(
                         return Err("已取消".to_string());
                     }
 
-                    // Guard against infinite tool loops: bail if same tool called too many times in a row
-                    if tc.function.name == last_tool_name {
-                        consecutive_same_tool += 1;
-                        if consecutive_same_tool >= MAX_CONSECUTIVE_SAME_TOOL {
-                            return Err(format!(
-                                "工具 {} 被连续调用 {} 次，可能陷入循环，已中止",
-                                tc.function.name, consecutive_same_tool
-                            ));
-                        }
-                    } else {
-                        consecutive_same_tool = 1;
-                        last_tool_name = tc.function.name.clone();
-                    }
-
                     let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
 
                     let dispatch = dispatch_tool_call(
                         state,
+                        &mut loop_guard,
                         security_gateway,
                         approval_store,
                         conversation_id,
@@ -1312,6 +1322,7 @@ mod tests {
 
         let outcome = dispatch_tool_call(
             &mut state,
+            &mut super::ToolLoopGuard::default(),
             &gateway,
             &approvals,
             "conversation-1",
@@ -1351,6 +1362,7 @@ mod tests {
 
         let outcome = dispatch_tool_call(
             &mut state,
+            &mut super::ToolLoopGuard::default(),
             &gateway,
             &approvals,
             "conversation-1",
@@ -1390,6 +1402,7 @@ mod tests {
 
         let outcome = dispatch_tool_call(
             &mut state,
+            &mut super::ToolLoopGuard::default(),
             &gateway,
             &approvals,
             "conversation-1",
@@ -1429,6 +1442,7 @@ mod tests {
 
         let outcome = dispatch_tool_call(
             &mut state,
+            &mut super::ToolLoopGuard::default(),
             &gateway,
             &approvals,
             "conversation-1",
@@ -1486,6 +1500,7 @@ mod tests {
 
         let outcome = dispatch_tool_call(
             &mut state,
+            &mut super::ToolLoopGuard::default(),
             &gateway,
             &approvals,
             "conversation-1",
@@ -1538,6 +1553,7 @@ mod tests {
 
         let outcome = dispatch_tool_call(
             &mut state,
+            &mut super::ToolLoopGuard::default(),
             &gateway,
             &approvals,
             "conversation-1",
@@ -1615,3 +1631,7 @@ mod route_wire_tests {
         assert!(value.get("args").is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "engine/loop_policy_tests.rs"]
+mod loop_policy_tests;
