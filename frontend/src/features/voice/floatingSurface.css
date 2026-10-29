@@ -2,6 +2,10 @@ html:has(.floating-orb),body:has(.floating-orb){margin:0;background:transparent;
 .floating-orb{width:64px;height:64px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;border:1px solid var(--accent-primary);border-radius:50%;background:var(--surface-solid);color:var(--text-primary);padding:4px;overflow:hidden;cursor:grab;touch-action:none;user-select:none;font-family:inherit}
 .floating-orb:active,.floating-drag-handle:active{cursor:grabbing}
 .floating-orb:focus-visible{outline:2px solid var(--accent-primary);outline-offset:-3px}
+.floating-orb-wrap{width:88px;height:64px;display:flex;align-items:flex-start}
+.floating-orb-wrap .floating-orb{flex:0 0 64px}
+.floating-orb-close{width:24px;height:24px;flex:0 0 24px;display:grid;place-items:center;padding:0;border:1px solid var(--border-soft);border-radius:50%;background:var(--surface-solid);color:var(--text-primary);cursor:pointer}
+.floating-orb-close:focus-visible{outline:2px solid var(--accent-primary);outline-offset:-2px}
 .floating-orb-status{max-width:100%;border-radius:8px;padding:1px 4px;font-size:10px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface-hover);color:var(--text-primary)}
 .floating-orb[data-status=error]{border-color:#cf657f}
 .floating-orb[data-status=error] .floating-orb-status{background:#cf657f;color:white}

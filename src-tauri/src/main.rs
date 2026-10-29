@@ -15,6 +15,8 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 use tracing;
 mod floating;
@@ -179,6 +181,74 @@ fn configure_initial_main_window(app: &tauri::App) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+fn show_main(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show-main", "显示主窗口", true, None::<&str>)?;
+    let hide = MenuItem::with_id(app, "hide-main", "隐藏主窗口", true, None::<&str>)?;
+    let show_floating =
+        MenuItem::with_id(app, "show-floating", "显示已打开的浮窗", true, None::<&str>)?;
+    let hide_floating = MenuItem::with_id(
+        app,
+        "hide-floating",
+        "隐藏浮窗（通话继续）",
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit-app", "退出忆涟千言", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &hide, &show_floating, &hide_floating, &quit])?;
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .expect("application icon is configured");
+    TrayIconBuilder::with_id("main-tray")
+        .icon(icon)
+        .tooltip("忆涟千言")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show-main" => show_main(app),
+            "hide-main" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+            "show-floating" | "hide-floating" => {
+                for label in ["call-overlay", "monitor-overlay"] {
+                    if let Some(window) = app.get_webview_window(label) {
+                        if event.id().as_ref() == "show-floating" {
+                            let _ = window.show();
+                        } else {
+                            let _ = window.hide();
+                        }
+                    }
+                }
+            }
+            "quit-app" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            ) {
+                show_main(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -186,6 +256,16 @@ fn main() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    let context = tauri::generate_context!();
+    let bundled_skills = if cfg!(debug_assertions) {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skills")
+    } else {
+        tauri::utils::platform::resource_dir(context.package_info(), &tauri::utils::Env::default())
+            .expect("application resource directory is available")
+            .join("bundled-skills")
+    };
+    std::env::set_var("YILIAN_BUNDLED_SKILLS", bundled_skills);
 
     // Set workspace root to project root (Tauri runs from src-tauri/)
     let exe_dir = std::env::current_dir().unwrap_or_default();
@@ -269,11 +349,20 @@ fn main() {
             floating::open_floating_surface,
             floating::resize_floating_surface,
             floating::position_floating_surface,
-            floating::close_floating_surface
+            floating::close_floating_surface,
+            floating::hide_floating_surface
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 window.app_handle().exit(0);
+            } else if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if window.app_handle().tray_by_id("main-tray").is_some() {
+                        if window.hide().is_ok() {
+                            api.prevent_close();
+                        }
+                    }
+                }
             } else if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 let _ = window
                     .app_handle()
@@ -281,11 +370,12 @@ fn main() {
             }
         })
         .setup(|app| {
+            setup_tray(app)?;
             configure_initial_main_window(app)?;
             tracing::info!("Tauri desktop window ready, backend on http://127.0.0.1:9420");
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 

@@ -16,7 +16,7 @@ pub async fn open_floating_surface(
     let (width, height) = if expanded {
         (360.0, if kind == "call" { 420.0 } else { 300.0 })
     } else {
-        (64.0, 64.0)
+        (88.0, 64.0)
     };
     if let Some(window) = app.get_webview_window(name) {
         window
@@ -58,11 +58,18 @@ pub fn resize_floating_surface(
     let (width, height) = if expanded {
         (360.0, if kind == "call" { 420.0 } else { 300.0 })
     } else {
-        (64.0, 64.0)
+        (88.0, 64.0)
     };
     window
         .set_size(LogicalSize::new(width, height))
         .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn hide_floating_surface(app: tauri::AppHandle, kind: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(label(&kind)?) {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 #[tauri::command]
 pub fn position_floating_surface(

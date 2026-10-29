@@ -20,6 +20,7 @@
         "minHeight": 600,
         "resizable": true,
         "visible": false,
+        "dragDropEnabled": false,
         "decorations": true
       }
     ],
@@ -30,6 +31,11 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": {
+      "../skills/code-reviewer/": "bundled-skills/code-reviewer/",
+      "../skills/doc-writer/": "bundled-skills/doc-writer/",
+      "../skills/python-expert/": "bundled-skills/python-expert/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

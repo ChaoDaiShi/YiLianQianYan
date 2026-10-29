@@ -20,7 +20,7 @@ export default function MonitoringToolbox({ data, health }: { data: Record<strin
   const [approvalOpen, setApprovalOpen] = useState(false);
   const location = useLocation(); const navigate = useNavigate();
   useEffect(() => { setLayout(preferences.monitor); }, [preferences]);
-  useEffect(() => { if (new URLSearchParams(location.search).get("card") === "approvals") setApprovalOpen(true); }, [location.search]);
+  useEffect(() => { setApprovalOpen(new URLSearchParams(location.search).get("card") === "approvals"); }, [location.search]);
   const refresh = useCallback(async () => {
     const [pending, diagnostic] = await Promise.allSettled([listPendingApprovals(), getIsolationStatus()]);
     setApprovals(pending.status === "fulfilled" ? pending.value : null);
@@ -55,7 +55,7 @@ export default function MonitoringToolbox({ data, health }: { data: Record<strin
         </article>)}
       </div><p className="mt-2 text-xs text-[var(--text-faint)]">仅显示实际接口数据；页面隐藏时停止自动刷新，前台最多每 30 秒刷新一次。</p>
     </>}
-    <Modal open={approvalOpen} onClose={() => setApprovalOpen(false)} title="待审批操作">
+    <Modal open={approvalOpen} onClose={() => { setApprovalOpen(false); const params = new URLSearchParams(location.search); if (params.get("card") === "approvals") { params.delete("card"); const search = params.toString(); navigate({ pathname: location.pathname, search: search ? `?${search}` : "" }, { replace: true }); } }} title="待审批操作">
       {approvals === null ? <p role="status">审批数据 unavailable，请稍后重试。</p> : approvals.length === 0 ? <p>暂无待审批操作。</p> : approvals.map((approval) => approval.task_graph_id ? <TaskCanvasApproval key={approval.approval_id} approval={approval} onResolved={refresh}/> : <div key={approval.approval_id} className="mb-3"><p>{approval.tool_name}</p><Button variant="secondary" onClick={() => navigate(`/chat/${encodeURIComponent(approval.conversation_id)}`)}>前往对应对话核对并审批</Button></div>)}
       <Button variant="secondary" onClick={() => void refresh()}>刷新审批</Button>
     </Modal>

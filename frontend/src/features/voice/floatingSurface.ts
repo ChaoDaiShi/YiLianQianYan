@@ -11,6 +11,7 @@ async function nativeWindow(){return(await import("@tauri-apps/api/window")).get
 export async function openFloatingSurface(kind:FloatingKind,expanded=true){if(desktopFloatingAvailable()){await invokeNative("open_floating_surface",{kind,expanded});await emitNative(`${kind}-overlay`,"floating:layout",{kind,expanded});}}
 export async function resizeFloatingSurface(kind:FloatingKind,expanded:boolean){if(desktopFloatingAvailable()){await invokeNative("resize_floating_surface",{kind,expanded});await emitNative(`${kind}-overlay`,"floating:layout",{kind,expanded});}}
 export async function closeFloatingSurface(kind:FloatingKind){if(desktopFloatingAvailable())await invokeNative("close_floating_surface",{kind});}
+export async function hideFloatingSurface(kind:FloatingKind){if(desktopFloatingAvailable())await invokeNative("hide_floating_surface",{kind});}
 export async function pinFloatingSurface(pinned:boolean){if(desktopFloatingAvailable())await(await nativeWindow()).setAlwaysOnTop(pinned);}
 export async function dragFloatingSurface(){if(desktopFloatingAvailable())await(await nativeWindow()).startDragging();}
 interface FloatingDragActions {
