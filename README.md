@@ -1,555 +1,369 @@
-# 忆涟千言 — 桌面级 AI 智能体
+# 忆涟千言 · YiLianQianYan
 
-基于 **Rust + React + Tauri** 的本地优先桌面 AI 智能体。Tauri 桌面客户端是主要交互入口，浏览器版本用于开发预览。
+忆涟千言是一个以本地工作空间为中心的桌面 AI 助手。你可以和它讨论问题，也可以把文件、资料和具体目标交给它，让它调用工具、处理任务，并在同一个工作台里查看执行过程和结果。
 
-当前版本：`1.2.0`。Windows x64 与 Apple Silicon Mac 安装包由 GitHub Actions 构建，安装方式与验证范围见 [v1.2 安装说明](docs/releases/v1.2-installation.md)。v1.1 在不削弱游客/离线本地能力的前提下，新增可选身份、增量同步、账号与隐私中心、首次配置向导、AI Search，以及物理隔离的私有 Cloud/Admin 服务实现。
+做这个项目，是希望把分散在聊天窗口、文件夹和各类工具里的工作接起来：读完一份资料后可以继续整理成文稿，讨论过的方案可以变成任务，一次有用的操作也可以保存成技能或工作流。对话保留上下文，工作空间保存文件与成果，执行记录则用来回答“刚才做了什么、做到了哪一步”。
 
-R3 实施记录：[记忆、AI 知识构建与原工作流适配](docs/pid/2026-10-23-v1-r3/implementation.md)。知识库新增快速/深度 AI 构建入口，记忆页增加版本、纠正与撤回，工作流沿用原编辑器和运行界面并支持本次执行参数。完整实现范围、验证结果与尚未实现的扩展以该记录为准。
+项目采用 Rust、React 和 Tauri，主要入口是桌面客户端。当前源码版本为 `1.2.0`，提供 Windows x64 和 Apple Silicon Mac 的打包流程；浏览器模式用于开发和预览。本地核心功能无需登录，模型、搜索、语音和消息平台需要分别配置相应服务。
 
-消息工作台提供飞书、QQ / OneBot 11、微信 iLink 与 Akasha-WeChat 接入，以及可保存的角色、模型和回复风格预设。QQ 机器人可按主人目标查询好友、群和历史，并向授权对象主动发言；目标可立即运行或按计划执行。工作台采用左侧账号／会话导航、顶部操作和按需配置抽屉。接入、授权与状态说明见[消息渠道与回复预设](docs/message-channels.md)，Akasha 环境与配套补丁见[微信接入说明](docs/message-channels-akasha.md)。
+[下载安装](https://github.com/ChaoDaiShi/YiLianQianYan/releases) · [安装说明](docs/releases/v1.2-installation.md) · [消息渠道接入](docs/message-channels.md)
 
-当前优化任务入口：[2026-10-10 小范围优化与并行实施计划](docs/superpowers/plans/2026-10-10-v1-1-focused-optimization.md)。服务器仓库已独立到同级 `../YiLianCloud-Private`；业务修复和真实发布验收按该计划分阶段执行，文档不代表已完成实现。
+## 阅读顺序
 
-## 架构
+- [可以用它做什么](#可以用它做什么)
+- [第一次使用](#第一次使用)
+- [从源码运行](#从源码运行)
+- [配置、数据与隐私](#配置数据与隐私)
+- [工具执行、审批与验证](#工具执行审批与验证)
+- [项目结构与接口](#项目结构与接口)
+- [开发与验证](#开发与验证)
+- [进一步阅读](#进一步阅读)
 
-```
-frontend (:1420)          backend (:9420)           src-tauri (primary)
-┌──────────────┐   HTTP   ┌──────────────┐   IPC   ┌──────────────┐
-│ React + Vite │ ◄─SSE──► │ axum + Rust  │ ◄─────► │ Tauri shell  │
-│ React UI     │          │ agent/tools  │         │ 主要桌面入口 │
-└──────────────┘          └──────┬───────┘         └──────────────┘
-                                 │ SQLite
-                                 ▼
-                           ~/.yilianqianyan/
-```
+## 可以用它做什么
 
-登录和启用同步后，本地后端通过公开 Cloud Contract 与 YiLian Cloud 交换增量变更；云端不可用时继续使用 SQLite、Resource Store、SecretStore、Task/MCP/Voice 本地运行时。私有云与 Admin 源码位于公共 Git Root 之外，不属于本仓库。
+### 围绕一件事持续对话
 
-## 快速开始
+对话页支持流式回答、附件、模型切换和执行过程查看。模型返回推理内容时，可以展开阅读；这些内容会随对话历史保存。工具调用、审批、执行错误和结果验证也有各自的展示位置，遇到问题时可以找到具体停在哪一步。
 
-### 1. 启动后端
+如果一个问题有几种思路，可以从已有回答新建分支，再沿着新路径继续。原来的对话会保留，创建分支本身不会调用模型。对话画布按对话组展示主线与分支，节点保留摘要，选中后在详情区阅读完整 Markdown、模型思考与附件。选中历史节点用于阅读，输入栏继续在当前路径末尾追加消息。
+
+界面以固定工作区为主，配置和详情按需打开。聊天历史与执行上下文可以收起，为正文留出空间；白天、夜间和跟随系统三种外观沿用 Cyrene 主题。桌面主窗口关闭后进入托盘，可以从托盘恢复或退出应用。
+
+### 把文件、任务和成果放进工作空间
+
+工作空间关联本机项目目录，集中查看文件、任务、执行记录和产物。文件树可以打开预览，聊天附件与画布也复用同一个预览入口。读取工作空间文件时使用只读接口，不会为了预览再复制一份上传资源。
+
+预览支持以下内容：
+
+| 类型 | 预览方式 |
+| --- | --- |
+| Markdown、文本与代码 | 阅读正文，文本内容可搜索 |
+| DOCX | 展示标题、段落样式、表格和内嵌图片，支持长正文搜索 |
+| XLSX / XLS | 切换工作表，查看单元格内容 |
+| PPTX | 按页查看正文、表格与图片 |
+| RTF | 阅读正文与基本样式 |
+| PDF | 显示原文件；扫描页可以视觉阅读 |
+| 图片 | 图片预览与缩放 |
+| 音频、视频 | 使用 WebView 或浏览器支持的播放器 |
+| ZIP | 查看压缩包目录条目 |
+
+Office 预览侧重内容阅读，不保证复现原文件的分页、母版和复杂布局。旧版 DOC、PPT 尚不支持内置内容解析，RTF 的复杂表格和图片也未覆盖。扫描 PDF 不会凭空生成 OCR 文本，音视频是否能播放取决于当前环境支持的编码。
+
+工作空间还提供资料学习和创作文稿页面。文稿保存为本地资源，保留历史版本；保存新版本时检查当前修订号，避免把较新的内容直接覆盖掉。
+
+### 让任务有执行过程，也有交付结果
+
+对于需要多步完成的目标，可以使用任务管理和工作流。任务记录计划、每次执行、审批、状态变化及最终产物；重试会创建新的执行尝试，历史记录继续保留。中断的运行会在恢复时标记相应状态，便于决定下一步如何处理。
+
+工作流提供图形编辑器、运行参数、节点结果和运行历史。它使用有向无环图组织步骤，支持工具、MCP、子智能体、模型、条件和输出等节点。当前调度按顺序执行；模型节点本身只调用模型，带工具操作的节点仍进入统一安全执行链。
+
+任务相关的 ProofLoop 提供验收条件、检查点、证据、评估与修复记录。它的作用是让交付结果有据可查。具体任务能否判定完成，仍取决于验收条件和实际取得的证据。
+
+定时任务支持一次、每日和每周等计划。应用需要保持运行，不能把本机调度理解为关机后仍会执行的云端服务。
+
+### 积累记忆，整理自己的知识资料
+
+记忆用于保留事实、偏好、知识和笔记，为后续对话与任务提供上下文。页面可以按分类筛选、查看详情和历史版本，也可以纠正或撤回已有记忆。检索支持词法、语义和混合方式；语义检索需要配置 Embedding 服务，索引状态和维护入口可以在页面查看。
+
+知识库用于组织资料与来源，并提供 AI 构建入口。快速模式适合先整理一个主题，深度模式会进行多轮互补检索。当前快速模式执行一轮、四条查询，深度模式执行三轮、最多十八条查询，保留最多四十八个去重来源。DeepSeek 深度研究每轮还会读取最多四页原文，把取得的摘录用于来源和引文核对；读取失败时会显示失败并保留已有材料。
+
+搜索结果可以继续交给助手、创建任务或保存为知识记忆。使用搜索、网页读取和 AI 构建时，请先配置对应模型与搜索服务；这些步骤会向所选服务发出真实请求。
+
+### 用技能、MCP 和角色扩展工作方式
+
+内置工具负责文件读写、搜索、HTTP 请求、命令执行、进程管理、截图以及键鼠操作等原子能力。技能把一套操作方法写成可复用的步骤。应用默认展示随包提供的官方技能，也支持发现和预览其他软件的技能目录，再按实际兼容性导入。
+
+MCP 用于接入外部工具服务。当前实现支持 stdio 和 Streamable HTTP，提供工具发现、资源读取以及提示词预览。接入服务、看到目录或安装插件，都不等于授予执行权限；调用工具时仍需经过本机安全策略。外部资源和提示词也不会仅因被预览就自动加入对话或系统提示词。
+
+角色用于保存不同的工作偏好和提示词，团队与子智能体用于任务中的有限委派。当前多智能体任务按顺序执行，委派深度和执行数量有上限，并非并行运行的 Agent 集群。角色、技能和插件都不能自行扩大文件、网络或进程权限。
+
+### 从桌面继续到语音和消息平台
+
+桌面端提供语音会话与独立通话浮窗。语音需要配置对应的识别、合成服务及设备权限。隐藏通话浮窗会保留通话，结束通话使用单独的操作；监控浮窗也可以独立收起和关闭。
+
+消息渠道工作台支持飞书、QQ / OneBot 11、微信 iLink 和 Akasha-WeChat。每个渠道可以选择自动回复或审阅后发送，并使用保存好的角色、模型与回复预设。QQ 主人目标还可以查询授权范围内的好友、群和历史，向指定对象发信，或按计划运行目标。
+
+这些接入需要平台自己的应用权限、账号登录或外部服务。应用不会替你安装、登录 QQ，也不会仅凭本机连接成功就把消息标成送达。平台确认受理与联系人已阅读是两回事；发送结果未知时会保留未知状态。
+
+具体配置、支持的消息类型和授权范围见[消息渠道说明](docs/message-channels.md)，微信 Akasha 的环境要求见[配套接入说明](docs/message-channels-akasha.md)。
+
+## 第一次使用
+
+如果只是使用应用，直接在 [Releases](https://github.com/ChaoDaiShi/YiLianQianYan/releases) 选择对应平台的安装包即可，不需要安装 Rust 或 Node.js。发布包对应某次发布，`develop` 和 `main` 上的新提交不会自动改写已经发布的安装包。
+
+Windows 使用 x64 安装程序。Apple Silicon Mac 使用 arm64 DMG，打开后把应用拖进“应用程序”。现有发布说明中的 Windows 包未配置发布者代码签名，Mac 包采用临时签名、未经 Apple 公证；系统提示和校验方式见[安装说明](docs/releases/v1.2-installation.md)。
+
+启动后建议按下面的顺序配置：
+
+1. 在首次配置页选择模型服务商，填写模型名称、服务地址和自己的 API Key。内置服务商预设可以编辑，也可以接入自定义 OpenAI 兼容服务。
+2. 点击“保存并测试连接”。应用会保存档案、发起真实连接测试、激活模型并确认可用状态，成功后再进入完成页。
+3. 进入对话页，先发送一条简单问题，确认模型能够正常回答。
+4. 需要处理本机资料时，再创建工作空间并选择目录。根据任务需要配置文件、网络、命令等权限。
+5. 搜索、识图、生图、语音、消息渠道和账号同步都可以稍后配置，无需在第一次启动时全部填完。
+
+选择“稍后配置”可以先浏览界面，但调用模型仍需要可用的模型配置。未完成配置时，后续启动仍会提醒。
+
+日常模型配置在“模型与服务”中完成，可选择已有账户或保存新凭据，多模态服务也可以复用账户。高级模型池供需要集中管理模型能力的场景使用，普通识图和生图无需先创建模型池。服务商返回 Token usage 时，应用会记录本地用量；未返回时不会估算成精确数字。
+
+## 从源码运行
+
+下面以 Windows / PowerShell 为例。仓库包含一个 Cargo workspace，后端和 Tauri 共享 Rust 实现，前端依赖单独安装。
+
+### 准备环境
+
+- Node.js 22 或 24，以及 npm；仓库 CI 使用 Node.js 22。
+- Rust stable 与 Cargo。
+- Windows 的 MSVC C++ 构建工具和 Windows SDK，通常通过 Visual Studio Build Tools 安装。
+- Microsoft Edge WebView2 Runtime，用于 Tauri 桌面界面。
+
+克隆后，在仓库根目录安装桌面 CLI 和前端依赖：
 
 ```powershell
-cd backend
-$env:OPENAI_API_KEY = "sk-your-key"   # 设置 API 密钥
-$env:YILIAN_CONTROL_SESSION_TOKEN = "local-dev-control-session-token-change-me"
-cargo run
-# → http://127.0.0.1:9420
+git clone https://github.com/ChaoDaiShi/YiLianQianYan.git
+cd YiLianQianYan
+npm ci
+npm --prefix frontend ci
 ```
 
-### 2. 启动前端
+依赖已安装且锁文件没有变化时，无需每次重新安装。
 
-使用 Node.js 22 或 24（CI 使用 Node.js 22）；前端构建使用 Vite 6，测试使用 Vitest 4。
+### 启动桌面客户端
+
+在仓库根目录运行：
 
 ```powershell
-cd frontend
-npm install
-$env:VITE_CONTROL_SESSION_TOKEN = "local-dev-control-session-token-change-me"
-npm run dev
-# → http://localhost:1420
+npm run tauri:dev
 ```
 
-浏览器打开 `http://localhost:1420` 可进行开发预览。前后端开发令牌必须完全一致，且至少 32 个字符；令牌只用于本地开发，不应提交到仓库。
+Tauri 会启动前端开发服务，并在桌面进程内启动本地 Rust 后端。此时不要再单独运行一个占用 `9420` 端口的后端。
 
-### 3. 启动 Tauri 桌面客户端（主要入口）
+桌面客户端默认以 `1440 × 900` 逻辑像素为窗口目标，启动时根据屏幕工作区和缩放调整、居中，最小内尺寸为 `800 × 600`。本地控制会话令牌由 Tauri 在启动时生成，再通过内部命令交给 WebView，无需手动填写。
+
+开发服务使用以下地址：
+
+| 服务 | 默认地址 | 用途 |
+| --- | --- | --- |
+| Vite | `http://localhost:1420` | 桌面开发页面与浏览器预览 |
+| Rust / Axum | `http://127.0.0.1:9420` | 本地 API、SSE 与工具运行时 |
+
+### 单独调试后端和浏览器界面
+
+需要分别观察前后端日志时，可以使用两个 PowerShell 终端。两边的控制会话令牌必须相同，且至少有 32 个字符。下面是仅供本机开发的示例值，请换成自己的随机值，不要提交到仓库。
+
+终端一，从仓库根目录启动后端：
 
 ```powershell
-npm run tauri dev
+$env:YILIAN_CONTROL_SESSION_TOKEN = "replace-with-your-local-random-token-at-least-32-chars"
+cargo run -p yilian-backend --bin yilian-server
 ```
 
-默认窗口目标为 `1440 × 900` 逻辑像素，启动时根据屏幕工作区与缩放比例收敛、居中，最小内尺寸为 `800 × 600`。
-Tauri 会在每次启动时生成新的控制会话令牌，并通过内部 command 交给 webview；无需手工配置，也不会把令牌写入日志或数据库。
+终端二，从仓库根目录启动前端：
 
-### 首次配置模型
-
-新用户进入工作台后会先打开 `/setup`，按“连接模型 → 开始使用”两步完成配置。选择服务商后沿用模型管理的现有预设，模型名称和地址仍可编辑；“保存并测试连接”依次保存档案、测试真实连接、激活模型并确认可用状态。只有这些步骤成功后才显示完成页，点击“开始使用”保存首次配置完成状态。
-
-账号、搜索和语音均可稍后配置。选择“稍后配置”可先浏览工作台，页面会保留返回配置的提醒，本次会话不重复跳转；下次启动仍会提示未完成配置。已完成配置的用户不会自动进入向导，手动打开 `/setup` 会读取当前模型。密钥继续由现有模型服务写入系统凭据库，不写入浏览器存储。
-
-全局导航、命令面板、更多功能、能力分类及画布资源节点使用统一的 SVG 图标。工作空间扩展包的 7 项图标加上补充包的 21 项图标，共提供 28 项功能语义；新补充图标使用原生 24px 画布。浅色功能卡片显示彩色版，深色及紧凑导航显示随主题变色的单色版。智能体、记忆、知识、技能、审批、定时任务和运行历史的页面标识同步复用对应图标，小尺寸通用操作保留现有图标。
-
-### 对话画布
-
-对话画布默认适配最近消息的上下文，选中节点后在右侧查看完整 Markdown、模型思考与附件；节点本身保留摘要。连接线根据当前节点位置使用相对的上下或左右边缘，拖动节点后同步更新。输入栏位于画布列底部，关闭详情不影响正在进行的执行或停止操作。
-
-## 桌面工作台
-
-- `>= 1180px`：任务列表与对话区常驻，执行上下文默认收起为右侧 ContextRail，显式点击后展开。
-- `960–1179px`：任务列表常驻，执行轨迹从右侧抽屉打开。
-- `800–959px`：任务列表与执行轨迹使用互斥的左右抽屉。
-- 外观统一为 Cyrene 跟随系统、白天和夜间三种模式；自定义背景仍可本地保存。
-- 工具执行结果与结果验证分别显示；工具返回成功不等于验证通过。
-- 高风险与严重风险操作仍会暂停并等待用户明确批准，拒绝后不会执行原工具调用。
-
-## 项目结构
-
-```
-├── backend/                     # Rust HTTP 服务端
-│   └── src/
-│       ├── main.rs              # axum 服务器入口
-│       ├── server.rs            # AppServer 共享状态
-│       ├── api/                 # REST + SSE 路由
-│       │   ├── chat.rs          # POST /api/chat (SSE流式)
-│       │   ├── events.rs        # GET /api/events (产品事件 SSE)
-│       │   ├── commands.rs      # POST /api/commands (共享命令入口)
-│       │   ├── resources.rs     # Resource ingest/list/get
-│       │   ├── voice.rs         # Voice/Presence foundation API
-│       │   ├── conversations.rs # CRUD /api/conversations
-│       │   ├── settings.rs      # GET/PUT /api/settings
-│       │   └── tools.rs         # GET /api/tools
-│       ├── shared/              # Event/Command/Resource/Voice/Projection 契约
-│       ├── agent/               # ReAct agent 引擎
-│       ├── llm/                 # LLM 客户端 (OpenAI兼容)
-│       ├── tools/               # 内置工具系统
-│       ├── safety/               # 风险、RBAC、脱敏、审计与控制会话
-│       ├── db/                  # SQLite 持久化（含安全审计表）
-│       └── config/              # 配置管理
-├── frontend/                    # React 前端
-│   └── src/
-│       ├── api/                 # 按 chat/tasks/events/resources 等领域拆分的客户端
-│       ├── surfaces/            # WorkspaceSurface 与 Desktop host skeleton
-│       ├── components/          # UI 组件
-│       │   ├── chat/            # 聊天界面
-│       │   ├── sidebar/         # 对话列表
-│       │   └── settings/        # 设置面板
-│       └── types/               # TypeScript 类型
-├── src-tauri/                   # Tauri 桌面客户端（主要入口）
-├── skills/                      # AI 技能目录
-└── .agents/                     # 子智能体目录
+```powershell
+$env:VITE_CONTROL_SESSION_TOKEN = "replace-with-your-local-random-token-at-least-32-chars"
+npm --prefix frontend run dev
 ```
 
-## API 端点
+打开 `http://localhost:1420`，按首次配置流程连接模型。若沿用默认模型的环境变量配置，也可以在启动后端前设置 `OPENAI_API_KEY`；自定义服务地址和模型名称仍应在应用中配置。
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/chat` | SSE 流式聊天 |
-| `POST` | `/api/chat/stop` | 取消生成 |
-| `GET` | `/api/events` | 低频 Product Event SSE |
-| `POST` | `/api/commands` | 共享命令路由；不替代授权 |
-| `POST` | `/api/resources/ingest` | 上传到应用管理存储并返回 Resource ID |
-| `GET` | `/api/resources[/:id]` | 查询 Resource 元数据 |
-| `GET` | `/api/presence` | 查询分层 Presence 快照 |
-| `POST` | `/api/voice/sessions/{start,stop,interrupt,cancel}` | Provider 中立 VoiceSession lifecycle |
-| `GET` | `/api/projections/tasks` | TaskProjection；Foundation 阶段为显式 Mock |
-| `GET` | `/api/projections/desktop-context` | DesktopContextProjection；Foundation 阶段为显式 Mock |
-| `GET` `/POST` `/DELETE` | `/api/conversations[/{id}]` | 对话 CRUD |
-| `GET` `/PUT` | `/api/settings` | 配置管理 |
-| `GET` `/POST` | `/api/llm/models` | 多服务商模型档案列表/新增 |
-| `PUT` `/DELETE` | `/api/llm/models/:id` | 编辑/删除模型档案 |
-| `POST` | `/api/llm/models/:id/verify` | 验证 OpenAI 兼容连接并记录 usage |
-| `POST` | `/api/llm/models/:id/activate` | 切换当前聊天模型 |
-| `GET` | `/api/llm/usage` | 按模型和时间范围查询 token 用量 |
-| `GET` | `/api/tools` | 工具列表 |
-| `GET` | `/api/security/audit` | 按时间、关联 ID、工具、事件、决策和风险筛选安全审计 |
-| `POST` | `/api/security/audit/export` | 导出版本化、已脱敏的 JSON 审计数据 |
-| `GET` | `/api/security/health` | 查询审计子系统与策略版本状态 |
-| `GET` | `/api/health` | 健康检查 |
-| `GET` | `/api/cloud/identity` | LocalIdentity、账号与同步状态 |
-| `POST` | `/api/cloud/{login,register,refresh,logout}` | 可选身份与本机安全会话 |
-| `GET` `/POST` | `/api/cloud/sync/*` | 显式同步选择、状态、冲突与增量同步 |
-| `GET` `/POST` | `/api/cloud/privacy/*`、`/api/cloud/export`、`/api/cloud/account/delete` | 数据摘要、导出与注销生命周期 |
-| `GET` `/PUT` | `/api/search/config` | AnySearch 匿名/BYOK 本机配置 |
-| `POST` | `/api/search` | Provider 中立的结构化 AI Search |
+`VITE_*` 变量会进入开发页面或构建产物，`VITE_CONTROL_SESSION_TOKEN` 只用于本机调试，不能用来保存模型 API Key。
 
-除 `/api/health` 外，所有 `/api/*` 请求都必须携带：
+### 启动时遇到问题
+
+- 提示 `9420` 端口不可用时，先检查是否已经打开桌面客户端或独立后端。关闭主窗口只会收到托盘，需要从托盘退出应用，才能结束该桌面进程。
+- 浏览器请求返回 `401` 或提示控制会话无效时，检查两个终端的令牌是否完全相同、长度是否足够。修改 `VITE_CONTROL_SESSION_TOKEN` 后需要重启 Vite，单纯刷新页面不会重新读取启动环境变量。
+- 界面能打开但模型连接失败时，核对服务地址、模型名称、账户凭据以及服务商权限。前端页面和健康检查可用，只能说明本地服务已启动，不能说明模型已经连通。
+- 数据看起来与预期不同时，先核对 `YILIAN_DATA_DIR` 和当前身份档案。开发环境与日常使用环境可以指向不同目录，不必通过删除数据库来重新开始。
+
+### 打包
+
+在相应平台、仓库根目录运行：
+
+```powershell
+# Windows x64 安装包
+npm run build:windows
+```
+
+```bash
+# 在 macOS 上构建 app 与 DMG
+npm run build:macos
+```
+
+完整脚本包含版本核对、构建和平台检查。发布工作流位于 [.github/workflows/release-v12.yml](.github/workflows/release-v12.yml)，安装包验证范围见[安装说明](docs/releases/v1.2-installation.md)。本机源码构建通过，不代表所有平台的安装、权限和实际 AI 服务都已验证。
+
+## 配置、数据与隐私
+
+### 本地数据放在哪里
+
+应用使用 SQLite 保存本地配置与业务记录，文件资源存放在本地资源存储中。默认数据根目录是操作系统用户数据目录下的 `yilianqianyan-v1`，由 `dirs::data_dir()` 确定；Windows 上通常位于 `%APPDATA%\yilianqianyan-v1`。实际数据库路径由当前本地身份档案选择，不是仓库中的固定数据库文件。
+
+开发时可以通过 `YILIAN_DATA_DIR` 指定独立的数据目录，避免调试记录混入日常使用的数据：
+
+```powershell
+$env:YILIAN_DATA_DIR = "F:\YiLianData\development"
+npm run tauri:dev
+```
+
+其他常用环境变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `YILIAN_WORKSPACE` | 指定运行时工作目录；已注册的项目工作空间仍有各自的目录范围 |
+| `YILIAN_HOST` | 独立后端的监听地址，默认 `127.0.0.1:9420` |
+| `YILIAN_CONTROL_SESSION_TOKEN` | 独立后端使用的本地控制会话令牌 |
+| `VITE_CONTROL_SESSION_TOKEN` | 浏览器开发模式下与后端匹配的令牌 |
+| `YILIAN_ALLOWED_ORIGINS` | 以逗号分隔，显式添加允许访问本地 API 的 Origin |
+| `OPENAI_API_KEY` | 默认模型配置可读取的模型凭据环境变量 |
+| `RUST_LOG` | 调整 Rust 日志级别 |
+
+### 凭据和外部请求
+
+模型、Embedding、语音、搜索与 MCP 等凭据通过系统凭据库管理。新配置在本地业务记录中保存凭据引用和配置状态，接口不回显密钥原文。不要把真实密钥放进 README、前端环境变量、测试输出或 Git 提交。
+
+本地优先表示数据与运行时以本机为中心。使用在线模型时，相关对话与选取的上下文会发送到配置的模型服务；使用搜索、语音或消息渠道时，也会访问对应服务。文件预览本身走本地接口，不因打开预览就上传到外部服务。
+
+### 账号与同步
+
+游客模式可以使用本地核心功能。登录后，需要明确选择同步已有数据、保持仅本地或稍后决定；账号并不是启动条件。账号中心提供设备会话、同步状态、数据导出与注销入口。
+
+公共仓库保留 Cloud Contract 和本地客户端。Cloud API、Admin 和服务端数据库实现位于独立私有仓库，不随桌面源码发布。同步、搜索和登录是否可用，取决于实际配置的服务与网络状态。
+
+## 工具执行、审批与验证
+
+忆涟千言可以读写文件、运行命令和控制桌面，因此“模型提出一个动作”和“允许这个动作执行”之间有明确的授权步骤。
+
+工具调用统一进入 `SecurityExecutionGateway`，结合调用者角色、资源授权、路径或网络范围及风险等级作出决定。低风险操作通常自动执行；中等风险仍受权限与范围约束；高风险和严重风险操作需要明确批准。未知工具、无法确定的安全状态和明确拒绝规则不会被当作允许。
+
+批准后执行的是审批保存的原始调用，执行前还会重新检查当前策略。同一审批最多消费一次。拒绝不会执行原工具，Agent 可以根据拒绝结果调整后续方案。待处理审批属于内存运行时状态，后端重启后会失效。
+
+工具返回成功之后，支持的操作还会进入结果验证，例如重新检查文件内容或进程状态。工具结果与验证结果分别记录；“接口返回成功”不会直接等同于“任务已经完成”。验证能力有具体范围，不能据此声称所有桌面操作都已实现完整视觉验收。
+
+执行过程中可以停止任务。Agent 保留每轮最多 20 轮执行的限制；同一个工具以相同参数连续三次返回相同失败或验证失败证据时，会停止本轮。成功操作或不同的参数、失败证据会重新计数，正常的多步读取和连续输入不会仅因工具名称重复就提前结束。
+
+安全执行记录会脱敏并写入本地审计。命令进程使用受管进程与超时清理机制；路径授权和网络请求也有独立检查。这些措施有各自的覆盖范围，当前不提供容器级文件系统或网络命名空间隔离，审计也未实现防篡改签名。
+
+## 项目结构与接口
+
+### 运行关系
+
+桌面客户端通过内嵌 WebView 显示 React 界面，在同一桌面进程中启动 Rust 本地服务。前端通过 HTTP 和 SSE 访问后端，Tauri IPC 处理控制会话、窗口与浮窗等桌面能力。
 
 ```text
-X-Yilian-Control-Session: <本次进程的控制会话令牌>
+Tauri 桌面进程
+├── WebView：React + TypeScript + Vite + Zustand
+│   ├── HTTP / SSE → 本地 Axum 服务
+│   └── Tauri IPC → 桌面窗口与系统能力
+└── Rust 后端
+    ├── 对话与 Agent 循环
+    ├── 工作空间 / 任务 / 工作流 / 记忆 / 知识
+    ├── 工具注册与安全执行网关
+    ├── 模型 / MCP / 消息平台等外部集成
+    └── SQLite / 本地资源存储 / 系统凭据库
 ```
 
-控制会话用于隔离 Agent 执行面、用户控制面和无关的本地回环请求，不宣称能够抵御已取得相同操作系统用户权限的恶意软件。默认 CORS 仅允许 Tauri Origin 与 `localhost:1420` 开发 Origin；额外 Origin 必须通过 `YILIAN_ALLOWED_ORIGINS` 显式配置。
+桌面控制使用 `enigo` 和 `xcap` 等库。实现新操作时优先使用结构化 API，再考虑 Windows UI Automation、视觉交互和坐标操作；工具执行仍应保留结果核验与取消能力。
 
-### 多模型与 Token 用量
-
-设置页的“模型”区域支持 OpenAI、DeepSeek、千问、GLM 和自定义 OpenAI 兼容服务商。新增档案后点击“验证”，验证通过的档案可激活为聊天模型；API Key 只写入 Windows Credential Manager 等系统凭据库，SQLite 和 API 响应只保留 SecretRef/配置状态。流式服务返回 usage 后，系统会把输入、输出和总 Token 持久化到本地 SQLite，并可按模型和日期筛选查看柱状图；服务商没有返回 usage 时不会伪造精确数字。模型树最多展示 32 个已验证模型枝条，避免配置数量撑破界面。
-
-## 可用工具
-
-| 工具 | 说明 |
-|------|------|
-| `bash` | Shell/PowerShell 执行 |
-| `read_file` / `write_file` / `edit_file` | 文件操作 |
-| `grep` / `glob` | 文件搜索 |
-| `http_request` | HTTP 请求 |
-| `load_skill` | 加载 AI 技能 |
-| `write_todos` | 任务规划 |
-| `process` | 进程管理 |
-| `mouse` | 鼠标模拟（移动/点击/拖拽/滚轮） |
-| `keyboard` | 键盘模拟（输入/按键/组合键） |
-| `screenshot` | 屏幕截图 |
-| `upscale_image` | AI 图片放大 |
-| `ai_search` | 通过安全网关调用官方 AnySearch，返回结构化结果与来源 |
-
-## v1.1 用户云与体验版
-
-- Guest 模式拥有完整本地核心能力；账号不是启动条件。
-- 登录后必须明确选择“同步已有数据”“保持仅本地”或稍后决定，不静默上传。
-- Outbox、cursor、revision、tombstone 与 durable conflict 支持离线工作和跨设备恢复。
-- LLM、STT、TTS、AnySearch、MCP 凭据默认只进入操作系统 SecretStore。
-- Account Center 集中提供账号、设备会话、同步中心、数据摘要、导出与注销入口。
-- Setup Wizard 优先完成模型连接，确认可用后进入工作台；身份、Search、Voice 与高级参数按需在 Settings 和账号中心配置。
-- AI Search 结果可以继续交给小涟、创建任务或保存为知识记忆。
-- 公共仓只包含 `cloud-contract` 与本地 `cloud-client`；Cloud API、Admin API/Web、Worker 和 PostgreSQL migration 保持私有物理隔离。
-
-详细基线、ADR、同步协议和验收状态见 `docs/v1.1/`、`docs/adr/`、`docs/cloud/` 与 `docs/privacy/`。
-
-## v0.2 Trusted Execution
-
-状态：**Completed**
-
-已完成：
-
-- Unified `SecurityExecutionGateway`
-- `PolicyEngine` Runtime Integration
-- SecuritySubject → Role → PolicyEngine 进入 Runtime（Agent 与 Approval 不再硬编码 `Owner`）
-- Sandbox Path Enforcement（含 symlink / junction 逃逸防护）
-- Approval Execution Unification（审批后执行使用原始 subject，重新评估当前 role）
-- Deterministic Verification Pipeline
-- Redacted Security Audit Chain
-
-## v0.6 Workspace / Task / Multi-Agent Runtime
-
-状态：**v0.8.0 Released**
-
-v0.6 将忆涟千言从「能运行一次工作流的桌面 Agent」升级为「能长期管理项目、任务、多智能体协作、产物与执行历史的本地 Agent Runtime」：
-
-- Workspace Runtime（项目工作空间，Active/Archived 生命周期，不绕过 Sandbox）
-- Task Runtime（Draft → Running → WaitingApproval/WaitingUser → Completed/Failed/Cancelled/Blocked）
-- Task Execution（每次执行独立持久化，Retry 生成新 attempt，历史保留）
-- Task Planner（LLM 生成严格 TaskPlan，schema 校验 + executor 引用校验；Planner 不执行工具）
-- Artifacts（路径 containment 校验，防 `..`/symlink 逃逸；metadata-only，不授予文件权限）
-- Task Timeline（用户视角事件流，与安全审计分离，metadata 有界）
-- Agent Definition / Agent Team（Database 来源，兼容现有 AGENT.md Subagent）
-- Sequential Multi-Agent Runtime（TaskOrchestrator 顺序驱动 plan steps）
-- Bounded Delegation（深度/执行数/迭代数硬上限，无 A→B→A 递归）
-- Shared Task Context（有界拼接，char-safe 截断）
-- Task Agent Approval（consume-once + execute_approved 重新评估 + 有界 resume）
-- Task Decision（业务决策与安全审批分离）
-- Retry / Recovery（启动时 running → interrupted，task → blocked）
-- Workflow Integration（Task 绑定 Workflow，terminal 同步 Task 状态，Output → Text Artifact）
-- Desktop Workspace Surface（工作空间列表/详情、任务列表/时间线/执行/产物、Agents/Teams 页面）
-- v1 预览界面补齐：默认收起聊天历史；工作空间文件树/文本阅读与最近成果；单角色编辑、记忆详情弹窗、定时任务列表；资料学习和创作文稿独立工作页；文稿版本复用本地 Resource 持久化。范围与验证见 [实施记录](docs/superpowers/plans/2026-10-25-v1-preview-completion.md)。
-- 新增只读工作空间文件 API：`GET /api/workspaces/:id/files?path=` 与 `GET /api/workspaces/:id/file?path=README.md`，仅访问已注册目录；支持 UTF-8 文本和 Markdown 预览，其他文件类型明确提示。
-- 新增工作空间文稿 API：`GET/POST /api/workspaces/:id/creations`、`GET/PUT /api/workspaces/:id/creations/:creationId`、`GET /api/workspaces/:id/creations/:creationId/versions/:versionId`；保存新版本须传 `expected_revision`，历史版本不可覆盖。
-
-**Known Limitations**：多智能体顺序执行（无并行）、无 Agent swarm、delegation 深度有界、无分布式 worker、无 Cron/定时任务、无 cloud Workspace、Workflow 调度仍顺序、Agent Team 不绕过 Security Gateway、MCP 仍 stdio、OS 级 Sandbox 未实现。
-
-## v0.8 Development — Agent Memory + Unified Capability Registry
-
-状态：**Phase 1–6 Completed（v0.8.0 Released）**
-
-- Phase 1 Agent Memory Retrieval：`MemoryContextBuilder` 将任务/步骤转为检索查询，走 hybrid（lexical + vector，lexical 回退），有界 char-safe 注入 Agent 上下文。
-- Phase 2 Agent Memory Learning Loop：确定性 `DeterministicMemoryReflector`（无 LLM、无工具调用）+ 保守 `MemoryWritePolicy`（有界/置信度/secret 标记/近重复）+ `MemoryWriter`（validate → persist → best-effort embedding）。Completed → knowledge，Failed → note，Cancelled/Blocked/Waiting → 不学习。共享 `contains_sensitive_content` secret 检测单一真相源。
-- Phase 3 Unified Capability Registry：`capability/` 模块统一 Builtin/MCP/Subagent/Agent/Workflow/Skill 的能力发现（`CapabilityDescriptor` + providers + 原子 refresh + 重复检测 + runtime readiness）。**Registry 只做发现，绝不执行能力**；真实授权仍在 Security Execution Gateway。`GET/POST /api/capabilities` API + Planner 引用校验（missing/disabled/unavailable → reject）+ 桌面「能力」页面。
-- Phase 4 ✅ COMPLETED — MCP Runtime Expansion + Plugin Manifest Foundation：
-  - Plugin Manifest（声明式 `plugin.json` 模型 + 校验 + registry + 路径 containment，绝不加载 native code / 自动连接 MCP）。
-  - MCP Runtime：modern 2026-07-28 Streamable HTTP + legacy stdio；持久化 stdio 子进程；Tools/Resources/Prompts 目录；x-mcp-header 完整 wire；MRTR `resultType`；资源读缓存（`cacheScope` + TTL）；capability-gated 目录发现 + unknown-tool fail-closed。
-  - **Production chain**：`DB MCP Config → McpRuntimeManager → Runtime Catalog → McpToolAdapter → ToolRegistry → SecurityExecutionGateway → Remote MCP`（approved/authorized remote call = 1，denied / pre-approval = 0）。
-  - **Product surface**：Tools 元数据、Resources/read 只读预览（二进制不展开）、Prompts 预览（外部内容警告，不自动进对话/任务/System Prompt）、Plugin/MCP 生命周期（CRUD ↔ Runtime 同步 + shutdown_all + bounded startup refresh）。
-  - 无 direct MCP Tool REST API，前端无 Tool 执行按钮；`call_tool` 保持 `pub(crate)`；Resource/Prompt 不自动注入 Agent 上下文。
-- Phase 5 ✅ COMPLETED — SecretStore + Legacy Secret Migration：
-  - OS-backed SecretStore（Windows Credential Manager / Keychain / Secret Service，`keyring` + `secrecy::SecretString` zeroize-on-drop）；测试用 `InMemorySecretStore`（绝不 plaintext fallback）。
-  - `SecretRef`（version + key）持久化；`ModelConfig`/`McpServer` 只存 ref，`api_key`/`embedding_api_key`/stdio MCP env 值不再进 SQLite。
-  - Legacy migration：Chat / Embedding / stdio MCP env → SecretStore（write → verify → clear plaintext）；失败保留明文并标 pending；幂等。
-  - Runtime：`SecretResolver` 按需解析（SecretRef → env → legacy literal）；LLM/Embedding/MCP stdio 在 Authorization header / Command.env 边界才 `expose_secret`，不长缓存。
-  - API/UX：Settings write-only 密钥 + 清除/轮换 + configured/source 状态；`GET /api/secrets/status`（无 value 导出）；`save_settings`/`create/update_mcp_server` 守卫拒绝明文。
-  - **No plaintext new writes**：持久化 Chat/Embedding literal key = NO，stdio MCP env value = NO，API/log/audit/Debug 泄漏 = NO。
-- Phase 6 ✅ COMPLETED — OS-assisted Isolation + Resource Grants + Permission Surface：
-  - Typed `SecurityGrant`（Allow/Deny + `GrantResource`：Filesystem/Network/Process/Shell；`NetworkZone`；`ProcessGrantScope`）+ `security_grants` 表 + GrantStore + GrantEvaluator（Explicit Deny 优先、过期忽略、Missing → RequireApproval）。
-  - SecurityExecutionGateway 接入 GrantEvaluator（决策顺序 RBAC → Grants → Sandbox → Risk）；Approval = 一次性资源授权，`execute_approved` 仍 re-evaluate 当前 live grants（Explicit Deny 不可被 approval 绕过）。
-  - Filesystem Read/Write grant 强制 + canonical path + symlink/junction containment；Network target grant（scheme/host/port/method + zone）；http_request SSRF/DNS rebinding 硬化（redirect=none + private/loopback 拒绝）。
-  - 进程隔离：Bash 走 ManagedProcessRunner（sanitized env，secret 剥离 + 真实 async timeout + 超时 kill 整个 process tree）；ManagedProcessRegistry 区分 managed child 与宿主 PID。
-  - Grant CRUD API（protected）+ `/api/security/isolation/status`（诚实：process containment Active；OS filesystem/network namespace **未实现**，非容器级隔离）。
-  - Windows hardening：受限令牌必须验证为严格降权；管道句柄继承失败即阻断；Job Object 真实回归覆盖孙进程树；优雅退出会清理 ManagedProcessRegistry。
-  - ProcessTool 只能终止 Gateway 注册的 managed child，拒绝后端自身 PID 与未知宿主 PID；Bash/HTTP 直达 Tool Registry 的执行路径 fail closed。
-  - HTTP 只允许经 Gateway 的固定 DNS 地址请求；解析结果必须全部属于目标 NetworkZone，IPv4 映射 IPv6 地址按其实际 IPv4 地址分类，重定向关闭。请求 URL 的 query 不进入显示地址或网络错误文本，敏感请求/响应头被过滤；响应体读取中断或超时明确返回工具失败，不以空正文报告成功。
-  - 每次资源授权评估写入 `grant_evaluated` 审计事件，审计上下文只保留类型化、脱敏证据；审计持久化失败时在副作用前 fail closed。
-  - Settings「权限」页面提供 Filesystem/Network/Process/Shell 授权创建、删除、风险提示与真实隔离状态；不宣传 Full Sandbox。
-
-**Key principle**：Discovery ≠ Authorization ≠ Execution。Capability Registry 不在 execution authorization 链中；Workflow/Registry 永不构成绕过 Trusted Execution 的第二条执行通道。SecretStore 只负责存取，绝不授予权限或绕过 Gateway；Grant 是 authority，不是 execution。
-
-## v1 / v2 Shared Foundation
-
-v1 Task World 与 v2 Desktop World 从同一 `shared-foundation-v1-v2` 标签并行开发。Shared 只冻结 Migration、API boundary、Surface Host、Event、Command、Resource、Voice/Presence、Context/Projection 契约；TaskGraph、DesktopSpace、App Mount、Wallpaper 与 Widget 均未在 Foundation 中实现。
-
-- 架构入口：`docs/architecture/shared-foundation.md`
-- Ownership 与并行流程：`docs/development/ownership.md`、`parallel-development.md`
-- 验收入口：`docs/development/integration-gates.md`
-- 下游交接：`docs/handoff-v1.md`、`docs/handoff-v2.md`
-
-跨域 Mock 始终返回 `simulated=true` / `provider=mock`，不伪装真实 Windows 或 Task 能力。Command request 仍不等于 Authorization，任何现实副作用必须继续经过现有安全执行路径。
-
-## Next: v0.9
-
-重点：UI / visual polish、UX improvements、bug fixes、performance optimization。Voice / TTS 不属于初始 v0.9 范围。
-
-## v0.4 Workflow Runtime
-
-状态：**Completed（v0.4.1 Workflow Runtime Completion）**
-
-v0.4 将旧 Workflow 从 Prompt Template 升级为可执行 DAG Runtime：
-
-- Typed DAG Definition + Validation（schema version、节点/边上限、唯一性、可达性、环检测）
-- Workflow Run State（确定性状态机与 ready 节点计算）
-- Persistence（graph 定义与 run 快照）
-- Async Run Lifecycle（启动立即返回 run_id，后台调度）
-- Run History（`GET /api/workflow-runs` 分页/过滤查询）
-- Real Cancellation（CancellationToken 控制活动 Runner）
-- Deterministic Sequential Scheduler
-- Bounded Node Results（节点结果安全摘要，UTF-8 char-safe 截断）
-- Tool / MCP / Subagent Nodes（一律经过 SecurityExecutionGateway，不绕过 RBAC/Approval/Sandbox/Verifier/Audit）
-- Agent Node（LLM-only，不调用工具、不产生审批）
-- Limited Condition Node（Always / PreviousSucceeded）
-- Output Node
-- Approval Pause / Resume（consume-once 防重放 + 重新评估 + HTTP Bridge）
-- Desktop Runtime Surface（工作流中心：模板工作流 / 运行工作流两个 Tab，含图编辑器、Run Inspector、审批卡片、最近运行）
-- Legacy Prompt Template Compatibility（旧模板保持可用）
-
-**Known Limitations**：顺序调度（无并行）、无 Loop Node、无 Workflow 递归、无 Cron/后台调度、无分布式 worker、Condition 仅 Always/PreviousSucceeded、Agent Node 仅 LLM（无 ReAct/工具）、无嵌套 Agent 审批、MCP 仅 stdio、OS 级 Sandbox 未实现。
-
-## v0.3.2 Product Surface Completion
-
-状态：**Completed**
-
-v0.3.2 将已完成的 Memory、MCP Runtime 与 Subagent Runtime 能力接入桌面端产品表面：
-
-- Memory 页面提供记忆管理、词法/语义/混合检索模式、Embedding 状态与受控重建索引入口；内容变更会使旧 Embedding 失效。
-- MCP 页面提供 stdio Runtime 能力状态、工具发现/调用反馈与脱敏配置展示；不支持的 HTTP/SSE Transport 不会被宣传为可用。
-- Subagent 页面展示安全运行时元数据和允许工具白名单；私有 instructions、路径细节与敏感配置不会通过公共页面/API 回显。
-- Settings 与 MCP 配置响应对 API Key、Embedding Key 和环境变量执行脱敏；未配置外部 Provider 或 MCP 服务时显示可理解的状态，而不是伪造成功。
-
-本版本不新增 Workflow DAG、MCP HTTP Transport、嵌套 Subagent 或 OS 级 Sandbox。
-
-## v0.3 Runtime Intelligence
-
-状态：**Completed**
-
-### Memory Runtime
-
-已完成：
-
-- 从对话中提取长期记忆，并按 `fact`、`preference`、`knowledge`、`note` 分类；
-- 写入前执行格式校验、去重与敏感信息过滤；
-- 提供词法检索，以及可配置的 Embedding Provider、向量持久化和混合检索；
-- Embedding 不可用时自动回退到词法检索，并支持历史记忆重新索引；
-- 将检索结果注入聊天上下文，同时不通过公共 API 暴露原始 Embedding。
-
-Memory Runtime 是面向 Agent 上下文的本地长期记忆层，不替代 SQLite 数据库，也不等同于完整知识库或 RAG 平台。
-
-### MCP Runtime
-
-已完成：
-
-- 通过 stdio 完成 `initialize` / `initialized`、带分页的 `tools/list` 与 `tools/call`；
-- 将发现的 MCP Tool 转换为带命名空间的运行时 Tool，并提供 MCP 专用安全描述符；
-- MCP 调用进入生产 Tool Registry 和统一审批恢复链；
-- `Owner`、`Standard` 默认需要审批，`Restricted` 默认拒绝，审批后仍由当前策略重新评估。
-
-当前 MCP Runtime 仅支持 stdio Transport；尚不支持 Streamable HTTP、SSE Transport、Resources、Prompts 或 Tasks。
-
-### Subagent Runtime
-
-已完成：
-
-- 严格解析本地 `AGENT.md`，并保持子智能体 instructions 私有；
-- 通过 `subagent_*` Tool Adapter 和 `agent.delegate` 安全描述符接入生产 Tool Registry；
-- `Owner`、`Standard` 默认需要审批，`Restricted` 默认拒绝；
-- `LocalSubagentExecutor` 为每次委派创建隔离的 Child `AgentState`、严格的 `allowed_tools` 白名单和独立安全 Gateway；
-- 支持 Parent → Child 单层委派，并把 Child 输出封装为有长度上限的 `ToolResult`。
-
-当前限制：仅支持单层委派；不支持嵌套审批、`workdir` 覆盖、热重载或递归委派。
-
-### Workflow 状态
-
-当前 Workflow 能力仍是 Workflow Template / Prompt Template，不是可执行 DAG 或完整 Workflow Engine。Workflow Engine 计划在 v0.4 继续演进。
-
-## 安全机制
-
-YiLianQianYan 对 Tool Call 进行统一安全评估。Agent 主循环和审批恢复路径中已接入运行时的 Tool Call 均通过 `SecurityExecutionGateway`，不会由 Agent 或 Approval API 直接执行 Tool。
-
-| 风险等级 | 策略 |
-|----------|------|
-| `Low` | 通常自动执行 |
-| `Medium` | 默认允许，但仍受角色、权限与 Sandbox 约束 |
-| `High` | 需要用户批准 |
-| `Critical` | 需要用户明确批准 |
-
-### 统一安全执行链
+### 代码目录
 
 ```text
-Tool Call
-  ↓
-ToolSecurityDescriptor
-  ↓
-ResourceScope Resolution
-  ↓
-Sandbox Policy
-  ↓
-SafetyPolicy Risk Evaluation
-  ↓
-PolicyEngine Decision
-  ↓
-Allow / RequireApproval / Deny
-  ↓
-Tool Execution
-  ↓
-Deterministic Verification
-  ↓
-Redacted Audit Recording
+backend/src/
+├── app/                  服务启动、状态与路由装配
+├── api/                  本地 HTTP / SSE 接口
+├── agent/                Agent 循环与工具调用协调
+├── modules/              任务、工作流、知识、资源、语音等业务模块
+├── integrations/         MCP、系统凭据等外部与系统集成
+├── tools/                内置工具实现
+├── safety/               风险、授权、审批、验证与审计
+├── db/                   SQLite 持久化
+└── shared/               事件、命令、资源与跨界面契约
+frontend/src/
+├── surfaces/             工作台与桌面宿主入口
+├── pages/                页面路由入口
+├── features/             按业务组织的界面与交互
+├── components/           共享组件与聊天、工作流等组件
+├── api/                  各领域 API 客户端
+├── stores/               前端状态
+└── theme/                Cyrene 主题与设计变量
+src-tauri/                桌面入口、托盘、窗口与平台打包配置
+skills/                   随应用提供的技能
+cloud-contract/           公共云端协议
+cloud-client/             本地云端客户端
+scripts/                  构建、边界检查与验收脚本
+docs/                     架构、接入说明、实施记录和发布文档
 ```
 
-未知 Tool、无效 Descriptor、身份不匹配或资源无法解析时，执行链默认关闭。执行前的必要审计若无法持久化，也不会继续启动 Tool；Tool 已实际执行后的审计异常则保留执行结果，不会把已发生的执行伪装成未执行。
+### 本地 API
 
-### SecurityExecutionGateway
+日常使用通过桌面界面完成。开发工具或排查请求时，可以从以下接口入手；完整路由以 `backend/src/app/router/` 和各模块的路由实现为准。
 
-`SecurityExecutionGateway` 是当前统一的 Tool 安全执行入口，负责连接：
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/health` | 本地服务健康检查 |
+| `POST /api/chat` | 发起对话，返回 SSE |
+| `POST /api/chat/stop` | 停止对话执行 |
+| `/api/conversations` | 对话与消息管理 |
+| `POST /api/conversations/:id/branches` | 从指定回答创建分支 |
+| `/api/workspaces` | 工作空间管理 |
+| `GET /api/workspaces/:id/files` | 读取已注册工作空间的文件目录 |
+| `GET /api/workspaces/:id/file` | 读取工作空间文件，路径通过查询参数传入 |
+| `/api/workspaces/:id/creations` | 工作空间文稿与版本 |
+| `POST /api/resources/ingest` | 导入本地资源 |
+| `/api/settings` | 读取或保存设置 |
+| `GET /api/tools` | 查询工具目录 |
+| `GET /api/events` | 订阅产品事件流 |
+| `/api/approvals` | 查询与处理审批 |
 
-- `ToolSecurityDescriptor` 与实际 `ResourceScope` 解析；
-- Sandbox 写路径约束；
-- `SafetyPolicy` 动态风险评估；
-- `PolicyEngine` 权限决策；
-- `ToolRegistry` 单次执行；
-- `Verifier` 确定性结果验证；
-- `AuditRecorder` 脱敏审计。
+健康检查可以直接访问：
 
-普通 Agent Tool Call 与审批通过后的原始 Tool Call 都通过 Gateway 执行。未来接入 Tool 执行能力的扩展模块也应复用该入口，不能绕过安全检查直接调用 `ToolRegistry.execute(...)`。
-
-### PolicyEngine 与最小权限
-
-`PolicyEngine` 负责统一处理：
-
-- RBAC 角色；
-- Capability；
-- Permission；
-- ResourceScope；
-- Tool 最终风险；
-- `Allow` / `RequireApproval` / `Deny`。
-
-安全模块提供 `owner`、`standard`、`restricted` 三种内置角色。角色的解析链路为 `SecuritySubject → security_role_bindings → BuiltInRole → PolicyEngine`，Agent 和 Approval 运行时不再硬编码角色。`Owner` 不会绕过 High/Critical 风险的单次审批要求。role binding 不存在、无效或安全数据库不可用时，Gateway Fail Closed 并拒绝 Tool 执行（返回明确错误，不 fallback 到任何内置角色）。Gateway 不复制 RBAC 规则，只向 `PolicyEngine` 提交真实 Descriptor、资源范围、角色与最终风险。
-
-### Sandbox 路径约束
-
-当前 Sandbox 是**应用层路径约束**，用于判断文件写入目标是否满足配置策略。
-
-支持的 profile：
-
-- `read-only`：拒绝文件写入；
-- `workspace-write`：仅允许工作区内写入；
-- `custom`：仅允许 `writable_paths` 范围内写入；
-- `open`：默认允许写入，但仍受显式拒绝路径限制。
-
-支持：
-
-- `writable_paths`
-- `denied_write_paths`
-
-`denied_write_paths` 的优先级始终高于 workspace 或 writable allow 规则。路径判断会规范化相对路径、绝对路径和 `..`，并按路径组件判断目录边界，避免把相似字符串前缀误判为同一目录。
-
-路径判断会规范化相对路径、绝对路径和 `..`，并按路径组件判断目录边界，避免把相似字符串前缀误判为同一目录。写入目标路径会通过文件系统 `canonicalize` 解析 symlink / junction / reparse point 后再做边界检查，symlink 指向 workspace 外部时拒绝写入。
-
-当前 Sandbox **不等价于**：
-
-- Windows AppContainer；
-- Windows 受限令牌或 Job Object；
-- Linux namespace；
-- 独立安全 Worker；
-- 操作系统级强隔离。
-
-Tool 仍在现有后端进程内执行。当前能力是应用层路径安全边界，不应宣传为 OS 级 Sandbox。
-
-### 用户审批
-
-高风险与关键风险 Tool Call 会暂停并进入以下流程：
-
-```text
-Tool Request
-  ↓
-Policy Decision
-  ↓
-RequireApproval
-  ↓
-用户批准 / 拒绝
-  ↓
-SecurityExecutionGateway Resume
-  ↓
-Execute Once
-  ↓
-Verify
-  ↓
-Audit
+```powershell
+Invoke-RestMethod http://127.0.0.1:9420/api/health
 ```
 
-用户批准后执行的是审批时保存的**原始 Tool Call**，不会要求 LLM 重新生成另一个 Tool Call。审批采用原子消费，同一个 `approval_id` 最多执行一次；重复 approve 不会再次执行 Tool。
+本地控制接口需要请求头 `X-Yilian-Control-Session`，值为当前进程的控制会话令牌。渠道平台回调使用各自的认证与路由，不能拿控制接口令牌替代平台配置。默认 CORS 允许 Tauri 和本机 `1420` 开发 Origin，其他 Origin 需要显式配置。
 
-拒绝或取消不会执行 Tool。Agent 可以在拒绝结果写回上下文后继续重新规划。
+这个令牌用于区分合法界面和无关的本地请求，不用于抵御已经取得同一操作系统用户权限的恶意程序。本地服务应保持回环监听，不能当作开放公网的远程控制 API 部署。
 
-审批 API：
+## 开发与验证
 
-```text
-POST /api/approvals/:id/approve    允许 → Gateway 执行原始 Tool Call → 验证 → 继续 Agent（SSE）
-POST /api/approvals/:id/reject     拒绝 → 写回拒绝结果 → 继续 Agent（SSE）
-POST /api/approvals/:id/cancel     取消 → 标记取消，不执行
-GET  /api/approvals/:id            查询单个审批
-GET  /api/approvals/pending        列出待审批
+开发使用功能分支，集成到 `develop`，稳定发布进入 `main`。提交采用 Conventional Commits；改动应围绕具体问题，避免把无关重构、演示产物或本地数据一起提交。
+
+在仓库根目录运行 Rust 检查：
+
+```powershell
+cargo fmt --all
+cargo fmt --all --check
+cargo check --workspace
+cargo test --workspace --all-targets
 ```
 
-注意：当前 `PendingApproval` 是内存中的运行时状态；后端重启后，未处理审批会失效。
+Git 目录检查测试需要一个不属于任何 Git 工作树的临时目录。如果系统临时目录位于其他仓库下，测试会提示设置 `YILIAN_GIT_TEST_NONREPO_ROOT`。将这个变量指向仓库外的临时目录后再运行测试即可，它只影响测试夹具的位置。
 
-### 持久化安全审计
+前端测试和生产构建：
 
-当前 Tool 安全执行链会持久化以下关键事件：
-
-```text
-policy_decided
-approval_requested
-approval_resolved
-execution_started
-execution_finished
-verification_finished
+```powershell
+npm --prefix frontend test
+npm --prefix frontend run build
 ```
 
-`Allow`、`RequireApproval` 和 `Deny` 都会记录策略决策；只有真正执行 Tool 时才记录 execution 事件，只有运行 Verifier 后才记录 `verification_finished`。
+仓库另有浏览器端到端测试入口和公私边界检查：
 
-`AuditRecorder` 会在持久化前递归脱敏对象和数组：
-
-- API Key、Token、Password、Cookie 等敏感值不会按原文保存；
-- data URI 不保存正文；
-- 长文本只保存受限预览、原始长度与 SHA-256 摘要；
-- Gateway 不把完整原始 arguments 或 `ToolResult` 直接写入审计数据库。
-
-SQLite 当前包含：
-
-```text
-security_subjects
-security_role_bindings
-security_approvals
-security_audit_events
+```powershell
+npm --prefix frontend run test:e2e
+powershell -NoProfile -File scripts/check-private-boundary.ps1
 ```
 
-安全审计支持查询和版本化 JSON 导出，不提供删除 API。`previous_hash`、`event_hash` 和 `signature` 仍是未来升级预留字段，当前不宣称审计日志具备防篡改签名能力。
+端到端测试的运行前提以 `frontend/e2e/core-paths.mjs` 为准。编译、单元测试、浏览器测试、真实桌面操作和外部平台收发是不同层面的验证。提交说明应写明实际执行了哪些检查；受控测试通过不能代替真实账号、模型或目标机器上的使用结果。
 
-### 结果验证
+## 进一步阅读
 
-YiLianQianYan 不会仅根据 `ToolResult.ok == true` 就认定任务完成。
+- [v1.2 安装与平台验证范围](docs/releases/v1.2-installation.md)
+- [消息渠道、回复预设与 QQ 主人目标](docs/message-channels.md)
+- [Akasha-WeChat 配套环境与接入](docs/message-channels-akasha.md)
+- [当前业务模块目录](docs/architecture/module-catalog.md)
+- [模块边界与依赖规则](docs/architecture/dependency-rules.md)
+- [公共 API 范围](docs/architecture/public-api-policy.md)
+- [记忆、AI 知识构建与工作流实施记录](docs/pid/2026-10-23-v1-r3/implementation.md)
+- [云端同步协议](docs/cloud/sync-contract-v1.md)
+- [数据分类与同步范围](docs/privacy/data-classification-v1.1.md)
 
-Tool 执行后统一进入现有 `Verifier`。对于支持确定性验证的操作，Verifier 会重新观察真实状态，例如：
-
-- 文件是否真实存在；
-- 文件内容是否符合预期；
-- 目标进程状态是否符合预期。
-
-`ToolResult` 与 `VerificationResult` 分开保留。验证失败不等于 Tool 未执行；Agent 会收到验证失败和 `should_replan` 信息，并沿用现有 ReAct 流程重新规划。
-
-当前 Verifier 主要覆盖文件与进程等确定性场景。Windows UI 与视觉结果验证仍属于后续扩展。
-
-### 当前能力边界
-
-当前能力仍有以下边界：
-
-- MCP Runtime 仅支持 stdio，不支持 Streamable HTTP、SSE Transport、Resources、Prompts 或 Tasks；
-- Workflow 仍是 Template / Prompt Template，不是可执行 DAG 或完整 Workflow Engine；
-- Subagent Runtime 仅支持单层 Parent → Child 委派，不支持嵌套审批、`workdir` 覆盖、热重载或递归委派；
-- OS 级 Sandbox 隔离；
-- 跨后端重启持久化的 PendingApproval。
-
-README 只把已经接入当前运行时并通过回归测试的能力标记为已完成；上述边界不作超出当前实现的承诺。
+历史文档记录的是当时的实现与验收结果，可能包含旧版本的限制。阅读当前能力时，请结合本文、对应模块源码和近期实施记录；需要安装某个发布版本时，则以该版本的发布说明为准。
