@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Badge, Button, Textarea } from "../../components/ui";
 import { correctMemory, getMemoryGovernance, getMemoryHistory, withdrawMemory, type MemoryGovernance, type MemoryRecord, type MemoryVersion } from "../../api/memory";
 import { listWorkspaces, type Workspace } from "../../api/workspaces";
+import { useMemoryStore } from "../../stores/memoryStore";
 
-export function MemoryGovernancePanel({ memory, onChanged }: { memory: MemoryRecord; onChanged: () => void }) {
+export function MemoryGovernancePanel({ memory, onChanged, readOnly = false, graphHistory }: { memory: MemoryRecord; onChanged: () => void; readOnly?: boolean; graphHistory?: MemoryVersion[] }) {
   const [governance, setGovernance] = useState<MemoryGovernance | null>(null);
   const [versions, setVersions] = useState<MemoryVersion[]>([]);
   const [content, setContent] = useState(memory.content);
@@ -28,12 +29,12 @@ export function MemoryGovernancePanel({ memory, onChanged }: { memory: MemoryRec
   useEffect(() => {
     let active = true;
     setGovernance(null); setVersions([]); setEditing(false); setContent(memory.content); setReason(""); setError(null);
-    Promise.all([getMemoryGovernance(memory.id), getMemoryHistory(memory.id)]).then(([record, history]) => {
+    Promise.all([getMemoryGovernance(memory.id), graphHistory ?? getMemoryHistory(memory.id)]).then(([record, history]) => {
       if (!active) return;
       setGovernance(record); setVersions(history); setScope(record.scope); setSourceRef(record.source_ref ?? "");
     }).catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
     return () => { active = false; };
-  }, [memory.id, memory.updated_at, refresh]);
+  }, [memory.id, memory.updated_at, refresh, graphHistory]);
 
   const save = async (action: "correct" | "withdraw") => {
     if (!governance || pending || !reason.trim()) return;
@@ -43,11 +44,17 @@ export function MemoryGovernancePanel({ memory, onChanged }: { memory: MemoryRec
         await correctMemory(memory.id, { content: content.trim(), expected_revision: governance.revision, reason: reason.trim(), scope, source_ref: sourceRef.trim() || undefined });
       } else {
         await withdrawMemory(memory.id, { expected_revision: governance.revision, reason: reason.trim() });
+        useMemoryStore.getState().evictMemory(memory.id);
       }
       setRefresh((value) => value + 1); onChanged();
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setPending(false); }
   };
+
+  const workspaceId = governance?.scope.startsWith("workspace:") ? governance.scope.slice("workspace:".length) : null;
+  const workspace = workspaceId ? workspaces.find(item => item.id === workspaceId) : null;
+  const scopeLabel = workspaceId ? `工作空间${workspace ? ` · ${workspace.name}` : ""}`
+    : governance?.scope.startsWith("conversation:") ? "来源对话" : "当前档案";
 
   return <section className="space-y-3 border-t border-[var(--border-soft)] pt-4" aria-label="记忆版本与来源">
     <div className="flex items-center justify-between gap-2">
@@ -57,13 +64,15 @@ export function MemoryGovernancePanel({ memory, onChanged }: { memory: MemoryRec
     {error && <p role="alert" className="text-xs text-[var(--danger)]">{error}<button className="ml-2 underline" onClick={() => setRefresh((value) => value + 1)}>重新加载</button></p>}
     {governance && <>
       <dl className="memory-detail-fields">
-        <div><dt>采用范围</dt><dd>{governance.scope === "profile" ? "当前档案" : governance.scope}</dd></div>
-        <div><dt>来源引用</dt><dd>{governance.source_ref || "未提供来源引用"}</dd></div>
+        <div><dt>采用范围</dt><dd>{scopeLabel}</dd></div>
+        {!readOnly && <>
+        <div><dt>来源引用</dt><dd>{memory.source_removed ? "来源对话已移除" : governance.source_ref || "未提供来源引用"}</dd></div>
         <div><dt>事实有效时间</dt><dd>{governance.valid_from ? new Date(governance.valid_from).toLocaleString("zh-CN") : "未知；入库时间不代表事实发生时间"}</dd></div>
         <div><dt>检索索引</dt><dd>{governance.embedding_revision === governance.revision ? `${governance.embedding_model} · v${governance.embedding_revision}` : "待重建"}</dd></div>
+        </>}
       </dl>
-      {governance.status === "active" && <Button variant="secondary" size="sm" onClick={() => setEditing(!editing)}>{editing ? "取消纠正" : "纠正或撤回"}</Button>}
-      {editing && <div className="space-y-3 rounded-[var(--radius-md)] bg-[var(--surface-muted)] p-3">
+      {!readOnly && governance.status === "active" && <Button variant="secondary" size="sm" onClick={() => setEditing(!editing)}>{editing ? "取消纠正" : "纠正或撤回"}</Button>}
+      {!readOnly && editing && <div className="space-y-3 rounded-[var(--radius-md)] bg-[var(--surface-muted)] p-3">
         <Textarea label="纠正后的内容" value={content} onChange={(event) => setContent(event.target.value)} />
         <Textarea label="变更原因（必填）" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="说明为什么需要纠正或撤回" />
         <label className="block text-xs">采用范围
@@ -75,22 +84,22 @@ export function MemoryGovernancePanel({ memory, onChanged }: { memory: MemoryRec
           </select>
         </label>
         <Textarea label="来源引用" value={sourceRef} onChange={(event) => setSourceRef(event.target.value)} placeholder="来源对话或证据说明" />
-        <p className="text-xs text-[var(--text-secondary)]">纠正保留旧版本。撤回后不再被检索采用，历史仍可查阅；删除会同时移除历史。</p>
+        <p className="text-xs text-[var(--text-secondary)]">纠正保留旧版本。撤回会停止在回答中采用这条记忆，并保留正文与历史；永久清除会移除正文、历史和检索索引。</p>
         <div className="flex gap-2">
           <Button size="sm" disabled={pending || !reason.trim() || !content.trim()} onClick={() => void save("correct")}>保存纠正</Button>
           <Button variant="secondary" size="sm" disabled={pending || !reason.trim()} onClick={() => void save("withdraw")}>撤回记忆</Button>
         </div>
       </div>}
     </>}
-    <details className="memory-technical-details">
+    {(!readOnly || versions.length > 1) && <details className="memory-technical-details">
       <summary>历史版本（{versions.length}）</summary>
-      <ol className="mt-3 space-y-3">
+      <ol className="memory-version-stack mt-3 space-y-3">
         {versions.map((version) => <li key={version.revision} className="rounded border border-[var(--border-soft)] p-3 text-xs">
-          <p className="font-medium">v{version.revision} · {version.status === "active" ? "可用" : "已撤回"} · {new Date(version.recorded_at).toLocaleString("zh-CN")}</p>
+          <p className="font-medium">{version.layer === 0 ? version.baseline ? "已知基线" : "原始层" : `第 ${version.layer} 层`} · {version.status === "active" ? "记录时有效" : "已撤回"} · {new Date(version.recorded_at).toLocaleString("zh-CN")}</p>
           <p className="mt-2 whitespace-pre-wrap">{version.content}</p>
-          <p className="mt-2 text-[var(--text-secondary)]">原因：{version.reason} · 范围：{version.scope} · 来源：{version.source_ref || version.source}</p>
+          <p className="mt-2 text-[var(--text-secondary)]">原因：{version.baseline ? "更早记录未知" : version.reason === "created" ? "创建记忆" : version.reason} · 范围：{version.scope} · 来源：{version.source_removed ? "来源已移除" : version.source_ref || version.source}</p>
         </li>)}
       </ol>
-    </details>
+    </details>}
   </section>;
 }

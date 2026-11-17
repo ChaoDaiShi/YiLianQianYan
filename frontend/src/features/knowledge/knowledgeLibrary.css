@@ -14,3 +14,15 @@
 .knowledge-build-rest { min-height: 0; }
 .knowledge-build-history-dialog { max-height: 60dvh; }
 @media(max-width:640px) { .knowledge-build-dialog { max-height: calc(100dvh - 32px); } }
+.knowledge-reader { display: grid; gap: 12px; min-width: 0; }
+.knowledge-reader-toolbar, .knowledge-chunk-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.knowledge-chunks, .knowledge-chunk-list { display: grid; gap: 10px; min-width: 0; }
+.knowledge-chunk-list { list-style: none; }
+.knowledge-chunk-card { padding: 0 14px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); min-width: 0; }
+.knowledge-chunk-card > button { display: flex; width: 100%; min-height: 42px; align-items: center; gap: 10px; text-align: start; }
+.knowledge-chunk-card > button span, .knowledge-chunk-pagination { color: var(--text-secondary); font-size: var(--font-size-caption); }
+.knowledge-chunk-card > button svg { margin-inline-start: auto; }
+.knowledge-chunk-card > button[aria-expanded="true"] svg { transform: rotate(180deg); }
+.knowledge-chunk-card p, .knowledge-chunk-card pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--font-size-control); line-height: 1.65; }
+.knowledge-chunk-card p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text-secondary); }
+.knowledge-source-highlight { background: var(--accent-soft); color: var(--accent-soft-fg); box-shadow: 0 1px var(--accent-primary); }
