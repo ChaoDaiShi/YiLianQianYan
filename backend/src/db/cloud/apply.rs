@@ -177,6 +177,17 @@ pub fn apply_one_remote_tx(
         remote.operation,
         remote.payload.as_ref(),
     )?;
+    if remote.entity_type == "memory"
+        && super::memory_purge::handle_remote(
+            tx,
+            &remote.entity_id,
+            remote.revision,
+            remote.operation,
+            chrono::Utc::now().timestamp_millis(),
+        )?
+    {
+        return Ok(ApplyDisposition::Applied);
+    }
     let remote_digest = compute_canonical_digest(
         &remote.entity_type,
         &remote.entity_id,
@@ -298,14 +309,7 @@ pub fn apply_one_remote_tx(
                 }
             }
 
-            super::projection::apply_remote_entity(
-                tx,
-                &remote.entity_type,
-                &remote.entity_id,
-                remote.operation,
-                remote.payload.as_ref(),
-                now,
-            )?;
+            super::memory_purge::project_remote_entity(tx, remote, now)?;
 
             tx.execute(
                 "INSERT INTO cloud_synced_entities (entity_type, entity_id, revision, deleted, payload_json, canonical_digest, server_sequence, updated_at)
@@ -342,6 +346,8 @@ pub fn apply_one_remote_tx(
                 ],
             )?;
 
+            super::memory_purge::record_accepted_memory_deletion(tx, remote, now)?;
+
             Ok(ApplyDisposition::Applied)
         }
     }
@@ -371,14 +377,7 @@ pub fn apply_selected_remote_tx(
         .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_default());
 
-    super::projection::apply_remote_entity(
-        tx,
-        &remote.entity_type,
-        &remote.entity_id,
-        remote.operation,
-        remote.payload.as_ref(),
-        now,
-    )?;
+    super::memory_purge::project_remote_entity(tx, remote, now)?;
 
     tx.execute(
         "INSERT INTO cloud_synced_entities (entity_type, entity_id, revision, deleted, payload_json, canonical_digest, server_sequence, updated_at)
@@ -413,6 +412,8 @@ pub fn apply_selected_remote_tx(
             now
         ],
     )?;
+
+    super::memory_purge::record_accepted_memory_deletion(tx, remote, now)?;
 
     Ok(ApplyDisposition::Applied)
 }

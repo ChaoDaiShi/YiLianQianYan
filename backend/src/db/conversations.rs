@@ -402,6 +402,8 @@ impl Database {
                     msg.tool_calls, msg.tool_call_id, msg.tool_name, msg.tool_result, msg.created_at],
             )
             .map_err(|e| e.to_string())?;
+        super::memory_activity::record_chat_activity(&transaction, msg)
+            .map_err(|e| e.to_string())?;
         if let Some(reasoning) = reasoning {
             transaction
                 .execute(

@@ -2162,6 +2162,8 @@ mod tests {
             score: 0.9,
             lexical_score: 0.8,
             vector_score: 0.95,
+            revision: 1,
+            scope: crate::db::MemoryScope::Profile,
         }
     }
 
@@ -2264,7 +2266,7 @@ mod tests {
         send_chat(
             server.clone(),
             &token,
-            json!({"message": "我开发代码时希望怎么控制改动范围？", "conversation_id": conv.id}),
+            json!({"message": "我修改代码时希望怎么控制改动范围？", "conversation_id": conv.id}),
         )
         .await;
 

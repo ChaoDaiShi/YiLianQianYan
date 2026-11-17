@@ -3,9 +3,11 @@ use super::{
     migrations::{MigrationOwner, ProductMigrationSpec},
     Database, Memory,
 };
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+mod graph_versions;
 
 const SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
     1040,
@@ -79,6 +81,14 @@ mod tests;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryVersion {
+    pub version_id: String,
+    pub layer: usize,
+    pub baseline: bool,
+    pub relationship_known: bool,
+    pub relationship: Option<serde_json::Value>,
+    pub source_conversation_id: Option<String>,
+    pub source_message_id: Option<String>,
+    pub source_removed: bool,
     pub revision: i64,
     pub content: String,
     pub category: String,
@@ -119,6 +129,20 @@ pub struct MemoryEmbeddingTicket {
 pub fn content_hash(content: &str) -> String {
     format!("{:x}", Sha256::digest(content.as_bytes()))
 }
+
+/// A usable embedding must represent the current exact text and have a nonzero direction.
+pub(crate) fn current_embedding_vector(
+    content: &str,
+    serialized: Option<&str>,
+    hash: Option<&str>,
+    dimension: Option<usize>,
+) -> Option<Vec<f32>> {
+    let vector = super::memories::parse_embedding(serialized?)?;
+    (Some(vector.len()) == dimension
+        && vector.iter().any(|&value| value != 0.0)
+        && hash == Some(content_hash(content).as_str()))
+    .then_some(vector)
+}
 /// Endpoint fingerprint separates equal model names served by different providers.
 /// Persist no API credentials or endpoint query strings in memory metadata.
 pub fn embedding_identity(config: &crate::config::types::ModelConfig) -> String {
@@ -134,6 +158,36 @@ pub fn normalize_memory(content: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+fn require_chat_memory_scope(
+    tx: &Transaction<'_>,
+    id: &str,
+    conversation_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(conversation_id) = conversation_id else {
+        return Ok(());
+    };
+    let available: bool = tx
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM memory_governance g
+                JOIN conversations c ON c.id=?2
+                LEFT JOIN settings w ON w.key='conversation_workspace:'||c.id
+                WHERE g.memory_id=?1 AND g.status='active'
+                  AND (g.valid_from IS NULL OR g.valid_from<=?3)
+                  AND (g.valid_until IS NULL OR g.valid_until>?3)
+                  AND (g.scope='profile' OR g.scope='conversation:'||c.id
+                       OR g.scope='workspace:'||w.value)
+            )",
+            params![id, conversation_id, chrono::Utc::now().timestamp_millis()],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !available {
+        return Err("memory_not_in_scope".into());
+    }
+    Ok(())
 }
 
 impl Database {
@@ -162,7 +216,7 @@ impl Database {
     ) -> Result<bool, String> {
         let scope = conversation_id.map(|id| format!("conversation:{id}"));
         let workspace = workspace_id.map(|id| format!("workspace:{id}"));
-        self.conn().query_row("SELECT EXISTS(SELECT 1 FROM memory_governance WHERE memory_id=?1 AND status='active' AND (scope='profile' OR scope=?2 OR scope=?3))",params![id,scope,workspace],|r|r.get(0)).map_err(|e|e.to_string())
+        self.conn().query_row("SELECT EXISTS(SELECT 1 FROM memory_governance WHERE memory_id=?1 AND status='active' AND (scope='profile' OR scope=?2 OR scope=?3) AND (valid_from IS NULL OR valid_from<=?4) AND (valid_until IS NULL OR valid_until>?4))",params![id,scope,workspace,chrono::Utc::now().timestamp_millis()],|r|r.get(0)).map_err(|e|e.to_string())
     }
     pub fn memory_duplicate_exists(&self, category: &str, content: &str) -> Result<bool, String> {
         let conn = self.conn();
@@ -200,12 +254,50 @@ impl Database {
     ) -> Result<Vec<Memory>, String> {
         let ids = {
             let conn = self.conn();
-            let mut stmt=conn.prepare("SELECT m.id FROM memories m JOIN memory_governance g ON g.memory_id=m.id WHERE g.status='active' AND (m.embedding IS NULL OR TRIM(m.embedding)='' OR g.embedding_revision IS NOT g.revision OR g.embedding_model IS NOT ?1 OR g.embedding_generation IS NOT (SELECT generation FROM memory_embedding_config WHERE id=1 AND model=?1)) ORDER BY m.created_at ASC LIMIT ?2").map_err(|e|e.to_string())?;
-            let rows = stmt
-                .query_map(params![model, limit as i64], |r| r.get::<_, String>(0))
+            let mut stmt = conn
+                .prepare(
+                    "SELECT m.id,m.content,g.embedding_hash,g.embedding_dimension,
+                        CASE WHEN g.embedding_revision=g.revision AND g.embedding_model=?1
+                                  AND g.embedding_generation=cfg.generation THEN m.embedding END
+                 FROM memories m JOIN memory_governance g ON g.memory_id=m.id
+                 LEFT JOIN memory_embedding_config cfg ON cfg.id=1 AND cfg.model=?1
+                 WHERE g.status='active' AND (g.valid_from IS NULL OR g.valid_from<=?2)
+                   AND (g.valid_until IS NULL OR g.valid_until>?2)
+                 ORDER BY m.created_at,m.id",
+                )
                 .map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?
+            let rows = stmt
+                .query_map(
+                    params![model, chrono::Utc::now().timestamp_millis()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<i64>>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                        ))
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+            let mut pending = Vec::new();
+            for row in rows {
+                if pending.len() >= limit {
+                    break;
+                }
+                let (id, content, hash, dimension, embedding) = row.map_err(|e| e.to_string())?;
+                if current_embedding_vector(
+                    &content,
+                    embedding.as_deref(),
+                    hash.as_deref(),
+                    dimension.and_then(|value| usize::try_from(value).ok()),
+                )
+                .is_none()
+                {
+                    pending.push(id);
+                }
+            }
+            pending
         };
         ids.iter().map(|id| self.get_memory(id)).collect()
     }
@@ -221,31 +313,30 @@ impl Database {
         })).map_err(|e| e.to_string())
     }
 
-    pub fn memory_history(&self, id: &str) -> Result<Vec<MemoryVersion>, String> {
-        let conn = self.conn();
-        let mut stmt=conn.prepare("SELECT revision,content,category,source,source_ref,scope,status,reason,recorded_at,valid_from,valid_until FROM memory_versions WHERE memory_id=?1 ORDER BY revision DESC").map_err(|e|e.to_string())?;
-        let rows = stmt
-            .query_map([id], |r| {
-                Ok(MemoryVersion {
-                    revision: r.get(0)?,
-                    content: r.get(1)?,
-                    category: r.get(2)?,
-                    source: r.get(3)?,
-                    source_ref: r.get(4)?,
-                    scope: r.get(5)?,
-                    status: r.get(6)?,
-                    reason: r.get(7)?,
-                    recorded_at: r.get(8)?,
-                    valid_from: r.get(9)?,
-                    valid_until: r.get(10)?,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
+    pub fn correct_memory(&self, id: &str, req: &CorrectMemoryRequest) -> Result<Memory, String> {
+        self.correct_memory_scoped(id, req, None)
     }
 
-    pub fn correct_memory(&self, id: &str, req: &CorrectMemoryRequest) -> Result<Memory, String> {
+    pub(crate) fn correct_memory_scoped(
+        &self,
+        id: &str,
+        req: &CorrectMemoryRequest,
+        conversation_id: Option<&str>,
+    ) -> Result<Memory, String> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        Self::correct_memory_on(&tx, id, req, conversation_id)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_memory(id)
+    }
+
+    pub(super) fn correct_memory_on(
+        tx: &Transaction<'_>,
+        id: &str,
+        req: &CorrectMemoryRequest,
+        conversation_id: Option<&str>,
+    ) -> Result<(), String> {
         let content = req.content.trim();
         if content.is_empty() || content.chars().count() > 2000 || req.reason.trim().is_empty() {
             return Err("invalid_memory_correction".into());
@@ -253,8 +344,7 @@ impl Database {
         if crate::safety::contains_sensitive_content(content) {
             return Err("sensitive_memory_content".into());
         }
-        let mut conn = self.conn();
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        require_chat_memory_scope(tx, id, conversation_id)?;
         let owned: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM knowledge_document_chunks WHERE memory_id=?1)",
@@ -264,6 +354,29 @@ impl Database {
             .map_err(|e| e.to_string())?;
         if owned {
             return Err("knowledge_document_owned_chunk".into());
+        }
+        let (old_content, scope, source_ref): (String, String, Option<String>) = tx
+            .query_row(
+                "SELECT m.content,g.scope,g.source_ref FROM memory_governance g
+                 JOIN memories m ON m.id=g.memory_id
+                 WHERE g.memory_id=?1 AND g.revision=?2 AND g.status='active'",
+                params![id, req.expected_revision],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(|err| err.to_string())?
+            .ok_or("memory_revision_conflict")?;
+        if old_content.trim() == content
+            && req
+                .scope
+                .as_ref()
+                .is_none_or(|requested| requested == &scope)
+            && req
+                .source_ref
+                .as_ref()
+                .is_none_or(|requested| Some(requested) == source_ref.as_ref())
+        {
+            return Ok(());
         }
         if let Some(scope) = req.scope.as_deref() {
             if scope != "profile" {
@@ -282,10 +395,18 @@ impl Database {
             return Err("memory_revision_conflict".into());
         }
         let now = chrono::Utc::now().timestamp_millis();
-        // Explicit corrections always produce a revision, even when only provenance/scope changes.
+        // Actual scope or provenance changes also count when the content is unchanged.
         tx.execute(
             "UPDATE memories SET content=?1,updated_at=?2 WHERE id=?3",
-            params![content, now, id],
+            params![
+                if old_content.trim() == content {
+                    &old_content
+                } else {
+                    content
+                },
+                now,
+                id
+            ],
         )
         .map_err(|e| e.to_string())?;
         let current: i64 = tx
@@ -301,9 +422,7 @@ impl Database {
                 .map_err(|e| e.to_string())?;
             tx.execute("INSERT INTO memory_versions SELECT m.id,g.revision,m.content,m.category,m.source,g.source_ref,g.scope,g.status,g.reason,?2,g.valid_from,g.valid_until FROM memories m JOIN memory_governance g ON g.memory_id=m.id WHERE m.id=?1",params![id,now]).map_err(|e|e.to_string())?;
         }
-        tx.commit().map_err(|e| e.to_string())?;
-        drop(conn);
-        self.get_memory(id)
+        Ok(())
     }
 
     pub fn withdraw_memory(
@@ -311,11 +430,21 @@ impl Database {
         id: &str,
         req: &WithdrawMemoryRequest,
     ) -> Result<MemoryGovernance, String> {
+        self.withdraw_memory_scoped(id, req, None)
+    }
+
+    pub(crate) fn withdraw_memory_scoped(
+        &self,
+        id: &str,
+        req: &WithdrawMemoryRequest,
+        conversation_id: Option<&str>,
+    ) -> Result<MemoryGovernance, String> {
         if req.reason.trim().is_empty() {
             return Err("invalid_memory_reason".into());
         }
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
+        require_chat_memory_scope(&tx, id, conversation_id)?;
         let owned: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM knowledge_document_chunks WHERE memory_id=?1)",
@@ -381,6 +510,9 @@ impl Database {
         embedding: &[f32],
     ) -> Result<(), String> {
         let json = super::memories::serialize_embedding(embedding)?;
+        if embedding.iter().all(|&value| value == 0.0) {
+            return Err("zero_memory_embedding".into());
+        }
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         let content: Option<String> = tx

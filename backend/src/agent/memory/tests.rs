@@ -38,6 +38,8 @@ fn scored(content: &str, category: &str) -> ScoredMemory {
         score: 0.9,
         lexical_score: 0.9,
         vector_score: 0.0,
+        revision: 1,
+        scope: crate::db::MemoryScope::Profile,
     }
 }
 

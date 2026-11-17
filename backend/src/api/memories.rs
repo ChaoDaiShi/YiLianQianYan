@@ -14,7 +14,29 @@ use crate::db::{
     CreateMemoryRequest, Memory, MemoryQuery, MemoryStats, RetrieveQuery, UpdateMemoryRequest,
 };
 use crate::integrations::llm::client::LlmClient;
-use crate::integrations::llm::types::ChatMessage;
+
+pub(crate) fn library_router() -> axum::Router<Arc<AppServer>> {
+    use axum::routing::{delete, get, post};
+
+    axum::Router::new()
+        .route("/api/memories/library", get(library_handler))
+        .merge(graph::router())
+        .route("/api/memories/activity", get(activity_handler))
+        .route(
+            "/api/memories/activity/:id",
+            delete(remove_activity_handler),
+        )
+        .route("/api/memories/extract", post(candidates::extract))
+        .route("/api/memories/candidates", get(candidates::list))
+        .route(
+            "/api/memories/candidates/:id/accept",
+            post(candidates::accept),
+        )
+        .route(
+            "/api/memories/candidates/:id/dismiss",
+            post(candidates::dismiss),
+        )
+}
 
 pub type StorageApiError = (StatusCode, Json<serde_json::Value>);
 
@@ -70,12 +92,12 @@ pub async fn correct_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
     Json(req): Json<crate::db::memory_governance::CorrectMemoryRequest>,
-) -> Result<Json<Memory>, StorageApiError> {
-    server
+) -> Result<Json<MemoryWithSource>, StorageApiError> {
+    let memory = server
         .db
         .correct_memory(&id, &req)
-        .map(Json)
-        .map_err(governance_error)
+        .map_err(governance_error)?;
+    Ok(Json(single_with_source_status(&server.db, memory)?))
 }
 
 pub async fn withdraw_handler(
@@ -92,12 +114,46 @@ pub async fn withdraw_handler(
 
 pub async fn withdrawn_handler(
     State(server): State<Arc<AppServer>>,
-) -> Result<Json<Vec<Memory>>, StorageApiError> {
-    server
-        .db
-        .withdrawn_memories()
-        .map(Json)
-        .map_err(storage_error)
+) -> Result<Json<Vec<MemoryWithSource>>, StorageApiError> {
+    let entries = server.db.withdrawn_memories().map_err(storage_error)?;
+    Ok(Json(with_source_status(&server.db, entries)?))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct MemoryWithSource {
+    #[serde(flatten)]
+    memory: Memory,
+    source_removed: bool,
+}
+
+fn with_source_status(
+    db: &crate::db::Database,
+    mut entries: Vec<Memory>,
+) -> Result<Vec<MemoryWithSource>, StorageApiError> {
+    let statuses = db
+        .memory_source_status(&mut entries)
+        .map_err(|error| storage_error(error.to_string()))?;
+    Ok(entries
+        .into_iter()
+        .zip(statuses)
+        .map(|(memory, source_removed)| MemoryWithSource {
+            memory,
+            source_removed,
+        })
+        .collect())
+}
+
+fn single_with_source_status(
+    db: &crate::db::Database,
+    mut memory: Memory,
+) -> Result<MemoryWithSource, StorageApiError> {
+    let statuses = db
+        .memory_source_status(std::slice::from_mut(&mut memory))
+        .map_err(|error| storage_error(error.to_string()))?;
+    Ok(MemoryWithSource {
+        memory,
+        source_removed: statuses[0],
+    })
 }
 
 fn storage_error(_: String) -> StorageApiError {
@@ -135,7 +191,7 @@ fn document_owned_chunk() -> StorageApiError {
 pub async fn list_handler(
     State(server): State<Arc<AppServer>>,
     Query(query): Query<MemoryQuery>,
-) -> Result<Json<Vec<Memory>>, StorageApiError> {
+) -> Result<Json<Vec<MemoryWithSource>>, StorageApiError> {
     // Log query params for debugging
     if query.q.is_some() || query.category.is_some() || query.source.is_some() {
         tracing::debug!(
@@ -145,11 +201,67 @@ pub async fn list_handler(
             query.source
         );
     }
-    server
+    let entries = server.db.list_memories(&query).map_err(storage_error)?;
+    Ok(Json(with_source_status(&server.db, entries)?))
+}
+
+pub async fn library_handler(
+    State(server): State<Arc<AppServer>>,
+    Query(query): Query<MemoryQuery>,
+) -> Result<Json<Vec<MemoryWithSource>>, StorageApiError> {
+    let entries = server
         .db
-        .list_memories(&query)
-        .map(Json)
-        .map_err(storage_error)
+        .list_memory_library(&query)
+        .map_err(storage_error)?;
+    Ok(Json(with_source_status(&server.db, entries)?))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ActivityQuery {
+    #[serde(default)]
+    recent: bool,
+    offset: Option<usize>,
+    q: Option<String>,
+}
+
+pub async fn activity_handler(
+    State(server): State<Arc<AppServer>>,
+    Query(query): Query<ActivityQuery>,
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    const PAGE_SIZE: usize = 40;
+    let offset = query.offset.unwrap_or(0);
+    let mut entries = server
+        .db
+        .search_memory_activity(
+            query.recent,
+            query
+                .q
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            PAGE_SIZE + 1,
+            offset,
+        )
+        .map_err(|error| storage_error(error.to_string()))?;
+    let next_offset = (entries.len() > PAGE_SIZE).then(|| offset.saturating_add(PAGE_SIZE));
+    entries.truncate(PAGE_SIZE);
+    Ok(Json(
+        serde_json::json!({"entries": entries, "next_offset": next_offset}),
+    ))
+}
+
+pub async fn remove_activity_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    let removed = server
+        .db
+        .remove_memory_activity(&id)
+        .map_err(|error| storage_error(error.to_string()))?;
+    if !removed {
+        return Err(not_found_error("记忆日志"));
+    }
+    Ok(Json(serde_json::json!({"status":"deleted"})))
 }
 
 // ── Get by ID ──
@@ -157,9 +269,9 @@ pub async fn list_handler(
 pub async fn get_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-) -> Result<Json<Memory>, StorageApiError> {
+) -> Result<Json<MemoryWithSource>, StorageApiError> {
     match server.db.find_memory(&id) {
-        Ok(Some(mem)) => Ok(Json(mem)),
+        Ok(Some(mem)) => Ok(Json(single_with_source_status(&server.db, mem)?)),
         Ok(None) => Err(not_found_error("记忆")),
         Err(e) => Err(storage_error(e)),
     }
@@ -172,17 +284,24 @@ pub async fn create_handler(
     Json(req): Json<CreateMemoryRequest>,
 ) -> Result<Json<Memory>, StorageApiError> {
     let mem = server.db.create_memory(&req).map_err(governance_error)?;
-    // Auto-embed: best-effort, never fails the create
+    embed_saved_memory(&server, &mem).await;
+    Ok(Json(mem))
+}
+
+async fn embed_saved_memory(server: &AppServer, mem: &Memory) {
     let model_cfg = server.config.read().model.clone();
     if model_cfg.has_embedding() {
         let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
-        let ticket = server
-            .db
-            .begin_memory_embedding(
-                &mem,
-                &crate::db::memory_governance::embedding_identity(&model_cfg),
-            )
-            .map_err(governance_error)?;
+        let ticket = match server.db.begin_memory_embedding(
+            mem,
+            &crate::db::memory_governance::embedding_identity(&model_cfg),
+        ) {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                tracing::warn!(memory_id = %mem.id, %error, "memory persisted without a new embedding ticket");
+                return;
+            }
+        };
         match llm.embed(&mem.content).await {
             Ok(vec) => {
                 if let Err(e) = server.db.complete_memory_embedding(&ticket, &vec) {
@@ -194,16 +313,22 @@ pub async fn create_handler(
             }
         }
     }
-    Ok(Json(mem))
 }
 
 // ── Update ──
 
+#[derive(serde::Deserialize)]
+pub struct GuardedMemoryUpdate {
+    expected_revision: Option<i64>,
+    #[serde(flatten)]
+    change: UpdateMemoryRequest,
+}
+
 pub async fn update_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
-    Json(req): Json<UpdateMemoryRequest>,
-) -> Result<Json<Memory>, StorageApiError> {
+    Json(req): Json<GuardedMemoryUpdate>,
+) -> Result<Json<MemoryWithSource>, StorageApiError> {
     if server
         .db
         .knowledge_chunk_document(&id)
@@ -213,11 +338,13 @@ pub async fn update_handler(
         return Err(document_owned_chunk());
     }
     match server.db.find_memory(&id) {
-        Ok(Some(_)) => server
-            .db
-            .update_memory(&id, &req)
-            .map(Json)
-            .map_err(storage_error),
+        Ok(Some(_)) => {
+            let memory = server
+                .db
+                .update_memory_at_revision(&id, &req.change, req.expected_revision)
+                .map_err(governance_error)?;
+            Ok(Json(single_with_source_status(&server.db, memory)?))
+        }
         Ok(None) => Err(not_found_error("记忆")),
         Err(e) => Err(storage_error(e)),
     }
@@ -310,360 +437,8 @@ pub async fn retrieve_handler(
     }
 }
 
-// ── Extract (LLM-based memory extraction) ──
-
-#[derive(serde::Deserialize)]
-pub struct ExtractRequest {
-    pub conversation_id: Option<String>,
-}
-
-/// A single candidate memory returned by the LLM extraction tool.
-#[derive(Debug, Clone, serde::Deserialize)]
-struct ExtractedMemory {
-    category: String,
-    content: String,
-}
-
-/// The expected JSON payload inside the tool-call arguments.
-#[derive(Debug, serde::Deserialize)]
-struct ExtractMemoriesArgs {
-    memories: Vec<ExtractedMemory>,
-}
-
-const VALID_CATEGORIES: &[&str] = &["fact", "preference", "knowledge", "note"];
-const MAX_MEMORY_LENGTH: usize = 2000;
-const EXTRACTION_TOOL_NAME: &str = "extract_memories";
-
-fn is_valid_category(category: &str) -> bool {
-    VALID_CATEGORIES.contains(&category)
-}
-
-/// Delegates to the shared secret-detection helper so Chat Memory Extraction
-/// and Agent Memory Learning use the same source of truth.
-fn is_sensitive(content: &str) -> bool {
-    crate::safety::contains_sensitive_content(content)
-}
-
-fn memory_exists(db: &crate::db::Database, category: &str, content: &str) -> Result<bool, String> {
-    db.memory_duplicate_exists(category, content)
-}
-
-/// Build the tool definition for structured memory extraction.
-fn extraction_tool_definition() -> serde_json::Value {
-    serde_json::json!({
-        "type": "function",
-        "function": {
-            "name": EXTRACTION_TOOL_NAME,
-            "description": "Extract long-term memories from a conversation.\n\
-                Only save information that is valuable across conversations.\n\
-                DO NOT save: one-off chat, temporary questions, model responses, tool logs, \
-                API keys, tokens, passwords, cookies, full conversation summaries.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "memories": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "category": {
-                                    "type": "string",
-                                    "enum": ["fact", "preference", "knowledge", "note"]
-                                },
-                                "content": {
-                                    "type": "string",
-                                    "description": "The memory content in the user's language"
-                                }
-                            },
-                            "required": ["category", "content"]
-                        }
-                    }
-                },
-                "required": ["memories"]
-            }
-        }
-    })
-}
-
-fn build_extraction_prompt(conversation_text: &str) -> Vec<ChatMessage> {
-    vec![
-        ChatMessage {
-            reasoning_content: None,
-            role: "system".to_string(),
-            content: Some(
-                "你是忆涟千言的记忆提取模块。你的任务是从对话中提取可跨对话保留的长期记忆。\n\n\
-                提取规则：\n\
-                - 只提取对后续对话仍有价值的长期信息\n\
-                - 可以提取：用户长期偏好、稳定个人事实、长期目标、持续项目背景、用户明确要求记住的信息\n\
-                - 不要提取：一次性闲聊、临时问题、模型自己的回答、工具调用日志、完整对话摘要\n\
-                - category 必须是: fact（事实）, preference（偏好）, knowledge（知识）, note（备注）之一\n\
-                - content 使用用户原始语言\n\
-                - 不要提取任何 API Key、Token、Password、Secret、Cookie 等凭据信息\n\
-                - 如果没有值得长期保留的信息，返回空数组"
-                    .to_string(),
-            ),
-            tool_calls: None,
-            tool_call_id: None,
-            name: None,
-        },
-        ChatMessage {
-            reasoning_content: None,
-            role: "user".to_string(),
-            content: Some(format!("请从以下对话中提取长期记忆：\n\n{conversation_text}")),
-            tool_calls: None,
-            tool_call_id: None,
-            name: None,
-        },
-    ]
-}
-
-fn build_conversation_text(messages: &[crate::db::MessageRow]) -> String {
-    let mut text = String::new();
-    for msg in messages {
-        let role_label = match msg.role.as_str() {
-            "user" => "用户",
-            "assistant" => "助手",
-            "tool" => continue, // skip tool messages
-            _ => continue,
-        };
-        // Skip tool-call JSON blobs in assistant messages
-        let content = if msg.role == "assistant" {
-            // Only include text content, not tool call JSON
-            if msg.tool_calls.is_some() && msg.content.is_empty() {
-                continue;
-            }
-            crate::utils::text::truncate_chars(&msg.content, 500)
-        } else {
-            crate::utils::text::truncate_chars(&msg.content, 1000)
-        };
-        if content.trim().is_empty() {
-            continue;
-        }
-        text.push_str(&format!("{}: {}\n", role_label, content));
-    }
-    text
-}
-
-pub async fn extract_handler(
-    State(server): State<Arc<AppServer>>,
-    Json(req): Json<ExtractRequest>,
-) -> Result<Json<serde_json::Value>, StorageApiError> {
-    let conv_id = match req.conversation_id {
-        Some(ref id) if !id.is_empty() => id.clone(),
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "code": "invalid_request",
-                    "error": "conversation_id is required"
-                })),
-            ));
-        }
-    };
-
-    // 1. Read conversation messages
-    let conversation = match server.db.find_conversation(&conv_id) {
-        Ok(Some(conv)) => conv,
-        Ok(None) => return Err(not_found_error("对话")),
-        Err(e) => return Err(storage_error(e)),
-    };
-
-    let messages = conversation.messages;
-    if messages.is_empty() {
-        return Ok(Json(serde_json::json!({
-            "ok": true,
-            "created": 0,
-            "skipped": 0,
-            "memories": []
-        })));
-    }
-
-    let conversation_text = build_conversation_text(&messages);
-    if conversation_text.trim().is_empty() {
-        return Ok(Json(serde_json::json!({
-            "ok": true,
-            "created": 0,
-            "skipped": 0,
-            "memories": []
-        })));
-    }
-
-    // 2. Call LLM
-    let config = server.config.read().clone();
-    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
-    let prompt = build_extraction_prompt(&conversation_text);
-    let tools = vec![extraction_tool_definition()];
-
-    let llm_response = match llm_client.invoke(&prompt, &tools).await {
-        Ok(resp) => resp,
-        Err(e) => {
-            tracing::error!("Memory extraction LLM call failed: {e}");
-            return Err((
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "code": "llm_call_failed",
-                    "error": format!("LLM call failed: {e}")
-                })),
-            ));
-        }
-    };
-
-    // 3. Parse structured output from tool call
-    let tool_calls = match llm_response
-        .choices
-        .first()
-        .and_then(|c| c.message.tool_calls.as_ref())
-    {
-        Some(tcs) if !tcs.is_empty() => tcs,
-        _ => {
-            // No tool call — maybe the model returned empty content
-            // Try parsing the raw content as JSON (fallback for models
-            // that output JSON directly)
-            let raw_content = llm_response
-                .choices
-                .first()
-                .and_then(|c| c.message.content.as_deref())
-                .unwrap_or("");
-            if let Ok(parsed) = serde_json::from_str::<ExtractMemoriesArgs>(raw_content.trim()) {
-                return process_extracted_memories(&server, &conv_id, parsed.memories).await;
-            }
-            return Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(serde_json::json!({
-                    "code": "llm_parse_failed",
-                    "error": "LLM did not return structured memory output"
-                })),
-            ));
-        }
-    };
-
-    let extraction_call = tool_calls
-        .iter()
-        .find(|tc| tc.function.name == EXTRACTION_TOOL_NAME);
-
-    let args_str = match extraction_call {
-        Some(tc) => &tc.function.arguments,
-        None => {
-            return Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(serde_json::json!({
-                    "code": "llm_parse_failed",
-                    "error": "LLM did not call the extraction tool"
-                })),
-            ));
-        }
-    };
-
-    let parsed: ExtractMemoriesArgs = match serde_json::from_str(args_str) {
-        Ok(args) => args,
-        Err(e) => {
-            tracing::error!("Failed to parse extraction tool arguments: {e}");
-            return Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(serde_json::json!({
-                    "code": "llm_parse_failed",
-                    "error": format!("failed to parse LLM output: {e}")
-                })),
-            ));
-        }
-    };
-
-    process_extracted_memories(&server, &conv_id, parsed.memories).await
-}
-
-async fn process_extracted_memories(
-    server: &AppServer,
-    conv_id: &str,
-    candidates: Vec<ExtractedMemory>,
-) -> Result<Json<serde_json::Value>, StorageApiError> {
-    let model_cfg = server.config.read().model.clone();
-    let has_embedding = model_cfg.has_embedding();
-    let mut created = Vec::new();
-    let mut skipped = 0usize;
-
-    for mem in candidates {
-        // Validate category
-        if !is_valid_category(&mem.category) {
-            tracing::debug!("Skipping memory with invalid category: {}", mem.category);
-            skipped += 1;
-            continue;
-        }
-
-        // Validate content
-        let content = mem.content.trim().to_string();
-        if content.is_empty() {
-            skipped += 1;
-            continue;
-        }
-        if content.chars().count() > MAX_MEMORY_LENGTH {
-            tracing::debug!(
-                "Skipping overly long memory ({} chars)",
-                content.chars().count()
-            );
-            skipped += 1;
-            continue;
-        }
-
-        // Reject sensitive content
-        if is_sensitive(&content) {
-            tracing::warn!("Rejected memory containing sensitive pattern");
-            skipped += 1;
-            continue;
-        }
-
-        // Dedup
-        if memory_exists(&server.db, &mem.category, &content).map_err(storage_error)? {
-            skipped += 1;
-            continue;
-        }
-
-        // Write
-        let memory = match server.db.create_memory(&CreateMemoryRequest {
-            content: content.clone(),
-            category: mem.category.clone(),
-            source: "auto".to_string(),
-            source_conversation_id: Some(conv_id.to_string()),
-            metadata: None,
-        }) {
-            Ok(memory) => memory,
-            Err(e) => {
-                tracing::error!("Failed to create memory: {e}");
-                return Err(storage_error(e));
-            }
-        };
-
-        // Auto-embed: best-effort, never fails memory creation
-        if has_embedding {
-            let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
-            let ticket = server
-                .db
-                .begin_memory_embedding(
-                    &memory,
-                    &crate::db::memory_governance::embedding_identity(&model_cfg),
-                )
-                .map_err(governance_error)?;
-            match llm.embed(&content).await {
-                Ok(vec) => {
-                    if let Err(e) = server.db.complete_memory_embedding(&ticket, &vec) {
-                        tracing::warn!(memory_id = %memory.id, error = %e, "failed to persist embedding");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(memory_id = %memory.id, error = %e, "embedding generation failed, memory persisted without embedding");
-                }
-            }
-        }
-
-        created.push(memory);
-    }
-
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "created": created.len(),
-        "skipped": skipped,
-        "memories": created
-    })))
-}
+pub(crate) mod candidates;
+pub(crate) mod graph;
 
 // ── Reserved: Batch-import ──
 
@@ -880,7 +655,7 @@ mod tests {
             .knowledge_chunks(Some(&document.id), None)
             .unwrap();
         let chunk = &chunks[0];
-        let update: UpdateMemoryRequest =
+        let update: GuardedMemoryUpdate =
             serde_json::from_value(serde_json::json!({"content":"must not overwrite"})).unwrap();
         let rejected = update_handler(
             State(server.clone()),
@@ -923,13 +698,25 @@ mod tests {
                 metadata: None,
             })
             .unwrap();
-        let update: UpdateMemoryRequest =
+        let update: GuardedMemoryUpdate =
             serde_json::from_value(serde_json::json!({"content":"updated manual knowledge"}))
                 .unwrap();
         let updated = update_handler(State(server.clone()), Path(manual.id.clone()), Json(update))
             .await
             .unwrap();
-        assert_eq!(updated.0.content, "updated manual knowledge");
+        assert_eq!(updated.0.memory.content, "updated manual knowledge");
+        let stale = serde_json::from_value(
+            serde_json::json!({"content":"stale update","expected_revision":1}),
+        )
+        .unwrap();
+        let rejected = update_handler(State(server.clone()), Path(manual.id.clone()), Json(stale))
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.0, StatusCode::CONFLICT);
+        assert_eq!(
+            server.db.get_memory(&manual.id).unwrap().content,
+            "updated manual knowledge"
+        );
         delete_handler(State(server.clone()), Path(manual.id.clone()))
             .await
             .unwrap();
@@ -937,238 +724,6 @@ mod tests {
     }
 
     // ── Unit tests: validation helpers ──
-
-    #[test]
-    fn valid_categories_are_accepted() {
-        assert!(is_valid_category("fact"));
-        assert!(is_valid_category("preference"));
-        assert!(is_valid_category("knowledge"));
-        assert!(is_valid_category("note"));
-    }
-
-    #[test]
-    fn invalid_categories_are_rejected() {
-        assert!(!is_valid_category("random"));
-        assert!(!is_valid_category(""));
-        assert!(!is_valid_category("administrator"));
-        assert!(!is_valid_category("FACT")); // case-sensitive
-    }
-
-    #[test]
-    fn sensitive_patterns_are_detected() {
-        assert!(is_sensitive("my api_key is sk-12345"));
-        assert!(is_sensitive("the token is deadbeef"));
-        assert!(is_sensitive("password: hunter2"));
-        assert!(is_sensitive("Authorization: Bearer xxx"));
-        assert!(is_sensitive("cookie session=abc"));
-        assert!(is_sensitive("这里包含apiKey"));
-    }
-
-    #[test]
-    fn clean_content_is_not_sensitive() {
-        assert!(!is_sensitive("用户偏好每次只进行最小范围代码修改"));
-        assert!(!is_sensitive("project uses Rust for backend"));
-        assert!(!is_sensitive(""));
-    }
-
-    #[test]
-    fn build_conversation_text_filters_tool_messages() {
-        let msgs = vec![
-            MessageRow {
-                id: "1".into(),
-                conversation_id: "c1".into(),
-                role: "user".into(),
-                content: "你好".into(),
-                tool_calls: None,
-                tool_call_id: None,
-                tool_name: None,
-                tool_result: None,
-                created_at: 0,
-            },
-            MessageRow {
-                id: "2".into(),
-                conversation_id: "c1".into(),
-                role: "assistant".into(),
-                content: "你好！有什么可以帮助你的？".into(),
-                tool_calls: None,
-                tool_call_id: None,
-                tool_name: None,
-                tool_result: None,
-                created_at: 1,
-            },
-            MessageRow {
-                id: "3".into(),
-                conversation_id: "c1".into(),
-                role: "tool".into(),
-                content: "screenshot data...".into(),
-                tool_calls: None,
-                tool_call_id: Some("tc1".into()),
-                tool_name: Some("screenshot".into()),
-                tool_result: None,
-                created_at: 2,
-            },
-            MessageRow {
-                id: "4".into(),
-                conversation_id: "c1".into(),
-                role: "user".into(),
-                content: "我以后写代码希望每次只改最少几个文件".into(),
-                tool_calls: None,
-                tool_call_id: None,
-                tool_name: None,
-                tool_result: None,
-                created_at: 3,
-            },
-        ];
-        let text = build_conversation_text(&msgs);
-        assert!(text.contains("用户: 你好"));
-        assert!(text.contains("用户: 我以后写代码希望每次只改最少几个文件"));
-        // tool messages are skipped
-        assert!(!text.contains("screenshot"));
-    }
-
-    #[test]
-    fn build_extraction_prompt_contains_system_and_user() {
-        let prompt = build_extraction_prompt("测试对话");
-        assert_eq!(prompt.len(), 2);
-        assert_eq!(prompt[0].role, "system");
-        assert_eq!(prompt[1].role, "user");
-        assert!(prompt[1].content.as_ref().unwrap().contains("测试对话"));
-    }
-
-    // ── Integration test: process_extracted_memories ──
-
-    #[tokio::test]
-    async fn process_extracts_valid_preference_memory() {
-        let (server, db_path, conv_id) = test_server("process-valid");
-
-        let candidates = vec![ExtractedMemory {
-            category: "preference".to_string(),
-            content: "用户偏好每次只进行最小范围代码修改".to_string(),
-        }];
-
-        let json = process_extracted_memories(&server, &conv_id, candidates)
-            .await
-            .unwrap();
-        let value = json.0;
-        assert_eq!(value["ok"], true);
-        assert_eq!(value["created"], 1);
-        assert_eq!(value["skipped"], 0);
-        assert_eq!(value["memories"].as_array().unwrap().len(), 1);
-        assert_eq!(value["memories"][0]["category"], "preference");
-        assert_eq!(value["memories"][0]["source"], "auto");
-
-        std::fs::remove_file(&db_path).ok();
-    }
-
-    #[tokio::test]
-    async fn process_skips_duplicate_memory() {
-        let (server, db_path, conv_id) = test_server("process-dup");
-        let candidates = vec![ExtractedMemory {
-            category: "fact".to_string(),
-            content: "用户居住在杭州".to_string(),
-        }];
-
-        // First extraction
-        let json1 = process_extracted_memories(&server, &conv_id, candidates.clone())
-            .await
-            .unwrap();
-        assert_eq!(json1.0["created"], 1);
-
-        // Second extraction with identical content
-        let json2 = process_extracted_memories(&server, &conv_id, candidates)
-            .await
-            .unwrap();
-        assert_eq!(json2.0["created"], 0);
-        assert_eq!(json2.0["skipped"], 1);
-
-        std::fs::remove_file(&db_path).ok();
-    }
-
-    #[tokio::test]
-    async fn process_skips_empty_candidates() {
-        let (server, db_path, conv_id) = test_server("process-empty");
-        let candidates: Vec<ExtractedMemory> = vec![];
-
-        let json = process_extracted_memories(&server, &conv_id, candidates)
-            .await
-            .unwrap();
-        assert_eq!(json.0["ok"], true);
-        assert_eq!(json.0["created"], 0);
-        assert_eq!(json.0["skipped"], 0);
-
-        std::fs::remove_file(&db_path).ok();
-    }
-
-    #[tokio::test]
-    async fn process_skips_invalid_category() {
-        let (server, db_path, conv_id) = test_server("process-invalid-cat");
-        let candidates = vec![ExtractedMemory {
-            category: "random".to_string(),
-            content: "some content".to_string(),
-        }];
-
-        let json = process_extracted_memories(&server, &conv_id, candidates)
-            .await
-            .unwrap();
-        assert_eq!(json.0["created"], 0);
-        assert_eq!(json.0["skipped"], 1);
-
-        std::fs::remove_file(&db_path).ok();
-    }
-
-    #[tokio::test]
-    async fn process_skips_empty_content() {
-        let (server, db_path, conv_id) = test_server("process-empty-content");
-        let candidates = vec![ExtractedMemory {
-            category: "note".to_string(),
-            content: "   ".to_string(),
-        }];
-
-        let json = process_extracted_memories(&server, &conv_id, candidates)
-            .await
-            .unwrap();
-        assert_eq!(json.0["created"], 0);
-        assert_eq!(json.0["skipped"], 1);
-
-        std::fs::remove_file(&db_path).ok();
-    }
-
-    #[tokio::test]
-    async fn process_rejects_sensitive_content() {
-        let (server, db_path, conv_id) = test_server("process-sensitive");
-        let candidates = vec![ExtractedMemory {
-            category: "knowledge".to_string(),
-            content: "API key is sk-abc123".to_string(),
-        }];
-
-        let json = process_extracted_memories(&server, &conv_id, candidates)
-            .await
-            .unwrap();
-        assert_eq!(json.0["created"], 0);
-        assert_eq!(json.0["skipped"], 1);
-
-        std::fs::remove_file(&db_path).ok();
-    }
-
-    #[tokio::test]
-    async fn process_handles_chinese_content() {
-        let (server, db_path, conv_id) = test_server("process-chinese");
-        let candidates = vec![ExtractedMemory {
-            category: "preference".to_string(),
-            content: "用户长期使用中文内容进行交互，偏好简洁回复".to_string(),
-        }];
-
-        let json = process_extracted_memories(&server, &conv_id, candidates)
-            .await
-            .unwrap();
-        let value = json.0;
-        assert_eq!(value["ok"], true);
-        assert_eq!(value["created"], 1);
-        let saved = &value["memories"][0]["content"];
-        assert!(saved.as_str().unwrap().contains("中文"));
-
-        std::fs::remove_file(&db_path).ok();
-    }
 
     // ── Retrieval tests ──
 
@@ -1576,6 +1131,8 @@ mod tests {
             score: 0.82,
             lexical_score: 0.61,
             vector_score: 0.91,
+            revision: 1,
+            scope: crate::db::MemoryScope::Profile,
         };
         let json = serde_json::to_value(&scored).unwrap();
         assert!(json.get("embedding").is_none());

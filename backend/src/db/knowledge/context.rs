@@ -5,8 +5,9 @@ use std::collections::{HashSet, VecDeque};
 use serde::Serialize;
 
 use super::super::{memories::keyword_score, Database};
+use super::chunking::{excerpt, Layout, TextMatch, CHUNK_CHARS};
+use crate::utils::text::is_cjk;
 
-const WINDOW_CHARS: usize = 1200;
 const WINDOW_OVERLAP: usize = 240;
 const EXCERPT_CHARS: usize = 500;
 const EXCERPTS_PER_DOCUMENT: usize = 2;
@@ -17,11 +18,28 @@ pub struct KnowledgeContext {
     pub name: String,
     pub content: String,
     pub score: f64,
+    pub version: String,
+    pub start_char: usize,
+    pub end_char: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
 }
 
 struct Candidate {
     context: KnowledgeContext,
     anchor: usize,
+}
+
+struct Occurrence {
+    hit: TextMatch,
+    score: f64,
+}
+
+fn compare_occurrences(left: &Occurrence, right: &Occurrence) -> std::cmp::Ordering {
+    right
+        .score
+        .total_cmp(&left.score)
+        .then_with(|| left.hit.character.cmp(&right.hit.character))
 }
 
 impl Database {
@@ -43,7 +61,7 @@ impl Database {
         }
         let conn = self.conn();
         let mut statement = conn
-            .prepare("SELECT id,name,text_content FROM knowledge_documents ORDER BY id")
+            .prepare("SELECT id,name,text_content,mime_type FROM knowledge_documents ORDER BY id")
             .map_err(|error| error.to_string())?;
         let mut rows = statement.query([]).map_err(|error| error.to_string())?;
         let mut best: Vec<Candidate> = Vec::new();
@@ -51,7 +69,9 @@ impl Database {
             let id: String = row.get(0).map_err(|error| error.to_string())?;
             let name: String = row.get(1).map_err(|error| error.to_string())?;
             let text: String = row.get(2).map_err(|error| error.to_string())?;
-            let document = document_candidates(&id, &name, &text, query, &terms);
+            let mime: String = row.get(3).map_err(|error| error.to_string())?;
+            let document =
+                document_candidates(&id, &name, &text, Layout::from_mime(&mime), query, &terms);
             for candidate in document {
                 best.push(candidate);
                 sort_candidates(&mut best);
@@ -69,16 +89,17 @@ fn document_candidates(
     document_id: &str,
     name: &str,
     text: &str,
+    layout: Layout,
     query: &str,
     terms: &[String],
 ) -> Vec<Candidate> {
     // Each entry retains the exact source character and byte offset. Overlap
-    // catches terms that cross the 1200-character derived chunk boundary.
+    // catches terms crossing a scoring window or a stored chunk boundary.
     let mut remaining = text.char_indices().enumerate();
     let mut window: VecDeque<(usize, usize, char)> = VecDeque::new();
-    let mut best: Vec<Candidate> = Vec::new();
+    let mut best: Vec<Occurrence> = Vec::new();
     loop {
-        while window.len() < WINDOW_CHARS {
+        while window.len() < CHUNK_CHARS {
             let Some((character_index, (byte_index, character))) = remaining.next() else {
                 break;
             };
@@ -90,46 +111,69 @@ fn document_candidates(
         let content: String = window.iter().map(|entry| entry.2).collect();
         let score = keyword_score(query, &content);
         if score > 0.0 {
-            if let Some(local_anchor) = match_anchor(&content, terms) {
+            if let Some((local_anchor, length)) = match_anchor(&content, terms) {
                 let (anchor, source_byte, _) = window[local_anchor];
-                let candidate = Candidate {
-                    context: KnowledgeContext {
-                        document_id: document_id.into(),
-                        name: name.into(),
-                        content: excerpt(text, source_byte),
-                        score,
+                let candidate = Occurrence {
+                    hit: TextMatch {
+                        byte: source_byte,
+                        character: anchor,
+                        length,
                     },
-                    anchor,
+                    score,
                 };
                 // Two windows containing the same occurrence have the same
                 // source anchor; overlapping 500-char excerpts are near hits.
                 if let Some(index) = best
                     .iter()
-                    .position(|existing| existing.anchor.abs_diff(anchor) < EXCERPT_CHARS)
+                    .position(|existing| existing.hit.character.abs_diff(anchor) < EXCERPT_CHARS)
                 {
-                    if precedes(&candidate, &best[index]) {
+                    if compare_occurrences(&candidate, &best[index]).is_lt() {
                         best[index] = candidate;
                     }
                 } else {
                     best.push(candidate);
                 }
-                sort_candidates(&mut best);
+                best.sort_by(compare_occurrences);
                 best.truncate(EXCERPTS_PER_DOCUMENT);
             }
         }
-        if window.len() < WINDOW_CHARS {
+        if window.len() < CHUNK_CHARS {
             break;
         }
-        for _ in 0..WINDOW_CHARS - WINDOW_OVERLAP {
+        for _ in 0..CHUNK_CHARS - WINDOW_OVERLAP {
             window.pop_front();
         }
     }
-    best
-}
-
-fn precedes(left: &Candidate, right: &Candidate) -> bool {
-    left.context.score > right.context.score
-        || (left.context.score == right.context.score && left.anchor < right.anchor)
+    if best.is_empty() {
+        return Vec::new();
+    }
+    let version = super::knowledge_text_version(text);
+    best.into_iter()
+        .map(|occurrence| {
+            let source = excerpt(
+                text,
+                layout,
+                occurrence.hit,
+                EXCERPT_CHARS / 2,
+                EXCERPT_CHARS,
+            );
+            Candidate {
+                anchor: occurrence.hit.character,
+                context: KnowledgeContext {
+                    document_id: document_id.into(),
+                    name: name.into(),
+                    content: source.content.into(),
+                    score: occurrence.score,
+                    version: version.clone(),
+                    start_char: source.start_char,
+                    end_char: source.start_char + source.content.chars().count(),
+                    section: source
+                        .section
+                        .map(|heading| crate::utils::text::truncate_chars(heading, 120)),
+                },
+            }
+        })
+        .collect()
 }
 
 fn sort_candidates(candidates: &mut [Candidate]) {
@@ -178,11 +222,7 @@ fn match_terms(query: &str) -> Vec<String> {
     terms
 }
 
-fn is_cjk(character: char) -> bool {
-    matches!(character as u32, 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x3134f)
-}
-
-fn match_anchor(content: &str, terms: &[String]) -> Option<usize> {
+fn match_anchor(content: &str, terms: &[String]) -> Option<(usize, usize)> {
     // Unicode case folding can expand a source character (e.g. capital I with
     // dot); keep the mapping so a normalized match always points into source.
     let mut normalized = String::new();
@@ -196,20 +236,12 @@ fn match_anchor(content: &str, terms: &[String]) -> Option<usize> {
     for term in terms {
         if let Some(byte_index) = normalized.find(term) {
             let normalized_index = normalized[..byte_index].chars().count();
-            return original_indices.get(normalized_index).copied();
+            let start = original_indices[normalized_index];
+            let end = original_indices[normalized_index + term.chars().count() - 1];
+            return Some((start, end - start + 1));
         }
     }
     None
-}
-
-fn excerpt(text: &str, anchor_byte: usize) -> String {
-    let start = text[..anchor_byte]
-        .char_indices()
-        .rev()
-        .take(EXCERPT_CHARS / 2)
-        .last()
-        .map_or(0, |(index, _)| index);
-    text[start..].chars().take(EXCERPT_CHARS).collect()
 }
 
 #[cfg(test)]
@@ -331,6 +363,17 @@ mod tests {
         assert!(!results.is_empty());
         assert!(results[0].content.contains("尾部专属编号为涟-9834"));
         assert!(text.contains(&results[0].content));
+        let source = &results[0];
+        assert_eq!(
+            source.version,
+            crate::db::knowledge::knowledge_text_version(&text)
+        );
+        let anchored = text
+            .chars()
+            .skip(source.start_char)
+            .take(source.end_char - source.start_char)
+            .collect::<String>();
+        assert_eq!(anchored, source.content);
         assert!(results[0].content.chars().count() <= EXCERPT_CHARS);
         assert!(fixture.db().knowledge_context("", 2).unwrap().is_empty());
         assert!(fixture

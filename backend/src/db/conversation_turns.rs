@@ -93,6 +93,7 @@ impl Database {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         tx.execute("INSERT INTO messages(id,conversation_id,role,content,tool_calls,tool_call_id,tool_name,tool_result,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![message.id,message.conversation_id,message.role,message.content,message.tool_calls,message.tool_call_id,message.tool_name,message.tool_result,message.created_at]).map_err(|e|e.to_string())?;
+        super::memory_activity::record_chat_activity(&tx, message).map_err(|e| e.to_string())?;
         if resources.len() > crate::modules::resource::MAX_INPUT_FILES {
             return Err("一次最多附加8个文件".into());
         }

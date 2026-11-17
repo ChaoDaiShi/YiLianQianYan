@@ -26,7 +26,11 @@ pub mod learning;
 mod llm_models;
 mod mcp;
 mod memories;
+pub mod memory_activity;
+pub(crate) mod memory_candidates;
 pub mod memory_governance;
+pub(crate) mod memory_graph;
+mod memory_purge_journal;
 mod migrations;
 pub mod model_pools;
 mod proofloop;
@@ -75,6 +79,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
+    memory_purge_journal: Option<std::path::PathBuf>,
 }
 
 impl Database {
@@ -87,6 +92,7 @@ impl Database {
         let adopted_v09 = migrations::table_exists(&conn, "conversations")?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            memory_purge_journal: memory_purge_journal::journal_path(path),
         };
         db.run_v09_bootstrap()?;
         db.run_versioned_migrations(adopted_v09)?;
@@ -108,12 +114,17 @@ impl Database {
         db.initialize_channel_peers()?;
         db.migrate_memory_governance()
             .map_err(rusqlite::Error::InvalidParameterName)?;
+        db.initialize_memory_activity()?;
+        db.initialize_memory_graph_versions()?;
+        db.initialize_memory_candidates()?;
+        db.initialize_memory_graph()?;
         db.initialize_knowledge_build_schema()?;
         db.initialize_access_rules_schema()?;
         db.init_model_pools()
             .map_err(rusqlite::Error::InvalidParameterName)?;
         db.init_provider_accounts()
             .map_err(rusqlite::Error::InvalidParameterName)?;
+        db.replay_memory_purges()?;
         // Seed after migrations so the lock is released between calls
         db.seed_builtin_workflows()?;
         Ok(db)

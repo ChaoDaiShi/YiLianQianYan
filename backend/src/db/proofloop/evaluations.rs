@@ -150,6 +150,12 @@ impl Database {
                 created_at,
             ],
         )?;
+        crate::db::memory_candidates::stage_verified_report(
+            &transaction,
+            report,
+            evidence,
+            created_at,
+        )?;
         transaction.commit()?;
         Ok(())
     }

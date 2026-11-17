@@ -4,10 +4,16 @@ use super::{
 };
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
+mod chunking;
 mod collections;
 mod context;
+mod entries;
 pub use collections::{KnowledgeCollection, KnowledgeImportLocation, KnowledgeMembership};
 pub use context::KnowledgeContext;
+pub use entries::{KnowledgeEntryDraft, KnowledgeEntryError};
+#[cfg(test)]
+use entries::{KnowledgeSourceAnchor, KnowledgeSourceStatus};
 
 const SCHEMA:ProductMigrationSpec=ProductMigrationSpec::new(1025,"1025_knowledge_documents",MigrationOwner::V1TaskWorld,
 "CREATE TABLE knowledge_documents(id TEXT PRIMARY KEY,resource_id TEXT NOT NULL,name TEXT NOT NULL,mime_type TEXT NOT NULL,hash TEXT NOT NULL UNIQUE,size INTEGER NOT NULL,char_count INTEGER NOT NULL,text_content TEXT NOT NULL,created_at INTEGER NOT NULL);
@@ -32,6 +38,9 @@ pub struct KnowledgeChunk {
     pub document_name: String,
     pub chunk_index: i64,
     pub content: String,
+    pub start_char: Option<usize>,
+    pub end_char: Option<usize>,
+    pub version: Option<String>,
 }
 /// A canonical document excerpt. Its zero-based character offset traces the
 /// content into text_content without claiming the identity of a memory chunk.
@@ -41,31 +50,21 @@ pub struct KnowledgeSearchHit {
     pub document_name: String,
     pub content: String,
     pub start_char: usize,
+    pub version: String,
 }
+
+pub fn knowledge_text_version(text: &str) -> String {
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
 pub fn split_document(text: &str) -> Vec<String> {
-    if text.trim().is_empty() {
-        return Vec::new();
-    }
-    let mut result = Vec::new();
-    let mut part = String::new();
-    let mut count = 0;
-    for character in text.chars() {
-        part.push(character);
-        count += 1;
-        if count >= 1200 {
-            result.push(std::mem::take(&mut part));
-            count = 0;
-        }
-    }
-    if !part.is_empty() {
-        result.push(part);
-    }
-    result
+    chunking::split(text, chunking::Layout::Text)
 }
 impl Database {
     pub fn initialize_knowledge_schema(&self) -> Result<(), rusqlite::Error> {
         self.apply_product_migration(&SCHEMA)?;
-        self.apply_product_migration(&collections::SCHEMA)
+        self.apply_product_migration(&collections::SCHEMA)?;
+        self.apply_product_migration(&entries::SCHEMA)
     }
     pub fn knowledge_documents(&self) -> Result<Vec<KnowledgeDocument>, String> {
         self.knowledge_documents_for_collection(None)
@@ -134,7 +133,8 @@ impl Database {
         if created {
             let now = chrono::Utc::now().timestamp_millis();
             tx.execute("INSERT INTO knowledge_documents(id,resource_id,name,mime_type,hash,size,char_count,text_content,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![id,resource_id,name,mime,hash,size,text.chars().count() as i64,text,now]).map_err(|e|e.to_string())?;
-            for (index, content) in split_document(text).into_iter().enumerate() {
+            let layout = chunking::Layout::from_mime(mime);
+            for (index, content) in chunking::split(text, layout).into_iter().enumerate() {
                 let memory = uuid::Uuid::new_v4().to_string();
                 let metadata=serde_json::json!({"knowledge_document_id":id,"resource_id":resource_id,"document_name":name,"chunk_index":index}).to_string();
                 tx.execute("INSERT INTO memories(id,content,category,source,metadata,created_at,updated_at) VALUES(?1,?2,'knowledge','document',?3,?4,?4)",params![memory,content,metadata,now]).map_err(|e|e.to_string())?;
@@ -176,23 +176,72 @@ impl Database {
         document: Option<&str>,
         query: Option<&str>,
     ) -> Result<Vec<KnowledgeChunk>, String> {
+        self.knowledge_chunk_page(document, query, 2000, 0)
+    }
+
+    pub fn knowledge_chunk_page(
+        &self,
+        document: Option<&str>,
+        query: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<KnowledgeChunk>, String> {
         let conn = self.conn();
         let query = query.filter(|query| !query.trim().is_empty());
-        let mut statement=conn.prepare("SELECT m.id,d.id,d.name,c.chunk_index,m.content FROM knowledge_document_chunks c JOIN memories m ON m.id=c.memory_id JOIN knowledge_documents d ON d.id=c.document_id WHERE (?1 IS NULL OR d.id=?1) AND (?2 IS NULL OR instr(lower(m.content),lower(?2))>0 OR instr(lower(d.name),lower(?2))>0) ORDER BY d.created_at DESC,d.id,c.chunk_index LIMIT 2000").map_err(|e|e.to_string())?;
-        let result = statement
-            .query_map(params![document, query], |r| {
+        let mut statement = conn
+            .prepare(
+                "WITH ordered AS (
+                SELECT m.id,c.document_id,c.chunk_index,m.content,
+                    coalesce(sum(length(m.content)) OVER (
+                        PARTITION BY c.document_id ORDER BY c.chunk_index
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ),0) AS start_char
+                FROM knowledge_document_chunks c JOIN memories m ON m.id=c.memory_id
+                WHERE ?1 IS NULL OR c.document_id=?1
+             )
+             SELECT c.id,d.id,d.name,c.chunk_index,c.content,
+                CASE WHEN substr(d.text_content,c.start_char+1,length(c.content))=c.content
+                     THEN c.start_char END
+             FROM ordered c JOIN knowledge_documents d ON d.id=c.document_id
+             WHERE ?2 IS NULL OR instr(lower(c.content),lower(?2))>0
+             ORDER BY d.created_at DESC,d.id,c.chunk_index LIMIT ?3 OFFSET ?4",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut chunks = statement
+            .query_map(params![document, query, limit as i64, offset as i64], |r| {
+                let content: String = r.get(4)?;
+                let start_char: Option<usize> = r.get(5)?;
                 Ok(KnowledgeChunk {
                     memory_id: r.get(0)?,
                     document_id: r.get(1)?,
                     document_name: r.get(2)?,
                     chunk_index: r.get(3)?,
-                    content: r.get(4)?,
+                    end_char: start_char.map(|start| start + content.chars().count()),
+                    content,
+                    start_char,
+                    version: None,
                 })
             })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string());
-        result
+            .map_err(|e| e.to_string())?;
+        if let Some(id) = document.filter(|_| chunks.iter().any(|chunk| chunk.start_char.is_some()))
+        {
+            let text: String = conn
+                .query_row(
+                    "SELECT text_content FROM knowledge_documents WHERE id=?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            let version = knowledge_text_version(&text);
+            for chunk in &mut chunks {
+                if chunk.start_char.is_some() {
+                    chunk.version = Some(version.clone());
+                }
+            }
+        }
+        Ok(chunks)
     }
     pub fn search_knowledge(&self, query: &str) -> Result<Vec<KnowledgeSearchHit>, String> {
         self.search_knowledge_in_collection(query, None)
@@ -207,7 +256,7 @@ impl Database {
             return Ok(Vec::new());
         }
         let conn = self.conn();
-        let mut statement=conn.prepare("SELECT id,name,text_content,instr(lower(text_content),lower(?1)) FROM knowledge_documents WHERE (instr(lower(text_content),lower(?1))>0 OR instr(lower(name),lower(?1))>0) AND (?2 IS NULL OR EXISTS(SELECT 1 FROM knowledge_collection_documents m WHERE m.document_id=knowledge_documents.id AND m.collection_id=?2)) ORDER BY created_at DESC,id LIMIT 200").map_err(|e|e.to_string())?;
+        let mut statement=conn.prepare("SELECT id,name,text_content,instr(lower(text_content),lower(?1)),mime_type FROM knowledge_documents WHERE (instr(lower(text_content),lower(?1))>0 OR instr(lower(name),lower(?1))>0) AND (?2 IS NULL OR EXISTS(SELECT 1 FROM knowledge_collection_documents m WHERE m.document_id=knowledge_documents.id AND m.collection_id=?2)) ORDER BY created_at DESC,id LIMIT 200").map_err(|e|e.to_string())?;
         let rows = statement
             .query_map(params![query, collection], |row| {
                 Ok((
@@ -215,26 +264,35 @@ impl Database {
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, usize>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             })
             .map_err(|error| error.to_string())?;
         let mut hits = Vec::new();
         for row in rows {
-            let (document_id, document_name, text, position) =
+            let (document_id, document_name, text, position, mime) =
                 row.map_err(|error| error.to_string())?;
             // SQLite instr is one-based and counts Unicode characters. A name
             // match with no body match uses the true beginning of the document.
-            let start_char = position.saturating_sub(1).saturating_sub(120);
-            let content = text
-                .chars()
-                .skip(start_char)
-                .take(500 + query.chars().count())
-                .collect();
+            let query_chars = query.chars().count();
+            let hit = chunking::TextMatch::at_character(
+                &text,
+                position.saturating_sub(1),
+                if position == 0 { 0 } else { query_chars },
+            );
+            let excerpt = chunking::excerpt(
+                &text,
+                chunking::Layout::from_mime(&mime),
+                hit,
+                120,
+                500 + query_chars,
+            );
             hits.push(KnowledgeSearchHit {
                 document_id,
                 document_name,
-                content,
-                start_char,
+                content: excerpt.content.to_owned(),
+                start_char: excerpt.start_char,
+                version: knowledge_text_version(&text),
             });
         }
         Ok(hits)
