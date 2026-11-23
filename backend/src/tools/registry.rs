@@ -94,9 +94,23 @@ impl ToolRegistry {
         registry
     }
 
+    pub fn register_software(&mut self, runtime: Arc<crate::software::SoftwareRuntime>) {
+        for tool in super::software::software_tools(runtime) {
+            self.register(tool);
+        }
+    }
+
     /// Register a tool
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
+    }
+
+    pub fn filtered(&self, keep: impl Fn(&str) -> bool) -> Self {
+        let mut filtered = Self::new_with_process_registry(self.process_registry());
+        for tool in self.all().into_iter().filter(|tool| keep(tool.name())) {
+            filtered.register(tool.clone());
+        }
+        filtered
     }
 
     /// Get a tool by name

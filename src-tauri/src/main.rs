@@ -20,6 +20,8 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{Emitter, Manager};
 use tracing;
 mod floating;
+mod software;
+mod software_bridge;
 
 const BACKEND_START_TIMEOUT: Duration = Duration::from_secs(8);
 const BACKEND_HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -138,9 +140,14 @@ fn get_control_session_token(state: tauri::State<'_, ControlSessionState>) -> St
 
 #[tauri::command]
 fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(100));
-        app.restart();
+    let host = app
+        .state::<std::sync::Arc<software::NativeSoftwareHost>>()
+        .inner()
+        .clone();
+    tauri::async_runtime::spawn(async move {
+        if software_bridge::restore_before_exit(&app, host).await {
+            app.restart();
+        }
     });
     Ok(())
 }
@@ -214,11 +221,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show-main" => show_main(app),
-            "hide-main" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
-                }
-            }
+            "hide-main" => software_bridge::hide_main(app),
             "show-floating" | "hide-floating" => {
                 for label in ["call-overlay", "monitor-overlay"] {
                     if let Some(window) = app.get_webview_window(label) {
@@ -230,7 +233,18 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     }
                 }
             }
-            "quit-app" => app.exit(0),
+            "quit-app" => {
+                let app = app.clone();
+                let host = app
+                    .state::<std::sync::Arc<software::NativeSoftwareHost>>()
+                    .inner()
+                    .clone();
+                tauri::async_runtime::spawn(async move {
+                    if software_bridge::restore_before_exit(&app, host).await {
+                        app.exit(0);
+                    }
+                });
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -284,6 +298,8 @@ fn main() {
     // Start the backend server on a background thread with its own tokio runtime.
     // The shared token stays in memory and is never logged. Startup failures are
     // reported as bounded, redacted diagnostics; the desktop shell still opens.
+    let software_host = std::sync::Arc::new(software::NativeSoftwareHost::new());
+    let backend_software_host = software_host.clone();
     let (startup_tx, startup_rx) = mpsc::sync_channel(1);
     thread::spawn(move || {
         let rt = match tokio::runtime::Runtime::new() {
@@ -297,8 +313,11 @@ fn main() {
             }
         };
         rt.block_on(async {
-            match yilian_backend::serve_in_background_with_control_token(backend_control_token)
-                .await
+            match yilian_backend::serve_in_background_with_software(
+                backend_control_token,
+                backend_software_host,
+            )
+            .await
             {
                 Ok(port) => {
                     tracing::info!("Backend server started on port {}", port);
@@ -343,16 +362,22 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(ControlSessionState(control_token))
+        .manage(software_host.clone())
         .invoke_handler(tauri::generate_handler![
             get_control_session_token,
             restart_application,
+            software_bridge::native_software_bind,
+            software_bridge::native_software_recognize_crop,
             floating::open_floating_surface,
             floating::resize_floating_surface,
             floating::position_floating_surface,
             floating::close_floating_surface,
             floating::hide_floating_surface
         ])
-        .on_window_event(|window, event| {
+        .on_window_event(move |window, event| {
+            if !software_bridge::window_event(window, event, &software_host) {
+                return;
+            }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 window.app_handle().exit(0);
             } else if window.label() == "main" {

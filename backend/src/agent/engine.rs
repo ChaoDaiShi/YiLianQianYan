@@ -927,8 +927,16 @@ async fn run_react_loop_inner(
                         return Err("已取消".to_string());
                     }
 
-                    let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                    let mut args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
+
+                    if let Some(tool) = tool_registry.get(&tc.function.name) {
+                        if let Err(error) = tool.prepare_call_arguments(conversation_id, &mut args)
+                        {
+                            state.add_tool_result(tc.id.clone(), tc.function.name.clone(), error);
+                            continue;
+                        }
+                    }
 
                     let dispatch = dispatch_tool_call(
                         state,

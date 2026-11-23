@@ -11,6 +11,7 @@ pub mod registry;
 pub mod screenshot;
 pub mod search;
 pub mod skill;
+pub mod software;
 pub mod subagent;
 pub mod trait_def;
 pub mod upscale;

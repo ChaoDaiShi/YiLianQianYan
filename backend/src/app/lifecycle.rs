@@ -36,6 +36,10 @@ pub async fn serve(addr: &str) {
 /// MCP sessions and managed child processes are closed before the process
 /// exits so no external server or child process is orphaned.
 pub async fn shutdown(server: &AppServer) {
+    let software = Arc::clone(&server.software_runtime);
+    if let Ok(Err(error)) = tokio::task::spawn_blocking(move || software.shutdown()).await {
+        tracing::warn!(%error, "Software window restoration could not be confirmed");
+    }
     server.channel_runtime.shutdown().await;
     server.cloud_revocation_retry_cancel.cancel();
     server.mcp_runtime_manager.shutdown_all().await;
@@ -45,18 +49,32 @@ pub async fn shutdown(server: &AppServer) {
 /// Start the HTTP server on a background task (for Tauri embedding).
 /// Returns the port it's listening on.
 pub async fn serve_in_background() -> u16 {
-    serve_in_background_inner(None)
+    serve_in_background_inner(None, None)
         .await
         .expect("Failed to start server")
 }
 
 pub async fn serve_in_background_with_control_token(token: String) -> Result<u16, String> {
     let control_session = ControlSession::new(token).map_err(|error| error.to_string())?;
-    serve_in_background_inner(Some(control_session)).await
+    serve_in_background_inner(Some(control_session), None).await
 }
 
-async fn serve_in_background_inner(control_session: Option<ControlSession>) -> Result<u16, String> {
-    let (_server, router) = bootstrap::create_server_with_control_session(control_session).await?;
+pub async fn serve_in_background_with_software(
+    token: String,
+    host: Arc<dyn crate::software::SoftwareHost>,
+) -> Result<u16, String> {
+    let session = ControlSession::new(token).map_err(|error| error.to_string())?;
+    serve_in_background_inner(Some(session), Some(host)).await
+}
+async fn serve_in_background_inner(
+    control_session: Option<ControlSession>,
+    software: Option<Arc<dyn crate::software::SoftwareHost>>,
+) -> Result<u16, String> {
+    let (server, router) = bootstrap::create_server_with_control_session(control_session).await?;
+    if let Some(host) = software {
+        server.software_runtime.install_host(host);
+        server.invalidate_capability_registry();
+    }
 
     let addr = std::env::var("YILIAN_HOST").unwrap_or_else(|_| "127.0.0.1:9420".to_string());
     let port: u16 = addr

@@ -73,6 +73,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .merge(crate::api::conversation_modes::router())
         .merge(crate::api::settings_canvas::router())
         .merge(crate::api::plugin_settings::router())
+        .merge(crate::api::software::router())
         .route("/api/logs/tools", get(logs::get_tool_logs))
         .merge(crate::api::connector_messages::router())
         .merge(crate::api::access_rules::router())

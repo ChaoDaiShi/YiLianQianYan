@@ -132,6 +132,10 @@ pub async fn delete_workspace(
     let id = WorkspaceId::new(id).map_err(|error| map_field_error(&error))?;
     let now = chrono::Utc::now().timestamp_millis();
     server
+        .software_runtime
+        .revoke_workspace(id.as_str())
+        .map_err(|error| (StatusCode::CONFLICT, error.to_string()))?;
+    server
         .db
         .archive_workspace(&id, now)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;

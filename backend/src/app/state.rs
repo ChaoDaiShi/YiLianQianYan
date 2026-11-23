@@ -120,6 +120,7 @@ pub struct DiscoveredSubagent {
 
 /// Shared application server state
 pub struct AppServer {
+    pub software_runtime: Arc<crate::software::SoftwareRuntime>,
     pub db: Database,
     pub app_data_dir: std::path::PathBuf,
     pub config: Arc<RwLock<AppConfig>>,
@@ -485,6 +486,7 @@ impl AppServer {
             &self.workspace_root,
             Arc::clone(&self.managed_process_registry),
         );
+        base_registry.register_software(Arc::clone(&self.software_runtime));
         base_registry.register(Arc::new(crate::tools::LoadSkillTool::with_discovery(
             Arc::clone(&self.skill_discovery),
         )));

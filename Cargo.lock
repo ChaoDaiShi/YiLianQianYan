@@ -5222,6 +5222,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -6852,12 +6853,17 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 name = "yi-lian-qian-yan"
 version = "1.2.0"
 dependencies = [
+ "base64 0.22.1",
+ "image",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "windows 0.61.3",
  "yilian-backend",
 ]
 

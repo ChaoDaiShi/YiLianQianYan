@@ -42,9 +42,10 @@ fn requests_desktop_text_input(content: &str) -> bool {
         ]
         .iter()
         .any(|term| contains_ascii_word(&normalized, term));
-    let has_text_action = ["输入", "键入", "打字", "写入", "写下", "填写"]
+    let instruction = normalized.replace("输入框", "控件");
+    let has_text_action = ["输入", "键入", "打字", "写入", "写下", "填写", "填入"]
         .iter()
-        .any(|term| normalized.contains(term))
+        .any(|term| instruction.contains(term))
         || ["type", "enter", "write"]
             .iter()
             .any(|term| contains_ascii_word(&normalized, term));
@@ -53,20 +54,48 @@ fn requests_desktop_text_input(content: &str) -> bool {
 }
 
 pub fn evaluate_completion(messages: &[ChatMessage]) -> CompletionCheck {
-    let Some(latest_user_index) = messages.iter().rposition(|message| message.role == "user")
+    evaluate_turn_completion(messages, None)
+}
+
+pub(crate) fn evaluate_turn_completion(
+    messages: &[ChatMessage],
+    turn_user_start: Option<usize>,
+) -> CompletionCheck {
+    let Some(start) =
+        turn_user_start.or_else(|| messages.iter().rposition(|message| message.role == "user"))
     else {
         return CompletionCheck::Ready;
     };
-    let user_content = messages[latest_user_index].content.as_deref().unwrap_or("");
-    if !requests_desktop_text_input(user_content) {
+    let turn = &messages[start..];
+    if turn.iter().skip(1).any(|message| {
+        message.role == "user"
+            && message
+                .content
+                .as_deref()
+                .is_some_and(crate::interaction::chat_understanding::explicit_read_only)
+    }) {
         return CompletionCheck::Ready;
     }
+    let Some(request_index) = turn.iter().rposition(|message| {
+        message.role == "user"
+            && message
+                .content
+                .as_deref()
+                .is_some_and(requests_desktop_text_input)
+    }) else {
+        return CompletionCheck::Ready;
+    };
 
-    let mut pending_keyboard_calls = HashSet::new();
-    for message in &messages[latest_user_index + 1..] {
+    let mut pending_text_calls = HashSet::new();
+    for message in &turn[request_index + 1..] {
         if message.role == "assistant" {
             for tool_call in message.tool_calls.as_deref().unwrap_or_default() {
-                if tool_call.function.name != "keyboard" {
+                let name = tool_call.function.name.as_str();
+                if matches!(name, "software_wechat_draft") {
+                    pending_text_calls.insert((tool_call.id.as_str(), name));
+                    continue;
+                }
+                if !matches!(name, "keyboard" | "software_control") {
                     continue;
                 }
                 let Ok(arguments) =
@@ -78,22 +107,34 @@ pub fn evaluate_completion(messages: &[ChatMessage]) -> CompletionCheck {
                     && arguments["target_application"]
                         .as_str()
                         .is_some_and(|target| !target.trim().is_empty());
-                if is_targeted_text_input {
-                    pending_keyboard_calls.insert(tool_call.id.as_str());
+                if (name == "keyboard" && is_targeted_text_input)
+                    || (name == "software_control" && arguments["action"] == "set_value")
+                {
+                    pending_text_calls.insert((tool_call.id.as_str(), name));
                 }
             }
-        } else if message.role == "tool"
-            && message.name.as_deref() == Some("keyboard")
-            && message
-                .tool_call_id
-                .as_deref()
-                .is_some_and(|id| pending_keyboard_calls.contains(id))
-            && message
-                .content
-                .as_deref()
-                .is_some_and(|content| content.contains(VERIFIED_DESKTOP_TEXT_INPUT_MARKER))
-        {
-            return CompletionCheck::Ready;
+        } else if let ("tool", Some(id), Some(name), Some(content)) = (
+            message.role.as_str(),
+            message.tool_call_id.as_deref(),
+            message.name.as_deref(),
+            message.content.as_deref(),
+        ) {
+            if pending_text_calls.contains(&(id, name)) {
+                let confirmed = match name {
+                    "software_wechat_draft" => {
+                        content.lines().next() == Some("WECHAT_DRAFT_VERIFIED")
+                    }
+                    "software_control" => {
+                        content.lines().next()
+                            == Some(crate::tools::software::VERIFIED_SOFTWARE_TEXT_INPUT_MARKER)
+                    }
+                    "keyboard" => content.contains(VERIFIED_DESKTOP_TEXT_INPUT_MARKER),
+                    _ => false,
+                };
+                if confirmed {
+                    return CompletionCheck::Ready;
+                }
+            }
         }
     }
 

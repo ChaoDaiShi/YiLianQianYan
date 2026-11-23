@@ -91,10 +91,13 @@ impl AppServer {
         }
 
         let managed_process_registry = Arc::new(ManagedProcessRegistry::new());
+        let software_runtime =
+            Arc::new(crate::software::SoftwareRuntime::new(db.clone_connection()));
         let mut tool_registry = ToolRegistry::with_defaults_and_process_registry(
             workspace_root,
             Arc::clone(&managed_process_registry),
         );
+        tool_registry.register_software(Arc::clone(&software_runtime));
         tool_registry.register(Arc::new(AiSearchTool::new(
             db.clone_connection(),
             Arc::clone(&secret_store),
@@ -164,6 +167,7 @@ impl AppServer {
             .map_err(|error| format!("register presence command: {error}"))?;
 
         let server = Self {
+            software_runtime,
             db: db.clone(),
             app_data_dir: infer_app_data_dir(db_path),
             config,

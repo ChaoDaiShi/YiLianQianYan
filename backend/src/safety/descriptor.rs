@@ -170,6 +170,32 @@ fn builtin_descriptor_profile(
     );
 
     let value = match tool_name {
+        "software_sessions" | "software_observe" | "software_control" | "software_wechat_draft" => {
+            let observe = matches!(tool_name, "software_sessions" | "software_observe");
+            match descriptor.resources.as_slice() {
+                [ResourceDescriptor::Desktop {
+                    action,
+                    target: Some(target),
+                }] if action == tool_name && target.starts_with("software:") => profile(
+                    vec![permission(
+                        if observe {
+                            PermissionId::DesktopObserve
+                        } else {
+                            PermissionId::DesktopInteract
+                        },
+                        ResourceScope::DesktopTarget,
+                    )],
+                    RiskLevel::High,
+                    if observe {
+                        vec![]
+                    } else {
+                        vec![SideEffectKind::DesktopMutation]
+                    },
+                ),
+                _ => return Err(invalid_resources()),
+            }
+        }
+
         "read_file" if single_file => profile(
             vec![permission(
                 PermissionId::FilesystemRead,

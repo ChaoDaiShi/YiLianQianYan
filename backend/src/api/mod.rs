@@ -47,6 +47,7 @@ pub(crate) mod settings;
 pub(crate) mod settings_canvas;
 pub(crate) mod skill_candidates;
 pub(crate) mod skills_route;
+pub(crate) mod software;
 pub(crate) mod subagents;
 pub(crate) mod system;
 pub(crate) mod task_world;

@@ -819,7 +819,6 @@ pub async fn chat_handler(
     // Build one MCP-aware runtime registry snapshot for this whole chat run.
     // It is used by BOTH the LLM tool definitions and the Security Gateway so
     // the LLM, evaluation, and execution all see the same tool set.
-    let tool_registry = runtime.tools.clone();
     let mode = req
         .options
         .workspace_mode
@@ -845,6 +844,64 @@ pub async fn chat_handler(
             "当前会话模式",
         ))
         .await;
+    let history = db.load_chat_messages(&conv_id).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "chat_history_invalid",
+            error,
+        )
+    })?;
+    if !channel_context {
+        use crate::interaction::chat_understanding::{understand_with_software, Scope};
+        let registrations = server
+            .software_runtime
+            .chat_sessions(&conv_id)
+            .unwrap_or_default();
+        let names: Vec<_> = registrations
+            .iter()
+            .flat_map(|(registration, _)| {
+                let stem = std::path::Path::new(&registration.config.executable)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str());
+                std::iter::once(registration.config.name.clone()).chain(stem.map(str::to_owned))
+            })
+            .collect();
+        let understanding = understand_with_software(
+            &message,
+            history
+                .iter()
+                .rev()
+                .find(|item| item.role == "user")
+                .and_then(|item| item.content.as_deref()),
+            !req.resource_ids.is_empty(),
+            false,
+            mode,
+            &names,
+        );
+        if matches!(
+            understanding.scope,
+            Scope::WechatDraft | Scope::SoftwareRead | Scope::SoftwareControl
+        ) {
+            runtime.tools = Arc::new(runtime.tools.filtered(|name| {
+                matches!(
+                    (understanding.scope, name),
+                    (_, "ask_user")
+                        | (Scope::WechatDraft, "software_wechat_draft")
+                        | (
+                            Scope::SoftwareRead | Scope::SoftwareControl,
+                            "software_sessions" | "software_observe"
+                        )
+                        | (Scope::SoftwareControl, "software_control")
+                )
+            }));
+            runtime.prompt.push_str("\n\n");
+            runtime.prompt.push_str(match understanding.scope {
+                Scope::WechatDraft => "直接用 software_wechat_draft 按用户要求写入或更改当前微信草稿，仅在回读成功后确认。",
+                _ => "先用 software_observe 核对指定窗口。读取当前微信会话时传 read_chat=true，包括最小化窗口。只有通过审批并核对实际效果才能报告软件操作完成。",
+            });
+        }
+    }
+    let tool_registry = runtime.tools.clone();
     let mut system_prompt = format!("{}\n\n{}", runtime.prompt, mode.prompt());
 
     // Merge workflow context if workflow_id is provided
@@ -980,13 +1037,6 @@ pub async fn chat_handler(
     // Build agent state from history before persisting the current user message.
     let mut agent_state = AgentState::new(system_prompt);
     agent_state.goal_ref = conversation_goal_ref;
-    let history = db.load_chat_messages(&conv_id).map_err(|error| {
-        chat_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "chat_history_invalid",
-            error,
-        )
-    })?;
     agent_state.load_history(history);
     agent_state.compaction_checkpoint =
         db.load_conversation_compaction(&conv_id).map_err(|error| {

@@ -13,6 +13,8 @@ use crate::safety::{describe_builtin_tool, DescriptorError, ToolSecurityDescript
 pub struct ToolExecutionContext {
     pub(crate) managed_process_registry: crate::isolation::SharedManagedProcessRegistry,
     pub(crate) tool_call_id: String,
+    conversation_id: Option<String>,
+    authorization_epoch: Option<u64>,
     pub(crate) authorized_resources: Vec<crate::safety::grant::AuthorizedResource>,
 }
 
@@ -25,8 +27,26 @@ impl ToolExecutionContext {
         Self {
             managed_process_registry,
             tool_call_id: tool_call_id.into(),
+            conversation_id: None,
+            authorization_epoch: None,
             authorized_resources,
         }
+    }
+
+    pub(crate) fn with_conversation_id(mut self, conversation_id: String) -> Self {
+        self.conversation_id = Some(conversation_id);
+        self
+    }
+    pub(crate) fn conversation_id(&self) -> Option<&str> {
+        self.conversation_id.as_deref()
+    }
+
+    pub(crate) fn with_authorization_epoch(mut self, epoch: Option<u64>) -> Self {
+        self.authorization_epoch = epoch;
+        self
+    }
+    pub(crate) fn authorization_epoch(&self) -> Option<u64> {
+        self.authorization_epoch
     }
 
     pub(crate) fn authorized_network(
@@ -207,6 +227,16 @@ pub struct ToolInfo {
 pub trait Tool: Send + Sync {
     /// Unique tool name (used as the function name in LLM tool calls)
     fn name(&self) -> &str;
+    fn prepare_call_arguments(
+        &self,
+        _conversation: &str,
+        _args: &mut serde_json::Value,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    fn authorization_epoch(&self) -> Option<u64> {
+        None
+    }
 
     /// Human-readable description for the LLM
     fn description(&self) -> &str;

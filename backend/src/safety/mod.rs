@@ -18,6 +18,7 @@ pub mod grant;
 pub mod permission;
 pub mod policy;
 pub mod policy_engine;
+pub mod production_gateway;
 pub mod rbac;
 pub mod redaction;
 pub mod sandbox;

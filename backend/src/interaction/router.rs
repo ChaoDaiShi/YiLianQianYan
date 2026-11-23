@@ -322,6 +322,10 @@ fn normalize(value: &str) -> String {
         .collect()
 }
 
+pub(crate) fn text_task_command(utterance: &str) -> Option<String> {
+    task_command(&normalize(utterance))
+}
+
 fn task_command(utterance: &str) -> Option<String> {
     let command = if matches!(
         utterance,

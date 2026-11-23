@@ -301,9 +301,13 @@ impl SecurityExecutionGateway {
     where
         F: FnOnce(),
     {
+        let authorization_epoch = self
+            .tool_registry
+            .get(&request.tool_name)
+            .and_then(|tool| tool.authorization_epoch());
         match self.evaluate_with_role(request, role, final_risk)? {
             PolicyDecision::Allow(context) => {
-                self.execute_allowed(request, context, on_execution_start)
+                self.execute_allowed(request, context, authorization_epoch, on_execution_start)
                     .await
             }
             PolicyDecision::RequireApproval(context) => {
@@ -349,6 +353,10 @@ impl SecurityExecutionGateway {
         role: BuiltInRole,
         approved_risk: RiskLevel,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
+        let authorization_epoch = self
+            .tool_registry
+            .get(&request.tool_name)
+            .and_then(|tool| tool.authorization_epoch());
         let evaluated = self.evaluate_core(request, role, approved_risk)?;
         let mut decision = match evaluated {
             PolicyDecision::Deny(context) => PolicyDecision::Deny(context),
@@ -382,7 +390,10 @@ impl SecurityExecutionGateway {
 
         self.record_policy_decided(request, &decision)?;
         match decision {
-            PolicyDecision::Allow(context) => self.execute_allowed(request, context, || {}).await,
+            PolicyDecision::Allow(context) => {
+                self.execute_allowed(request, context, authorization_epoch, || {})
+                    .await
+            }
             PolicyDecision::Deny(context) => {
                 self.record_capability_usage_from_outcome(
                     request,
@@ -405,6 +416,7 @@ impl SecurityExecutionGateway {
         &self,
         request: &SecurityExecutionRequest,
         context: DecisionContext,
+        authorization_epoch: Option<u64>,
         on_execution_start: F,
     ) -> Result<SecurityExecutionOutcome, SecurityGatewayError>
     where
@@ -416,7 +428,9 @@ impl SecurityExecutionGateway {
             std::sync::Arc::clone(&self.managed_process_registry),
             request.tool_call_id.clone(),
             context.authorized_resources.clone(),
-        );
+        )
+        .with_conversation_id(request.conversation_id.clone())
+        .with_authorization_epoch(authorization_epoch);
         let start_time = std::time::Instant::now();
         let tool_result = match self
             .tool_registry

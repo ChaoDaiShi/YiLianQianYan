@@ -3,6 +3,9 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import GlobalVoiceHost, { resolveVoiceContextForRoute } from "../../features/voice/GlobalVoiceHost";
 import AppShell from "../../components/layout/AppShell";
 import ChatPage from "../../pages/ChatPage";
+import SoftwareMonitorNotices from "../../features/software/SoftwareMonitorNotices";
+
+const SoftwarePage = lazy(() => import("../../features/software/SoftwarePage"));
 
 const ConnectorsPage = lazy(() => import("../../features/connectors/ConnectorsPage"));
 const MorePage = lazy(() => import("../../pages/MorePage"));
@@ -27,6 +30,7 @@ export default function WorkspaceSurface() {
   const { pathname } = useLocation();
   return (
     <GlobalVoiceHost contextPatch={resolveVoiceContextForRoute(pathname, "standalone")}>
+    <SoftwareMonitorNotices />
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/chat" replace />} />
@@ -35,6 +39,7 @@ export default function WorkspaceSurface() {
         <Route path="connectors" element={<ConnectorsPage />} />
         <Route path="more" element={<MorePage />} />
         <Route path="automations" element={<AutomationsPage />} />
+        <Route path="software" element={<SoftwarePage />} />
         <Route path="channels" element={<ChannelsPage />} />
         <Route path="more/plugins/:pluginId/:featureId" element={<PluginFeaturePage />} />
         <Route path="system" element={<SystemPage />} />

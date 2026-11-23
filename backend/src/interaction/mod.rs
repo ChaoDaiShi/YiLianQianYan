@@ -6,6 +6,7 @@
 //! native application capability.
 
 mod approval_adapter;
+pub mod chat_understanding;
 mod conversation_adapter;
 mod graph_proposal;
 mod narration;

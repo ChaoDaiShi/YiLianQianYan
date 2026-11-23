@@ -203,6 +203,60 @@ impl DefaultVerifier {
             VerificationResult::failure("目标窗口未能显示在桌面前台", None)
         }
     }
+    fn verify_software(&self, tool_name: &str, result: &ToolResult) -> VerificationResult {
+        let proof = result.structured.as_ref();
+        let verified = result.ok
+            && proof.is_some_and(|proof| {
+                if proof["state"] != "verified"
+                    || proof["verification_scope"] != "software_window_interaction"
+                {
+                    return false;
+                }
+                let data = &proof["software"];
+                match tool_name {
+                    "software_sessions" => data["sessions"].is_array(),
+                    "software_observe" => {
+                        let observation = &data["observation"];
+                        if observation["source"] == "window_ocr" {
+                            return observation["visible_text"]
+                                .as_str()
+                                .is_some_and(|s| !s.trim().is_empty())
+                                && observation["target"]["session_id"].is_string();
+                        }
+                        if observation["source"] == "wechat_uia" {
+                            let conversation = &observation["conversation"];
+                            return observation["target"]["session_id"].is_string()
+                                && conversation["title"]
+                                    .as_str()
+                                    .is_some_and(|title| !title.trim().is_empty())
+                                && conversation["messages"].as_array().is_some_and(|rows| {
+                                    rows.len() <= 24 && rows.iter().all(|row| row.is_string())
+                                })
+                                && conversation["minimized"].is_boolean();
+                        }
+                        observation["id"].as_str().is_some_and(|v| !v.is_empty())
+                            && observation["controls"]
+                                .as_array()
+                                .is_some_and(|v| v.len() <= 64)
+                    }
+                    "software_wechat_draft" => data["draft_text_verified"] == true,
+                    "software_control" => {
+                        data["session"]["id"]
+                            .as_str()
+                            .is_some_and(|v| !v.is_empty())
+                            && data["session"]["window"]["identity"]["process_started_at"]
+                                .as_str()
+                                .is_some_and(|value| value.parse::<u64>().is_ok())
+                    }
+                    _ => false,
+                }
+            });
+        if verified {
+            VerificationResult::success("Native software host confirmed the exact interaction; application business completion requires separate evidence", None)
+        } else {
+            VerificationResult::failure("Software operation lacks current native interaction evidence or has an unknown result", None)
+        }
+    }
 }
 
 #[async_trait]
@@ -219,6 +273,10 @@ impl Verifier for DefaultVerifier {
             "edit_file" => self.verify_edit_file(args, tool_result),
             "process" => self.verify_process(args, tool_result),
             "open_url" | "open_application" => self.verify_gui_launch(tool_result),
+            "software_sessions"
+            | "software_observe"
+            | "software_wechat_draft"
+            | "software_control" => self.verify_software(tool_name, tool_result),
             _ => self.verify_default(tool_result),
         }
     }
