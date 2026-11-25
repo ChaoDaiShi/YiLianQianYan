@@ -117,7 +117,7 @@ export async function workbenchRevision4({page,frontendPort,backendPort,controlT
   const preview=await api("POST","/api/capabilities/imports/inspect",{format:"zip",data_base64:zip});
   const installed=await api("POST","/api/capabilities/imports/confirm",{preview_id:preview.preview_id});
   await api("PUT","/api/capabilities/imports/qa.settings",{revision:installed.revision,action:"enable"});
-  await navigate("/settings");
+  await navigate("/settings?view=canvas");
   assert.equal(await page.getByRole("button",{name:"展开节点管理器",exact:true}).getAttribute("aria-expanded"),"false");
   const data=await api("GET","/api/settings/canvas");assert.equal(data.state.connected_node_ids.length,14);
   await page.getByRole("button",{name:"展开节点管理器",exact:true}).click();

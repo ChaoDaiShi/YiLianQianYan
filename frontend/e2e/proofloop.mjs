@@ -78,8 +78,8 @@ export async function proofloop({ page, frontendPort, backendPort, controlToken,
     assert.equal(fixture.caps.filter((item) => item.kind === 'mcp_tool').length, 2);
     profile = await api('POST', '/api/llm/models', { provider: 'custom', label: 'ProofLoop controlled fixture', model: 'proofloop-loopback', base_url: `http://127.0.0.1:${model.address().port}`, api_format: 'openai', api_key: 'local-test-placeholder', api_key_env: '', temperature: 0, max_tokens: 2048, invoke_timeout_ms: 10000 }, 201);
     await api('POST', `/api/llm/models/${profile.id}/verify`); await api('POST', `/api/llm/models/${profile.id}/activate`);
-    await page.goto(`http://127.0.0.1:${frontendPort}/tasks`, { waitUntil: 'networkidle' });
-    await page.getByRole('button', { name: '证行目标编译', exact: true }).click();
+    await page.goto(`http://127.0.0.1:${frontendPort}/tasks?mode=goal&workspace=${encodeURIComponent(workspace.id)}`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('dialog', { name: '规划任务画布', exact: true }).waitFor();
     await page.getByRole('heading', { name: '从目标生成可验证任务' }).waitFor();
     await page.locator('textarea').fill('收集受控资料，生成可追溯报告，并通过成果及人工复核');
     await page.getByRole('button', { name: '清空', exact: true }).click();

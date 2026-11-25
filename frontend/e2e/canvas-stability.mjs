@@ -162,7 +162,7 @@ export async function canvasStability({ page, backendPort, frontendPort, control
   assert.equal(await camera(), userCamera);
   await page.setViewportSize({ width: 1800, height: 1000 });
   assert.equal(await camera(), userCamera);
-  await page.getByRole("button", { name: "任务中心", exact: true }).click();
+  await page.getByRole("button", { name: "工作流列表", exact: true }).click();
   await page.goto(`http://127.0.0.1:${frontendPort}/task-world/${graphId}`, { waitUntil: "domcontentloaded" });
   await node("A").waitFor();
   assert.equal(await camera(), userCamera);

@@ -41,7 +41,8 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
     last_received_at: null, last_event: null, last_error: null, created_at: now, updated_at: now,
     callback_path: "/api/channel-callbacks/channel-qq-empty", credentials_configured: true,
   };
-  const channels = new Map([[qq.id, qq], [wechat.id, wechat], [wechatIlink.id, wechatIlink], [qqEmpty.id, qqEmpty]]);
+  const feishu = { ...wechat, id: "channel-feishu", name: "飞书 · 项目协作", provider: "feishu", connection_mode: "websocket", self_id: null, callback_path: "/api/channel-callbacks/channel-feishu" };
+  const channels = new Map([[qq.id, qq], [wechat.id, wechat], [wechatIlink.id, wechatIlink], [feishu.id, feishu]]);
   const conversations = [
     { id: "session-private-1", channel_id: qq.id, peer_id: "2001", peer_type: "private", conversation_id: "conversation-friend-1", created_at: now - 60000 },
     { id: "session-group-1", channel_id: qq.id, peer_id: "3001", peer_type: "group", conversation_id: "conversation-group-1", created_at: now - 120000 },
@@ -50,6 +51,8 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
     { id: "message-private-1", channel_id: qq.id, conversation_id: "conversation-friend-1", event_id: "event-private-1", external_message_id: "platform-10", sender_id: "2001", peer_type: "private", peer_id: "2001", content: "这周的活动安排有更新吗？", draft_reply: "我来把最新安排整理给你。", status: "awaiting_send", send_mode: null, error: null, reply_message_id: null, approved_at: null, created_at: now - 45000, updated_at: now - 45000 },
     { id: "message-group-1", channel_id: qq.id, conversation_id: "conversation-group-1", event_id: "event-group-1", external_message_id: "platform-11", sender_id: "2002", peer_type: "group", peer_id: "3001", content: "请帮忙看一下活动时间。", draft_reply: null, status: "queued", send_mode: null, error: null, reply_message_id: null, approved_at: null, created_at: now - 90000, updated_at: now - 90000 },
   ];
+  messages.push({ ...messages[0], id: "message-private-earlier", event_id: "event-private-earlier", external_message_id: "platform-9", content: "活动资料已经发到群里了。", draft_reply: "收到，我晚一点看看。", status: "sent", send_mode: "manual", reply_message_id: "fixture-previous-receipt", approved_at: now - 180000, created_at: now - 240000, updated_at: now - 180000 });
+  messages.push({ ...messages[1], id: "message-group-2", event_id: "event-group-2", external_message_id: "platform-13", sender_id: "2001", content: "报名表已经更新好了。", created_at: now - 80000, updated_at: now - 80000 });
   const emptySessions = [];
   const emptyMessages = [];
   const directory = {
@@ -57,8 +60,9 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
     groups: [{ id: "3001", name: "活动小组", peer_type: "group" }],
     recent: [{ id: "2001", name: "林小雨", peer_type: "private" }, { id: "3001", name: "活动小组", peer_type: "group" }],
   };
-  let delayFriendsDirectoryOnce = true;
+  let delayFriendsDirectoryOnce = false;
   let delayAliceHistoryOnce = true;
+  let memberDirectoryReads = 0;
   let policy = {
     channel_id: qq.id, account_id: "", enabled: false, owner_ids: ["1001"], read_friends: true, read_groups: true,
     send_mode: "automatic", send_private_ids: ["2001"], send_group_ids: [], send_all_private: false, send_all_groups: false, updated_at: now,
@@ -68,9 +72,21 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   let automation = null;
   let login = null;
   let customPreset = null;
+  let emptyAccounts = true;
+  let failReplyMode = true;
   const sends = [];
   const manualSendActions = [];
   const approvedSends = [];
+
+  await page.route(/^https:\/\/(q1|p)\.qlogo\.cn\//, async route => {
+    const url = new URL(route.request().url());
+    const group = url.hostname === "p.qlogo.cn";
+    const member = url.searchParams.get("nk") === "2002";
+    const foreground = group ? "#385c7d" : member ? "#426753" : "#805070";
+    const background = group ? "#cbe7fa" : member ? "#ccebd7" : "#f5cee7";
+    const shapes = group ? '<circle cx="17" cy="16" r="5"/><circle cx="30" cy="16" r="5"/><path d="M8 34a9 9 0 0 1 18 0zm14 0a9 9 0 0 1 18 0z"/>' : '<circle cx="24" cy="17" r="7"/><path d="M11 37a13 13 0 0 1 26 0z"/>';
+    await route.fulfill({ contentType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" fill="${background}"/><g fill="${foreground}">${shapes}</g></svg>` });
+  });
 
   const fulfill = (route, body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   await page.route("**/api/**", async route => {
@@ -88,11 +104,14 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
     });
     if ((path === "/api/voice/session" || path === "/api/presence") && method === "GET") return fulfill(route, null);
     if (path === "/api/channels/providers" && method === "GET") return fulfill(route, { providers });
-    if (path === "/api/channels" && method === "GET") return fulfill(route, { channels: [...channels.values()] });
+    if (path === "/api/channels" && method === "GET") return fulfill(route, { channels: emptyAccounts ? [] : [...channels.values()] });
     if (path === "/api/channels/presets" && method === "GET") return fulfill(route, { presets: customPreset ? [...presets, customPreset] : presets });
     if (path === "/api/channels/presets" && method === "POST") {
       customPreset = { id: "preset-custom", ...request.postDataJSON(), builtin: false, created_at: now, updated_at: now };
       return fulfill(route, { preset: customPreset });
+    }
+    if (path === "/api/channels/presets/preset-custom/preview" && method === "POST") {
+      return fulfill(route, { reply: "受控本地试用回复", conversation_id: "preview-conversation" });
     }
     if (path === "/api/channels/channel-qq/sessions" && method === "GET") return fulfill(route, { sessions: conversations });
     if (path === "/api/channels/channel-qq/messages" && method === "GET") return fulfill(route, { messages });
@@ -100,11 +119,14 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
     if (path === "/api/channels/channel-wechat-onebot/messages" && method === "GET") return fulfill(route, { messages: [] });
     if (path === "/api/channels/channel-wechat-ilink/sessions" && method === "GET") return fulfill(route, { sessions: [] });
     if (path === "/api/channels/channel-wechat-ilink/messages" && method === "GET") return fulfill(route, { messages: [] });
+    if (path === "/api/channels/channel-feishu/sessions" && method === "GET") return fulfill(route, { sessions: [] });
+    if (path === "/api/channels/channel-feishu/messages" && method === "GET") return fulfill(route, { messages: [] });
     if (path === "/api/channels/channel-qq-empty/sessions" && method === "GET") {
       await new Promise(resolve => setTimeout(resolve, 120));
       return fulfill(route, { sessions: emptySessions });
     }
     if (path === "/api/channels/channel-qq-empty/messages" && method === "GET") return fulfill(route, { messages: emptyMessages });
+    if (path === "/api/software" && method === "GET") return fulfill(route, { available: false, registrations: [], sessions: [], history: [] });
     if (path === "/api/workspaces" && method === "GET") return fulfill(route, { workspaces: [{ id: "workspace-1", name: "个人工作区", description: "", root_path: null, status: "active", created_at: now, updated_at: now }] });
     if (path === "/api/automations" && method === "GET") return fulfill(route, { automations: automation ? [automation] : [] });
     if (path === "/api/automations" && method === "POST") {
@@ -147,6 +169,11 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
       }
       if (rest === "robot/directory" && method === "GET") {
         const kind = url.searchParams.get("kind");
+        if (kind === "members") {
+          assert.equal(url.searchParams.get("group_id"), "3001");
+          memberDirectoryReads += 1;
+          return fulfill(route, { items: [{ id: "2002", name: "活动负责人", peer_type: "private" }, { id: "2001", name: "小雨", peer_type: "private" }] });
+        }
         if (kind === "friends" && delayFriendsDirectoryOnce) {
           delayFriendsDirectoryOnce = false;
           await new Promise(resolve => setTimeout(resolve, 220));
@@ -205,7 +232,12 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
         messages.splice(index, 1, updated);
         return fulfill(route, { message: updated });
       }
-      if (rest === "reply-mode" && method === "POST") return fulfill(route, { channel: { ...qq, reply_mode: request.postDataJSON().reply_mode } });
+      if (rest === "reply-mode" && method === "POST") {
+        if (failReplyMode) return fulfill(route, { error: "受控回复模式保存失败" }, 400);
+        const updated = { ...channels.get(channelId), reply_mode: request.postDataJSON().reply_mode };
+        channels.set(channelId, updated);
+        return fulfill(route, { channel: updated });
+      }
     }
     return route.continue();
   });
@@ -253,50 +285,205 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   });
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto(`${origin}/channels`);
-  assert.equal(new URL(page.url()).pathname, "/channels");
+  await page.goto(`${origin}/more`);
+  assert.equal(await page.getByRole("link", { name: "消息工作台", exact: true }).count(), 0);
+  const openSoftwareChannels = async () => {
+    await page.getByRole("link", { name: "软件挂载", exact: true }).click();
+    await page.getByRole("button", { name: "登记软件", exact: true }).waitFor();
+    const categories = page.getByRole("navigation", { name: "软件分类", exact: true });
+    assert.equal(await page.locator(".page-header").getByRole("navigation", { name: "软件分类", exact: true }).count(), 0);
+    await categories.getByRole("link", { name: "桌面软件", exact: true }).waitFor();
+    await categories.getByRole("link", { name: "消息渠道", exact: true }).click();
+    await page.waitForURL(`${origin}/software/channels`);
+  };
+  await openSoftwareChannels();
   assert.equal(await page.title(), "忆涟千言");
   assert.equal(await page.locator(".vite-error-overlay").count(), 0);
   await page.getByRole("heading", { name: "消息工作台", exact: true }).waitFor();
-  await page.getByText("QQ · 昔涟", { exact: true }).waitFor();
-  await page.locator(".channel-session-list").getByRole("button", { name: /2001/ }).waitFor();
+  await page.getByRole("heading", { name: "从一个消息账号开始", exact: true }).waitFor();
+  assert.equal(await page.getByRole("link", { name: "消息渠道", exact: true }).getAttribute("aria-current"), "page");
+  const categoryTree = page.getByRole("navigation", { name: "软件分类", exact: true });
+  const platformList = categoryTree.getByRole("list", { name: "消息渠道平台", exact: true });
+  const selectPlatform = name => platformList.getByRole("button", { name, exact: true }).click();
+  await selectPlatform("飞书");
+  const addChannel = page.getByRole("button", { name: "添加渠道", exact: true });
+  assert.equal(await addChannel.count(), 1);
+  await addChannel.click();
+  const channelEditor = page.getByRole("dialog", { name: "添加消息渠道", exact: true });
+  assert.equal(await channelEditor.getByRole("combobox", { name: "平台模板", exact: true }).inputValue(), "feishu");
+  await channelEditor.getByRole("button", { name: "关闭添加消息渠道", exact: true }).click();
+  await selectPlatform("QQ");
+  emptyAccounts = false;
+  await page.getByRole("button", { name: "刷新消息工作台", exact: true }).click();
+  const accountPicker = page.getByRole("combobox", { name: "渠道账号", exact: true });
+  const channelAction = async name => {
+    await page.getByRole("button", { name: "渠道操作", exact: true }).click();
+    await page.getByRole("menu", { name: "渠道操作", exact: true }).getByRole("menuitem", { name, exact: true }).click();
+  };
+  const refreshWorkspace = () => channelAction("刷新消息工作台");
+  await page.getByRole("region", { name: "会话列表", exact: true }).waitFor();
+  assert.equal(await accountPicker.count(), 0);
+  const visibleAccounts = () => accountPicker.locator("option").evaluateAll(options => options.map(option => option.value));
+  await selectPlatform("微信");
+  assert.deepEqual(await visibleAccounts(), [wechat.id, wechatIlink.id]);
+  await selectPlatform("飞书");
+  assert.equal(await accountPicker.count(), 0);
+  await page.getByRole("button", { name: "渠道操作", exact: true }).click();
+  const channelMenu = page.getByRole("menu", { name: "渠道操作", exact: true });
+  await channelMenu.getByText(feishu.name, { exact: false }).waitFor();
+  await page.getByRole("heading", { name: "软件挂载", exact: true }).click();
+  await channelMenu.waitFor({ state: "hidden" });
+  await selectPlatform("QQ");
+  checks.push("software_mount_groups_channel_accounts_by_qq_wechat_and_feishu");
+  checks.push("account_picker_is_available_only_for_multiple_accounts_on_the_active_platform");
+  const qqBranch = platformList.locator(":scope > li").filter({ has: page.getByRole("button", { name: "QQ", exact: true }) });
+  await qqBranch.getByRole("region", { name: "会话列表", exact: true }).waitFor();
+  assert.equal(await qqBranch.getByRole("button", { name: "QQ", exact: true }).getAttribute("aria-expanded"), "true");
+  assert.equal(await platformList.getByRole("button", { name: "微信", exact: true }).getAttribute("aria-expanded"), "false");
+  assert.equal(await page.getByRole("region", { name: "聊天内容", exact: true }).getByRole("combobox", { name: "渠道账号", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("tablist", { name: "消息平台" }).count(), 0);
+  checks.push("active_platform_accounts_and_sessions_are_nested_in_one_sidebar");
+  const privateSession = page.locator(".channel-session-list").getByRole("button", { name: /林小雨/ });
+  const groupSession = page.locator(".channel-session-list").getByRole("button", { name: /活动小组/ });
+  await privateSession.waitFor();
+  await groupSession.waitFor();
+  const chatHeading = page.locator(".channel-main-heading");
+  await chatHeading.getByRole("heading", { name: "林小雨", exact: true }).waitFor();
+  await page.waitForFunction(() => [...document.querySelectorAll(".channel-session-list img, .channel-main-heading img")].filter(image => image.complete && image.naturalWidth > 0).length === 3);
+  assert.match(await privateSession.locator("img").getAttribute("src"), /q1\.qlogo\.cn\/g\?b=qq&nk=2001/);
+  assert.match(await groupSession.locator("img").getAttribute("src"), /p\.qlogo\.cn\/gh\/3001\/3001/);
+  assert.equal(await page.locator(".channel-session-list strong").allTextContents().then(names => names.includes("2001")), false);
+  const sessionSearch = page.getByRole("textbox", { name: "搜索会话", exact: true });
+  await sessionSearch.fill("2001");
+  assert.equal(await groupSession.count(), 0);
+  await privateSession.waitFor();
+  await sessionSearch.fill("活动小组");
+  await groupSession.waitFor();
+  assert.equal(await privateSession.count(), 0);
+  await sessionSearch.fill("");
+  await groupSession.click();
+  await chatHeading.getByRole("heading", { name: "活动小组", exact: true }).waitFor();
+  const groupThread = page.locator(".channel-thread-feed");
+  await groupThread.getByText("活动负责人", { exact: true }).waitFor();
+  await groupThread.getByText("小雨", { exact: true }).waitFor();
+  assert.equal(await groupThread.getByText("2002", { exact: true }).count(), 0);
+  await page.waitForFunction(() => [...document.querySelectorAll(".channel-thread-incoming img")].filter(image => image.complete && image.naturalWidth > 0).length === 2);
+  const memberAvatar = groupThread.locator(".channel-thread-entry").filter({ hasText: "请帮忙看一下活动时间。" }).locator("img");
+  assert.match(await memberAvatar.getAttribute("src"), /q1\.qlogo\.cn\/g\?b=qq&nk=2002/);
+  assert.equal(memberDirectoryReads, 1);
+  await capture("channels-robot-group-identity");
+  await privateSession.click();
+  await chatHeading.getByRole("heading", { name: "林小雨", exact: true }).waitFor();
+  checks.push("qq_sessions_and_titles_show_scoped_names_and_avatars_and_search_by_name_or_id");
+  checks.push("qq_group_messages_use_selected_group_member_names_and_personal_avatars");
+  const pendingMessage = page.locator(".channel-thread-entry").filter({ hasText: "这周的活动安排有更新吗？" }).locator(".channel-thread-message");
+  const replyBox = page.getByRole("textbox", { name: "回复正文", exact: true });
+  const openPendingReply = async () => {
+    await pendingMessage.waitFor();
+    assert.equal(await pendingMessage.getAttribute("aria-expanded"), "false");
+    assert.equal(await replyBox.count(), 0);
+    await pendingMessage.click();
+    await replyBox.waitFor();
+    assert.equal(await pendingMessage.getAttribute("aria-expanded"), "true");
+  };
+  await pendingMessage.waitFor();
+  assert.equal(await pendingMessage.getAttribute("aria-expanded"), "false");
+  assert.equal(await replyBox.count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await capture("channels-robot-conversation");
   checks.push("selected_account_conversations_show_fixture_messages_without_fake_unread_counts");
+  const previousReceipt = page.getByText(/fixture-previous-receipt/);
+  assert.equal(await previousReceipt.count(), 0);
+  const sentBubble = page.getByRole("button", { name: "收到，我晚一点看看。", exact: true });
+  await sentBubble.click();
+  await previousReceipt.waitFor();
+  await page.locator(".channel-thread-entry").filter({ hasText: "活动资料已经发到群里了。" }).locator(".channel-thread-message").click();
+  await previousReceipt.waitFor({ state: "hidden" });
+  checks.push("sent_history_hides_receipts_until_expanded");
+  await openPendingReply();
+  await page.getByRole("button", { name: "审阅并批准发送", exact: true }).waitFor();
+  await capture("channels-robot-reply-expanded");
+  await pendingMessage.click();
+  await replyBox.waitFor({ state: "hidden" });
+  assert.equal(approvedSends.length, 0);
+  checks.push("review_editor_starts_collapsed_and_expands_inline_without_sending");
+  assert.equal(await addChannel.count(), 0);
+  assert.equal(await page.getByRole("button", { name: "设置", exact: true }).count(), 0);
+  assert.equal(await page.locator(".channel-topbar").count(), 0);
+  assert.equal(await page.getByRole("button", { name: "机器人活动", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "通讯录", exact: true }).count(), 0);
+  const menuTrigger = page.getByRole("button", { name: "渠道操作", exact: true });
+  await menuTrigger.click();
+  await channelMenu.getByRole("menuitem", { name: "通讯录", exact: true }).waitFor();
+  await channelMenu.getByRole("menuitem", { name: "机器人活动", exact: true }).waitFor();
+  const triggerBox = await menuTrigger.boundingBox();
+  const menuBox = await channelMenu.boundingBox();
+  assert.ok(triggerBox && menuBox && Math.abs(menuBox.y - triggerBox.y - triggerBox.height) < 8 && menuBox.width < 220);
+  assert.equal(await page.getByRole("dialog", { name: "渠道操作", exact: true }).count(), 0);
+  await capture("channels-robot-channel-menu");
+  await page.keyboard.press("Escape");
+  await channelMenu.waitFor({ state: "hidden" });
+  assert.equal(await menuTrigger.evaluate(button => document.activeElement === button), true);
+  checks.push("qq_contacts_and_robot_activity_are_available_in_the_channel_menu");
+  await channelAction("设置");
+  const replySettings = page.getByRole("dialog", { name: "QQ 机器人设置", exact: true });
+  await replySettings.getByRole("button", { name: "开启自动回复", exact: true }).click();
+  await replySettings.getByRole("alert").filter({ hasText: "受控回复模式保存失败" }).waitFor();
+  assert.equal(channels.get(qq.id).reply_mode, "manual");
+  failReplyMode = false;
+  await replySettings.getByRole("button", { name: "开启自动回复", exact: true }).click();
+  await page.locator(".channel-chat-state").filter({ hasText: "自动回复" }).waitFor();
+  assert.equal(channels.get(qq.id).reply_mode, "automatic");
+  await replySettings.getByRole("button", { name: "改为审阅发送", exact: true }).click();
+  await replySettings.getByRole("button", { name: "开启自动回复", exact: true }).waitFor();
+  await replySettings.getByRole("button", { name: "关闭QQ 机器人设置", exact: true }).click();
+  assert.equal(channels.get(qq.id).reply_mode, "manual");
+  assert.equal(messages[0].status, "awaiting_send");
+  assert.equal(approvedSends.length, 0);
+  checks.push("empty_accounts_offer_one_add_action_and_reply_mode_changes_only_in_settings");
 
   await page.evaluate(() => { window.__channelsRobotFaults.failNextSessionListCount = 10; });
-  await page.getByRole("button", { name: "刷新消息工作台", exact: true }).click();
+  await refreshWorkspace();
   await page.getByRole("alert").filter({ hasText: "受控会话列表失败" }).waitFor();
   await page.evaluate(() => { window.__channelsRobotFaults.failNextSessionListCount = 0; });
-  await page.getByRole("button", { name: "刷新消息工作台", exact: true }).click();
-  await page.locator(".channel-session-list").getByRole("button", { name: /2001/ }).waitFor();
+  await refreshWorkspace();
+  await privateSession.waitFor();
   assert.equal(await page.getByRole("alert").filter({ hasText: "会话列表无法加载" }).count(), 0);
-  checks.push("topbar_refresh_recovers_the_session_rail_after_a_list_error");
+  checks.push("single_workspace_refresh_recovers_the_session_rail_after_a_list_error");
 
   conversations.push({ id: "session-private-2", channel_id: qq.id, peer_id: "2003", peer_type: "private", conversation_id: "conversation-friend-3", created_at: now - 30000 });
   messages.push({ id: "message-private-2", channel_id: qq.id, conversation_id: "conversation-friend-3", event_id: "event-private-2", external_message_id: "platform-12", sender_id: "2003", peer_type: "private", peer_id: "2003", content: "下周的安排还在确认吗？", draft_reply: null, status: "queued", send_mode: null, error: null, reply_message_id: null, approved_at: null, created_at: now - 20000, updated_at: now - 20000 });
-  await page.getByRole("button", { name: "刷新消息", exact: true }).click();
+  await refreshWorkspace();
   await page.locator(".channel-session-list").getByRole("button", { name: /2003/ }).waitFor();
   checks.push("new_inbound_peer_appears_in_the_rail_after_the_existing_message_poll");
 
   const unsavedReply = "这份回复还没有发送，切换后仍要保留。";
-  await page.getByRole("textbox", { name: "回复正文", exact: true }).fill(unsavedReply);
-  await page.locator(".channel-session-list").getByRole("button", { name: /3001/ }).click();
+  const waitForRestoredReply = async () => {
+    await openPendingReply();
+    await page.waitForFunction(expected =>
+      document.querySelector('textarea[aria-label="回复正文"]')?.value === expected, unsavedReply);
+  };
+  await openPendingReply();
+  await replyBox.fill(unsavedReply);
+  await pendingMessage.click();
+  await waitForRestoredReply();
+  await groupSession.click();
   await page.locator(".channel-thread-feed").getByText("请帮忙看一下活动时间。", { exact: true }).waitFor();
-  await page.locator(".channel-session-list").getByRole("button", { name: /2001/ }).click();
-  assert.equal(await page.getByRole("textbox", { name: "回复正文", exact: true }).inputValue(), unsavedReply);
-  await page.getByRole("button", { name: "通讯录", exact: true }).click();
-  await page.getByRole("button", { name: "会话", exact: true }).click();
-  assert.equal(await page.getByRole("textbox", { name: "回复正文", exact: true }).inputValue(), unsavedReply);
-  await page.locator(".channel-account-list").getByRole("button", { name: /微信 · Akasha/ }).click();
-  await page.locator(".channel-account-list").getByRole("button", { name: /QQ · 昔涟/ }).click();
-  assert.equal(await page.getByRole("textbox", { name: "回复正文", exact: true }).inputValue(), unsavedReply);
+  await privateSession.click();
+  await waitForRestoredReply();
+  await channelAction("通讯录");
+  await privateSession.click();
+  await waitForRestoredReply();
+  await selectPlatform("微信");
+  await accountPicker.selectOption(wechat.id);
+  await selectPlatform("QQ");
+  await waitForRestoredReply();
   checks.push("unsent_reply_draft_survives_message_account_and_section_switches");
 
-  await page.locator(".channel-account-list").getByRole("button", { name: /空会话测试/ }).click();
-  const emptyAccountListBox = await page.locator(".channel-account-list").boundingBox();
-  const emptyAccountBox = await page.locator(".channel-account-list button[aria-pressed='true']").boundingBox();
-  assert.ok(emptyAccountListBox && emptyAccountBox && emptyAccountBox.y + emptyAccountBox.height <= emptyAccountListBox.y + emptyAccountListBox.height + 1);
+  channels.set(qqEmpty.id, qqEmpty);
+  await refreshWorkspace();
+  await accountPicker.waitFor();
+  await accountPicker.selectOption(qqEmpty.id);
   await page.getByRole("status").filter({ hasText: "正在读取会话" }).waitFor();
   await capture("channels-robot-sessions-loading");
   await page.getByRole("heading", { name: "等待第一条消息", exact: true }).waitFor();
@@ -307,19 +494,34 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   await page.locator(".channel-thread-feed").getByText("新账号收到的第一条消息。", { exact: true }).waitFor();
   await capture("channels-robot-first-inbound");
   checks.push("first_inbound_message_creates_a_session_from_the_existing_inbox_poll");
-  await page.locator(".channel-account-list").getByRole("button", { name: /QQ · 昔涟/ }).click();
-  await page.getByRole("textbox", { name: "回复正文", exact: true }).waitFor();
-  assert.equal(await page.getByRole("textbox", { name: "回复正文", exact: true }).inputValue(), unsavedReply);
+  await accountPicker.selectOption(qq.id);
+  await waitForRestoredReply();
 
   await page.getByRole("button", { name: "审阅并批准发送", exact: true }).click();
   const manualReview = page.getByRole("dialog", { name: "确认发送外部消息", exact: true });
   await manualReview.waitFor();
   await manualReview.getByText("2001", { exact: false }).waitFor();
+  await capture("channels-robot-inbound-approval");
   await manualReview.getByRole("button", { name: "批准并发送此消息", exact: true }).click();
-  await page.getByText("发送确认标识：fixture-manual-receipt", { exact: true }).waitFor();
+  const receipt = page.getByText(/fixture-manual-receipt/);
+  await receipt.first().waitFor();
+  assert.equal(await receipt.count(), 1);
+  assert.equal(await replyBox.count(), 0);
   assert.equal(approvedSends.length, 1);
   checks.push("existing_inbound_reply_still_requires_manual_review_and_platform_receipt");
 
+  messages.push({ ...messages[0], id: "message-uncertain", content: "请确认平台有没有收到这条回复。", status: "delivery_unknown", reply_message_id: null, created_at: now });
+  await refreshWorkspace();
+  const uncertainRow = page.locator(".channel-thread-entry").filter({ hasText: "请确认平台有没有收到这条回复。" });
+  const uncertainMessage = uncertainRow.getByRole("button");
+  await uncertainRow.getByRole("status").filter({ hasText: "未取得平台送达确认" }).waitFor();
+  assert.equal(await uncertainMessage.getAttribute("aria-expanded"), "false");
+  await uncertainMessage.click();
+  assert.equal(await pendingMessage.getAttribute("aria-expanded"), "false");
+  assert.equal(await page.getByRole("button", { name: "审阅并批准发送", exact: true }).count(), 0);
+  checks.push("unknown_delivery_stays_visible_when_collapsed_and_offers_no_resend");
+
+  delayFriendsDirectoryOnce = true;
   const staleFriendsResponse = page.waitForResponse(response => {
     const url = new URL(response.url());
     return url.pathname.endsWith("/robot/directory") && url.searchParams.get("kind") === "friends";
@@ -328,7 +530,7 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
     const url = new URL(request.url());
     return url.pathname.endsWith("/robot/directory") && url.searchParams.get("kind") === "friends";
   });
-  await page.getByRole("button", { name: "通讯录", exact: true }).click();
+  await channelAction("通讯录");
   await staleFriendsRequest;
   await page.getByRole("button", { name: "群", exact: true }).click();
   await page.getByRole("button", { name: /活动小组.*3001/ }).waitFor();
@@ -432,7 +634,7 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   assert.equal(sends.length, 4);
   checks.push("delivery_unknown_intent_has_no_direct_retry_action");
 
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await channelAction("设置");
   const settings = page.getByRole("dialog", { name: "QQ 机器人设置", exact: true });
   await settings.waitFor();
   await settings.getByRole("checkbox", { name: "启用机器人自主模式" }).check();
@@ -456,7 +658,7 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   checks.push("robot_policy_persists_owner_identity_and_separate_read_and_send_scopes");
   await settings.getByRole("button", { name: "关闭QQ 机器人设置", exact: true }).click();
 
-  await page.getByRole("button", { name: "机器人活动", exact: true }).click();
+  await channelAction("机器人活动");
   const manualSendHistory = page.getByLabel("手动发送记录");
   await manualSendHistory.waitFor();
   await manualSendHistory.getByText(/账号 90001/).first().waitFor();
@@ -476,8 +678,8 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   await page.getByRole("button", { name: "新建目标", exact: true }).click();
   assert.equal(await page.getByRole("textbox", { name: "目标任务", exact: true }).inputValue(), newMissionDraft);
   await page.locator(".channel-mission-list").getByRole("button", { name: /QQ 目标任务/ }).click();
-  await page.getByRole("button", { name: "会话", exact: true }).click();
-  await page.getByRole("button", { name: "机器人活动", exact: true }).click();
+  await channelAction("返回会话");
+  await channelAction("机器人活动");
   assert.equal(await page.getByRole("textbox", { name: "目标任务", exact: true }).inputValue(), missionDraft);
   checks.push("unsaved_robot_goal_drafts_survive_new_goal_and_section_navigation");
   await page.getByRole("button", { name: "保存目标", exact: true }).click();
@@ -505,11 +707,16 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   assert.deepEqual(automation.schedule.weekdays, [1]);
   checks.push("scheduled_robot_goal_is_saved_as_agent_turn_automation");
 
-  await page.getByRole("button", { name: /微信 · Akasha/ }).click();
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await selectPlatform("微信");
+  await accountPicker.selectOption(wechat.id);
+  assert.equal(await page.getByRole("button", { name: /机器人活动|^机器人$/ }).count(), 0);
+  await channelAction("设置");
   const wechatConfiguration = page.getByRole("dialog", { name: /微信 · Akasha/ });
   await wechatConfiguration.waitFor();
-  await wechatConfiguration.getByText(/不提供 QQ 式通讯录与历史探索/).waitFor();
+  const providerLimit = wechatConfiguration.getByText(/不提供 QQ 式通讯录与历史探索/);
+  assert.equal(await providerLimit.isVisible(), false);
+  await wechatConfiguration.getByText("平台资料与限制", { exact: true }).click();
+  await providerLimit.waitFor();
   assert.equal(await wechatConfiguration.getByRole("button", { name: "通讯录", exact: true }).count(), 0);
   checks.push("wechat_onebot_is_distinct_and_does_not_claim_qq_exploration_support");
   await wechatConfiguration.getByRole("button", { name: "编辑接入配置", exact: true }).click();
@@ -525,8 +732,8 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   checks.push("wechat_onebot_configuration_uses_only_reverse_websocket_and_no_ilink_qr_flow");
   await wechatEditor.getByRole("button", { name: "关闭编辑消息渠道", exact: true }).click();
 
-  await page.getByRole("button", { name: /微信 · iLink/ }).click();
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await accountPicker.selectOption(wechatIlink.id);
+  await channelAction("设置");
   const ilinkSettings = page.getByRole("dialog", { name: /微信 · iLink 设置/ });
   await ilinkSettings.waitFor();
   await ilinkSettings.getByRole("button", { name: "开始扫码", exact: true }).click();
@@ -544,20 +751,26 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   checks.push("existing_ilink_qr_verification_flow_is_preserved_inside_the_settings_drawer");
 
   channels.set("channel-wechat-ilink", { ...channels.get("channel-wechat-ilink"), status: "error", last_error: "Controlled disconnected fixture" });
-  await page.getByRole("button", { name: "刷新消息工作台", exact: true }).click();
-  await page.locator(".channel-topbar-state").filter({ hasText: "渠道异常" }).waitFor();
-  assert.equal(await page.locator(".channel-topbar-state").getAttribute("data-connected"), "false");
-  checks.push("topbar_connection_indicator_uses_the_selected_account_status");
+  await refreshWorkspace();
+  await page.locator(".channel-chat-state").filter({ hasText: "渠道异常" }).waitFor();
+  await page.getByRole("alert").filter({ hasText: "Controlled disconnected fixture" }).waitFor();
+  checks.push("selected_account_errors_remain_visible_without_an_overview_bar");
 
-  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await channelAction("回复预设");
   await page.getByRole("heading", { name: "回复预设", exact: true }).waitFor();
   await page.getByRole("button", { name: /昔涟 · 温柔日常/ }).click();
   await page.getByRole("button", { name: "复制为自定义", exact: true }).click();
   const presetDraftName = "跨页面保留的预设草稿";
   await page.getByRole("textbox", { name: "预设名称", exact: true }).fill(presetDraftName);
+  await selectPlatform("飞书");
+  const discardPreset = page.getByRole("dialog", { name: "放弃未保存的预设修改？", exact: true });
+  await discardPreset.getByRole("button", { name: "继续编辑", exact: true }).click();
+  assert.equal(await page.getByRole("textbox", { name: "预设名称", exact: true }).inputValue(), presetDraftName);
+  assert.equal(await platformList.getByRole("button", { name: "微信", exact: true }).getAttribute("aria-current"), "true");
+  checks.push("sidebar_platform_switch_preserves_unsaved_preset_until_confirmed");
   await page.getByRole("link", { name: "更多", exact: true }).click();
   await page.getByRole("heading", { name: "更多", exact: true }).waitFor();
-  await page.getByRole("button", { name: /消息渠道/ }).click();
+  await openSoftwareChannels();
   await page.getByRole("heading", { name: "回复预设", exact: true }).waitFor();
   await page.getByRole("textbox", { name: "预设名称", exact: true }).waitFor();
   assert.equal(await page.getByRole("textbox", { name: "预设名称", exact: true }).inputValue(), presetDraftName);
@@ -566,22 +779,34 @@ export async function channelsRobot({ page, frontendPort, evidenceDir }) {
   await page.getByRole("heading", { name: presetDraftName, exact: true }).waitFor();
   assert.equal(customPreset?.name, presetDraftName);
   checks.push("unsaved_preset_survives_app_navigation_until_explicit_save");
+  assert.equal(await page.getByRole("textbox", { name: "试用消息", exact: true }).count(), 0);
+  await page.getByRole("button", { name: "本地试用", exact: true }).click();
+  const preview = page.getByRole("dialog", { name: "本地试用", exact: true });
+  await preview.getByRole("textbox", { name: "试用消息", exact: true }).fill("请试用当前预设");
+  await preview.getByRole("button", { name: "运行本地试用", exact: true }).click();
+  await preview.getByText("受控本地试用回复", { exact: true }).waitFor();
+  await preview.getByRole("button", { name: "关闭本地试用", exact: true }).click();
+  checks.push("preset_trial_runs_in_a_separate_local_preview_dialog");
 
-  await page.goto(`${origin}/channels?channel=channel-qq&run=run-1`);
+  await page.goto(`${origin}/channels?channel=channel-wechat-onebot&run=run-1`);
+  await page.waitForURL(`${origin}/software/channels?channel=channel-wechat-onebot&run=run-1`);
+  await page.getByRole("heading", { name: "消息会话", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "机器人活动", exact: true }).count(), 0);
+  await page.goto(`${origin}/software/channels?channel=channel-qq&run=run-1`);
   await page.getByRole("heading", { name: "机器人目标", exact: true }).waitFor();
   await page.getByText("get_recent_contact", { exact: true }).waitFor();
   checks.push("automation_history_query_selects_the_channel_and_requested_robot_run");
 
   await page.setViewportSize({ width: 900, height: 900 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  const railBox = await page.locator(".channel-left-rail").boundingBox();
+  const railBox = await page.locator(".software-category-sidebar").boundingBox();
   const mainBox = await page.locator(".channel-workspace-main").boundingBox();
-  assert.ok(railBox && mainBox && mainBox.y >= railBox.y + railBox.height - 1, "narrow workspace stacks the account selector above details");
+  assert.ok(railBox && mainBox && railBox.x + railBox.width <= mainBox.x, "medium workspace retains the single sidebar beside the content");
   await capture("channels-robot-narrow");
 
   await page.setViewportSize({ width: 760, height: 900 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await channelAction("设置");
   const narrowSettings = page.getByRole("dialog", { name: "QQ 机器人设置", exact: true });
   await narrowSettings.waitFor();
   const narrowDrawerBox = await narrowSettings.boundingBox();

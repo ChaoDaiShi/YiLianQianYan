@@ -128,7 +128,7 @@ export async function settingsRevision3({ page, frontendPort, backendPort, contr
     await page.waitForFunction(() => document.querySelectorAll(".message-branch-stage .react-flow__node").length === 6);
     assert.equal((await api("GET", graphPath)).nodes.length, 6);
 
-    await page.goto(origin + "/settings");
+    await page.goto(origin + "/settings?view=canvas");
     await settingNode("对话模型").waitFor();
     assert.equal(await page.getByRole("button", { name: "展开节点管理器", exact: true }).getAttribute("aria-expanded"), "false");
     assert.equal(Math.round((await manager().boundingBox()).width), 48);
@@ -176,7 +176,10 @@ export async function settingsRevision3({ page, frontendPort, backendPort, contr
     assert.equal(await page.getByRole("dialog").count(), 1, "Escape closes only the topmost dialog");
     await closeEditor();
 
-    await page.getByRole("combobox", { name: "设置配置对象" }).selectOption(a.canvas_id);
+    const canvasView = page.getByRole("combobox", { name: "画布视图", exact: true });
+    await page.getByText("从画布打开的系统设置作用于全局。", { exact: true }).waitFor();
+    assert.equal(await canvasView.inputValue(), "");
+    await canvasView.selectOption(a.canvas_id);
     await page.locator(`.settings-canvas-stage .react-flow__node[data-id="agent:${agent.id}"]`).waitFor();
     for (const id of resourceIds) await page.locator(`.settings-canvas-stage .react-flow__node[data-id="${id}"]`).waitFor();
     const ports = await page.locator(".settings-canvas-stage .connector-node.agent .react-flow__handle").evaluateAll(nodes => nodes.map(node => node.dataset.handlepos).sort());
@@ -188,17 +191,17 @@ export async function settingsRevision3({ page, frontendPort, backendPort, contr
     await page.waitForTimeout(250);
     await screenshot("settings-agent-resources");
     assert.equal((await api("GET", canvasPath(""))).state.connected_node_ids.includes("stt"), false);
-    await page.getByRole("combobox", { name: "设置配置对象" }).selectOption("");
+    await canvasView.selectOption("");
     await settingNode("对话模型").waitFor();
     await settingNode("语音识别").waitFor({ state: "detached" });
     assert.equal((await api("GET", canvasPath(a.canvas_id))).state.connected_node_ids.includes("stt"), true);
     await screenshot("settings-manager");
 
     for (const [mode, label] of [["light", "白天"], ["dark", "夜间"]]) {
-      await page.goto(origin + "/settings?section=appearance");
+      await page.goto(origin + "/settings?view=canvas&section=appearance");
       const radio = page.getByRole("radio", { name: new RegExp(label) });
       await radio.click();
-      assert.equal(await radio.getAttribute("aria-checked"), "true");
+      assert.equal(await radio.isChecked(), true);
       await screenshot(`settings-${mode}-dialog`);
       await closeEditor();
       await settingNode("对话模型").waitFor();

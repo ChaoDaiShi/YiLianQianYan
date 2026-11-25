@@ -52,6 +52,7 @@ fn draft(
     p: &CandidatePlan,
 ) -> ProofDraft {
     ProofDraft {
+        source: None,
         planning_review: None,
         draft_id: id.into(),
         revision: 1,
@@ -381,6 +382,8 @@ async fn human_review_keeps_real_automatic_evidence() {
     srv.db
         .save_acceptance_report(&report, &snapshot, now())
         .unwrap();
+    let (_, pending) = call(&srv, "GET", "/api/memories/candidates", Value::Null).await;
+    assert_eq!(pending["entries"], json!([]));
     let (status, body) = call(
         &srv,
         "POST",
@@ -393,6 +396,54 @@ async fn human_review_keeps_real_automatic_evidence() {
     .await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["status"], "pass");
+    let (status, pending) = call(&srv, "GET", "/api/memories/candidates", Value::Null).await;
+    assert_eq!(status, 200, "{pending}");
+    let entries = pending["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{pending}");
+    assert_eq!(entries[0]["category"], "note");
+    assert_eq!(entries[0]["source_kind"], "proofloop_acceptance");
+    assert_eq!(entries[0]["source_graph_id"], g.as_str());
+    assert_eq!(entries[0]["source_report_id"], body["report_id"]);
+    assert_eq!(entries[0]["source_removed"], false);
+    assert!(!entries[0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("actual isolated output"));
+    assert_eq!(srv.db.get_memory_stats().unwrap().total, 0);
+    let candidate = entries[0]["id"].as_str().unwrap();
+
+    // A second human acceptance report for identical evidence is one proposal.
+    let (status, report_again) = call(
+        &srv,
+        "POST",
+        &format!(
+            "/api/task-world/proofloop/evaluations/{}/human-review",
+            report.report_id
+        ),
+        json!({"criterion_id":"human","decision":"pass","reason":"same verified evidence"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{report_again}");
+    assert_eq!(report_again["status"], "pass");
+    assert_ne!(report_again["report_id"], body["report_id"]);
+    let (_, pending) = call(&srv, "GET", "/api/memories/candidates", Value::Null).await;
+    assert_eq!(pending["entries"].as_array().unwrap().len(), 1);
+
+    srv.task_world.delete_graph(&g, 1, now()).unwrap();
+    let (_, pending) = call(&srv, "GET", "/api/memories/candidates", Value::Null).await;
+    assert_eq!(pending["entries"][0]["source_removed"], true);
+    assert!(pending["entries"][0]["source_graph_id"].is_null());
+    assert!(pending["entries"][0]["source_report_id"].is_null());
+    let (status, blocked) = call(
+        &srv,
+        "POST",
+        &format!("/api/memories/candidates/{candidate}/accept"),
+        json!({"content":"通过验收的任务备注","category":"note","scope":"workspace"}),
+    )
+    .await;
+    assert_eq!(status, 409, "{blocked}");
+    assert_eq!(blocked["code"], "memory_candidate_source_removed");
+    assert_eq!(srv.db.get_memory_stats().unwrap().total, 0);
 }
 
 #[test]

@@ -1,0 +1,19 @@
+{
+  "memories": [
+    {"id":"answer_style","content":"处理日常问题时先写结论，再简短说明理由，偏好篇幅紧凑。","category":"preference"},
+    {"id":"qa_runner","content":"CI 自动化回归使用 Playwright，桌面端通过 WebView2 bridge 验证。","category":"fact"},
+    {"id":"delivery","content":"店铺补货采用定批量配送，每次固定发运二百四十件。","category":"fact"},
+    {"id":"button_style","content":"界面首屏展示主要按钮，品牌色用浅粉，正文采用深色。","category":"preference"},
+    {"id":"lab_private","content":"项目橘猫的仓库密封编号为密语青鸟。","category":"fact","scope":"workspace:orange-cat"},
+    {"id":"updated","content":"库房盘点在星期五上午。","category":"fact","replace":"库房盘点改到星期一早上。"},
+    {"id":"obsolete","content":"废弃流程的凭条统一采用蓝色。","category":"fact","withdraw":true}
+  ],
+  "queries": [
+    {"query":"平时回答我，希望你言简意赅并把答案放前面","expected":"answer_style"},
+    {"query":"Which browser testing framework is used to automate QA?","expected":"qa_runner"},
+    {"query":"每回送货数额一定是一样的吗","expected":"delivery"},
+    {"query":"什么时候清点库存","expected":"updated"},
+    {"query":"项目橘猫的仓库密封编号","excluded":"lab_private"},
+    {"query":"废弃流程的凭条颜色","excluded":"obsolete"}
+  ]
+}
