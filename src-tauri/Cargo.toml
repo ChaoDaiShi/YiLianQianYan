@@ -37,6 +37,7 @@ path = "src/main.rs"
 [features]
 default = []
 native-browser-fixture = []
+native-software-fixture = ["native-browser-fixture"]
 
 [[bin]]
 name = "yilian-native-browser-fixture"
