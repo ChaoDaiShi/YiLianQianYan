@@ -7,97 +7,50 @@
 // the call the user was shown.
 // ============================================================
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::tools::trait_def::RiskLevel;
 
-/// Lifecycle of a pending approval.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalStatus {
-    Pending,
-    Approved,
-    Rejected,
-    Cancelled,
-    Expired,
-}
+mod model;
 
-impl std::fmt::Display for ApprovalStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            ApprovalStatus::Pending => "pending",
-            ApprovalStatus::Approved => "approved",
-            ApprovalStatus::Rejected => "rejected",
-            ApprovalStatus::Cancelled => "cancelled",
-            ApprovalStatus::Expired => "expired",
-        };
-        write!(f, "{}", s)
+pub use model::{ApprovalError, ApprovalOwner, ApprovalStatus, PendingApproval};
+
+#[cfg(test)]
+mod owner_contract_tests {
+    use super::*;
+    fn approval() -> PendingApproval {
+        ApprovalStore::new().create(
+            "conversation".into(),
+            "call".into(),
+            "read_file".into(),
+            serde_json::json!({"path":"input.txt"}),
+            RiskLevel::Low,
+            "review".into(),
+            "local_user".into(),
+        )
     }
-}
-
-/// A paused high-risk tool call awaiting user confirmation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingApproval {
-    pub approval_id: String,
-    pub conversation_id: String,
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub arguments: serde_json::Value,
-    pub risk_level: RiskLevel,
-    pub reason: String,
-    pub status: ApprovalStatus,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    /// The security subject that initiated this approval request.
-    pub subject_id: String,
-    /// Optional workflow binding (set when the approval pauses a workflow run).
-    pub execution_id: Option<String>,
-    pub workflow_run_id: Option<String>,
-    pub workflow_node_id: Option<String>,
-    /// Optional task/agent binding (set when the approval pauses a task agent).
-    pub task_id: Option<String>,
-    pub task_execution_id: Option<String>,
-    pub agent_execution_id: Option<String>,
-    /// Trusted Task Harness binding; never populated from an approval request.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_graph_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_node_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_execution_id: Option<String>,
-}
-
-impl PendingApproval {
-    pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
-        now >= self.expires_at
-    }
-}
-
-/// Errors returned when an approval cannot be processed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ApprovalError {
-    NotFound,
-    Ambiguous,
-    AlreadyProcessed,
-    Expired,
-    Cancelled,
-    ConversationMismatch,
-}
-
-impl std::fmt::Display for ApprovalError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            ApprovalError::NotFound => "审批不存在",
-            ApprovalError::Ambiguous => "当前会话存在多个待处理审批",
-            ApprovalError::AlreadyProcessed => "审批已被处理，不能重复操作",
-            ApprovalError::Expired => "审批已过期",
-            ApprovalError::Cancelled => "审批已取消",
-            ApprovalError::ConversationMismatch => "审批不属于当前会话",
-        };
-        write!(f, "{}", s)
+    #[test]
+    fn integration_approval_owner_preserves_old_json_and_rejects_ambiguous_bindings() {
+        let mut value = approval();
+        assert!(matches!(
+            value.owner(),
+            Ok(ApprovalOwner::Conversation { .. })
+        ));
+        let decoded: PendingApproval =
+            serde_json::from_value(serde_json::to_value(&value).unwrap()).unwrap();
+        assert_eq!(value.owner(), decoded.owner());
+        value.workflow_run_id = Some("run".into());
+        assert!(value.owner().is_err());
+        value.execution_id = Some("execution".into());
+        value.workflow_node_id = Some("node".into());
+        assert!(matches!(value.owner(), Ok(ApprovalOwner::Workflow { .. })));
+        value.task_graph_id = Some("graph".into());
+        assert!(value.owner().is_err());
+        value.task_graph_id = None;
+        value.workflow_node_id = Some("".into());
+        assert!(value.owner().is_err());
     }
 }
 
@@ -141,6 +94,7 @@ impl ApprovalStore {
             created_at: now,
             expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
             subject_id,
+            chat_turn_model: None,
             execution_id: None,
             workflow_run_id: None,
             workflow_node_id: None,
@@ -183,6 +137,7 @@ impl ApprovalStore {
             created_at: now,
             expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
             subject_id,
+            chat_turn_model: None,
             execution_id: None,
             workflow_run_id: None,
             workflow_node_id: None,
@@ -225,6 +180,7 @@ impl ApprovalStore {
             created_at: now,
             expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
             subject_id,
+            chat_turn_model: None,
             execution_id: None,
             workflow_run_id: None,
             workflow_node_id: None,
@@ -270,6 +226,7 @@ impl ApprovalStore {
             created_at: now,
             expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
             subject_id,
+            chat_turn_model: None,
             execution_id: Some(execution_id),
             workflow_run_id: Some(workflow_run_id),
             workflow_node_id: Some(workflow_node_id),
@@ -312,6 +269,7 @@ impl ApprovalStore {
             return (existing, false);
         }
 
+        let chat_turn_model = crate::execution::context::chat_turn_model(&conversation_id);
         let approval = PendingApproval {
             approval_id: uuid::Uuid::new_v4().to_string(),
             conversation_id,
@@ -324,6 +282,7 @@ impl ApprovalStore {
             created_at: now,
             expires_at: now + chrono::Duration::seconds(DEFAULT_TTL_SECS),
             subject_id,
+            chat_turn_model,
             execution_id: None,
             workflow_run_id: None,
             workflow_node_id: None,
@@ -458,6 +417,29 @@ impl ApprovalStore {
         conversation_id: &str,
     ) -> Result<PendingApproval, ApprovalError> {
         self.transition(approval_id, conversation_id, ApprovalStatus::Cancelled)
+    }
+
+    /// Resolve only still-pending requests owned by the cancelled graph.
+    /// Selection and mutation share the store lock with explicit approval.
+    pub fn cancel_pending_for_goal(
+        &self,
+        graph_id: &str,
+        conversations: &[String],
+    ) -> Vec<PendingApproval> {
+        self.approvals
+            .write()
+            .values_mut()
+            .filter_map(|approval| {
+                let owned = approval.task_graph_id.as_deref() == Some(graph_id)
+                    || conversations.contains(&approval.conversation_id);
+                if owned && approval.status == ApprovalStatus::Pending {
+                    approval.status = ApprovalStatus::Cancelled;
+                    Some(approval.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn transition(

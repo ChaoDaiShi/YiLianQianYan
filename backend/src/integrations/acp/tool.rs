@@ -1,18 +1,22 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+mod expected_outputs;
+use expected_outputs::{build_task_prompt, collect_expected_outputs, parse_expected_outputs};
+
 use super::client::{AcpClient, AcpError, AcpPermissionHandler};
+use super::gateway_permission::DelegatedAcpPermissions;
 use super::model::{
     agent_message_text, exposed_tool_name, external_task_result, AcpLaunchConfig, AcpPromptOutcome,
     ExternalSessionState, ExternalTaskResult,
 };
 use super::session::AcpSession;
+use crate::safety::subject::ToolInvocation;
 use crate::safety::{
     DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
     ToolSecurityDescriptor,
@@ -39,9 +43,14 @@ pub enum AcpToolError {
 pub struct AcpAgentTool {
     name: String,
     config: AcpLaunchConfig,
-    permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
+    permissions: AcpPermissions,
     active: Arc<Mutex<std::collections::HashMap<String, CancellationToken>>>,
     session_slot: Arc<Semaphore>,
+}
+
+enum AcpPermissions {
+    Fixed(Option<Arc<dyn AcpPermissionHandler>>),
+    Delegated(Arc<DelegatedAcpPermissions>),
 }
 
 struct AcpExecutionGuard {
@@ -191,7 +200,7 @@ impl AcpAgentTool {
         Ok(Self {
             name,
             config,
-            permission_handler,
+            permissions: AcpPermissions::Fixed(permission_handler),
             active: Arc::new(Mutex::new(std::collections::HashMap::new())),
             session_slot,
         })
@@ -216,7 +225,18 @@ impl AcpAgentTool {
         args: Value,
         tool_call_id: String,
         parent_cancel: Option<CancellationToken>,
+        invocation: Option<&ToolInvocation>,
     ) -> ToolResult {
+        let permission_handler: Option<Arc<dyn AcpPermissionHandler>> =
+            match (&self.permissions, invocation) {
+                (AcpPermissions::Fixed(handler), _) => handler.clone(),
+                (AcpPermissions::Delegated(permissions), Some(invocation)) => {
+                    Some(Arc::new(permissions.bind(&self.config, invocation)))
+                }
+                (AcpPermissions::Delegated(_), None) => {
+                    return ToolResult::error("外部 ACP 子任务需要通过权限入口发起委派");
+                }
+            };
         let cancel = CancellationToken::new();
         self.active
             .lock()
@@ -236,7 +256,9 @@ impl AcpAgentTool {
             tool_call_id,
         );
 
-        let result = self.run_agent(args, &cancel, &mut cleanup).await;
+        let result = self
+            .run_agent(args, permission_handler, &cancel, &mut cleanup)
+            .await;
         cleanup.cleanup().await;
         match result {
             Ok(result) if result.state == ExternalSessionState::Completed => {
@@ -272,6 +294,7 @@ impl AcpAgentTool {
     async fn run_agent(
         &self,
         args: Value,
+        permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
         cancel: &CancellationToken,
         cleanup: &mut AcpExecutionGuard,
     ) -> Result<ExternalTaskResult, AcpError> {
@@ -292,7 +315,7 @@ impl AcpAgentTool {
         let expected_outputs =
             parse_expected_outputs(args.get("expected_outputs"), &self.config.cwd)?;
         let prompt = build_task_prompt(task, &expected_outputs, &self.config.cwd);
-        let client = AcpClient::spawn(&self.config, self.permission_handler.clone()).await?;
+        let client = AcpClient::spawn(&self.config, permission_handler).await?;
         cleanup.set_client(client.clone());
         let mut updates = client.subscribe_updates();
         let outcome = self.run_session(&client, &prompt, cancel, cleanup).await;
@@ -428,7 +451,7 @@ impl Tool for AcpAgentTool {
     async fn execute(&self, args: Value) -> ToolResult {
         let scope = crate::agent::delegation::current_scope();
         let cancel = scope.as_ref().map(|scope| scope.cancel.clone());
-        self.execute_task(args, Uuid::new_v4().to_string(), cancel)
+        self.execute_task(args, Uuid::new_v4().to_string(), cancel, None)
             .await
     }
 
@@ -439,8 +462,13 @@ impl Tool for AcpAgentTool {
     ) -> ToolResult {
         let scope = crate::agent::delegation::current_scope();
         let cancel = scope.as_ref().map(|scope| scope.cancel.clone());
-        self.execute_task(args, context.tool_call_id.clone(), cancel)
-            .await
+        self.execute_task(
+            args,
+            context.tool_call_id.clone(),
+            cancel,
+            context.invocation(),
+        )
+        .await
     }
 }
 
@@ -451,12 +479,7 @@ pub fn register_configured_acp_agent(
     config: AcpLaunchConfig,
     permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
 ) -> Result<Arc<AcpAgentTool>, AcpToolError> {
-    let tool = Arc::new(AcpAgentTool::new(config, permission_handler)?);
-    if registry.get(tool.name()).is_some() {
-        return Err(AcpToolError::NameCollision(tool.name().to_string()));
-    }
-    registry.register(tool.clone());
-    Ok(tool)
+    register_acp_tool(registry, AcpAgentTool::new(config, permission_handler)?)
 }
 
 pub fn register_configured_acp_agent_with_slot(
@@ -465,11 +488,28 @@ pub fn register_configured_acp_agent_with_slot(
     permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
     session_slot: Arc<Semaphore>,
 ) -> Result<Arc<AcpAgentTool>, AcpToolError> {
-    let tool = Arc::new(AcpAgentTool::new_with_session_slot(
-        config,
-        permission_handler,
-        session_slot,
-    )?);
+    register_acp_tool(
+        registry,
+        AcpAgentTool::new_with_session_slot(config, permission_handler, session_slot)?,
+    )
+}
+
+pub(crate) fn register_delegated_acp_agent(
+    registry: &mut ToolRegistry,
+    config: AcpLaunchConfig,
+    permissions: Arc<DelegatedAcpPermissions>,
+    session_slot: Arc<Semaphore>,
+) -> Result<Arc<AcpAgentTool>, AcpToolError> {
+    let mut tool = AcpAgentTool::new_with_session_slot(config, None, session_slot)?;
+    tool.permissions = AcpPermissions::Delegated(permissions);
+    register_acp_tool(registry, tool)
+}
+
+fn register_acp_tool(
+    registry: &mut ToolRegistry,
+    tool: AcpAgentTool,
+) -> Result<Arc<AcpAgentTool>, AcpToolError> {
+    let tool = Arc::new(tool);
     if registry.get(tool.name()).is_some() {
         return Err(AcpToolError::NameCollision(tool.name().to_string()));
     }
@@ -483,75 +523,6 @@ fn valid_environment_name(name: &str) -> bool {
         .next()
         .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
         && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
-}
-
-fn parse_expected_outputs(value: Option<&Value>, cwd: &Path) -> Result<Vec<PathBuf>, AcpError> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let outputs = value.as_array().ok_or_else(|| {
-        AcpError::InvalidConfig("expected_outputs must be an array of relative paths".to_string())
-    })?;
-    outputs
-        .iter()
-        .map(|value| {
-            let value = value
-                .as_str()
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| {
-                    AcpError::InvalidConfig(
-                        "expected_outputs must contain non-empty relative paths".to_string(),
-                    )
-                })?;
-            let path = Path::new(value);
-            if path.is_absolute()
-                || path
-                    .components()
-                    .any(|component| !matches!(component, Component::Normal(_)))
-            {
-                return Err(AcpError::InvalidConfig(
-                    "expected_outputs must stay beneath cwd".to_string(),
-                ));
-            }
-            Ok(cwd.join(path))
-        })
-        .collect()
-}
-
-fn build_task_prompt(task: &str, expected_outputs: &[PathBuf], cwd: &Path) -> String {
-    if expected_outputs.is_empty() {
-        return task.to_string();
-    }
-    let outputs = expected_outputs
-        .iter()
-        .filter_map(|path| {
-            path.strip_prefix(cwd)
-                .ok()
-                .map(|relative| relative.to_string_lossy().into_owned())
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{task}\n\nExpected output files relative to the configured task working directory: {outputs}")
-}
-
-async fn collect_expected_outputs(cwd: &Path, expected: &[PathBuf]) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let Ok(root) = tokio::fs::canonicalize(cwd).await else {
-        return found;
-    };
-    for path in expected {
-        let Ok(actual) = tokio::fs::canonicalize(path).await else {
-            continue;
-        };
-        if actual.starts_with(&root)
-            && tokio::fs::metadata(&actual)
-                .await
-                .is_ok_and(|metadata| metadata.is_file())
-        {
-            found.push(actual);
-        }
-    }
-    found
 }
 
 fn error_code(error: &AcpError) -> String {

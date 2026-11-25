@@ -44,30 +44,32 @@ pub async fn get_workflow_run(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "工作流运行不存在".to_string()))?;
     let graph_id = stored.workflow_graph_id.clone();
-    Ok(Json(run_view(&graph_id, &stored.run)))
+    Ok(Json(run_detail_view(&graph_id, &stored.run)))
 }
 
 /// GET /api/workflow-runs — list persisted runs (recent history), newest first.
 pub async fn list_workflow_runs(
     State(server): State<Arc<AppServer>>,
     Query(params): Query<ListWorkflowRunsParams>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
     let query = WorkflowRunQuery {
         workflow_graph_id: params.workflow_graph_id,
+        parent_execution_id: params.parent_execution_id,
         status: params.status,
         limit: Some(limit),
         offset: params.offset,
     };
-    match server.db.list_workflow_runs(&query) {
-        Ok(stored) => Json(serde_json::json!({
-            "runs": stored.iter().map(|s| run_view(&s.workflow_graph_id, &s.run)).collect::<Vec<_>>(),
-        })),
-        Err(error) => {
-            tracing::error!(error = %error, "failed to list workflow runs");
-            Json(serde_json::json!({ "runs": [] }))
-        }
-    }
+    let stored = server.db.list_workflow_runs(&query).map_err(|error| {
+        tracing::error!(error = %error, "failed to list workflow runs");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "无法读取工作流运行记录".into(),
+        )
+    })?;
+    Ok(Json(serde_json::json!({
+        "runs": stored.iter().map(|s| run_view(&s.workflow_graph_id, &s.run)).collect::<Vec<_>>(),
+    })))
 }
 
 pub async fn cancel_workflow_run(

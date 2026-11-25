@@ -85,12 +85,29 @@ pub async fn list_executions(
             let summaries: Vec<_> = executions.iter().map(execution_summary).collect();
             let mut response = json!({"executions":summaries});
             if query.include_output {
-                response["latest_successful_output"] = executions
-                    .iter()
-                    .filter(|e| e.status == crate::modules::task::NodeExecutionStatus::Succeeded)
-                    .max_by_key(|e| e.attempt)
-                    .and_then(|e| e.output.clone())
-                    .unwrap_or(Value::Null);
+                if let Some(id) = &query.execution_id {
+                    response["execution_output"] = executions
+                        .iter()
+                        .find(|e| {
+                            e.id.as_str() == id
+                                && matches!(
+                                    e.status,
+                                    crate::modules::task::NodeExecutionStatus::Succeeded
+                                        | crate::modules::task::NodeExecutionStatus::Stale
+                                )
+                        })
+                        .and_then(|e| e.output.clone())
+                        .unwrap_or(Value::Null);
+                } else {
+                    response["latest_successful_output"] = executions
+                        .iter()
+                        .filter(|e| {
+                            e.status == crate::modules::task::NodeExecutionStatus::Succeeded
+                        })
+                        .max_by_key(|e| e.attempt)
+                        .and_then(|e| e.output.clone())
+                        .unwrap_or(Value::Null);
+                }
             }
             if query.include_snapshot {
                 let selected = query
@@ -108,6 +125,10 @@ pub async fn list_executions(
 
 fn execution_runtime_error(error: TaskWorldRuntimeError) -> Response {
     match &error {
+        TaskWorldRuntimeError::Harness(TaskHarnessError::ExternalResultConflict(execution_id)) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error":"external_result_conflict", "message":error.to_string(), "execution_id":execution_id.as_str() })),
+        ).into_response(),
         TaskWorldRuntimeError::Harness(TaskHarnessError::ExternalResultUnknown(execution_id)) => (
             StatusCode::CONFLICT,
             Json(json!({
@@ -150,6 +171,76 @@ pub async fn cancel_execution(
         )
             .into_response(),
         Err(error) => runtime_error(error),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewedOutcome {
+    NoEffect,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewExecutionRequest {
+    pub expected_revision: u64,
+    pub outcome: ReviewedOutcome,
+    pub note: String,
+}
+
+pub async fn review_execution_outcome(
+    State(server): State<Arc<AppServer>>,
+    Path((graph_id, execution_id)): Path<(String, String)>,
+    Json(request): Json<ReviewExecutionRequest>,
+) -> Response {
+    let graph = match parse_graph_id(graph_id) {
+        Ok(id) => id,
+        Err(error) => return runtime_error(error),
+    };
+    let execution_id = match NodeExecutionId::new(execution_id) {
+        Ok(id) => id,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":"invalid_execution", "message":error.to_string()})),
+            )
+                .into_response()
+        }
+    };
+    let note = request.note.trim();
+    if note.is_empty() || note.chars().count() > 1000 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"invalid_review", "message":"请填写 1–1000 字的外部核验依据"})),
+        )
+            .into_response();
+    }
+    let ReviewedOutcome::NoEffect = request.outcome;
+    match server.task_world.record_no_effect_review(
+        &graph,
+        &execution_id,
+        request.expected_revision,
+        note,
+        now(),
+    ) {
+        Ok(execution) => {
+            if let Some(pending) = server
+                .approval_store
+                .list_pending()
+                .into_iter()
+                .find(|item| execution.approval_ref.as_deref() == Some(item.approval_id.as_str()))
+            {
+                let _ = server
+                    .approval_store
+                    .cancel(&pending.approval_id, &pending.conversation_id);
+            }
+            (
+                StatusCode::OK,
+                Json(json!({"execution":execution_summary(&execution)})),
+            )
+                .into_response()
+        }
+        Err(error) => execution_runtime_error(error),
     }
 }
 

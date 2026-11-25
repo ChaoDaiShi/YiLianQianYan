@@ -265,6 +265,9 @@ pub fn record_local_deletion_tx(
     entity_id: &str,
     device_id: &str,
 ) -> Result<(), rusqlite::Error> {
+    if entity_type == "memory" {
+        return super::memory_purge::record(tx, entity_id, device_id);
+    }
     let now = chrono::Utc::now().timestamp_millis();
     let existing: Option<(i64, i64, bool)> = tx
         .query_row(
@@ -322,7 +325,7 @@ pub fn collect_sync_sources(
     let mut sources = Vec::new();
     if policy.sync_conversations {
         let mut statement =
-            transaction.prepare("SELECT id, title, created_at, updated_at FROM conversations")?;
+            transaction.prepare("SELECT id, title, created_at, updated_at FROM conversations WHERE NOT EXISTS(SELECT 1 FROM conversation_lanes WHERE conversation_id=conversations.id)")?;
         let rows = statement.query_map([], |row| {
             Ok(SyncSource {
                 entity_type: "conversation",
@@ -343,7 +346,8 @@ pub fn collect_sync_sources(
     if policy.sync_messages {
         let mut statement = transaction.prepare(
             "SELECT id, conversation_id, role, content, created_at FROM messages
-             WHERE role IN ('user', 'assistant')",
+             WHERE role IN ('user', 'assistant')
+             AND NOT EXISTS(SELECT 1 FROM conversation_lanes WHERE conversation_id=messages.conversation_id)",
         )?;
         let rows = statement.query_map([], |row| {
             Ok(SyncSource {
@@ -365,7 +369,9 @@ pub fn collect_sync_sources(
 
     if policy.sync_memories {
         let mut statement = transaction.prepare(
-            "SELECT id, content, category, source, source_conversation_id, created_at, updated_at FROM memories",
+            "SELECT m.id,m.content,m.category,m.source,m.source_conversation_id,m.created_at,m.updated_at
+             FROM memories m JOIN memory_governance g ON g.memory_id=m.id
+             WHERE g.status='active' AND g.scope='profile'",
         )?;
         let rows = statement.query_map([], |row| {
             Ok(SyncSource {

@@ -21,14 +21,26 @@ async fn fixture_schema(
     String,
     tokio::task::JoinHandle<()>,
 ) {
+    fixture_with_delay(header, None).await
+}
+
+async fn fixture_with_delay(
+    header: bool,
+    delay: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+) -> (
+    Arc<AppServer>,
+    Arc<AtomicUsize>,
+    String,
+    tokio::task::JoinHandle<()>,
+) {
     let server = server();
     let calls = Arc::new(AtomicUsize::new(0));
     server.config.write().sandbox.profile = crate::config::types::SandboxProfile::Open;
-    let app=axum::Router::new().route("/mcp",axum::routing::post({let calls=calls.clone();move |Json(body):Json<Value>|{let calls=calls.clone();async move{
+    let app=axum::Router::new().route("/mcp",axum::routing::post({let calls=calls.clone();move |Json(body):Json<Value>|{let calls=calls.clone();let delay=delay.clone();async move{
         let result=match body["method"].as_str().unwrap_or("") {
             "server/discover"=>json!({"supportedVersions":["2026-07-28","2025-11-25"],"serverInfo":{"name":"LOCAL MCP FIXTURE","version":"1"},"capabilities":{"tools":true}}),
             "tools/list"=>json!({"tools":[{"name":"echo","description":"LOCAL MCP FIXTURE echo","inputSchema":if header {json!({"type":"object","properties":{"text":{"type":"string","x-mcp-header":"Authorization"}}})} else {json!({"type":"object","properties":{"text":{"type":"string"}}})}}]}),
-            "tools/call"=>{calls.fetch_add(1,Ordering::SeqCst);json!({"content":[{"type":"text","text":body["params"]["arguments"].to_string()}],"isError":false,"resultType":"complete"})},
+            "tools/call"=>{calls.fetch_add(1,Ordering::SeqCst);if let Some((entered,release))=delay { entered.notify_one();release.notified().await; }json!({"content":[{"type":"text","text":body["params"]["arguments"].to_string()}],"isError":false,"resultType":"complete"})},
             _=>json!({}),
         };Json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
     }}}));
@@ -72,6 +84,123 @@ async fn fixture_schema(
         .find(|d| d.kind == crate::modules::capability::CapabilityKind::McpTool)
         .unwrap();
     (server, calls, capability.id.to_string(), handle)
+}
+
+#[tokio::test]
+async fn mcp_canvas_pause_after_remote_acceptance_requires_result_verification() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (server, calls, id, fixture_handle) =
+        fixture_with_delay(false, Some((entered.clone(), release.clone()))).await;
+    let execution = start(&server, &id).await;
+    let approval = execution.approval_ref.clone().unwrap();
+    let running = tokio::spawn({
+        let server = server.clone();
+        async move { decide(server, &approval, true).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+        .await
+        .unwrap();
+    server
+        .task_world
+        .pause_task(&execution.graph_id, 4)
+        .unwrap();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), running)
+        .await
+        .unwrap()
+        .unwrap();
+    release.notify_one();
+    let paused = server.task_world.find_execution(&execution.id).unwrap().1;
+    assert_eq!(paused.failure_code(), Some("external_mutation_uncertain"));
+    assert_eq!(
+        server
+            .db
+            .load_node_execution(&execution.id)
+            .unwrap()
+            .unwrap()
+            .failure_code(),
+        Some("external_mutation_uncertain")
+    );
+    server
+        .task_world
+        .resume_task(&execution.graph_id, 5)
+        .unwrap();
+    assert!(server
+        .task_world
+        .prepare_rerun_from_node(&execution.graph_id, &execution.node_id, 1, 6)
+        .is_err());
+    assert!(server
+        .task_world
+        .start_execution_with_resolver(
+            &execution.graph_id,
+            &execution.node_id,
+            1,
+            executor_resolver(&server, &execution.graph_id, &execution.node_id)
+                .await
+                .unwrap(),
+            7,
+        )
+        .is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let stale = review_execution_outcome(
+        State(server.clone()),
+        Path((execution.graph_id.to_string(), execution.id.to_string())),
+        Json(ReviewExecutionRequest {
+            expected_revision: 99,
+            outcome: ReviewedOutcome::NoEffect,
+            note: "已核对服务未产生业务写入".into(),
+        }),
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let empty = review_execution_outcome(
+        State(server.clone()),
+        Path((execution.graph_id.to_string(), execution.id.to_string())),
+        Json(ReviewExecutionRequest {
+            expected_revision: 1,
+            outcome: ReviewedOutcome::NoEffect,
+            note: " ".into(),
+        }),
+    )
+    .await;
+    assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
+    let reviewed = review_execution_outcome(
+        State(server.clone()),
+        Path((execution.graph_id.to_string(), execution.id.to_string())),
+        Json(ReviewExecutionRequest {
+            expected_revision: 1,
+            outcome: ReviewedOutcome::NoEffect,
+            note: "已在回环服务核对：仅接收请求，没有产生业务数据写入".into(),
+        }),
+    )
+    .await;
+    assert_eq!(reviewed.status(), StatusCode::OK);
+    assert_eq!(
+        body(reviewed).await["execution"]["failure_code"],
+        "operator_reported_no_effect"
+    );
+    let recorded = server
+        .db
+        .load_node_execution(&execution.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        recorded.external_review.as_ref().unwrap().source,
+        "user_statement"
+    );
+    assert!(recorded.output.is_none());
+    assert!(recorded.validation.is_none());
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "recording a review never dispatches a call"
+    );
+    server
+        .task_world
+        .prepare_rerun_from_node(&execution.graph_id, &execution.node_id, 1, 8)
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    fixture_handle.abort();
 }
 
 #[tokio::test]
@@ -202,6 +331,33 @@ async fn mcp_canvas_rejection_and_cancel_prevent_remote_calls() {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         fixture_handle.abort();
     }
+}
+
+#[tokio::test]
+async fn mcp_canvas_graph_cancel_settles_waiting_attempt_and_cancels_approval() {
+    use crate::modules::task::NodeExecutionStatus;
+
+    let (server, calls, id, fixture_handle) = fixture().await;
+    let execution = start(&server, &id).await;
+    let approval = execution.approval_ref.as_ref().unwrap();
+    assert_eq!(execution.status, NodeExecutionStatus::WaitingApproval);
+    server
+        .task_world
+        .cancel_task(&execution.graph_id, 3)
+        .unwrap();
+
+    let saved = server
+        .db
+        .load_node_execution(&execution.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.status, NodeExecutionStatus::Cancelled);
+    let (_, current) = server.task_world.find_execution(&execution.id).unwrap();
+    assert_eq!(current.status, NodeExecutionStatus::Cancelled);
+    assert!(server.approval_store.list_pending().is_empty());
+    assert!(decide(server.clone(), approval, true).await.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    fixture_handle.abort();
 }
 
 #[tokio::test]

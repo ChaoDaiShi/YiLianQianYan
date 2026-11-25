@@ -422,6 +422,19 @@ impl ProfileManager {
 
     /// Stop new requests, cancel in-flight tasks and executions, and wait for them to finish.
     pub async fn quiesce_runtime(server: &AppServer, timeout: Duration) -> Result<(), ScopeError> {
+        let start = std::time::Instant::now();
+        // Changing profiles prepares a restart before the desktop command can
+        // run. Save the old profile's task positions before stopping its chats.
+        server
+            .task_world
+            .pause_active_for_shutdown(
+                &server.command_router,
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .map_err(|error| {
+                tracing::error!(%error, "Profile change could not save active task positions");
+                ScopeError::TaskCheckpointFailed(error)
+            })?;
         // Cancel all active conversation tasks
         {
             let tasks = server.active_tasks.lock();
@@ -444,12 +457,27 @@ impl ProfileManager {
             }
         }
 
+        // Revoke native views before any profile registry activation. Keep
+        // cancelling independent runtimes even if native shutdown cannot confirm.
+        let software = server.software_runtime.clone();
+        let software_result = tokio::time::timeout(
+            timeout.saturating_sub(start.elapsed()),
+            tokio::task::spawn_blocking(move || software.shutdown()),
+        )
+        .await;
+        let browser_result = server
+            .browser_runtime
+            .quiesce(timeout.saturating_sub(start.elapsed()))
+            .await;
         // Shutdown MCP and managed processes
         server.mcp_runtime_manager.shutdown_all().await;
         server.managed_process_registry.shutdown_all();
+        if !matches!(software_result, Ok(Ok(Ok(())))) {
+            return Err(ScopeError::QuiesceTimeout);
+        }
+        browser_result.map_err(|_| ScopeError::QuiesceTimeout)?;
 
-        // Wait with bounded timeout to ensure active operations terminate
-        let start = std::time::Instant::now();
+        // Wait within the remaining transition deadline for active operations.
         while start.elapsed() < timeout {
             let tasks_empty = server.active_tasks.lock().is_empty();
             let runs_empty = server.active_workflow_runs.lock().is_empty();

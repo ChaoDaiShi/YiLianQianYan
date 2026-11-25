@@ -8,17 +8,28 @@ use std::path::Path;
 
 use super::trait_def::{Tool, ToolResult};
 use crate::utils::text::truncate_chars;
+mod scoped;
 
 // ── grep ──
 
 pub struct GrepTool {
     workspace_root: String,
+    scoped: bool,
 }
 
 impl GrepTool {
     pub fn new(workspace_root: &str) -> Self {
         Self {
             workspace_root: workspace_root.to_string(),
+            scoped: false,
+        }
+    }
+
+    /// Explicitly bounded local search for a delegated filesystem scope.
+    pub fn new_scoped(workspace_root: &str) -> Self {
+        Self {
+            workspace_root: workspace_root.to_string(),
+            scoped: true,
         }
     }
 
@@ -37,6 +48,9 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
+        if self.scoped {
+            return "在授权目录内有界搜索 UTF-8 文本；跳过隐路径、构建目录与链接。结果附完整性说明，不完整时须缩小路径或模式，不能声称已经查完。";
+        }
         "在工作区内使用正则表达式搜索文件内容。自动跳过node_modules/.git/target等目录。"
     }
 
@@ -62,6 +76,9 @@ impl Tool for GrepTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
+        if self.scoped {
+            return scoped::execute(&self.workspace_root, args, true).await;
+        }
         let pattern = args["pattern"].as_str().unwrap_or("");
         if pattern.is_empty() {
             return ToolResult::error("pattern不能为空");
@@ -200,12 +217,22 @@ impl GrepTool {
 
 pub struct GlobTool {
     workspace_root: String,
+    scoped: bool,
 }
 
 impl GlobTool {
     pub fn new(workspace_root: &str) -> Self {
         Self {
             workspace_root: workspace_root.to_string(),
+            scoped: false,
+        }
+    }
+
+    /// Explicitly bounded local search for a delegated filesystem scope.
+    pub fn new_scoped(workspace_root: &str) -> Self {
+        Self {
+            workspace_root: workspace_root.to_string(),
+            scoped: true,
         }
     }
 }
@@ -217,6 +244,9 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
+        if self.scoped {
+            return "在授权目录内按相对 glob 模式有界查找普通文件；跳过隐路径、构建目录与链接。结果是可供 read_file 使用的绝对路径，并附完整性说明。";
+        }
         "使用glob模式匹配文件路径。用于查找文件名匹配特定模式的文件。"
     }
 
@@ -238,6 +268,9 @@ impl Tool for GlobTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
+        if self.scoped {
+            return scoped::execute(&self.workspace_root, args, false).await;
+        }
         let pattern_str = args["pattern"].as_str().unwrap_or("");
         if pattern_str.is_empty() {
             return ToolResult::error("pattern不能为空");

@@ -15,8 +15,8 @@ use serde::Deserialize;
 use crate::app::state::AppServer;
 use crate::db::{ArtifactQuery, TaskQuery};
 use crate::modules::task::{
-    build_task_orchestrator, Task, TaskExecutionId, TaskId, TaskOrchestrator, TaskPriority,
-    TaskRunner,
+    build_task_orchestrator, Task, TaskExecutionId, TaskId, TaskOrchestrator, TaskPageSource,
+    TaskPriority, TaskRunner,
 };
 use crate::workspace::WorkspaceId;
 
@@ -32,6 +32,7 @@ pub struct CreateTaskRequest {
     pub workflow_graph_id: Option<String>,
     #[serde(default)]
     pub agent_team_id: Option<String>,
+    pub page_source: Option<TaskPageSource>,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +99,7 @@ fn task_view(task: &Task) -> serde_json::Value {
         "workspace_id": task.workspace_id.as_str(),
         "title": task.title,
         "description": task.description,
+        "page_source": task.page_source,
         "status": task.status.to_string(),
         "priority": task.priority.to_string(),
         "workflow_graph_id": task.workflow_graph_id,
@@ -149,6 +151,18 @@ pub async fn create_task(
     {
         return Err((StatusCode::BAD_REQUEST, "工作空间不存在".to_string()));
     }
+    if let Some(source) = &body.page_source {
+        let page = server
+            .db
+            .workspace_page(&source.page_id, false)
+            .map_err(super::workspace_pages::page_error)?;
+        if page.page.workspace_id != body.workspace_id {
+            return Err((StatusCode::FORBIDDEN, "页面不属于任务的工作空间".into()));
+        }
+        if page.page.revision != source.revision {
+            return Err((StatusCode::CONFLICT, "请读取页面的最新版本".into()));
+        }
+    }
     let priority = parse_priority(body.priority)?;
     let agent_team_id = body
         .agent_team_id
@@ -156,7 +170,7 @@ pub async fn create_task(
         .transpose()
         .map_err(|_| (StatusCode::BAD_REQUEST, "无效 agent_team_id".to_string()))?;
     let now = chrono::Utc::now().timestamp_millis();
-    let task = Task::new(
+    let mut task = Task::new(
         TaskId::generate(),
         workspace_id,
         body.title,
@@ -167,10 +181,15 @@ pub async fn create_task(
         now,
     )
     .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-    server
-        .db
-        .create_task(&task)
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    task.page_source = body.page_source;
+    server.db.create_task(&task).map_err(|error| {
+        let status = if error == "页面已变化或不再可用" {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        (status, error)
+    })?;
     Ok(Json(task_view(&task)))
 }
 

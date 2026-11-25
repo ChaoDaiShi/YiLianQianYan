@@ -244,31 +244,16 @@ pub async fn propose_repair_handler(
                 "目标的剩余 token 预算已耗尽",
             ));
         }
-        let mut config = server.effective_model_config();
-        config.invoke_timeout_ms = config
-            .invoke_timeout_ms
-            .min(contract.budget.max_wall_time_ms);
-        let usage_recorder = server
-            .db
-            .get_active_llm_model()
-            .ok()
-            .flatten()
-            .filter(|model| model.model == config.name && model.provider == config.provider)
-            .map(|model| {
-                std::sync::Arc::new(crate::integrations::llm::usage::DatabaseUsageRecorder::new(
-                    server.db.clone_connection(),
-                    model.id,
-                    model.provider,
-                    model.model,
-                    "proofloop-ai-repair",
-                ))
-                    as std::sync::Arc<dyn crate::integrations::llm::client::UsageRecorder>
-            });
-        let client = LlmClient::new_with_usage_recorder(
-            &config,
-            Arc::clone(&server.secret_resolver),
-            usage_recorder,
-        );
+        let client = match model::planning_client(
+            &server,
+            &contract.workspace_id,
+            &contract.goal_id,
+            "proofloop-ai-repair",
+            contract.budget.max_wall_time_ms,
+        ) {
+            Ok(client) => client,
+            Err(error) => return proof_error_response(error),
+        };
         let messages =
             match crate::modules::task::proofloop::ai_repair::build_ai_repair_messages(&context) {
                 Ok(value) => value,

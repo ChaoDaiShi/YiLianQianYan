@@ -341,6 +341,8 @@ pub enum ScopeError {
     ScopeMismatch(String),
     #[error("Quiesce timeout")]
     QuiesceTimeout,
+    #[error("Could not save active task positions: {0}")]
+    TaskCheckpointFailed(String),
     #[error("Migration failed: {0}")]
     MigrationFailed(String),
     #[error("Secret store failed: {0}")]

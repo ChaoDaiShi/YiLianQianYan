@@ -62,6 +62,7 @@ pub async fn create_grant(
         .db
         .create_grant(&grant)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    server.browser_runtime.invalidate_authorizations();
     server
         .audit_recorder
         .record(crate::safety::AuditEventInput {
@@ -92,6 +93,7 @@ pub async fn delete_grant(
     if !deleted {
         return Err((StatusCode::NOT_FOUND, "grant not found".to_string()));
     }
+    server.browser_runtime.invalidate_authorizations();
     server
         .audit_recorder
         .record(crate::safety::AuditEventInput {

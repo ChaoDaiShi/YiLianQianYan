@@ -27,6 +27,37 @@ fn output_tool() -> (BasicServiceTool, ResourceService) {
     .with_resource_service(service.clone());
     (tool, service)
 }
+
+#[tokio::test]
+async fn vision_prepares_a_smaller_provider_copy_of_a_wide_image() {
+    let (tool, service) = output_tool();
+    let output = tool
+        .db
+        .create_conversation_image_output(
+            &tool.conversation_id,
+            "wide",
+            "PNG",
+            Some("fixture"),
+            None,
+        )
+        .unwrap();
+    let mut image = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(9_000, 450)
+        .write_to(&mut image, image::ImageFormat::Png)
+        .unwrap();
+    let original = image.into_inner();
+    let result = tool.persist_image(&output, original.clone()).await.unwrap();
+    let id = result.resource_id.unwrap();
+    let url = tool
+        .vision_image(&json!({"resource_id":id}))
+        .unwrap()
+        .unwrap();
+    let sent = decode_image_data_url(&url).unwrap();
+    let decoded = image::load_from_memory(&sent).unwrap();
+    assert_eq!(decoded.width(), 4096);
+    assert_eq!(decoded.height(), 205);
+    assert_eq!(service.read_bytes(&id).unwrap(), original);
+}
 #[tokio::test]
 async fn generated_bytes_become_real_resources_and_vision_uses_only_this_conversation() {
     let (tool, service) = output_tool();
@@ -72,12 +103,11 @@ async fn generated_bytes_become_real_resources_and_vision_uses_only_this_convers
     assert!(tool
         .vision_image(&json!({"resource_id":id,"image_url":"https://example.invalid/image.png"}))
         .is_err());
+    let outputs = tool.db.conversation_outputs(&tool.conversation_id).unwrap();
+    assert_eq!(outputs.len(), 1);
     assert_eq!(
-        tool.db
-            .conversation_outputs(&tool.conversation_id)
-            .unwrap()
-            .len(),
-        1
+        serde_json::to_value(&outputs[0]).unwrap()["tool_call_id"],
+        "call-1"
     );
     assert!(tool
         .db
@@ -209,11 +239,19 @@ fn agent_specific_profile_is_resolved_before_default() {
         crate::integrations::secret::InMemorySecretStore::new(),
     )));
     let defaults = BasicServiceTool::new(db.clone_connection(), resolver.clone(), "image");
-    assert_eq!(defaults.selected().unwrap().1[0].id, "default");
-    let bound = BasicServiceTool::new(db, resolver, "image").with_agent_id("actor".into());
-    assert_eq!(bound.selected().unwrap().1[0].id, "explicit");
     assert_eq!(
-        bound.endpoint(&bound.selected().unwrap().1[0]).unwrap(),
+        defaults.selected().unwrap().selection.profiles[0].id,
+        "default"
+    );
+    let bound = BasicServiceTool::new(db, resolver, "image").with_agent_id("actor".into());
+    assert_eq!(
+        bound.selected().unwrap().selection.profiles[0].id,
+        "explicit"
+    );
+    assert_eq!(
+        bound
+            .endpoint(&bound.selected().unwrap().selection.profiles[0])
+            .unwrap(),
         "https://example.invalid/v1/images/generations"
     );
 }
@@ -378,3 +416,5 @@ async fn vision_uses_selected_account_and_bound_real_image_in_local_request() {
     assert_eq!(result.content, "真实测试图片");
     server.abort();
 }
+
+mod workspace;

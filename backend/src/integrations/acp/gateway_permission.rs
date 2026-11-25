@@ -7,11 +7,58 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::client::{AcpError, AcpPermissionHandler};
-use super::model::{AcpPermissionDecision, AcpPermissionRequest};
+use super::model::{AcpLaunchConfig, AcpPermissionDecision, AcpPermissionRequest};
+use crate::safety::subject::{DelegatedSubject, ToolInvocation};
 use crate::safety::{
     PolicyDecision, SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject,
 };
 use crate::tools::trait_def::RiskLevel;
+use crate::tools::ToolRegistry;
+
+pub(crate) struct DelegatedAcpPermissions {
+    config: Arc<parking_lot::RwLock<crate::config::types::AppConfig>>,
+    db: crate::db::Database,
+    audit: crate::safety::AuditRecorder,
+    registry: Arc<ToolRegistry>,
+    workspace_root: String,
+}
+
+impl DelegatedAcpPermissions {
+    pub(crate) fn new(server: &crate::app::state::AppServer, source: &ToolRegistry) -> Self {
+        Self {
+            config: Arc::clone(&server.config),
+            db: server.db.clone_connection(),
+            audit: server.audit_recorder.clone(),
+            registry: Arc::new(source.filtered(|name| matches!(name, "read_file" | "edit_file"))),
+            workspace_root: server.workspace_root.clone(),
+        }
+    }
+
+    pub(crate) fn bind(
+        &self,
+        launch: &AcpLaunchConfig,
+        invocation: &ToolInvocation,
+    ) -> GatewayAcpPermissionHandler {
+        let subject = SecuritySubject::acp_agent(&launch.id);
+        let delegation = DelegatedSubject::new(
+            subject.clone(),
+            &launch.id,
+            format!("handoff-{}", Uuid::new_v4()),
+            invocation.clone(),
+            launch.cwd.clone(),
+        );
+        let gateway = crate::safety::production_gateway::build_with_components(
+            Arc::clone(&self.config),
+            &self.db,
+            &self.audit,
+            &self.workspace_root,
+            Arc::clone(&self.registry),
+            None,
+        )
+        .with_delegation(delegation);
+        GatewayAcpPermissionHandler::new(Arc::new(gateway), launch.cwd.clone(), subject)
+    }
+}
 
 /// Routes ACP's nested file permission requests through the existing security
 /// Gateway. The Gateway is only asked to evaluate each operation; this adapter

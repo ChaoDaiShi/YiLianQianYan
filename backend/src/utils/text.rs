@@ -10,6 +10,10 @@ pub fn truncate_chars(text: &str, max_chars: usize) -> String {
     }
 }
 
+pub(crate) fn is_cjk(character: char) -> bool {
+    matches!(character as u32, 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x3134f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::truncate_chars;

@@ -29,7 +29,6 @@ use async_trait::async_trait;
 
 use crate::agent::engine;
 use crate::agent::state::AgentState;
-use crate::agent::verifier::DefaultVerifier;
 use crate::app::state::LogBuffer;
 use crate::config::types::AppConfig;
 use crate::db::Database;
@@ -38,8 +37,8 @@ use crate::integrations::secret::SecretResolver;
 use crate::modules::task::artifact::ArtifactService;
 use crate::modules::task::model::ArtifactId;
 use crate::safety::approval::ApprovalStore;
+use crate::safety::subject::{DelegatedSubject, ToolInvocation};
 use crate::safety::AuditRecorder;
-use crate::safety::SecurityExecutionGateway;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::subagent::{SubagentExecutionSpec, SubagentExecutor};
 use crate::tools::trait_def::ToolResult;
@@ -47,9 +46,26 @@ use crate::tools::trait_def::ToolResult;
 /// Maximum characters of the final child result returned to the parent.
 pub(crate) const MAX_SUBAGENT_RESULT_CHARS: usize = 16_000;
 
+#[derive(Clone)]
+pub(crate) struct ChildModel {
+    pub(crate) handoff_id: String,
+    pub(crate) name: String,
+    pub(crate) config: crate::config::types::ModelConfig,
+    pub(crate) generation: crate::integrations::llm::generation::GenerationOverrides,
+}
+
+tokio::task_local! { pub(crate) static CURRENT_CHILD_MODEL: ChildModel; }
+
+pub(crate) fn child_model_for_handoff(handoff_id: &str) -> Option<ChildModel> {
+    CURRENT_CHILD_MODEL
+        .try_with(|model| (model.handoff_id == handoff_id).then(|| model.clone()))
+        .ok()
+        .flatten()
+}
+
 /// Runtime executor that runs a local Child Agent using the shared ReAct engine.
 pub(crate) struct LocalSubagentExecutor {
-    config: AppConfig,
+    config: Arc<parking_lot::RwLock<AppConfig>>,
     workspace_root: String,
     source_tool_registry: Arc<ToolRegistry>,
     db: Database,
@@ -61,7 +77,7 @@ pub(crate) struct LocalSubagentExecutor {
 
 impl LocalSubagentExecutor {
     pub(crate) fn new(
-        config: AppConfig,
+        config: Arc<parking_lot::RwLock<AppConfig>>,
         workspace_root: String,
         source_tool_registry: Arc<ToolRegistry>,
         db: Database,
@@ -95,7 +111,11 @@ impl SubagentExecutor for LocalSubagentExecutor {
         spec: &SubagentExecutionSpec,
         task: &str,
         handoff: Option<&crate::agent::delegation::DelegationRequest>,
+        invocation: Option<&ToolInvocation>,
     ) -> ToolResult {
+        let Some(invocation) = invocation else {
+            return ToolResult::error("子任务需要通过权限入口发起委派");
+        };
         if let Err(reason) = validate_runtime_spec(spec) {
             return ToolResult::error(reason);
         }
@@ -157,7 +177,7 @@ impl SubagentExecutor for LocalSubagentExecutor {
                 Err(_)=>return ToolResult::error("子任务执行超时"),
             }
         };
-        let child_config = build_child_config(&self.config, spec.model.as_deref());
+        let child_config = build_child_config(&self.config.read(), spec.model.as_deref());
         let child_tools = match effective_child_tools(spec, handoff, &self.source_tool_registry) {
             Ok(tools) => tools,
             Err(error) => return ToolResult::error(error),
@@ -165,6 +185,7 @@ impl SubagentExecutor for LocalSubagentExecutor {
         let child_registry = build_child_tool_registry(&self.source_tool_registry, &child_tools);
 
         let mut system_prompt = build_child_system_prompt(&spec.name, &spec.instructions, handoff);
+        let mut generation = crate::integrations::llm::generation::GenerationOverrides::default();
         let is_profiled = self.db.conn().query_row(
             "SELECT EXISTS(SELECT 1 FROM agent_definitions WHERE id=?1)",
             [&spec.name],
@@ -173,10 +194,13 @@ impl SubagentExecutor for LocalSubagentExecutor {
         match is_profiled {
             Ok(true) => {
                 match crate::api::agents::persona::profile_for_agent(&self.db, &spec.name) {
-                    Ok(profile) => system_prompt.push_str(&format!(
-                        "\n\n{}",
-                        crate::api::agents::persona::compose_user_persona(&profile)
-                    )),
+                    Ok(profile) => {
+                        generation = profile.generation();
+                        system_prompt.push_str(&format!(
+                            "\n\n{}",
+                            crate::api::agents::persona::compose_user_persona(&profile)
+                        ));
+                    }
                     Err(error) => return ToolResult::error(error),
                 }
             }
@@ -188,23 +212,35 @@ impl SubagentExecutor for LocalSubagentExecutor {
 
         let conversation_id = format!("subagent:{}:{}", spec.name, uuid::Uuid::new_v4());
 
-        let client = LlmClient::new(&child_config.model, Arc::clone(&self.resolver));
-        let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-            child_config.sandbox.clone(),
-            self.workspace_root.clone(),
+        let client = LlmClient::new(&child_config.model, Arc::clone(&self.resolver))
+            .with_generation_overrides(generation);
+        let security_gateway = crate::safety::production_gateway::build_with_components(
+            Arc::clone(&self.config),
+            &self.db,
+            &self.audit_recorder,
+            &self.workspace_root,
             Arc::clone(&child_registry),
-            Arc::new(DefaultVerifier::new(&self.workspace_root)),
-            Arc::new(self.audit_recorder.clone()),
+            None,
         )
-        .with_permissions_config(Arc::new(parking_lot::RwLock::new(child_config.clone())))
-        .with_db(Arc::new(self.db.clone_connection()))
-        .with_grant_enforcement();
+        .with_delegation(DelegatedSubject::new(
+            crate::safety::SecuritySubject::subagent(&spec.name),
+            &spec.name,
+            handoff_id.clone(),
+            invocation.clone(),
+            self.workspace_root.clone().into(),
+        ));
 
         // Independent approval store: a child pause must never leak into the
         // parent approval chain.
         let child_approval_store = ApprovalStore::new();
-        let (tx, _rx) = tokio::sync::mpsc::channel(256);
+        let (tx, rx) = tokio::sync::mpsc::channel(256);
+        drop(rx); // Child runs have no live reply subscriber.
         let scope = crate::agent::delegation::ExecutionScope {
+            owner: crate::execution::owner::current_owner().or_else(|| {
+                Some(crate::execution::ExecutionOwner::Conversation {
+                    conversation_id: invocation.conversation_id.clone(),
+                })
+            }),
             cancel: cancel_token.clone(),
             budget: Some(Arc::clone(&budget)),
             handoff_id: Some(handoff_id.clone()),
@@ -227,18 +263,23 @@ impl SubagentExecutor for LocalSubagentExecutor {
             &tx,
             &self.log_buffer,
         );
-        let result = crate::agent::delegation::EXECUTION_SCOPE
-            .scope(scope, async {
-                tokio::select! {
-                    biased;
-                    _=cancel_token.cancelled()=>Err("子任务已取消".into()),
-                    result=tokio::time::timeout_at(deadline,execution)=>match result {
-                        Ok(value)=>value,
-                        Err(_)=>{cancel_token.cancel();Err("子任务执行超时".into())},
-                    }
+        let current_child = ChildModel {
+            handoff_id: handoff_id.clone(),
+            name: spec.name.clone(),
+            config: child_config.model.clone(),
+            generation,
+        };
+        let execution = crate::agent::delegation::EXECUTION_SCOPE.scope(scope, async {
+            tokio::select! {
+                biased;
+                _=cancel_token.cancelled()=>Err("子任务已取消".into()),
+                result=tokio::time::timeout_at(deadline,execution)=>match result {
+                    Ok(value)=>value,
+                    Err(_)=>{cancel_token.cancel();Err("子任务执行超时".into())},
                 }
-            })
-            .await;
+            }
+        });
+        let result = CURRENT_CHILD_MODEL.scope(current_child, execution).await;
         let child_usage = budget.handoff_usage(&handoff_id).ok();
         drop(reservation);
 

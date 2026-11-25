@@ -130,15 +130,17 @@ impl NodeContextBuilder {
         let instructions = optional_text(input, "instructions")?
             .or(optional_text(input, "instruction")?)
             .unwrap_or_else(|| node.title.clone());
-        let resources = if let Some(database) = &self.resource_database {
-            crate::modules::resource::bound_node_resources(
-                database,
-                graph.id.as_str(),
-                node.id.as_str(),
-            )
-            .map_err(NodeContextBuildError::InvalidField)?
+        let (resources, resource_manifest) = if let Some(database) = &self.resource_database {
+            let (resources, manifest) =
+                crate::modules::resource::bound_node_resources_with_manifest(
+                    database,
+                    graph.id.as_str(),
+                    node.id.as_str(),
+                )
+                .map_err(NodeContextBuildError::InvalidField)?;
+            (resources, Some(manifest))
         } else {
-            bounded_text_list(input, "resources", self.limits)?
+            (bounded_text_list(input, "resources", self.limits)?, None)
         };
         let memory_references = bounded_text_list(input, "memory_references", self.limits)?;
         let capabilities = bounded_text_list(input, "capabilities", self.limits)?;
@@ -163,7 +165,7 @@ impl NodeContextBuilder {
                 });
             }
         }
-        let context = NodeContext::new(
+        let mut context = NodeContext::new(
             goal,
             instructions,
             resources,
@@ -173,6 +175,14 @@ impl NodeContextBuilder {
             constraints,
             acceptance_criteria,
         )?;
+        if let Some(manifest) = resource_manifest {
+            context
+                .manifest
+                .entries
+                .retain(|entry| entry.kind != "resource");
+            context.manifest.total_chars = context.manifest.entries.iter().map(|e| e.chars).sum();
+            context.manifest.extend(manifest);
+        }
         Ok(context)
     }
 }
@@ -363,11 +373,32 @@ fn only_bound_ready_resources_enter_context_with_provenance() {
     assert!(context.resources[0].contains("authorized context"));
     assert!(context.resources[0].contains(&resource.hash));
     assert!(!context.resources[0].contains("unbound-context"));
+    assert!(context
+        .manifest
+        .entries
+        .iter()
+        .any(|entry| entry.kind == "resource"
+            && entry.version.as_deref() == Some(&resource.hash)
+            && entry.status == crate::execution::context_manifest::ContextStatus::Resolved));
+    assert!(context
+        .manifest
+        .entries
+        .iter()
+        .any(|entry| entry.kind == "resource"
+            && entry.status == crate::execution::context_manifest::ContextStatus::Unavailable));
     std::fs::remove_file(&resource.storage_path).unwrap();
     assert!(builder
         .build(&graph, &node_id, Vec::new())
         .unwrap()
         .resources
         .is_empty());
+    assert!(builder
+        .build(&graph, &node_id, Vec::new())
+        .unwrap()
+        .manifest
+        .entries
+        .iter()
+        .any(|entry| entry.source_id == resource.id
+            && entry.status == crate::execution::context_manifest::ContextStatus::Unavailable));
     let _ = std::fs::remove_dir_all(root);
 }

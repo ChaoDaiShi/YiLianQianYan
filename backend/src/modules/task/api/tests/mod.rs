@@ -13,10 +13,11 @@ use crate::modules::task::{GraphRevision, TaskGraph, TaskWorldRuntime};
 use axum::body::to_bytes;
 
 fn server() -> Arc<AppServer> {
-    let server = AppServer::new_with_control_session(
+    let server = AppServer::new_with_control_session_and_store(
         std::path::Path::new(":memory:"),
         ".",
         crate::safety::ControlSession::new(uuid::Uuid::new_v4().to_string().repeat(2)).unwrap(),
+        Arc::new(crate::integrations::secret::InMemorySecretStore::new()),
     )
     .unwrap();
     {

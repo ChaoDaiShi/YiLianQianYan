@@ -1,5 +1,6 @@
 use super::migrations::{MigrationOwner, ProductMigrationSpec};
-use super::{Database, MessageRow};
+use super::{conversations::insert_chat_message_on, Database, MessageRow};
+use crate::integrations::llm::types::ChatMessage;
 use rusqlite::params;
 use serde::Serialize;
 
@@ -30,6 +31,9 @@ impl Database {
         workspace: Option<&str>,
     ) -> Result<(), String> {
         self.get_conversation(id)?;
+        self.initialize_conversation_goal_bindings()?;
+        self.initialize_proofloop_schema()
+            .map_err(|error| error.to_string())?;
         if let Some(workspace) = workspace {
             let parsed =
                 crate::workspace::WorkspaceId::new(workspace).map_err(|e| e.to_string())?;
@@ -37,15 +41,32 @@ impl Database {
             if row.status != crate::workspace::WorkspaceStatus::Active {
                 return Err("工作空间已归档".into());
             }
-            self.conn().execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("conversation_workspace:{id}"),workspace]).map_err(|e|e.to_string())?;
-        } else {
-            self.conn()
-                .execute(
-                    "DELETE FROM settings WHERE key=?1",
-                    [format!("conversation_workspace:{id}")],
-                )
-                .map_err(|e| e.to_string())?;
         }
+        let mut conn = self.conn();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+        use rusqlite::OptionalExtension;
+        let goal_workspace: Option<String> = tx.query_row(
+            "SELECT v.workspace_id FROM conversation_goal_bindings b JOIN proofloop_goal_versions v ON v.goal_id=b.goal_id AND v.version=b.goal_version WHERE b.conversation_id=?1",
+            [id], |row| row.get(0),
+        ).optional().map_err(|error| error.to_string())?;
+        if goal_workspace
+            .as_deref()
+            .is_some_and(|goal_workspace| Some(goal_workspace) != workspace)
+        {
+            return Err("conversation_goal_workspace_conflict".into());
+        }
+        if let Some(workspace) = workspace {
+            tx.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("conversation_workspace:{id}"),workspace]).map_err(|e|e.to_string())?;
+        } else {
+            tx.execute(
+                "DELETE FROM settings WHERE key=?1",
+                [format!("conversation_workspace:{id}")],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|error| error.to_string())?;
         Ok(())
     }
     pub fn load_conversation_compaction(
@@ -70,9 +91,14 @@ impl Database {
         id: &str,
         checkpoint: &Option<crate::agent::context_compaction::CompactedContext>,
     ) -> Result<(), String> {
+        let key = format!("conversation_compaction:{id}");
         if let Some(point) = checkpoint {
             let json = serde_json::to_string(point).map_err(|e| e.to_string())?;
-            self.conn().execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("conversation_compaction:{id}"),json]).map_err(|e|e.to_string())?;
+            self.conn().execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,json]).map_err(|e|e.to_string())?;
+        } else {
+            self.conn()
+                .execute("DELETE FROM settings WHERE key=?1", [key])
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
@@ -93,6 +119,7 @@ impl Database {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         tx.execute("INSERT INTO messages(id,conversation_id,role,content,tool_calls,tool_call_id,tool_name,tool_result,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![message.id,message.conversation_id,message.role,message.content,message.tool_calls,message.tool_call_id,message.tool_name,message.tool_result,message.created_at]).map_err(|e|e.to_string())?;
+        super::memory_activity::record_chat_activity(&tx, message).map_err(|e| e.to_string())?;
         if resources.len() > crate::modules::resource::MAX_INPUT_FILES {
             return Err("一次最多附加8个文件".into());
         }
@@ -114,6 +141,12 @@ impl Database {
         .map_err(|e| e.to_string())?;
         tx.execute("UPDATE conversations SET run_status='running',run_error=NULL,run_started_at=?2,run_finished_at=NULL,updated_at=?2 WHERE id=?1",params![message.conversation_id,message.created_at]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.publish_goal_conversation_change(
+            &message.conversation_id,
+            "conversation_status",
+            Some("running"),
+        );
         Ok(id)
     }
     pub fn finish_conversation_turn(&self, conversation: &str, status: &str) -> Result<(), String> {
@@ -123,6 +156,79 @@ impl Database {
             Some(chrono::Utc::now().timestamp_millis())
         };
         self.conn().execute("UPDATE conversation_turns SET status=?2,finished_at=?3 WHERE id=(SELECT id FROM conversation_turns WHERE conversation_id=?1 AND finished_at IS NULL ORDER BY started_at DESC,rowid DESC LIMIT 1)",params![conversation,status,finished]).map_err(|e|e.to_string())?;
+        Ok(())
+    }
+
+    /// Append the user's supplement to the accepted turn while it still runs.
+    pub(crate) fn accept_turn_supplement(
+        &self,
+        turn_id: &str,
+        message: &MessageRow,
+    ) -> Result<bool, String> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let inserted = tx.execute(
+            "INSERT INTO messages(id,conversation_id,role,content,created_at)
+             SELECT ?1,?2,'user',?3,?4 WHERE EXISTS(
+                 SELECT 1 FROM conversation_turns
+                 WHERE id=?5 AND conversation_id=?2 AND status='running' AND finished_at IS NULL
+                   AND id=(SELECT id FROM conversation_turns WHERE conversation_id=?2 ORDER BY started_at DESC,rowid DESC LIMIT 1)
+             )",
+            params![message.id, message.conversation_id, message.content, message.created_at, turn_id],
+        ).map_err(|e| e.to_string())?;
+        if inserted == 0 {
+            return Ok(false);
+        }
+        super::memory_activity::record_chat_activity(&tx, message).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    /// Keep the order observed by the model and keep a durable supplement if
+    /// cancellation or a provider error ended the turn before it was applied.
+    pub(crate) fn persist_steered_turn_messages(
+        &self,
+        conversation: &str,
+        messages: &[ChatMessage],
+        new_start: usize,
+        updates: &[(Option<usize>, &str)],
+    ) -> Result<(), String> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let time = tx
+            .query_row(
+                "SELECT MAX(created_at) FROM messages WHERE conversation_id=?1",
+                [conversation],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(|e| e.to_string())?
+            .unwrap_or(now)
+            .max(now);
+        // Messages are ordered by (created_at, rowid). Move the accepted row
+        // after the preceding model messages without advancing the clock.
+        let move_supplement = "UPDATE messages SET
+            rowid=(SELECT MAX(rowid)+1 FROM messages), created_at=?1
+            WHERE id=?2 AND conversation_id=?3";
+        for (index, message) in messages.iter().enumerate().skip(new_start) {
+            if let Some((_, id)) = updates.iter().find(|(applied, _)| *applied == Some(index)) {
+                tx.execute(move_supplement, params![time, id, conversation])
+                    .map_err(|e| e.to_string())?;
+            } else if matches!(message.role.as_str(), "assistant" | "tool") {
+                let row = MessageRow::from_chat_message(conversation, message, time)?;
+                insert_chat_message_on(&tx, &row, message.reasoning_content.as_deref())?;
+            }
+        }
+        for (_, id) in updates.iter().filter(|(applied, _)| applied.is_none()) {
+            tx.execute(move_supplement, params![time, id, conversation])
+                .map_err(|e| e.to_string())?;
+        }
+        tx.execute(
+            "UPDATE conversations SET updated_at=?1 WHERE id=?2",
+            params![now, conversation],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
     pub fn conversation_turns(

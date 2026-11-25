@@ -186,10 +186,14 @@ impl Database {
 
     pub fn create_task(&self, task: &Task) -> Result<(), String> {
         let conn = self.conn();
-        conn.execute(
+        let changed = conn.execute(
             "INSERT INTO tasks (id, workspace_id, title, description, status, priority,
-                workflow_graph_id, agent_team_id, created_at, updated_at, completed_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                workflow_graph_id, agent_team_id, created_at, updated_at, completed_at, source_page_id, source_page_revision)
+             SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13
+             WHERE ?12 IS NULL OR EXISTS (
+               SELECT 1 FROM pages p JOIN workspaces w ON w.id=p.workspace_id
+               WHERE p.id=?12 AND p.revision=?13 AND p.workspace_id=?2 AND p.deleted_at IS NULL AND w.status='active'
+             )",
             rusqlite::params![
                 task.id.as_str(),
                 task.workspace_id.as_str(),
@@ -202,9 +206,14 @@ impl Database {
                 task.created_at,
                 task.updated_at,
                 task.completed_at,
+                task.page_source.as_ref().map(|source| &source.page_id),
+                task.page_source.as_ref().map(|source| source.revision),
             ],
         )
         .map_err(|error| error.to_string())?;
+        if changed == 0 {
+            return Err("页面已变化或不再可用".into());
+        }
         Ok(())
     }
 
@@ -213,7 +222,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, workspace_id, title, description, status, priority,
-                    workflow_graph_id, agent_team_id, created_at, updated_at, completed_at
+                    workflow_graph_id, agent_team_id, created_at, updated_at, completed_at, source_page_id, source_page_revision
                  FROM tasks WHERE id = ?1",
             )
             .map_err(|error| error.to_string())?;
@@ -230,7 +239,7 @@ impl Database {
         let conn = self.conn();
         let mut sql = String::from(
             "SELECT id, workspace_id, title, description, status, priority,
-                    workflow_graph_id, agent_team_id, created_at, updated_at, completed_at
+                    workflow_graph_id, agent_team_id, created_at, updated_at, completed_at, source_page_id, source_page_revision
              FROM tasks WHERE 1 = 1",
         );
         let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -607,13 +616,35 @@ impl Database {
     // ── Agent definitions ──
 
     pub fn create_agent_definition(&self, agent: &AgentDefinition) -> Result<(), String> {
+        self.insert_agent_definition(agent, false)
+    }
+
+    pub(crate) fn insert_builtin_agent_definition(
+        &self,
+        agent: &AgentDefinition,
+    ) -> Result<(), String> {
+        self.insert_agent_definition(agent, true)
+    }
+
+    fn insert_agent_definition(
+        &self,
+        agent: &AgentDefinition,
+        builtin: bool,
+    ) -> Result<(), String> {
         let allowed_tools = encode_json(&agent.allowed_tools)?;
         let capabilities = encode_json(&agent.capabilities)?;
         let conn = self.conn();
+        let conflict = if builtin {
+            " ON CONFLICT(id) DO NOTHING"
+        } else {
+            ""
+        };
         conn.execute(
-            "INSERT INTO agent_definitions (id, name, description, instructions, allowed_tools,
+            &format!(
+                "INSERT INTO agent_definitions (id, name, description, instructions, allowed_tools,
                 model, capabilities, max_iterations, enabled, source, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12){conflict}"
+            ),
             rusqlite::params![
                 agent.id.as_str(),
                 agent.name,
@@ -935,6 +966,13 @@ fn now_ms() -> i64 {
 fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     let status: String = row.get(4)?;
     let priority: String = row.get(5)?;
+    let page_source = match row.get::<_, Option<String>>(11)? {
+        Some(page_id) => Some(TaskPageSource {
+            page_id,
+            revision: row.get(12)?,
+        }),
+        None => None,
+    };
     Ok(Task {
         id: TaskId::new(row.get::<_, String>(0)?).unwrap(),
         workspace_id: WorkspaceId::new(row.get::<_, String>(1)?).unwrap(),
@@ -949,6 +987,7 @@ fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         completed_at: row.get(10)?,
+        page_source,
     })
 }
 

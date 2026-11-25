@@ -6,6 +6,27 @@ use super::manifest::*;
 use super::path::*;
 use super::registry::*;
 
+#[test]
+fn service_feature_is_an_explicit_process_contribution() {
+    let mut value = serde_json::json!({
+        "schema_version":1,"id":"yilian.qq","name":"QQ / OneBot","version":"1.0.0",
+        "permissions":["process.manage"],
+        "contributes":{
+            "services":["services/napcat.json"],
+            "features":[{"id":"qq","title":"QQ 工作台","target":{"kind":"service","contribution":"services/napcat.json"}}]
+        }
+    });
+    assert!(
+        parse_manifest(&value.to_string()).is_ok(),
+        "service features must be accepted"
+    );
+    value["permissions"] = serde_json::json!([]);
+    assert!(
+        parse_manifest(&value.to_string()).is_err(),
+        "external process contributions must declare their permission"
+    );
+}
+
 fn valid_manifest_json() -> String {
     serde_json::to_string(&serde_json::json!({
         "schema_version": 1,

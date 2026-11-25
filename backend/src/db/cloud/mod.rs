@@ -4,6 +4,7 @@ pub mod checkpoint;
 pub mod conflict_resolve;
 pub mod conflicts;
 pub mod identity;
+pub(super) mod memory_purge;
 pub mod outbox;
 pub mod projection;
 pub mod schema;

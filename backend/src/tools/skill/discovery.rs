@@ -34,6 +34,18 @@ impl SkillDiscovery {
             bundled.as_deref(),
         )
     }
+    /// Restrictive local fixture discovery. Only the explicitly supplied bundle
+    /// and fixture workspace are considered. Never inspect HOME/CODEX_HOME or
+    /// configured external roots, even during a later settings refresh.
+    pub fn discover_local_fixture(workspace_root: &str, bundled_root: &Path) -> Self {
+        Self::discover_with_bundled_roots(
+            &["./skills".into()],
+            Path::new(workspace_root),
+            None,
+            None,
+            Some(bundled_root),
+        )
+    }
     /// Explicit environment roots keep fixtures independent of installed user skills.
     pub(super) fn discover_with_roots(
         directories: &[String],

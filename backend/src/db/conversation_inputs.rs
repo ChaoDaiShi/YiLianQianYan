@@ -164,6 +164,11 @@ impl Database {
         tx.execute("UPDATE conversations SET run_status='waiting_input',run_error=NULL,run_finished_at=NULL,updated_at=?2 WHERE id=?1",params![conversation,now]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
         drop(conn);
+        self.publish_goal_conversation_change(
+            conversation,
+            "conversation_status",
+            Some("waiting_input"),
+        );
         self.conversation_input(&id)
     }
     pub fn conversation_input(&self, id: &str) -> Result<ConversationInput, String> {
@@ -226,6 +231,11 @@ impl Database {
         tx.execute("UPDATE conversations SET run_status='running',run_error=NULL,run_finished_at=NULL,updated_at=?2 WHERE id=?1",params![input.conversation_id,now]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
         drop(conn);
+        self.publish_goal_conversation_change(
+            &input.conversation_id,
+            "conversation_status",
+            Some("running"),
+        );
         self.conversation_input(id)
     }
     pub fn cancel_conversation_inputs(&self, conversation: &str) -> Result<bool, String> {
@@ -241,6 +251,12 @@ impl Database {
         tx.execute("UPDATE conversation_turns SET status='cancelled',finished_at=?2 WHERE id=(SELECT turn_id FROM conversation_inputs WHERE id=?1)",params![id,now]).map_err(|e|e.to_string())?;
         tx.execute("UPDATE conversations SET run_status='cancelled',run_finished_at=?2,updated_at=?2 WHERE id=?1",params![conversation,now]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.publish_goal_conversation_change(
+            conversation,
+            "conversation_status",
+            Some("cancelled"),
+        );
         Ok(true)
     }
 }

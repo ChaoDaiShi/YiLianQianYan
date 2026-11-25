@@ -1,5 +1,6 @@
 [workspace]
 members = ["backend", "src-tauri"]
+exclude = ["vendor/tauri-runtime-wry"]
 resolver = "2"
 
 [profile.dev]
@@ -11,6 +12,12 @@ codegen-units = 1
 debug = 0
 codegen-units = 1
 
+# The backend's monolithic LLVM unit can exhaust memory as its router/runtime
+# grows. Keep dependency settings unchanged and split only this package, as in
+# the already bounded test profile below.
+[profile.dev.package.yilian-backend]
+codegen-units = 4
+
 [profile.test]
 debug = 0
 incremental = false
@@ -20,3 +27,12 @@ codegen-units = 4
 debug = 0
 codegen-units = 4
 
+
+# Split the backend test crate only: its combined runtime and fixture suite can
+# exceed the Windows compiler process memory budget in four large LLVM units.
+[profile.test.package.yilian-backend]
+codegen-units = 64
+
+[patch.crates-io]
+# Same upstream version; avoid holding the parent-ID lock across native UI reparent.
+tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }

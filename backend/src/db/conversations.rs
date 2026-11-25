@@ -105,6 +105,9 @@ pub struct ConversationExecutionRecord {
     pub verification_status: String,
     pub verification_reason: Option<String>,
     pub result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration_source:
+        Option<crate::modules::settings::application::ServiceConfigurationSource>,
     pub sequence: i64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
@@ -123,6 +126,53 @@ pub struct MessageRow {
     pub created_at: i64,
 }
 
+impl MessageRow {
+    pub(crate) fn from_chat_message(
+        conversation: &str,
+        message: &crate::integrations::llm::types::ChatMessage,
+        now: i64,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: conversation.into(),
+            role: message.role.clone(),
+            content: message.content.clone().unwrap_or_default(),
+            tool_calls: message
+                .tool_calls
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|e| e.to_string())?,
+            tool_call_id: message.tool_call_id.clone(),
+            tool_name: message.name.clone(),
+            tool_result: None,
+            created_at: now,
+        })
+    }
+}
+
+pub(super) fn insert_chat_message_on(
+    conn: &rusqlite::Connection,
+    msg: &MessageRow,
+    reasoning: Option<&str>,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![msg.id, msg.conversation_id, msg.role, msg.content,
+            msg.tool_calls, msg.tool_call_id, msg.tool_name, msg.tool_result, msg.created_at],
+    ).map_err(|e| e.to_string())?;
+    super::memory_activity::record_chat_activity(conn, msg).map_err(|e| e.to_string())?;
+    if let Some(reasoning) = reasoning {
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key,value) VALUES(?1,?2)",
+            params![format!("chat_reasoning:{}", msg.id), reasoning],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub(super) fn reasoning_map(
     conn: &rusqlite::Connection,
     conversation: &str,
@@ -138,10 +188,23 @@ pub(super) fn reasoning_map(
     rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
 }
 
+const CHAT_REASONING_SOURCE: &str =
+    "(SELECT id FROM messages WHERE conversation_id=?1 AND role='user'
+      ORDER BY id=(SELECT user_message_id FROM conversation_turns WHERE conversation_id=?1
+                   ORDER BY started_at DESC,rowid DESC LIMIT 1) DESC,created_at DESC,rowid DESC LIMIT 1)";
+
 impl Database {
     pub fn current_chat_reasoning(&self, conversation: &str) -> Result<String, String> {
         use rusqlite::OptionalExtension;
-        self.conn().query_row("SELECT s.value FROM messages m LEFT JOIN settings s ON s.key='chat_turn_reasoning:'||m.id WHERE m.conversation_id=?1 AND m.role='user' ORDER BY m.created_at DESC,m.rowid DESC LIMIT 1",[conversation],|row|row.get::<_,Option<String>>(0)).optional().map(|value|value.flatten().unwrap_or_default()).map_err(|error|error.to_string())
+        self.conn()
+            .query_row(
+                &format!("SELECT value FROM settings WHERE key='chat_turn_reasoning:'||{CHAT_REASONING_SOURCE}"),
+                [conversation],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(Option::unwrap_or_default)
+            .map_err(|error| error.to_string())
     }
     /// Only provider reasoning deltas are appended, attached to the actual persisted user turn.
     pub fn append_chat_reasoning_event(
@@ -157,18 +220,43 @@ impl Database {
         let Some(reasoning) = event.token.as_deref().filter(|text| !text.is_empty()) else {
             return Ok(());
         };
-        self.conn().execute("INSERT INTO settings(key,value) SELECT 'chat_turn_reasoning:'||id,?2 FROM messages WHERE conversation_id=?1 AND role='user' ORDER BY created_at DESC,rowid DESC LIMIT 1 ON CONFLICT(key) DO UPDATE SET value=CASE WHEN ?3 THEN excluded.value ELSE settings.value||excluded.value END",params![event.conversation_id,reasoning,event.event_type == "reasoning_snapshot"]).map_err(|e|e.to_string())?;
+        self.conn().execute(
+            &format!("INSERT INTO settings(key,value)
+                      SELECT 'chat_turn_reasoning:'||source,?2 FROM (SELECT {CHAT_REASONING_SOURCE} AS source)
+                      WHERE source IS NOT NULL ON CONFLICT(key) DO UPDATE SET
+                      value=CASE WHEN ?3 THEN excluded.value ELSE settings.value||excluded.value END"),
+            params![event.conversation_id, reasoning, event.event_type == "reasoning_snapshot"],
+        ).map_err(|e|e.to_string())?;
         Ok(())
     }
     pub fn create_conversation(&self, title: &str) -> Result<ConversationSummary, String> {
-        let conn = self.conn();
+        self.create_conversation_with_workspace_default(title, false)
+    }
+
+    pub(crate) fn create_conversation_with_workspace_default(
+        &self,
+        title: &str,
+        use_default_workspace: bool,
+    ) -> Result<ConversationSummary, String> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        conn.execute(
+        tx.execute(
             "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
             params![id, title, now, now],
         )
         .map_err(|e| e.to_string())?;
+        if use_default_workspace {
+            if let Some(workspace) = super::workspace::default_workspace_on(&tx)? {
+                tx.execute(
+                    "INSERT INTO settings(key,value) VALUES(?1,?2)",
+                    params![format!("conversation_workspace:{id}"), workspace],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+        }
+        tx.commit().map_err(|error| error.to_string())?;
         Ok(ConversationSummary {
             id,
             title: title.to_string(),
@@ -188,7 +276,8 @@ impl Database {
                 "SELECT id, title, run_status, run_error, run_started_at, run_finished_at,
                         created_at, updated_at
                  FROM conversations
-                 WHERE EXISTS (
+                 WHERE NOT EXISTS (SELECT 1 FROM conversation_lanes WHERE conversation_id=conversations.id)
+                   AND EXISTS (
                      SELECT 1 FROM messages
                      WHERE messages.conversation_id = conversations.id
                        AND (
@@ -283,11 +372,69 @@ impl Database {
         }
     }
 
+    pub(crate) fn conversation_run_status(
+        &self,
+        id: &str,
+    ) -> Result<Option<ConversationRunStatus>, String> {
+        use rusqlite::OptionalExtension;
+        self.conn()
+            .query_row(
+                "SELECT run_status FROM conversations WHERE id=?1",
+                [id],
+                |row| {
+                    Ok(ConversationRunStatus::from_stored(
+                        &row.get::<_, String>(0)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
+
     pub fn delete_conversation(&self, id: &str) -> Result<(), String> {
+        self.delete_conversation_family(id, std::iter::empty())
+    }
+
+    pub(crate) fn delete_conversation_family<'a>(
+        &self,
+        id: &'a str,
+        lanes: impl Iterator<Item = &'a str>,
+    ) -> Result<(), String> {
+        let goal_graph = self.goal_event_graph_for_conversation(id)?;
         let identity = self.get_or_create_cloud_identity().ok();
         let mut conn = self.conn();
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        for id in lanes.chain(std::iter::once(id)) {
+            Self::delete_conversation_on(
+                &transaction,
+                id,
+                identity.as_ref().map(|value| value.device_id.as_str()),
+            )?;
+        }
+        transaction.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        if let Some(graph_id) = goal_graph {
+            self.publish_goal_change(
+                &graph_id,
+                "conversation_unbound",
+                serde_json::json!({"conversation_id":id}),
+            );
+        }
+        Ok(())
+    }
+
+    fn delete_conversation_on(
+        transaction: &rusqlite::Transaction<'_>,
+        id: &str,
+        device: Option<&str>,
+    ) -> Result<(), String> {
+        transaction
+            .execute(
+                "DELETE FROM conversation_lanes WHERE conversation_id=?1 OR parent_id=?1",
+                [id],
+            )
             .map_err(|e| e.to_string())?;
         transaction
             .execute(
@@ -333,17 +480,16 @@ impl Database {
         transaction
             .execute("DELETE FROM conversations WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())?;
-        super::connectors::remove_connector_entity_on(&transaction, "conversation", id)
+        super::connectors::remove_connector_entity_on(transaction, "conversation", id)
             .map_err(|e| e.to_string())?;
-        if let Some(identity) = identity {
+        if let Some(device) = device {
             let _ = crate::db::cloud::capture::record_local_deletion_tx(
-                &transaction,
+                transaction,
                 "conversation",
                 id,
-                &identity.device_id,
+                device,
             );
         }
-        transaction.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -355,6 +501,8 @@ impl Database {
             params![title, now, id],
         )
         .map_err(|e| e.to_string())?;
+        drop(conn);
+        self.publish_goal_conversation_change(id, "conversation_updated", None);
         Ok(())
     }
 
@@ -394,22 +542,7 @@ impl Database {
                 msg.conversation_id
             ));
         }
-        transaction
-            .execute(
-            "INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![msg.id, msg.conversation_id, msg.role, msg.content,
-                    msg.tool_calls, msg.tool_call_id, msg.tool_name, msg.tool_result, msg.created_at],
-            )
-            .map_err(|e| e.to_string())?;
-        if let Some(reasoning) = reasoning {
-            transaction
-                .execute(
-                    "INSERT OR REPLACE INTO settings(key,value) VALUES(?1,?2)",
-                    params![format!("chat_reasoning:{}", msg.id), reasoning],
-                )
-                .map_err(|e| e.to_string())?;
-        }
+        insert_chat_message_on(&transaction, msg, reasoning)?;
         let now = chrono::Utc::now().timestamp_millis();
         transaction
             .execute(
@@ -421,7 +554,7 @@ impl Database {
         Ok(())
     }
 
-    fn get_messages_internal(
+    pub(crate) fn get_messages_internal(
         &self,
         conn: &std::sync::MutexGuard<'_, rusqlite::Connection>,
         conv_id: &str,
@@ -467,7 +600,7 @@ impl Database {
                 "SELECT conversation_id, tool_call_id, approval_id, name, args_json,
                         risk_level, reason, approval_status, execution_status,
                         verification_status, verification_reason, result, sequence,
-                        started_at, finished_at
+                        started_at, finished_at, configuration_source_json
                  FROM conversation_execution_records
                  WHERE conversation_id = ?1
                  ORDER BY sequence ASC, tool_call_id ASC",
@@ -492,6 +625,17 @@ impl Database {
                     sequence: row.get(12)?,
                     started_at: row.get(13)?,
                     finished_at: row.get(14)?,
+                    configuration_source: row
+                        .get::<_, Option<String>>(15)?
+                        .map(|json| serde_json::from_str(&json))
+                        .transpose()
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                15,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -530,6 +674,7 @@ impl Database {
                 verification_status: "not_requested".to_string(),
                 verification_reason: None,
                 result: None,
+                configuration_source: None,
                 sequence: 0,
                 started_at: None,
                 finished_at: None,
@@ -557,6 +702,7 @@ impl Database {
             record.approval_id = Some(approval_id.clone());
         }
         let now = chrono::Utc::now().timestamp_millis();
+        let mut configuration_source_json = None;
         match event.event_type.as_str() {
             "tool_start" => {
                 record.execution_status = "running".to_string();
@@ -586,6 +732,12 @@ impl Database {
                 }
                 .to_string();
                 record.result = event.result.clone();
+                configuration_source_json = event
+                    .configuration_source
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(|error| error.to_string())?;
                 record.finished_at = Some(now);
             }
             "verification" => {
@@ -606,14 +758,15 @@ impl Database {
                 (conversation_id, tool_call_id, approval_id, name, args_json, risk_level,
                  reason, approval_status, execution_status, verification_status,
                  verification_reason, result, sequence, started_at, finished_at,
-                 created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)
+                 created_at, updated_at, configuration_source_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16, ?17)
              ON CONFLICT(conversation_id, tool_call_id) DO UPDATE SET
                  approval_id=excluded.approval_id, name=excluded.name, args_json=excluded.args_json,
                  risk_level=excluded.risk_level, reason=excluded.reason,
                  approval_status=excluded.approval_status, execution_status=excluded.execution_status,
                  verification_status=excluded.verification_status,
                  verification_reason=excluded.verification_reason, result=excluded.result,
+                 configuration_source_json=COALESCE(excluded.configuration_source_json, conversation_execution_records.configuration_source_json),
                  sequence=excluded.sequence, started_at=excluded.started_at,
                  finished_at=excluded.finished_at, updated_at=excluded.updated_at",
             params![
@@ -633,6 +786,7 @@ impl Database {
                 record.started_at,
                 record.finished_at,
                 now,
+                configuration_source_json,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -671,6 +825,12 @@ impl Database {
         tx.execute("UPDATE conversation_turns SET status=?2,finished_at=?3 WHERE id=(SELECT id FROM conversation_turns WHERE conversation_id=?1 AND finished_at IS NULL ORDER BY started_at DESC,rowid DESC LIMIT 1)",
             params![conversation_id,status.as_str(),if terminal {Some(now)} else {None}]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.publish_goal_conversation_change(
+            conversation_id,
+            "conversation_status",
+            Some(status.as_str()),
+        );
         Ok(())
     }
 

@@ -10,10 +10,10 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::verifier::DefaultVerifier;
 use crate::app::state::AppServer;
 use crate::execution::{ExecutionContext, ExecutionId};
-use crate::modules::task::NodeContext;
+use crate::modules::harness_profiles as harness;
+use crate::modules::task::{ExecutorDispatch, NodeContext, NodeExecution};
 use crate::safety::{SecurityExecutionGateway, SecuritySubject};
 
 use super::super::definition::WorkflowNodeConfig;
@@ -84,6 +84,37 @@ pub(crate) async fn start_workflow_run_identified(
     inputs: super::run_inputs::WorkflowRunInputs,
     run_id: WorkflowRunId,
 ) -> Result<RunStarted, RunServiceError> {
+    let selection = harness::active(&server.db).map_err(RunServiceError::Read)?;
+    start_workflow_run_bound(server, graph_id, inputs, run_id, selection).await
+}
+
+pub(crate) async fn start_workflow_run_selected(
+    server: &AppServer,
+    graph_id: &str,
+    selection: Option<harness::Selection>,
+) -> Result<RunStarted, RunServiceError> {
+    start_workflow_run_bound(
+        server,
+        graph_id,
+        Default::default(),
+        WorkflowRunId::generate(),
+        selection,
+    )
+    .await
+}
+
+async fn start_workflow_run_bound(
+    server: &AppServer,
+    graph_id: &str,
+    inputs: super::run_inputs::WorkflowRunInputs,
+    run_id: WorkflowRunId,
+    selection: Option<harness::Selection>,
+) -> Result<RunStarted, RunServiceError> {
+    if server.cloud_revocation_retry_cancel.is_cancelled() {
+        return Err(RunServiceError::InvalidRun("应用正在退出".into()));
+    }
+    ensure_harness_workflow(server, graph_id, selection.as_ref())
+        .map_err(RunServiceError::InvalidRun)?;
     crate::modules::capability::import_store::require_active_plugin_resource(&server.db, graph_id)
         .map_err(RunServiceError::InvalidRun)?;
     let mut graph = server
@@ -108,28 +139,42 @@ pub(crate) async fn start_workflow_run_identified(
         .map(crate::modules::task::AgentId::new)
         .transpose()
         .map_err(|e| RunServiceError::InvalidRun(e.to_string()))?;
+    context.owner = Some(crate::execution::ExecutionOwner::Workflow {
+        workflow_graph_id: graph_id.into(),
+        run_id: run_id.to_string(),
+    });
     let run = WorkflowRun::new(run_id, context, graph.definition.clone(), now)
         .map_err(|error| RunServiceError::InvalidRun(error.to_string()))?;
     let run_id = run.run_id.clone();
     let execution_id = run.execution_context.execution_id.clone();
     let initial_status = run.status.to_string();
     let run_id_str = run_id.to_string();
+    let gateway = build_selected_gateway(server, selection.as_ref())
+        .await
+        .map_err(RunServiceError::Read)?;
 
     // Persist immediately so the run is visible even before the runner starts.
     server
         .db
         .create_workflow_run(graph_id, &run)
         .map_err(RunServiceError::Persist)?;
+    record_harness(
+        server,
+        graph_id,
+        run_id.as_str(),
+        selection.as_ref(),
+        Default::default(),
+    )
+    .map_err(RunServiceError::Persist)?;
 
     // Register an active-run cancel token.
-    let token = CancellationToken::new();
+    let token = server.cloud_revocation_retry_cancel.child_token();
     server
         .active_workflow_runs
         .lock()
         .insert(run_id_str.clone(), token.clone());
 
     // Build runtime components before spawning.
-    let gateway = build_gateway(server).await;
     let agent_executor = build_agent_executor(server);
     let executor =
         SecurityGatewayNodeExecutor::new(Arc::clone(&gateway), Arc::clone(&server.approval_store))
@@ -175,6 +220,49 @@ pub(crate) async fn execute_for_task_harness(
     cancel: CancellationToken,
     node_context: Option<&NodeContext>,
 ) -> Result<Option<Value>, String> {
+    match execute_task_child(server, workflow_graph_id, cancel, node_context, None).await? {
+        ExecutorDispatch::Completed { output } => Ok(output),
+        ExecutorDispatch::WaitingApproval { .. } => Err("workflow paused for approval".into()),
+        ExecutorDispatch::Failed { code, error } => Err(match code.as_str() {
+            "workflow_cancelled" => "workflow cancelled".into(),
+            "workflow_failed" => "workflow failed".into(),
+            _ => error,
+        }),
+    }
+}
+
+pub(crate) async fn dispatch_for_task_harness(
+    server: Arc<AppServer>,
+    workflow_graph_id: &str,
+    cancel: CancellationToken,
+    execution: &NodeExecution,
+) -> Result<ExecutorDispatch, String> {
+    // Dispatch ownership is reserved by TaskWorld. Repeated observation may
+    // reuse the saved child outcome, but never starts that child a second time.
+    if let Some(stored) =
+        super::task_parent::existing_child(&server.db, execution, workflow_graph_id)?
+    {
+        return super::task_parent::dispatch_result(&stored, &server.approval_store);
+    }
+    execute_task_child(
+        server,
+        workflow_graph_id,
+        cancel,
+        Some(&execution.context),
+        Some(execution),
+    )
+    .await
+}
+
+async fn execute_task_child(
+    server: Arc<AppServer>,
+    workflow_graph_id: &str,
+    cancel: CancellationToken,
+    node_context: Option<&NodeContext>,
+    parent: Option<&NodeExecution>,
+) -> Result<ExecutorDispatch, String> {
+    let selection = harness::active(&server.db)?;
+    ensure_harness_workflow(&server, workflow_graph_id, selection.as_ref())?;
     crate::modules::capability::import_store::require_active_plugin_resource(
         &server.db,
         workflow_graph_id,
@@ -183,16 +271,32 @@ pub(crate) async fn execute_for_task_harness(
         .db
         .get_workflow_graph(workflow_graph_id)?
         .ok_or_else(|| format!("workflow graph not found: {workflow_graph_id}"))?;
-    if let Some(node_context) = node_context {
-        let context = bounded_workflow_task_context(node_context);
+    let adapted_context = node_context.map(|context| {
+        let (text, mut manifest) =
+            crate::execution::context_manifest::render_node_context_with_manifest(context, 8_000);
+        if !graph.definition.nodes.iter().any(|node| {
+            matches!(
+                node.config,
+                WorkflowNodeConfig::Agent { .. } | WorkflowNodeConfig::Subagent { .. }
+            )
+        }) {
+            for entry in &mut manifest.entries {
+                entry.status = crate::execution::context_manifest::ContextStatus::Unsupported;
+                entry.chars = 0;
+                entry.reason = Some(
+                    "This workflow has no prompt consumer; projected inputs were not consumed"
+                        .into(),
+                );
+            }
+            manifest.total_chars = 0;
+        }
+        (text, manifest)
+    });
+    if let Some((context, _)) = &adapted_context {
         for node in &mut graph.definition.nodes {
             match &mut node.config {
-                WorkflowNodeConfig::Agent { prompt } => {
-                    prompt.push_str(&context);
-                }
-                WorkflowNodeConfig::Subagent { task, .. } => {
-                    task.push_str(&context);
-                }
+                WorkflowNodeConfig::Agent { prompt } => prompt.push_str(&context),
+                WorkflowNodeConfig::Subagent { task, .. } => task.push_str(&context),
                 _ => {}
             }
         }
@@ -202,54 +306,67 @@ pub(crate) async fn execute_for_task_harness(
             .map_err(|error| error.to_string())?;
     }
     let now = chrono::Utc::now().timestamp_millis();
-    let context = ExecutionContext::new(
+    let run_id = WorkflowRunId::generate();
+    let mut context = ExecutionContext::new(
         ExecutionId::generate(),
         SecuritySubject::local_user().subject_id,
         "task-harness-workflow",
-        None,
-        now,
-    );
-    let mut run = WorkflowRun::new(
-        WorkflowRunId::generate(),
-        context,
-        graph.definition.clone(),
+        parent
+            .map(|p| ExecutionId::new(p.id.as_str()))
+            .transpose()
+            .map_err(|e| e.to_string())?,
         now,
     )
-    .map_err(|error| error.to_string())?;
-    let run_id = run.run_id.clone();
+    .with_owner(crate::execution::ExecutionOwner::Workflow {
+        workflow_graph_id: workflow_graph_id.into(),
+        run_id: run_id.to_string(),
+    });
+    context.agent_id = crate::safety::execution_gateway::current_agent_id()
+        .map(crate::modules::task::AgentId::new)
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let mut run = WorkflowRun::new(run_id, context, graph.definition.clone(), now)
+        .map_err(|e| e.to_string())?;
+    let gateway = build_selected_gateway(&server, selection.as_ref()).await?;
     server.db.create_workflow_run(workflow_graph_id, &run)?;
+    record_harness(
+        &server,
+        workflow_graph_id,
+        run.run_id.as_str(),
+        selection.as_ref(),
+        adapted_context
+            .map(|(_, manifest)| manifest)
+            .unwrap_or_default(),
+    )?;
+    let run_id = run.run_id.clone();
     server
         .active_workflow_runs
         .lock()
         .insert(run_id.to_string(), cancel.clone());
-
-    let gateway = build_gateway(&server).await;
     let executor =
         SecurityGatewayNodeExecutor::new(Arc::clone(&gateway), Arc::clone(&server.approval_store))
             .with_agent_executor(build_agent_executor(&server));
     let runner = WorkflowRunner::new(executor);
     let db = server.db.clone_connection();
-    let graph_id = workflow_graph_id.to_string();
+    let graph_id = workflow_graph_id.to_owned();
     let result = runner
         .run(&mut run, &cancel, move |state| {
             db.update_workflow_run(&graph_id, state)
         })
         .await;
     server.active_workflow_runs.lock().remove(run_id.as_str());
-    result.map_err(|error| error.to_string())?;
-
-    match run.status {
-        WorkflowRunStatus::Completed => Ok(Some(serde_json::json!({
-            "status": "completed",
-            "completed": true,
-            "workflow_graph_id": workflow_graph_id,
-            "workflow_run_id": run_id.as_str(),
-        }))),
-        WorkflowRunStatus::WaitingApproval => Err("workflow paused for approval".to_string()),
-        WorkflowRunStatus::Cancelled => Err("workflow cancelled".to_string()),
-        WorkflowRunStatus::Failed => Err("workflow failed".to_string()),
-        status => Err(format!("workflow ended in non-terminal status {status}")),
+    // Always read authoritative persistence after cancellation or a late write.
+    let stored = server
+        .db
+        .get_workflow_run(&run_id)?
+        .ok_or("saved child run missing")?;
+    if result.is_err() && !stored.run.status.is_terminal() {
+        return Ok(ExecutorDispatch::Failed{
+            code:"external_mutation_uncertain".into(),
+            error:format!("Workflow checkpoint failed; external effects require review and were not replayed: {}",result.unwrap_err()),
+        });
     }
+    super::task_parent::dispatch_result(&stored, &server.approval_store)
 }
 
 /// Cancel a run: terminal runs are a stable no-op; active runs are signalled,
@@ -299,27 +416,81 @@ pub async fn cancel_workflow_run(
         .db
         .update_workflow_run(&graph_id, &run)
         .map_err(RunServiceError::Persist)?;
+    super::task_parent::sync_parent(server, run.run_id.as_str())
+        .map_err(RunServiceError::Persist)?;
     Ok((graph_id, run))
 }
 
 /// Build the production security gateway for the workflow runtime: MCP-aware
 /// registry, verifier, audit and DB, with grant enforcement.
 pub(crate) async fn build_gateway(server: &AppServer) -> Arc<SecurityExecutionGateway> {
-    let tool_registry = server.build_agent_tool_registry().await;
-    let config = server.config.read().clone();
-    Arc::new(
-        SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-            config.sandbox.clone(),
-            server.workspace_root.clone(),
-            Arc::clone(&tool_registry),
-            Arc::new(DefaultVerifier::new(&server.workspace_root)),
-            Arc::new(server.audit_recorder.clone()),
-        )
-        .with_permissions_config(server.config.clone())
-        .with_db(Arc::new(server.db.clone_connection()))
-        .with_agent_context(crate::safety::execution_gateway::current_agent_id())
-        .with_grant_enforcement(),
+    build_selected_gateway(server, None)
+        .await
+        .expect("default workflow gateway uses no Harness data")
+}
+
+fn ensure_harness_workflow(
+    server: &AppServer,
+    graph_id: &str,
+    selection: Option<&harness::Selection>,
+) -> Result<(), String> {
+    if let Some(selection) = selection {
+        if !selection.allows_workflow(&server.db, graph_id)? {
+            return Err("当前 Harness 未启用此工作流".into());
+        }
+    }
+    Ok(())
+}
+
+fn record_harness(
+    server: &AppServer,
+    graph_id: &str,
+    run_id: &str,
+    selection: Option<&harness::Selection>,
+    mut manifest: crate::execution::context_manifest::ContextManifest,
+) -> Result<(), String> {
+    harness::record(&mut manifest, selection);
+    crate::execution::context_manifest::record_manifest(
+        &server.db,
+        &crate::execution::ExecutionOwner::Workflow {
+            workflow_graph_id: graph_id.into(),
+            run_id: run_id.into(),
+        },
+        &manifest,
     )
+}
+
+pub(crate) async fn gateway_for_run(
+    server: &AppServer,
+    run_id: &str,
+) -> Result<Arc<SecurityExecutionGateway>, String> {
+    let id = WorkflowRunId::new(run_id).map_err(|error| error.to_string())?;
+    let run = server.db.get_workflow_run(&id)?.ok_or("工作流运行不存在")?;
+    let owner = crate::execution::ExecutionOwner::Workflow {
+        workflow_graph_id: run.workflow_graph_id.clone(),
+        run_id: run_id.into(),
+    };
+    let manifest = crate::execution::context_manifest::load_manifest(&server.db, &owner)?;
+    let selection = harness::from_manifest(&server.db, manifest.as_ref())?;
+    ensure_harness_workflow(server, &run.workflow_graph_id, selection.as_ref())?;
+    build_selected_gateway(server, selection.as_ref()).await
+}
+
+async fn build_selected_gateway(
+    server: &AppServer,
+    selection: Option<&harness::Selection>,
+) -> Result<Arc<SecurityExecutionGateway>, String> {
+    let scope = selection
+        .map(|selection| harness::tool_scope(server, selection, None))
+        .transpose()?;
+    Ok(Arc::new(crate::safety::production_gateway::build(
+        server,
+        &server.workspace_root,
+        server
+            .build_agent_tool_registry_scoped(scope.as_ref())
+            .await,
+        crate::safety::execution_gateway::current_agent_id(),
+    )))
 }
 
 /// Build the LLM-only agent executor from the configured model. Node config can
@@ -333,13 +504,5 @@ pub(crate) fn build_agent_executor(server: &AppServer) -> Arc<dyn WorkflowAgentE
 }
 
 pub(crate) fn bounded_workflow_task_context(context: &NodeContext) -> String {
-    let mut text = format!(
-        "\n\nTask context (authorized, bounded):\nGoal: {}\nInstructions: {}",
-        context.goal, context.instructions
-    );
-    if !context.resources.is_empty() {
-        text.push_str("\nResources:\n");
-        text.push_str(&context.resources.join("\n"));
-    }
-    text.chars().take(8_000).collect()
+    crate::execution::context_manifest::render_node_context(context, 8_000)
 }

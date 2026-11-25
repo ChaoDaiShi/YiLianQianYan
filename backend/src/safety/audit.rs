@@ -170,8 +170,17 @@ impl AuditRecorder {
         }
     }
 
-    pub fn record(&self, input: AuditEventInput) -> Result<SecurityAuditEvent, AuditError> {
+    pub fn record(&self, mut input: AuditEventInput) -> Result<SecurityAuditEvent, AuditError> {
         input.validate()?;
+        if let Some(owner) = crate::execution::owner::current_owner() {
+            if let Some(details) = input.details.as_object_mut() {
+                details.insert(
+                    "execution_owner".into(),
+                    serde_json::to_value(owner)
+                        .map_err(|e| AuditError::InvalidInput(e.to_string()))?,
+                );
+            }
+        }
 
         let request = input.request.as_ref().map(redact_and_digest);
         let result = input.result.as_ref().map(redact_and_digest);

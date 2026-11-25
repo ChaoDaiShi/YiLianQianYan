@@ -14,9 +14,10 @@ use crate::integrations::secret::{SecretRef, CHAT_KEY_REF, STT_KEY_REF};
 use crate::modules::voice::VoiceProviderError;
 use crate::safety::ControlSession;
 
-use super::api::routes::{update_handler, verify_provider_handler};
+use super::api::routes::verify_provider_handler;
 use super::application::provider_test::normalize_voice_connection_error;
 use super::application::service::build_redacted_config;
+use super::application::update::apply;
 
 use crate::integrations::secret::{
     InMemorySecretStore, SecretStore, SecretStoreError, SecretStoreStatus,
@@ -222,9 +223,7 @@ async fn clear_delete_failure_preserves_each_persisted_secret_reference() {
             "tts" => incoming.voice.tts.clear_api_key = true,
             _ => unreachable!(),
         }
-        let response = update_handler(State(Arc::clone(&server)), Json(incoming))
-            .await
-            .0;
+        let (_, Json(response)) = apply(&server, incoming, None).await;
         assert!(
             response.get("error").is_some(),
             "{kind} clear must fail closed"
@@ -617,20 +616,13 @@ async fn empty_key_preserves_secret_across_settings_changes_and_restart() {
     let mut first = server.config.read().clone();
     first.model.api_key = "test-replace-key".to_string();
     first.model.base_url = "https://first.example/v1".to_string();
-    assert_eq!(
-        update_handler(State(Arc::clone(&server)), Json(first))
-            .await
-            .0["status"],
-        "saved"
-    );
+    assert_eq!(apply(&server, first, None).await.1 .0["status"], "saved");
 
     let mut changed_without_key = server.config.read().clone();
     changed_without_key.model.api_key = String::new();
     changed_without_key.model.base_url = "https://second.example/v1".to_string();
     assert_eq!(
-        update_handler(State(Arc::clone(&server)), Json(changed_without_key))
-            .await
-            .0["status"],
+        apply(&server, changed_without_key, None).await.1 .0["status"],
         "saved"
     );
     assert_eq!(

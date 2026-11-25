@@ -237,6 +237,12 @@ impl Database {
             [format!("conversation_compaction:{conversation}")],
         )
         .map_err(|error| error.to_string())?;
+        tx.execute(
+            "UPDATE settings SET value=json_remove(value,'$.projection')
+             WHERE key=?1 AND json_valid(value)",
+            [format!("context_manifest:{conversation}")],
+        )
+        .map_err(|error| error.to_string())?;
         tx.execute("UPDATE conversations SET run_status='idle',run_error=NULL,run_started_at=NULL,run_finished_at=NULL,updated_at=?2 WHERE id=?1",params![conversation,now]).map_err(|error|error.to_string())?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(MessageMutation {

@@ -6,6 +6,8 @@ pub enum SubjectType {
     LocalUser,
     WindowsAccount,
     OrganizationUser,
+    Subagent,
+    PluginService,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -63,5 +65,82 @@ impl SecuritySubject {
             provider: "workflow".to_string(),
             external_ref: None,
         }
+    }
+
+    pub(crate) fn subagent(name: &str) -> Self {
+        Self {
+            subject_id: format!("subagent:{name}"),
+            subject_type: SubjectType::Subagent,
+            provider: "local".into(),
+            external_ref: None,
+        }
+    }
+
+    pub(crate) fn acp_agent(id: &str) -> Self {
+        Self {
+            subject_id: format!("acp-agent:{id}"),
+            subject_type: SubjectType::Subagent,
+            provider: "acp".into(),
+            external_ref: None,
+        }
+    }
+}
+
+/// Identity emitted by the gateway when it actually dispatches a tool.
+#[derive(Debug, Clone)]
+pub(crate) struct ToolInvocation {
+    pub(crate) subject: SecuritySubject,
+    pub(crate) agent_id: Option<String>,
+    pub(crate) conversation_id: String,
+    pub(crate) tool_call_id: String,
+    pub(crate) tool_name: String,
+}
+
+/// Authority stays with the local child and carries a reference to the
+/// particular approved or directly authorized delegation that started it.
+#[derive(Debug, Clone)]
+pub(crate) struct DelegatedSubject {
+    pub(crate) subject: SecuritySubject,
+    pub(crate) child_name: String,
+    pub(crate) handoff_id: String,
+    pub(crate) parent: ToolInvocation,
+    pub(crate) default_read_root: std::path::PathBuf,
+}
+
+impl DelegatedSubject {
+    pub(crate) fn new(
+        subject: SecuritySubject,
+        name: &str,
+        handoff_id: String,
+        parent: ToolInvocation,
+        default_read_root: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            subject,
+            child_name: name.into(),
+            handoff_id,
+            parent,
+            default_read_root,
+        }
+    }
+}
+
+/// Only server-side service registration supplies the plugin and service IDs.
+/// A live process invocation is independently authorized by its service runtime.
+#[derive(Debug, Clone)]
+pub(crate) struct PluginServicePrincipal(SecuritySubject);
+
+impl PluginServicePrincipal {
+    pub(crate) fn new(plugin_id: &str, service_id: &str) -> Self {
+        Self(SecuritySubject {
+            subject_id: format!("plugin-service:{plugin_id}/{service_id}"),
+            subject_type: SubjectType::PluginService,
+            provider: "local".into(),
+            external_ref: None,
+        })
+    }
+
+    pub(crate) fn subject(&self) -> &SecuritySubject {
+        &self.0
     }
 }

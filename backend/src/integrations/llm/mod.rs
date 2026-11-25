@@ -8,4 +8,5 @@ mod usage_tests;
 pub mod model_pool;
 pub mod product_client;
 
+pub mod generation;
 pub mod thinking;

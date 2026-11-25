@@ -68,24 +68,34 @@ impl Database {
         &self,
         binding: &ConversationGoalBinding,
     ) -> Result<bool, String> {
+        self.bind_conversation_goal_with_workspace(binding, None)
+    }
+
+    /// Save the existing immutable goal binding and its workspace together.
+    pub fn bind_conversation_goal_with_workspace(
+        &self,
+        binding: &ConversationGoalBinding,
+        workspace_id: Option<&str>,
+    ) -> Result<bool, String> {
         self.initialize_conversation_goal_bindings()?;
         let mut conn = self.conn();
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
-        tx.execute(
-            "INSERT INTO conversation_goal_bindings
+        let inserted = tx
+            .execute(
+                "INSERT INTO conversation_goal_bindings
              (conversation_id, goal_id, goal_version, created_at)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(conversation_id) DO NOTHING",
-            params![
-                binding.conversation_id,
-                binding.goal_id,
-                binding.goal_version,
-                chrono::Utc::now().timestamp_millis()
-            ],
-        )
-        .map_err(|error| error.to_string())?;
+                params![
+                    binding.conversation_id,
+                    binding.goal_id,
+                    binding.goal_version,
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|error| error.to_string())?;
         let existing: (String, u32) = tx
             .query_row(
                 "SELECT goal_id, goal_version FROM conversation_goal_bindings
@@ -94,8 +104,99 @@ impl Database {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|error| error.to_string())?;
+        if existing.0 != binding.goal_id || existing.1 != binding.goal_version {
+            return Ok(false);
+        }
+        let mut workspace_changed = false;
+        if let Some(workspace_id) = workspace_id {
+            let key = format!("conversation_workspace:{}", binding.conversation_id);
+            let current: Option<String> = tx
+                .query_row("SELECT value FROM settings WHERE key=?1", [&key], |row| {
+                    row.get(0)
+                })
+                .optional()
+                .map_err(|error| error.to_string())?;
+            if current
+                .as_deref()
+                .is_some_and(|current| current != workspace_id)
+            {
+                return Err("conversation_goal_workspace_conflict".into());
+            }
+            workspace_changed = current.as_deref() != Some(workspace_id);
+            tx.execute(
+                "INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![key, workspace_id],
+            ).map_err(|error| error.to_string())?;
+        }
         tx.commit().map_err(|error| error.to_string())?;
-        Ok(existing.0 == binding.goal_id && existing.1 == binding.goal_version)
+        drop(conn);
+        if inserted > 0 || workspace_changed {
+            self.publish_goal_conversation_change(
+                &binding.conversation_id,
+                "conversation_bound",
+                None,
+            );
+        }
+        Ok(true)
+    }
+
+    pub fn goal_conversation_ids(
+        &self,
+        goal_id: &str,
+        goal_version: u32,
+    ) -> Result<Vec<String>, String> {
+        self.initialize_conversation_goal_bindings()?;
+        let conn = self.conn();
+        let mut query = conn.prepare(
+            "SELECT conversation_id FROM conversation_goal_bindings WHERE goal_id=?1 AND goal_version=?2 ORDER BY created_at,conversation_id",
+        ).map_err(|error| error.to_string())?;
+        let ids = query
+            .query_map(params![goal_id, goal_version], |row| row.get(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        Ok(ids)
+    }
+
+    pub(crate) fn graph_goal_conversation_ids(
+        &self,
+        graph_id: &str,
+    ) -> Result<Vec<String>, String> {
+        self.initialize_conversation_goal_bindings()?;
+        self.initialize_proofloop_schema()
+            .map_err(|error| error.to_string())?;
+        let conn = self.conn();
+        let mut query = conn.prepare("SELECT DISTINCT b.conversation_id FROM conversation_goal_bindings b JOIN proofloop_drafts d ON d.goal_id=b.goal_id AND d.goal_version=b.goal_version WHERE d.graph_id=?1 AND d.status='confirmed' ORDER BY b.conversation_id").map_err(|error| error.to_string())?;
+        let ids = query
+            .query_map([graph_id], |row| row.get(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|error| error.to_string())?;
+        Ok(ids)
+    }
+
+    pub(crate) fn active_goal_conversation_graph_ids(&self) -> Result<Vec<String>, String> {
+        self.initialize_conversation_goal_bindings()?;
+        self.initialize_proofloop_schema()
+            .map_err(|error| error.to_string())?;
+        let conn = self.conn();
+        let mut statement = conn
+            .prepare(
+                "SELECT DISTINCT d.graph_id
+                 FROM proofloop_drafts d
+                 JOIN conversation_goal_bindings b
+                   ON b.goal_id = d.goal_id AND b.goal_version = d.goal_version
+                 JOIN conversations c ON c.id = b.conversation_id
+                 WHERE d.status = 'confirmed'
+                   AND c.run_status IN ('running', 'waiting_approval', 'waiting_input')",
+            )
+            .map_err(|error| error.to_string())?;
+        let ids = statement
+            .query_map([], |row| row.get(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        Ok(ids)
     }
 }
 

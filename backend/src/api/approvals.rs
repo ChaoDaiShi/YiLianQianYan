@@ -27,14 +27,12 @@ use super::chat::{
 };
 use crate::agent::engine::{self, AgentEvent, RunOutcome};
 use crate::agent::state::AgentState;
-use crate::agent::verifier::DefaultVerifier;
 use crate::app::state::{AppServer, LogBuffer};
 use crate::config::types::AppConfig;
 use crate::db::{Database, MessageRow};
-use crate::modules::workflow::{
-    cancel_workflow_approval, resolve_workflow_approval, WorkflowRunId,
-};
-use crate::safety::approval::{ApprovalError, PendingApproval};
+use crate::execution::context::CURRENT_CHAT_TURN_MODEL;
+use crate::modules::workflow::WorkflowRunId;
+use crate::safety::approval::{ApprovalError, ApprovalOwner, PendingApproval};
 use crate::safety::execution_gateway::{SecurityExecutionOutcome, SecurityGatewayError};
 use crate::safety::{
     AuditEventInput, AuditEventType, SecurityExecutionGateway, SecurityExecutionRequest,
@@ -61,7 +59,7 @@ fn status_for(e: &ApprovalError) -> StatusCode {
     }
 }
 
-fn record_approval_resolved(server: &AppServer, approval: &PendingApproval) {
+pub(super) fn record_approval_resolved(server: &AppServer, approval: &PendingApproval) {
     let resolution = approval.status.to_string();
     let role_key = server
         .db
@@ -168,20 +166,16 @@ fn consume_spoken_attested(
 
 async fn execute_approved_tool(
     server: &AppServer,
-    config: &AppConfig,
+    _config: &AppConfig,
     approval: &PendingApproval,
     tool_registry: &Arc<ToolRegistry>,
 ) -> Result<SecurityExecutionOutcome, SecurityGatewayError> {
-    let gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-        config.sandbox.clone(),
-        server.workspace_root.clone(),
+    let gateway = crate::safety::production_gateway::build(
+        server,
+        &server.workspace_root,
         Arc::clone(tool_registry),
-        Arc::new(DefaultVerifier::new(&server.workspace_root)),
-        Arc::new(server.audit_recorder.clone()),
-    )
-    .with_db(Arc::new(server.db.clone_connection()))
-    .with_permissions_config(server.config.clone())
-    .with_grant_enforcement();
+        crate::safety::execution_gateway::current_agent_id(),
+    );
     let request = SecurityExecutionRequest {
         conversation_id: approval.conversation_id.clone(),
         tool_call_id: approval.tool_call_id.clone(),
@@ -190,9 +184,38 @@ async fn execute_approved_tool(
         subject: SecuritySubject::local_user(),
     };
 
-    gateway
-        .execute_approved(&request, approval.risk_level)
+    crate::execution::owner::CURRENT_EXECUTION_OWNER
+        .scope(
+            crate::execution::ExecutionOwner::Conversation {
+                conversation_id: approval.conversation_id.clone(),
+            },
+            gateway.execute_approved(&request, approval.risk_level),
+        )
         .await
+}
+
+/// Shared safety rule for approved continuations: unknown effects never reach a new model turn.
+pub(super) fn approved_execution_stop_reason(
+    scope: &crate::agent::delegation::ExecutionScope,
+    result: &crate::tools::ToolResult,
+    verification: &crate::agent::verifier::VerificationResult,
+    accounting: &Result<engine::ExternalToolAccounting, String>,
+) -> Option<String> {
+    if let crate::execution::VerifiedExecutionResult::ResultUnknown { reason } =
+        crate::execution::interpret_tool_result(result, verification)
+    {
+        return Some(reason);
+    }
+    match accounting {
+        Ok(engine::ExternalToolAccounting::ResultUnknown) => {
+            Some("External execution result is unknown; verify it before any further action".into())
+        }
+        Ok(engine::ExternalToolAccounting::BillingUnknown) if scope.is_bounded() => {
+            Some("External billing is unknown; bounded execution has stopped".into())
+        }
+        Err(error) => Some(error.clone()),
+        _ => None,
+    }
 }
 
 /// How to route an approval decision. Workflow-bound approvals resume a
@@ -214,45 +237,12 @@ enum ApprovalTarget {
 /// binding is treated as data corruption and fails closed rather than falling
 /// back to a different runtime.
 fn classify_approval(approval: &PendingApproval) -> ApprovalTarget {
-    let task = [
-        &approval.task_id,
-        &approval.task_execution_id,
-        &approval.agent_execution_id,
-    ];
-    let workflow = [
-        &approval.execution_id,
-        &approval.workflow_run_id,
-        &approval.workflow_node_id,
-    ];
-    let node = [
-        &approval.task_graph_id,
-        &approval.task_node_id,
-        &approval.node_execution_id,
-    ];
-    let groups = [task, workflow, node];
-    let active = groups
-        .iter()
-        .filter(|group| group.iter().any(|field| field.is_some()))
-        .count();
-    if active == 0 {
-        return ApprovalTarget::Agent;
-    }
-    if active != 1 {
-        return ApprovalTarget::InvalidBinding;
-    }
-    let complete = |group: &[&Option<String>; 3]| {
-        group
-            .iter()
-            .all(|field| field.as_ref().is_some_and(|value| !value.trim().is_empty()))
-    };
-    if complete(&task) {
-        ApprovalTarget::TaskAgent
-    } else if complete(&workflow) {
-        ApprovalTarget::Workflow
-    } else if complete(&node) {
-        ApprovalTarget::TaskNodeExecution
-    } else {
-        ApprovalTarget::InvalidBinding
+    match approval.owner() {
+        Ok(ApprovalOwner::Conversation { .. }) => ApprovalTarget::Agent,
+        Ok(ApprovalOwner::Workflow { .. }) => ApprovalTarget::Workflow,
+        Ok(ApprovalOwner::LegacyTaskAgent { .. }) => ApprovalTarget::TaskAgent,
+        Ok(ApprovalOwner::TaskNode { .. }) => ApprovalTarget::TaskNodeExecution,
+        Err(_) => ApprovalTarget::InvalidBinding,
     }
 }
 
@@ -273,19 +263,12 @@ fn sse_event(event: &str, data: serde_json::Value) -> Event {
 /// as the normal workflow runtime (MCP-aware registry, verifier, audit, DB).
 async fn build_workflow_gateway(server: &AppServer) -> Arc<SecurityExecutionGateway> {
     let tool_registry = server.build_agent_tool_registry().await;
-    let config = server.config.read().clone();
-    Arc::new(
-        SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-            config.sandbox.clone(),
-            server.workspace_root.clone(),
-            Arc::clone(&tool_registry),
-            Arc::new(DefaultVerifier::new(&server.workspace_root)),
-            Arc::new(server.audit_recorder.clone()),
-        )
-        .with_db(Arc::new(server.db.clone_connection()))
-        .with_permissions_config(server.config.clone())
-        .with_grant_enforcement(),
-    )
+    Arc::new(crate::safety::production_gateway::build(
+        server,
+        &server.workspace_root,
+        tool_registry,
+        crate::safety::execution_gateway::current_agent_id(),
+    ))
 }
 
 fn read_run_status(server: &AppServer, approval: &PendingApproval) -> String {
@@ -323,16 +306,11 @@ fn workflow_approval_stream(
 
     let stream = async_stream::stream! {
         // Resolve FIRST. No event is emitted until the decision truly happened.
-        let gateway = build_workflow_gateway(&server).await;
-        let result = resolve_workflow_approval(
-            &gateway,
-            &server.approval_store,
-            &server.db,
+        let result = crate::modules::workflow::application::task_parent::resolve_approval(
+            &server,
             &approval_id,
             &subject_id,
             approve,
-            &CancellationToken::new(),
-            crate::modules::workflow::application::run_service::build_agent_executor(&server),
         ).await;
 
         match result {
@@ -554,6 +532,14 @@ pub async fn approve_handler(
     } else {
         None
     };
+    if turn_guard.is_some()
+        && super::chat_stop::cancelled(&server.db, &lookup.conversation_id)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
+    {
+        super::chat_stop::cancel_approval(&server, &lookup)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        return Err((StatusCode::CONFLICT, "Conversation turn was stopped".into()));
+    }
     if let Some(approval) = consume_spoken_attested(&server, &lookup, &body, true)? {
         return Ok(Sse::new(resume_stream(
             server,
@@ -724,26 +710,27 @@ pub async fn cancel_handler(
         return Json(serde_json::json!({"ok": false, "error": "审批不存在"}));
     };
     match classify_approval(&lookup) {
-        ApprovalTarget::Workflow => match cancel_workflow_approval(
-            &server.approval_store,
-            &server.db,
-            &approval_id,
-            &lookup.subject_id,
-        )
-        .await
-        {
-            Ok(()) => {
-                if let Some(consumed) = server.approval_store.get(&approval_id) {
-                    record_approval_resolved(&server, &consumed);
+        ApprovalTarget::Workflow => {
+            match crate::modules::workflow::application::task_parent::cancel_approval(
+                &server,
+                &approval_id,
+                &lookup.subject_id,
+            )
+            .await
+            {
+                Ok(()) => {
+                    if let Some(consumed) = server.approval_store.get(&approval_id) {
+                        record_approval_resolved(&server, &consumed);
+                    }
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "approval_id": approval_id,
+                        "status": "cancelled"
+                    }))
                 }
-                Json(serde_json::json!({
-                    "ok": true,
-                    "approval_id": approval_id,
-                    "status": "cancelled"
-                }))
+                Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
             }
-            Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
-        },
+        }
         ApprovalTarget::TaskNodeExecution => {
             match crate::modules::task::application::capability_approval::cancel(&server, &lookup) {
                 Ok(_) => Json(
@@ -772,54 +759,38 @@ pub async fn cancel_handler(
         }
         ApprovalTarget::Agent => {
             let _turn_guard = acquire_turn(&server, &lookup.conversation_id).await;
+            let lookup = match server.approval_store.get(&approval_id) {
+                Some(approval) => approval,
+                None => return Json(serde_json::json!({"ok":false,"error":"Approval not found"})),
+            };
+            if !matches!(
+                lookup.status,
+                crate::safety::ApprovalStatus::Pending | crate::safety::ApprovalStatus::Cancelled
+            ) {
+                return Json(serde_json::json!({"ok":false,"error":"Approval already processed"}));
+            }
             let conv_id = body
                 .conversation_id
                 .clone()
                 .unwrap_or_else(|| lookup.conversation_id.clone());
-            match server.approval_store.cancel(&approval_id, &conv_id) {
-                Ok(a) => {
-                    record_approval_resolved(&server, &a);
-                    // Keep the conversation chain valid: record the op never ran.
-                    let db = server.db.clone_connection();
-                    let now = chrono::Utc::now().timestamp_millis();
-                    let _ = db.add_message(&MessageRow {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        conversation_id: a.conversation_id.clone(),
-                        role: "tool".to_string(),
-                        content: "任务已取消，操作未执行。".to_string(),
-                        tool_calls: None,
-                        tool_call_id: Some(a.tool_call_id.clone()),
-                        tool_name: Some(a.tool_name.clone()),
-                        tool_result: None,
-                        created_at: now,
-                    });
-                    let mut event = AgentEvent::error_event(&a.conversation_id, String::new());
-                    event.event_type = "approval_resolved".into();
-                    event.error = None;
-                    event.tool_call_id = Some(a.tool_call_id.clone());
-                    event.tool_name = Some(a.tool_name.clone());
-                    event.approval_id = Some(a.approval_id.clone());
-                    event.status = Some("cancelled".into());
-                    if let Err(error) = db.apply_execution_event(&event) {
-                        let _ = db.set_conversation_run_status(
-                            &a.conversation_id,
-                            crate::db::ConversationRunStatus::Failed,
-                            Some(&error),
-                        );
-                        return Json(serde_json::json!({"ok":false,"error":error}));
-                    }
-                    let _ = db.set_conversation_run_status(
-                        &a.conversation_id,
-                        crate::db::ConversationRunStatus::Cancelled,
-                        None,
-                    );
-                    Json(serde_json::json!({
-                        "ok": true,
-                        "approval_id": a.approval_id,
-                        "status": "cancelled"
-                    }))
-                }
-                Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+            if conv_id != lookup.conversation_id {
+                return Json(serde_json::json!({"ok":false,"error":"Conversation mismatch"}));
+            }
+            match super::chat_stop::cancel_approval(&server, &lookup) {
+                Ok(false) => Json(
+                    serde_json::json!({"ok":true,"approval_id":approval_id,"status":"cancelled"}),
+                ),
+                Ok(true) => match server.db.set_conversation_run_status(
+                    &lookup.conversation_id,
+                    crate::db::ConversationRunStatus::Cancelled,
+                    None,
+                ) {
+                    Ok(()) => Json(
+                        serde_json::json!({"ok":true,"approval_id":approval_id,"status":"cancelled"}),
+                    ),
+                    Err(error) => Json(serde_json::json!({"ok":false,"error":error})),
+                },
+                Err(error) => Json(serde_json::json!({"ok":false,"error":error})),
             }
         }
     }
@@ -831,7 +802,7 @@ pub async fn get_handler(
     Path(approval_id): Path<String>,
 ) -> Json<serde_json::Value> {
     match server.approval_store.get(&approval_id) {
-        Some(a) => Json(serde_json::json!({"ok": true, "approval": a})),
+        Some(a) => Json(serde_json::json!({"ok": true, "approval": approval_projection(&a)})),
         None => Json(serde_json::json!({"ok": false, "error": "审批不存在"})),
     }
 }
@@ -839,8 +810,27 @@ pub async fn get_handler(
 /// GET /api/approvals/pending — list all pending approvals.
 pub async fn pending_handler(State(server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
     server.approval_store.purge_expired();
-    let list = server.approval_store.list_pending();
+    let list: Vec<_> = server
+        .approval_store
+        .list_pending()
+        .iter()
+        .map(approval_projection)
+        .collect();
     Json(serde_json::json!({"ok": true, "approvals": list}))
+}
+
+fn approval_projection(approval: &PendingApproval) -> serde_json::Value {
+    let mut value = serde_json::to_value(approval).unwrap_or(serde_json::Value::Null);
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "owner".into(),
+            serde_json::to_value(approval.owner().ok()).unwrap_or(serde_json::Value::Null),
+        );
+        if let Err(error) = approval.owner() {
+            object.insert("owner_error".into(), serde_json::json!(error));
+        }
+    }
+    value
 }
 
 /// Build the resume SSE stream: apply the decision, then re-run the agent.
@@ -850,6 +840,14 @@ fn resume_stream(
     approve: bool,
     turn_guard: tokio::sync::OwnedMutexGuard<()>,
 ) -> ApprovalStream {
+    let resume_cancel = CancellationToken::new();
+    {
+        let mut active = server.active_tasks.lock();
+        if server.cloud_revocation_retry_cancel.is_cancelled() {
+            resume_cancel.cancel();
+        }
+        active.insert(approval.conversation_id.clone(), resume_cancel.clone());
+    }
     let (tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
     let (handoff, mut rx) = ChatTurnEvents::start(server.db.clone_connection(), event_rx);
 
@@ -857,11 +855,17 @@ fn resume_stream(
         let _turn_guard = turn_guard;
         async {
         let db = server.db.clone_connection();
+        if super::chat_stop::cancelled(&db, &approval.conversation_id).unwrap_or(true) {
+            resume_cancel.cancel();
+            close_cancelled_before_dispatch(&server, &approval, &handoff, &tx);
+            return;
+        }
+
         // Build ONE MCP-aware runtime registry snapshot for the whole resume.
         // The same registry is used to (1) execute the approved original tool
         // and (2) resume the ReAct loop, so evaluation and execution agree and
         // stale binding approvals fail closed.
-        let options = match db.load_chat_options(&approval.conversation_id) {
+        let mut options = match db.load_chat_options(&approval.conversation_id) {
             Ok(options) => options,
             Err(error) => {
                 let _ = handoff.set_status(&db,
@@ -875,14 +879,23 @@ fn resume_stream(
                 return;
             }
         };
-        let mut runtime = match crate::api::chat::runtime::prepare_with_model(
+        if let Some(binding) = &approval.chat_turn_model {
+            options.model_profile_id = binding.profile_id.clone();
+        }
+        let prepared = tokio::select! {
+            biased;
+            _ = resume_cancel.cancelled() => {
+                close_cancelled_before_dispatch(&server, &approval, &handoff, &tx);
+                return;
+            }
+            result = crate::api::chat::runtime::prepare_resume_with_model(
             &server,
             Some(&approval.conversation_id),
             Some(&tx),
             options.model_profile_id.as_deref(),
-        )
-        .await
-        {
+        ) => result,
+        };
+        let mut runtime = match prepared {
             Ok(runtime) => runtime,
             Err(error) => {
                 let _ = handoff.set_status(&db,
@@ -907,16 +920,19 @@ fn resume_stream(
                 .await;
             return;
         }
-        let _ = handoff.set_status(&db,
-            &approval.conversation_id,
-            crate::db::ConversationRunStatus::Running,
-            None,
-        );
+        {
+            let _active = server.active_tasks.lock();
+            if resume_cancel.is_cancelled() || super::chat_stop::cancelled(&db, &approval.conversation_id).unwrap_or(true) {
+                close_cancelled_before_dispatch(&server, &approval, &handoff, &tx);
+                return;
+            }
+            let _ = handoff.set_status(&db, &approval.conversation_id, crate::db::ConversationRunStatus::Running, None);
+        }
         let tool_registry = runtime.tools.clone();
         let config = runtime.config.clone();
         let log_buffer = server.log_buffer.clone();
         let system_prompt = runtime.prompt.clone();
-        let goal_cancel = CancellationToken::new();
+        let goal_cancel = resume_cancel.clone();
         let goal_run = match load_conversation_goal_ref(&db, &approval.conversation_id) {
             Ok(Some(goal_ref)) => {
                 resolve_goal_chat_run(&server, &db, &goal_ref, goal_cancel.clone()).map(Some)
@@ -944,6 +960,7 @@ fn resume_stream(
                 approval_id: Some(approval.approval_id.clone()),
                 verification_success: None,
                 verification_reason: None,
+                configuration_source: None,
                 should_replan: None,
             })
             .await;
@@ -993,6 +1010,7 @@ fn resume_stream(
                         approval_id: Some(approval.approval_id.clone()),
                         verification_success: None,
                         verification_reason: None,
+                        configuration_source: None,
                         should_replan: None,
                     })
                     .await;
@@ -1019,6 +1037,7 @@ fn resume_stream(
                     approval_id: Some(approval.approval_id.clone()),
                     verification_success: None,
                     verification_reason: None,
+                    configuration_source: None,
                     should_replan: None,
                 })
                 .await;
@@ -1029,10 +1048,12 @@ fn resume_stream(
                 &format!("▶ {}（审批后执行）", approval.tool_name),
             );
 
-            let scope = goal_run
+            let mut scope = goal_run
                 .as_ref()
                 .map(|run| run.scope.clone())
+                .or_else(|| runtime.execution_scope.clone())
                 .unwrap_or_else(|| crate::agent::delegation::ExecutionScope {
+                    owner: None,
                     cancel: CancellationToken::new(),
                     budget: None,
                     handoff_id: None,
@@ -1041,12 +1062,23 @@ fn resume_stream(
                     evidence_ids: Vec::new(),
                     deadline: None,
                 });
+            // Keep the token registered before preparation; replacing it would lose stop.
+            scope.cancel = resume_cancel.clone();
+            if super::chat_stop::cancelled(&db, &approval.conversation_id).unwrap_or(true) {
+                scope.cancel.cancel();
+            }
             server
                 .active_tasks
                 .lock()
                 .insert(approval.conversation_id.clone(), scope.cancel.clone());
-            let approved_execution =
-                execute_approved_tool(&server, &config, &approval, &tool_registry);
+            let approved_execution = CURRENT_CHAT_TURN_MODEL.scope(approval.chat_turn_model.clone(), async {
+                let execution = execute_approved_tool(&server, &config, &approval, &tool_registry);
+                if let Some(agent_id) = runtime.agent_id.clone() {
+                    crate::safety::execution_gateway::CURRENT_AGENT_ID.scope(agent_id, execution).await
+                } else {
+                    execution.await
+                }
+            });
             let gateway_outcome = crate::agent::delegation::EXECUTION_SCOPE.scope(scope.clone(), async {
                 tokio::select! {
                     biased;
@@ -1089,6 +1121,7 @@ fn resume_stream(
                         approval_id: Some(approval.approval_id.clone()),
                         verification_success: Some(false),
                         verification_reason: None,
+                        configuration_source: None,
                         should_replan: Some(false),
                     })
                     .await;
@@ -1104,22 +1137,8 @@ fn resume_stream(
                         &approval.tool_name,
                         tool_result.structured.as_ref(),
                     );
-                    let stop_reason = match &accounting {
-                        Ok(engine::ExternalToolAccounting::ResultUnknown) => Some(
-                            "外部 ACP 执行结果未知，请先核实外部会话结果；已停止自动重试。"
-                                .to_string(),
-                        ),
-                        Ok(engine::ExternalToolAccounting::BillingUnknown)
-                            if scope.goal_id.is_some() || scope.handoff_id.is_some() =>
-                        {
-                            Some(
-                                "外部 ACP 计费用量未知，目标预算不可用；已停止后续自动调用。"
-                                    .to_string(),
-                            )
-                        }
-                        Err(error) => Some(error.clone()),
-                        _ => None,
-                    };
+                    let interpreted = crate::execution::interpret_tool_result(&tool_result, &verification);
+                    let stop_reason = approved_execution_stop_reason(&scope, &tool_result, &verification, &accounting);
                     if let Some(reason) = stop_reason {
                         let content = format!("{}\n\n{reason}", tool_result.content);
                         add_tool_message(
@@ -1153,33 +1172,21 @@ fn resume_stream(
                                 approval_id: Some(approval.approval_id.clone()),
                                 verification_success: Some(false),
                                 verification_reason: None,
+                                configuration_source: tool_result.configuration_source.clone(),
                                 should_replan: Some(false),
                             })
                             .await;
                         return;
                     }
-                    let _ = tx
-                        .send(AgentEvent {
-                            event_type: "tool_end".into(),
-                            conversation_id: approval.conversation_id.clone(),
-                            token: None,
-                            tool_call_id: Some(approval.tool_call_id.clone()),
-                            tool_name: Some(approval.tool_name.clone()),
-                            args: None,
-                            result: Some(tool_result.content.clone()),
-                            status: Some(
-                                (if tool_result.ok { "success" } else { "error" }).to_string(),
-                            ),
-                            error: None,
-                            message_id: None,
-                            risk_level: None,
-                            reason: None,
-                            approval_id: Some(approval.approval_id.clone()),
-                            verification_success: None,
-                            verification_reason: None,
-                            should_replan: None,
-                        })
-                        .await;
+                    let mut completed_event = AgentEvent::tool_end(
+                        &approval.conversation_id,
+                        &approval.tool_call_id,
+                        &approval.tool_name,
+                        if interpreted.is_verified() { "success" } else { "error" },
+                        &tool_result,
+                    );
+                    completed_event.approval_id = Some(approval.approval_id.clone());
+                    let _ = tx.send(completed_event).await;
 
                     let _ = tx
                         .send(AgentEvent {
@@ -1198,6 +1205,7 @@ fn resume_stream(
                             approval_id: Some(approval.approval_id.clone()),
                             verification_success: Some(verification.success),
                             verification_reason: Some(verification.reason.clone()),
+                            configuration_source: None,
                             should_replan: Some(verification.should_replan),
                         })
                         .await;
@@ -1211,10 +1219,11 @@ fn resume_stream(
                     } else {
                         llm_result
                     };
-                    let decision_msg = if verification.should_replan {
+                    let decision_msg = if verification.should_replan || !interpreted.is_verified() {
                         crate::agent::verifier::replan_message(
                             &approval.tool_name,
                             &verification.reason,
+                            &llm_result,
                         )
                     } else {
                         llm_result
@@ -1245,6 +1254,7 @@ fn resume_stream(
                             reason: Some(reason.clone()),
                             verification_success: None,
                             verification_reason: None,
+                            configuration_source: None,
                             should_replan: Some(true),
                         })
                         .await;
@@ -1277,6 +1287,7 @@ fn resume_stream(
                             reason: Some(reason.clone()),
                             verification_success: None,
                             verification_reason: None,
+                            configuration_source: None,
                             should_replan: Some(true),
                         })
                         .await;
@@ -1306,6 +1317,7 @@ fn resume_stream(
                             reason: Some(reason.clone()),
                             verification_success: None,
                             verification_reason: None,
+                            configuration_source: None,
                             should_replan: Some(true),
                         })
                         .await;
@@ -1332,7 +1344,7 @@ fn resume_stream(
         }
 
         // 3. Resume the agent loop with the updated context.
-        resume_agent(
+        CURRENT_CHAT_TURN_MODEL.scope(approval.chat_turn_model.clone(), resume_agent(
             &server,
             &db,
             &tool_registry,
@@ -1344,7 +1356,7 @@ fn resume_stream(
             goal_run,
             &runtime,
             Some(&handoff),
-        )
+        ))
         .await;
         }.await;
         handoff.finish(&server, &approval.conversation_id).await;
@@ -1361,6 +1373,29 @@ fn resume_stream(
 }
 
 /// Insert a tool message for the paused tool call into the conversation.
+/// Settle only the three cancellation exits that precede host/tool dispatch.
+/// A dispatched action retains the existing unknown-result handling instead.
+fn close_cancelled_before_dispatch(
+    server: &AppServer,
+    approval: &PendingApproval,
+    handoff: &ChatTurnEvents,
+    tx: &Sender<AgentEvent>,
+) {
+    let error = super::chat_stop::record_not_executed(&server.db, approval).err();
+    let _ = handoff.set_status(
+        &server.db,
+        &approval.conversation_id,
+        crate::db::ConversationRunStatus::Cancelled,
+        error.as_deref(),
+    );
+    if let Some(error) = error {
+        let _ = tx.try_send(AgentEvent::error_event(
+            &approval.conversation_id,
+            format!("Cancelled continuation history could not be persisted: {error}"),
+        ));
+    }
+}
+
 fn add_tool_message(db: &Database, approval: &PendingApproval, content: String, now: i64) {
     let _ = db.add_message(&MessageRow {
         id: uuid::Uuid::new_v4().to_string(),
@@ -1377,7 +1412,7 @@ fn add_tool_message(db: &Database, approval: &PendingApproval, content: String, 
 
 /// Rebuild the agent state from persisted history and continue the loop.
 async fn resume_agent(
-    server: &AppServer,
+    server: &Arc<AppServer>,
     db: &Database,
     tool_registry: &Arc<ToolRegistry>,
     config: &AppConfig,
@@ -1406,7 +1441,7 @@ async fn resume_agent(
 }
 
 pub(crate) async fn resume_conversation(
-    server: &AppServer,
+    server: &Arc<AppServer>,
     db: &Database,
     tool_registry: &Arc<ToolRegistry>,
     config: &AppConfig,
@@ -1450,14 +1485,30 @@ pub(crate) async fn resume_conversation(
             return;
         }
     };
-    let _ = set_turn_status(
-        handoff,
-        db,
-        conversation_id,
-        crate::db::ConversationRunStatus::Running,
-        None,
-    );
-    let mode = match db.conversation_mode(conversation_id) {
+    {
+        let active = server.active_tasks.lock();
+        if server.cloud_revocation_retry_cancel.is_cancelled()
+            || active
+                .get(conversation_id)
+                .is_some_and(CancellationToken::is_cancelled)
+            || super::chat_stop::cancelled(db, conversation_id).unwrap_or(true)
+        {
+            return;
+        }
+        let _ = set_turn_status(
+            handoff,
+            db,
+            conversation_id,
+            crate::db::ConversationRunStatus::Running,
+            None,
+        );
+    }
+    let mode = match db.load_chat_options(conversation_id).and_then(|options| {
+        match options.workspace_mode {
+            Some(mode) => Ok(mode),
+            None => db.conversation_mode(conversation_id),
+        }
+    }) {
         Ok(mode) => mode,
         Err(error) => {
             let _ = set_turn_status(
@@ -1473,8 +1524,8 @@ pub(crate) async fn resume_conversation(
             return;
         }
     };
-    let history = match db.load_chat_messages(conversation_id) {
-        Ok(messages) => messages,
+    let (history, turn_user_start) = match db.load_chat_history(conversation_id) {
+        Ok(history) => history,
         Err(error) => {
             let _ = set_turn_status(
                 handoff,
@@ -1490,12 +1541,33 @@ pub(crate) async fn resume_conversation(
         }
     };
     let mut grounded_prompt = format!("{}\n\n{}", system_prompt, mode.prompt());
-    if let Err(error) = crate::api::chat::grounding::append_for_resume(
+    let mut context_manifest = runtime.context_manifest.clone();
+    if let Ok(Some(previous)) =
+        crate::execution::context_manifest::load_conversation_manifest(db, conversation_id)
+    {
+        for entry in previous
+            .manifest
+            .entries
+            .iter()
+            .filter(|entry| entry.kind == "user_supplement")
+        {
+            context_manifest.record(
+                &entry.kind,
+                &entry.source_id,
+                entry.version.clone(),
+                entry.status,
+                entry.chars,
+                entry.reason.as_deref(),
+            );
+        }
+    }
+    if let Err(error) = crate::api::chat::lanes::append_parent_context(
         db,
+        conversation_id,
         &mut grounded_prompt,
-        &history,
-        runtime.bindings.restrict_knowledge,
+        &mut context_manifest,
     ) {
+        let error = chat_error_message(error);
         let _ = set_turn_status(
             handoff,
             db,
@@ -1508,8 +1580,91 @@ pub(crate) async fn resume_conversation(
             .await;
         return;
     }
+    if goal_run.is_none() && crate::api::chat::recall::enabled(runtime) {
+        if let Err(error) = crate::api::chat::recall::append_for_resume(
+            db,
+            conversation_id,
+            &mut grounded_prompt,
+            &mut context_manifest,
+        ) {
+            tracing::warn!(%error, "could not reload earlier chat context");
+        }
+    }
+    if let Some(index) = history.iter().rposition(|message| message.role == "user") {
+        if let Some(question) = history[index].content.as_deref() {
+            let query =
+                crate::agent::memory::context::chat_memory_query(question, &history[..index]);
+            // A continuation reuses the topic with local retrieval and avoids a second embedding request.
+            let manifest = crate::api::chat::grounding::append_memory(
+                server,
+                runtime,
+                conversation_id,
+                &mut grounded_prompt,
+                query,
+                false,
+            )
+            .await;
+            context_manifest.extend(manifest);
+        }
+    }
+    let knowledge_manifest = match crate::api::chat::grounding::append_for_resume_with_manifest(
+        db,
+        &mut grounded_prompt,
+        &history,
+        runtime.bindings.restrict_knowledge,
+    ) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            let _ = set_turn_status(
+                handoff,
+                db,
+                conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&error),
+            );
+            let _ = tx
+                .send(AgentEvent::error_event(conversation_id, error))
+                .await;
+            return;
+        }
+    };
+    context_manifest.extend(knowledge_manifest);
+    if let Err(error) = crate::execution::context_manifest::save_current_conversation_manifest(
+        db,
+        conversation_id,
+        &context_manifest,
+    ) {
+        // Historic protocol-only rows may have no accepted turn. Keep the
+        // continuation compatible, but never claim metadata was persisted.
+        tracing::warn!(%error, %conversation_id, "resume context metadata unavailable");
+    }
+    use crate::execution::chat_context_cache::{ChatContextObservation, CURRENT_CHAT_CONTEXT};
+    let context_observation = (|| {
+        let Some(turn) = db.conversation_turns(conversation_id)?.into_iter().next() else {
+            return Ok(None);
+        };
+        ChatContextObservation::new(
+            server,
+            conversation_id,
+            &turn.id,
+            &turn.user_message_id,
+            runtime.context_model_id(),
+            config,
+            &context_manifest,
+        )
+        .map(Some)
+    })()
+    .map_err(|error: String| tracing::warn!(%error, "resumed context observation unavailable"))
+    .ok()
+    .flatten();
+    let history_starts_with_system = history
+        .first()
+        .is_some_and(|message| message.role == "system");
     let mut agent_state = AgentState::new(grounded_prompt);
     agent_state.load_history(history);
+    if let Some(index) = turn_user_start {
+        agent_state.set_turn_user_start(index + usize::from(!history_starts_with_system));
+    }
     match db.load_conversation_compaction(conversation_id) {
         Ok(point) => agent_state.compaction_checkpoint = point,
         Err(error) => {
@@ -1532,26 +1687,54 @@ pub(crate) async fn resume_conversation(
     }
     let prev_count = agent_state.messages.len();
 
-    let cancel_token = goal_run
-        .as_ref()
-        .map(|run| run.scope.cancel.clone())
-        .unwrap_or_else(CancellationToken::new);
-    server
-        .active_tasks
-        .lock()
-        .insert(conversation_id.to_string(), cancel_token.clone());
+    let cancel_token = {
+        let mut active = server.active_tasks.lock();
+        let token = active
+            .get(conversation_id)
+            .cloned()
+            .or_else(|| goal_run.as_ref().map(|run| run.scope.cancel.clone()))
+            .unwrap_or_else(CancellationToken::new);
+        if server.cloud_revocation_retry_cancel.is_cancelled()
+            || super::chat_stop::cancelled(db, conversation_id).unwrap_or(true)
+        {
+            token.cancel();
+        }
+        active.insert(conversation_id.to_string(), token.clone());
+        token
+    };
 
-    let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-        config.sandbox.clone(),
-        server.workspace_root.clone(),
-        Arc::clone(tool_registry),
-        Arc::new(DefaultVerifier::new(&server.workspace_root)),
-        Arc::new(server.audit_recorder.clone()),
+    // The approved operation or answered question is already settled in
+    // persisted history. Steering here can only affect the resumed model loop.
+    let steering = match crate::api::chat::steering::register_continuation(
+        server,
+        conversation_id,
+        cancel_token.clone(),
+        tx,
     )
-    .with_db(Arc::new(server.db.clone_connection()))
-    .with_agent_context(runtime.agent_id.clone())
-    .with_permissions_config(server.config.clone())
-    .with_grant_enforcement();
+    .await
+    {
+        Ok(steering) => steering,
+        Err(error) => {
+            let _ = set_turn_status(
+                handoff,
+                db,
+                conversation_id,
+                crate::db::ConversationRunStatus::Failed,
+                Some(&error),
+            );
+            let _ = tx
+                .send(AgentEvent::error_event(conversation_id, error))
+                .await;
+            return;
+        }
+    };
+
+    let security_gateway = crate::safety::production_gateway::build(
+        server,
+        &server.workspace_root,
+        Arc::clone(tool_registry),
+        runtime.agent_id.clone(),
+    );
 
     let execution = engine::run_react_loop_with_channel(
         &mut agent_state,
@@ -1565,14 +1748,30 @@ pub(crate) async fn resume_conversation(
         tx,
         log_buffer,
     );
-    let goal_scope = goal_run.as_ref().map(|run| run.scope.clone());
-    let mut result = match goal_scope {
-        Some(scope) => {
-            crate::agent::delegation::EXECUTION_SCOPE
-                .scope(scope, execution)
-                .await
+    let execution = crate::execution::owner::CURRENT_EXECUTION_OWNER.scope(
+        crate::execution::ExecutionOwner::Conversation {
+            conversation_id: conversation_id.to_string(),
+        },
+        execution,
+    );
+    let goal_scope = goal_run
+        .as_ref()
+        .map(|run| run.scope.clone())
+        .or_else(|| runtime.execution_scope.clone());
+    let execution = CURRENT_CHAT_CONTEXT.scope(context_observation, execution);
+    let run = async {
+        match goal_scope {
+            Some(scope) => {
+                crate::agent::delegation::EXECUTION_SCOPE
+                    .scope(scope, execution)
+                    .await
+            }
+            None => execution.await,
         }
-        None => execution.await,
+    };
+    let mut result = match &steering {
+        Some(steering) => steering.run(run).await,
+        None => run.await,
     };
     if let Some(run) = goal_run {
         if let Err(error) = run.finish() {
@@ -1587,13 +1786,21 @@ pub(crate) async fn resume_conversation(
     {
         result = Err(error);
     }
-    for msg in &agent_state.messages[prev_count.min(agent_state.messages.len())..] {
-        if msg.role == "user" || msg.role == "system" {
-            continue;
-        }
-        if let Err(error) = db.persist_chat_message(conversation_id, msg, now) {
+    let new_start = prev_count.min(agent_state.messages.len());
+    if let Some(steering) = &steering {
+        if let Err(error) = steering.persist(db, conversation_id, &agent_state.messages, new_start)
+        {
             result = Err(error);
-            break;
+        }
+    } else {
+        for msg in &agent_state.messages[new_start..] {
+            if msg.role == "user" || msg.role == "system" {
+                continue;
+            }
+            if let Err(error) = db.persist_chat_message(conversation_id, msg, now) {
+                result = Err(error);
+                break;
+            }
         }
     }
 
@@ -1645,7 +1852,11 @@ pub(crate) async fn resume_conversation(
                 handoff,
                 db,
                 conversation_id,
-                crate::db::ConversationRunStatus::Failed,
+                if cancel_token.is_cancelled() {
+                    crate::db::ConversationRunStatus::Cancelled
+                } else {
+                    crate::db::ConversationRunStatus::Failed
+                },
                 Some(&e),
             );
             log_buffer.push("error", "agent", &format!("审批后 Agent 错误: {}", e));
@@ -1666,6 +1877,7 @@ pub(crate) async fn resume_conversation(
                     approval_id: None,
                     verification_success: None,
                     verification_reason: None,
+                    configuration_source: None,
                     should_replan: None,
                 })
                 .await;
@@ -2402,6 +2614,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now(),
             subject_id: "local-user".to_string(),
+            chat_turn_model: None,
             execution_id: None,
             workflow_run_id: None,
             workflow_node_id: None,

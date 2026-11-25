@@ -2,8 +2,11 @@
 //!
 //! Defined in docs/superpowers/plans/2026-10-12-proofloop/00-contracts-and-ownership.md §5
 
+mod attention_source;
 mod checkpoints;
 mod evaluations;
+mod goal_conversations;
+mod model;
 mod planning;
 mod records;
 mod repairs;
@@ -24,7 +27,6 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::state::AppServer;
-use crate::integrations::llm::client::LlmClient;
 use crate::modules::task::proofloop::{
     acceptance::evaluate_goal,
     capabilities::build_capability_snapshot,
@@ -49,6 +51,7 @@ fn proof_error_response(error: ProofError) -> Response {
         "draft_not_found" => StatusCode::NOT_FOUND,
         "proofloop_invalid_goal_requirements"
         | "aborted"
+        | "invalid_attention_source"
         | "proofloop_invalid_planning_options"
         | "proofloop_candidate_not_found"
         | "proofloop_candidate_selection_required" => StatusCode::BAD_REQUEST,
@@ -78,6 +81,20 @@ pub async fn create_draft_handler(
 ) -> Response {
     use crate::modules::task::proofloop::{
         enhancement_contracts::PlanningStrategy, routing::rank_capabilities,
+    };
+    let _source_gate = if let Some(source) = &request.source {
+        let id = match source.draft_id() {
+            Ok(id) => id,
+            Err(error) => return proof_error_response(error),
+        };
+        let gate = crate::api::chat::lifecycle::acquire_turn(&server, &id).await;
+        match attention_source::existing_draft(&server, source, Some(&request.workspace_id)) {
+            Ok(Some(draft)) => return Json(draft).into_response(),
+            Ok(None) => Some(gate),
+            Err(error) => return proof_error_response(error),
+        }
+    } else {
+        None
     };
     if let Err(error) = request.planning.validate() {
         return proof_error_response(error);
@@ -118,13 +135,21 @@ pub async fn create_draft_handler(
         .as_ref()
         .and_then(|requirements| requirements.budget)
         .unwrap_or_default();
-    let mut model_config = server.effective_model_config();
-    let output_reserve = model_config.max_tokens.min(
+    let client = match model::planning_client(
+        &server,
+        &request.workspace_id,
+        &request.workspace_id,
+        "proofloop-planning",
+        budget.max_wall_time_ms,
+    ) {
+        Ok(client) => client,
+        Err(error) => return proof_error_response(error),
+    };
+    let output_reserve = client.max_output_tokens().min(
         (budget.max_total_tokens / 2)
             .max(1)
             .min(u64::from(u32::MAX)) as u32,
     );
-    model_config.invoke_timeout_ms = model_config.invoke_timeout_ms.min(budget.max_wall_time_ms);
     let routes = if request.planning.strategy == PlanningStrategy::Existing {
         Vec::new()
     } else {
@@ -164,26 +189,6 @@ pub async fn create_draft_handler(
             Err(error) => return proof_error_response(error),
         }
     };
-    let usage_recorder = server
-        .db
-        .get_active_llm_model()
-        .ok()
-        .flatten()
-        .filter(|model| model.model == model_config.name && model.provider == model_config.provider)
-        .map(|model| {
-            Arc::new(crate::integrations::llm::usage::DatabaseUsageRecorder::new(
-                server.db.clone_connection(),
-                model.id,
-                model.provider,
-                model.model,
-                "proofloop-planning",
-            )) as Arc<dyn crate::integrations::llm::client::UsageRecorder>
-        });
-    let client = LlmClient::new_with_usage_recorder(
-        &model_config,
-        Arc::clone(&server.secret_resolver),
-        usage_recorder,
-    );
     let cancel = CancellationToken::new();
     let service = DraftService::new(server.db.clone());
     match service
@@ -335,7 +340,18 @@ pub async fn graph_goal_handler(
 ) -> Response {
     match server.db.confirmed_proof_draft_for_graph(&graph_id) {
         Ok(Some(draft)) => {
+            let conversation_ids = match server
+                .db
+                .goal_conversation_ids(&draft.contract.goal_id, draft.contract.version)
+            {
+                Ok(ids) => ids,
+                Err(error) => return proof_error_response(ProofError::new("db_error", error)),
+            };
             let usage = server.proofloop_budget.usage(&draft.contract);
+            let conversations = match goal_conversations::project(&server.db, &conversation_ids) {
+                Ok(conversations) => conversations,
+                Err(error) => return proof_error_response(error),
+            };
             let remaining = server.proofloop_budget.check(&draft.contract, now());
             let budget_error = usage
                 .as_ref()
@@ -347,7 +363,7 @@ pub async fn graph_goal_handler(
                 .combined_goal_model_usage(&draft.contract, &draft.planning_usage)
                 .ok();
             (StatusCode::OK, Json(json!({"goal_id":draft.contract.goal_id,"goal_version":draft.contract.version,"graph_id":draft.graph_id,"contract":draft.contract,
-                "model_usage":model_usage,"time_usage":usage.ok(),"remaining_ms":remaining.ok().map(|duration|duration.as_millis() as u64),"budget_error":budget_error}))).into_response()
+                "conversation_ids":conversation_ids,"conversations":conversations,"model_usage":model_usage,"time_usage":usage.ok(),"remaining_ms":remaining.ok().map(|duration|duration.as_millis() as u64),"budget_error":budget_error}))).into_response()
         }
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -528,6 +544,10 @@ pub fn proofloop_router() -> axum::Router<Arc<AppServer>> {
         .route(
             "/api/task-world/proofloop/drafts",
             get(list_drafts_handler).post(create_draft_handler),
+        )
+        .route(
+            "/api/task-world/proofloop/drafts/attention/:automation_id/:observation_id",
+            get(attention_source::lookup),
         )
         .route(
             "/api/task-world/proofloop/drafts/:id",

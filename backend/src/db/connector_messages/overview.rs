@@ -206,6 +206,17 @@ impl Database {
     ) -> Result<String, String> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(err)?;
+        let restricted: Option<String> = tx
+            .query_row(
+                crate::db::automations::PERSONAL_OWNER_QUERY,
+                [conversation],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        if restricted.is_some() {
+            return Err("个人委托对话不能创建普通聊天分支，以免丢失工具范围；请回到委托详情管理或新建独立委托".into());
+        }
         let title: String = tx
             .query_row(
                 "SELECT title FROM conversations WHERE id=?1",

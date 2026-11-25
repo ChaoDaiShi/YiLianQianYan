@@ -1,4 +1,5 @@
 use crate::app::state::AppServer;
+use crate::db::knowledge::{knowledge_text_version, KnowledgeEntryDraft, KnowledgeEntryError};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -16,7 +17,13 @@ pub fn router() -> Router<Arc<AppServer>> {
     Router::new()
         .route("/api/knowledge/documents", get(list).post(import))
         .route("/api/knowledge/documents/:id", get(detail).delete(remove))
+        .route("/api/knowledge/documents/:id/chunks", get(chunk_page))
         .route("/api/knowledge/search", get(search))
+        .route("/api/knowledge/entries", get(entries).post(create_entry))
+        .route(
+            "/api/knowledge/entries/:id",
+            get(entry).put(update_entry).delete(remove_entry),
+        )
         .route(
             "/api/knowledge/collections",
             get(collections).post(create_collection),
@@ -112,19 +119,29 @@ async fn import(
     .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
     Ok(Json(json!({"document":parsed.0,"created":parsed.1})))
 }
+#[derive(Deserialize)]
+struct DetailQuery {
+    include_chunks: Option<bool>,
+}
+
 async fn detail(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
+    Query(query): Query<DetailQuery>,
 ) -> Result<Json<Value>, Error> {
     let document = server
         .db
         .find_knowledge_document(&id)
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "知识文档不存在"))?;
-    let chunks = server
-        .db
-        .knowledge_chunks(Some(&id), None)
-        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let chunks = if query.include_chunks.unwrap_or(true) {
+        server
+            .db
+            .knowledge_chunks(Some(&id), None)
+            .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    } else {
+        Vec::new()
+    };
     let text = server
         .db
         .knowledge_text(&id)
@@ -134,9 +151,40 @@ async fn detail(
         .db
         .knowledge_build_for_document(&id)
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let version = knowledge_text_version(&text);
     Ok(Json(
-        json!({"document":document,"chunks":chunks,"text":text,"build_id":build_id,"memberships":server.db.knowledge_memberships(Some(&id)).map_err(|e|error(StatusCode::INTERNAL_SERVER_ERROR,e))?}),
+        json!({"document":document,"chunks":chunks,"text":text,"version":version,"build_id":build_id,"memberships":server.db.knowledge_memberships(Some(&id)).map_err(|e|error(StatusCode::INTERNAL_SERVER_ERROR,e))?}),
     ))
+}
+
+#[derive(Deserialize)]
+struct ChunkQuery {
+    q: Option<String>,
+    offset: Option<usize>,
+}
+
+async fn chunk_page(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Query(query): Query<ChunkQuery>,
+) -> Result<Json<Value>, Error> {
+    const PAGE_SIZE: usize = 20;
+    if server
+        .db
+        .find_knowledge_document(&id)
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err(error(StatusCode::NOT_FOUND, "知识文档不存在"));
+    }
+    let offset = query.offset.unwrap_or(0);
+    let mut chunks = server
+        .db
+        .knowledge_chunk_page(Some(&id), query.q.as_deref(), PAGE_SIZE + 1, offset)
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let next_offset = (chunks.len() > PAGE_SIZE).then(|| offset.saturating_add(PAGE_SIZE));
+    chunks.truncate(PAGE_SIZE);
+    Ok(Json(json!({"chunks":chunks,"next_offset":next_offset})))
 }
 #[derive(Deserialize)]
 struct Search {
@@ -165,6 +213,90 @@ async fn remove(
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?
     {
         return Err(error(StatusCode::NOT_FOUND, "知识文档不存在"));
+    }
+    Ok(Json(json!({"deleted":true})))
+}
+
+#[derive(Deserialize)]
+struct EntryListQuery {
+    q: Option<String>,
+    offset: Option<usize>,
+}
+
+async fn entries(
+    State(server): State<Arc<AppServer>>,
+    Query(query): Query<EntryListQuery>,
+) -> Result<Json<Value>, Error> {
+    const PAGE_SIZE: usize = 30;
+    let offset = query.offset.unwrap_or(0);
+    let mut entries = server
+        .db
+        .knowledge_entries(
+            query.q.as_deref().unwrap_or("").trim(),
+            PAGE_SIZE + 1,
+            offset,
+        )
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let next_offset = (entries.len() > PAGE_SIZE).then(|| offset.saturating_add(PAGE_SIZE));
+    entries.truncate(PAGE_SIZE);
+    Ok(Json(json!({"entries":entries,"next_offset":next_offset})))
+}
+
+fn entry_error(cause: KnowledgeEntryError) -> Error {
+    match cause {
+        KnowledgeEntryError::NotFound => error(StatusCode::NOT_FOUND, "知识条目不存在"),
+        KnowledgeEntryError::Invalid(message) => error(StatusCode::BAD_REQUEST, message),
+        KnowledgeEntryError::Storage(cause) => {
+            error(StatusCode::INTERNAL_SERVER_ERROR, cause.to_string())
+        }
+    }
+}
+
+async fn entry(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, Error> {
+    let entry = server
+        .db
+        .knowledge_entry(&id)
+        .map_err(|e| entry_error(e.into()))?
+        .ok_or_else(|| entry_error(KnowledgeEntryError::NotFound))?;
+    Ok(Json(json!(entry)))
+}
+
+async fn create_entry(
+    State(server): State<Arc<AppServer>>,
+    Json(draft): Json<KnowledgeEntryDraft>,
+) -> Result<(StatusCode, Json<Value>), Error> {
+    let entry = server
+        .db
+        .save_knowledge_entry(None, &draft)
+        .map_err(entry_error)?;
+    Ok((StatusCode::CREATED, Json(json!(entry))))
+}
+
+async fn update_entry(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Json(draft): Json<KnowledgeEntryDraft>,
+) -> Result<Json<Value>, Error> {
+    let entry = server
+        .db
+        .save_knowledge_entry(Some(&id), &draft)
+        .map_err(entry_error)?;
+    Ok(Json(json!(entry)))
+}
+
+async fn remove_entry(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, Error> {
+    if !server
+        .db
+        .delete_knowledge_entry(&id)
+        .map_err(|e| entry_error(e.into()))?
+    {
+        return Err(entry_error(KnowledgeEntryError::NotFound));
     }
     Ok(Json(json!({"deleted":true})))
 }

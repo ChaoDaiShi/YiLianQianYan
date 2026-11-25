@@ -25,6 +25,9 @@ pub struct AgentState {
     /// Observed starts for this in-memory run only; never inferred from model output.
     #[serde(skip)]
     pub(crate) started_tool_calls: std::collections::HashSet<String>,
+    /// Index of the accepted user's original request in the current turn.
+    #[serde(skip)]
+    pub(crate) turn_user_start: Option<usize>,
 }
 
 impl AgentState {
@@ -48,6 +51,7 @@ impl AgentState {
             goal_ref: None,
             compaction_checkpoint: None,
             started_tool_calls: std::collections::HashSet::new(),
+            turn_user_start: None,
         }
     }
 
@@ -62,6 +66,10 @@ impl AgentState {
             tool_call_id: None,
             name: None,
         });
+    }
+
+    pub(crate) fn set_turn_user_start(&mut self, index: usize) {
+        self.turn_user_start = Some(index);
     }
 
     /// Add a transient system instruction used to correct the active run.
@@ -133,6 +141,7 @@ impl AgentState {
         self.goal_ref = None;
         self.compaction_checkpoint = None;
         self.started_tool_calls.clear();
+        self.turn_user_start = None;
 
         // Re-add system prompt
         self.messages.push(ChatMessage {
@@ -148,6 +157,7 @@ impl AgentState {
     /// Load messages from persisted history (replaces current messages)
     pub fn load_history(&mut self, messages: Vec<ChatMessage>) {
         self.started_tool_calls.clear();
+        self.turn_user_start = None;
         // Keep system prompt, replace rest
         let system_msg = self.messages.first().cloned();
         self.messages = messages;

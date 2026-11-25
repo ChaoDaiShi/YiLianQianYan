@@ -56,6 +56,22 @@ impl AppServer {
         control_session: ControlSession,
         secret_store: Arc<dyn SecretStore>,
     ) -> Result<Self, String> {
+        Self::new_with_control_session_store_and_browser(
+            db_path,
+            workspace_root,
+            control_session,
+            secret_store,
+            Arc::new(crate::browser::BrowserRuntime::new()),
+        )
+    }
+
+    pub fn new_with_control_session_store_and_browser(
+        db_path: &std::path::Path,
+        workspace_root: &str,
+        control_session: ControlSession,
+        secret_store: Arc<dyn SecretStore>,
+        browser_runtime: Arc<crate::browser::BrowserRuntime>,
+    ) -> Result<Self, String> {
         let db = Database::new(db_path).map_err(|e| e.to_string())?;
         // v0.6 recovery: any execution left "running" by a previous process must
         // not pretend to keep running — mark interrupted and block its task.
@@ -69,6 +85,7 @@ impl AppServer {
                 tracing::warn!(interrupted, "recovered interrupted conversation runs");
             }
         }
+        db.interrupt_standalone_workflow_runs(chrono::Utc::now().timestamp_millis())?;
         db.interrupt_knowledge_builds()?;
         db.interrupt_channel_runs()?;
         db.interrupt_running_robots()?;
@@ -91,6 +108,8 @@ impl AppServer {
         }
 
         let managed_process_registry = Arc::new(ManagedProcessRegistry::new());
+        let software_runtime =
+            Arc::new(crate::software::SoftwareRuntime::new(db.clone_connection()));
         let mut tool_registry = ToolRegistry::with_defaults_and_process_registry(
             workspace_root,
             Arc::clone(&managed_process_registry),
@@ -99,17 +118,25 @@ impl AppServer {
             db.clone_connection(),
             Arc::clone(&secret_store),
         )));
-        let tool_registry = Arc::new(tool_registry);
-
+        tool_registry.register_visible_browser(Arc::clone(&browser_runtime));
+        tool_registry.register_software(Arc::clone(&software_runtime));
         let skill_dirs = if config.skills.directories.is_empty() {
             vec!["./skills".to_string()]
         } else {
             config.skills.directories.clone()
         };
-        let skill_discovery = Arc::new(RwLock::new(SkillDiscovery::discover(
-            &skill_dirs,
-            workspace_root,
-        )));
+        let discovery = if let Some(bundle) = browser_runtime.local_fixture_bundled_skills() {
+            SkillDiscovery::discover_local_fixture(workspace_root, bundle)
+        } else {
+            SkillDiscovery::discover(&skill_dirs, workspace_root)
+        };
+        let skill_discovery = Arc::new(RwLock::new(discovery));
+        if browser_runtime.local_fixture_bundled_skills().is_some() {
+            tool_registry.register(Arc::new(crate::tools::LoadSkillTool::with_discovery(
+                Arc::clone(&skill_discovery),
+            )));
+        }
+        let tool_registry = Arc::new(tool_registry);
 
         let subagent_dirs = if config.subagents.directories.is_empty() {
             vec!["./.agents/agents".to_string()]
@@ -120,8 +147,10 @@ impl AppServer {
 
         let log_buffer = LogBuffer::new(2000);
         let event_hub = EventHub::new(256);
-        let task_world =
-            TaskWorldRuntime::new(&db, event_hub.clone()).map_err(|error| error.to_string())?;
+        let approval_store = Arc::new(ApprovalStore::new());
+        let task_world = TaskWorldRuntime::new(&db, event_hub.clone())
+            .map_err(|error| error.to_string())?
+            .with_goal_approvals(approval_store.clone(), audit_recorder.clone());
         let proofloop_budget = Arc::new(
             crate::modules::task::proofloop::budget::GoalBudgetMeter::new(db.clone())
                 .map_err(|error| error.message)?,
@@ -132,8 +161,15 @@ impl AppServer {
             .join("resources");
         let resource_service =
             ResourceService::new(db.clone_connection(), resource_root, event_hub.clone());
+        browser_runtime.configure_evidence(db.clone_connection(), resource_service.clone());
+        browser_runtime
+            .configure_credential_vault(db.clone_connection(), Arc::clone(&secret_store))?;
+        if db_path != std::path::Path::new(":memory:") {
+            browser_runtime
+                .configure_profile_context(db_path)
+                .map_err(|error| error.to_string())?;
+        }
         let voice_runtime = GlobalVoiceSessionRuntime::new(event_hub.clone());
-        let approval_store = Arc::new(ApprovalStore::new());
         let config = Arc::new(RwLock::new(config));
         let command_router = CommandRouter::new();
         command_router
@@ -163,16 +199,26 @@ impl AppServer {
             })
             .map_err(|error| format!("register presence command: {error}"))?;
 
+        let resource_budget = crate::modules::resource::policy::startup_budget(&db)?;
         let server = Self {
+            software_runtime,
+            plugin_services: Arc::new(
+                crate::plugin::service_runtime::PluginServiceRuntime::default(),
+            ),
             db: db.clone(),
             app_data_dir: infer_app_data_dir(db_path),
             config,
+            settings_update_lock: tokio::sync::Mutex::new(()),
+            memory_indexer: Default::default(),
+            chat_context_cache: Arc::default(),
             tool_registry,
+            browser_runtime,
             managed_process_registry,
             skill_discovery,
             subagents,
             workspace_root: workspace_root.to_string(),
             active_tasks: Mutex::new(HashMap::new()),
+            chat_steering: Mutex::new(HashMap::new()),
             chat_turn_gates: Mutex::new(HashMap::new()),
             active_workflow_runs: Arc::new(Mutex::new(HashMap::new())),
             active_task_executions: Arc::new(Mutex::new(HashMap::new())),
@@ -195,8 +241,10 @@ impl AppServer {
             voice_dispatch_hook: Arc::new(RwLock::new(None)),
             task_world,
             proofloop_budget,
-            delegation_slots: Arc::new(Semaphore::new(2)),
-            external_agent_slots: Arc::new(Semaphore::new(1)),
+            resource_budget,
+            memory_pressure: Default::default(),
+            delegation_slots: Arc::new(Semaphore::new(resource_budget.delegation_limit)),
+            external_agent_slots: Arc::new(Semaphore::new(resource_budget.cli_limit)),
             scoped_db: {
                 let lease = db.get_cloud_profile_lease().unwrap_or_else(|_| {
                     crate::modules::cloud::contracts::ScopeLease {
@@ -209,6 +257,16 @@ impl AppServer {
             cloud_operation_lock: tokio::sync::Mutex::new(()),
             cloud_revocation_retry_cancel: tokio_util::sync::CancellationToken::new(),
         };
+        server.db.recover_integration_handoffs()?;
+        server
+            .db
+            .conn()
+            .execute(
+                "UPDATE cli_chat_turns SET state='interrupted' WHERE state='running'",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+        crate::execution::reconciliation::recover_startup_receipts(&server)?;
         server.set_voice_dispatch_hook(Arc::new(InteractionVoiceDispatch::new(
             server.db.clone_connection(),
             server.task_world.clone(),
@@ -255,6 +313,13 @@ pub async fn create_server() -> Result<(Arc<AppServer>, axum::Router), String> {
 pub(crate) async fn create_server_with_control_session(
     control_session: Option<ControlSession>,
 ) -> Result<(Arc<AppServer>, axum::Router), String> {
+    create_server_with_control_session_and_browser(control_session, None).await
+}
+
+pub(crate) async fn create_server_with_control_session_and_browser(
+    control_session: Option<ControlSession>,
+    browser_runtime: Option<Arc<crate::browser::BrowserRuntime>>,
+) -> Result<(Arc<AppServer>, axum::Router), String> {
     let data_dir = default_data_dir();
     std::fs::create_dir_all(&data_dir).ok();
     let (db_path, lease, profile_id) =
@@ -278,17 +343,25 @@ pub(crate) async fn create_server_with_control_session(
         workspace_root
     );
 
-    let server = Arc::new(match control_session {
-        Some(control_session) => {
-            AppServer::new_with_control_session(&db_path, &workspace_root, control_session)?
+    let control_session = match control_session {
+        Some(session) => session,
+        None => {
+            ControlSession::from_environment_or_generate().map_err(|error| error.to_string())?
         }
-        None => AppServer::new(&db_path, &workspace_root)?,
-    });
+    };
+    let server = Arc::new(AppServer::new_with_control_session_store_and_browser(
+        &db_path,
+        &workspace_root,
+        control_session,
+        Arc::new(OsSecretStore::new()),
+        browser_runtime.unwrap_or_else(|| Arc::new(crate::browser::BrowserRuntime::new())),
+    )?);
 
     server
         .scoped_db
         .validate_stored_scope()
         .map_err(|e| format!("profile stored scope validation failed: {e}"))?;
+    server.db.ensure_default_workspace(&workspace_root)?;
     if let Some(report) = server
         .db
         .run_reliability_reconciliation_once()
@@ -334,6 +407,11 @@ pub(crate) async fn create_server_with_control_session(
         server.clone(),
         server.cloud_revocation_retry_cancel.child_token(),
     );
+    crate::execution::reconciliation::start_background(&server);
+    crate::modules::resource::policy::watch_pressure(&server);
+    if server.config.read().model.has_local_embedding() {
+        let _ = server.memory_indexer.start(&server);
+    }
     let router = super::router::build_router(server.clone());
     crate::modules::channel::runtime::start_channels(server.clone()).await;
 

@@ -118,6 +118,13 @@ impl Default for TaskPriority {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPageSource {
+    pub page_id: String,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub id: TaskId,
     pub workspace_id: WorkspaceId,
@@ -130,6 +137,8 @@ pub struct Task {
     pub created_at: i64,
     pub updated_at: i64,
     pub completed_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_source: Option<TaskPageSource>,
 }
 
 impl Task {
@@ -156,6 +165,7 @@ impl Task {
             created_at: now,
             updated_at: now,
             completed_at: None,
+            page_source: None,
         })
     }
 }
@@ -292,6 +302,7 @@ pub enum TaskEventType {
     ExecutionCancelled,
     ExecutionInterrupted,
     AgentDelegated,
+    ContextAssembled,
     AgentCompleted,
     AgentFailed,
     WorkflowStarted,

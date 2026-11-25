@@ -199,9 +199,20 @@ pub(super) fn apply_remote_entity(
             let content = json_text(&payload, "content").ok_or_else(|| {
                 rusqlite::Error::InvalidParameterName("missing required content in memory".into())
             })?;
+            let previous_revision: Option<i64> = transaction
+                .query_row(
+                    "SELECT revision FROM memory_governance WHERE memory_id=?1",
+                    [entity_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let has_metadata = payload.get("metadata").is_some();
             transaction.execute(
                 "INSERT INTO memories (id,content,category,source,source_conversation_id,metadata,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-                 ON CONFLICT(id) DO UPDATE SET content=excluded.content,category=excluded.category,source=excluded.source,source_conversation_id=excluded.source_conversation_id,metadata=excluded.metadata,updated_at=excluded.updated_at",
+                 ON CONFLICT(id) DO UPDATE SET content=excluded.content,category=excluded.category,source=excluded.source,source_conversation_id=excluded.source_conversation_id,
+                 metadata=CASE WHEN ?9 THEN excluded.metadata
+                           WHEN memories.content IS excluded.content AND memories.source_conversation_id IS excluded.source_conversation_id THEN memories.metadata
+                           ELSE NULL END,updated_at=excluded.updated_at",
                 params![
                     entity_id,
                     content,
@@ -210,8 +221,15 @@ pub(super) fn apply_remote_entity(
                     json_optional_text(&payload, "source_conversation_id"),
                     json_compact(payload.get("metadata")),
                     json_number(&payload, "created_at").unwrap_or(now),
-                    json_number(&payload, "updated_at").unwrap_or(now)
+                    json_number(&payload, "updated_at").unwrap_or(now),
+                    has_metadata,
                 ],
+            )?;
+            crate::db::Database::mark_remote_memory_snapshot_on(
+                transaction,
+                entity_id,
+                previous_revision,
+                has_metadata,
             )?;
         }
         "agent_profile" => {

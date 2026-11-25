@@ -47,6 +47,13 @@ pub(crate) const TASK_EXECUTION_SCHEMA_MIGRATION: ProductMigrationSpec = Product
     TASK_EXECUTION_SCHEMA_SQL,
 );
 
+const EXTERNAL_REVIEW_MIGRATION: ProductMigrationSpec = ProductMigrationSpec::new(
+    1101,
+    "1101_task_execution_external_review",
+    MigrationOwner::V1TaskWorld,
+    "ALTER TABLE task_node_executions ADD COLUMN external_review_json TEXT;",
+);
+
 #[derive(Debug, Error)]
 pub enum TaskExecutionPersistenceError {
     #[error("task execution database error: {0}")]
@@ -129,6 +136,7 @@ fn row_to_execution(
         i64,
         Option<i64>,
         Option<i64>,
+        Option<String>,
     ),
 ) -> Result<NodeExecution, TaskExecutionPersistenceError> {
     let (
@@ -150,6 +158,7 @@ fn row_to_execution(
         updated_at,
         started_at,
         finished_at,
+        external_review_json,
     ) = row;
     let execution_id = NodeExecutionId::new(execution_id)
         .map_err(|error| TaskExecutionPersistenceError::Integrity(error.to_string()))?;
@@ -175,6 +184,10 @@ fn row_to_execution(
         .as_deref()
         .map(|value| decode_json("output_json", value))
         .transpose()?;
+    let external_review = external_review_json
+        .as_deref()
+        .map(|value| decode_json("external_review_json", value))
+        .transpose()?;
     let retry_policy: crate::modules::task::execution::ExecutionRetryPolicy =
         decode_json("retry_policy_json", &retry_policy_json)?;
     let executor_ref = executor_ref
@@ -193,6 +206,7 @@ fn row_to_execution(
         executor_ref,
         context,
         output,
+        external_review,
         validation,
         audit_ref,
         approval_ref,
@@ -229,14 +243,19 @@ pub(crate) fn insert_node_execution_on(
         .map(|value| encode_json("validation_json", value))
         .transpose()?;
     let retry_policy_json = encode_json("retry_policy_json", &execution.retry_policy)?;
+    let external_review_json = execution
+        .external_review
+        .as_ref()
+        .map(|value| encode_json("external_review_json", value))
+        .transpose()?;
     conn.execute(
         "INSERT INTO task_node_executions (
             execution_id, graph_id, node_id, attempt, status, executor_ref,
             context_json, output_json, validation_json, audit_ref, approval_ref,
             failure_code, error, retry_policy_json, created_at, updated_at,
-            started_at, finished_at
+            started_at, finished_at, external_review_json
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                   ?14, ?15, ?16, ?17, ?18)",
+                   ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             execution.id.as_str(),
             execution.graph_id.as_str(),
@@ -256,6 +275,7 @@ pub(crate) fn insert_node_execution_on(
             execution.updated_at,
             execution.started_at,
             execution.finished_at,
+            external_review_json,
         ],
     )?;
     Ok(())
@@ -278,12 +298,17 @@ pub(crate) fn update_node_execution_on(
         .map(|value| encode_json("validation_json", value))
         .transpose()?;
     let retry_policy_json = encode_json("retry_policy_json", &execution.retry_policy)?;
+    let external_review_json = execution
+        .external_review
+        .as_ref()
+        .map(|value| encode_json("external_review_json", value))
+        .transpose()?;
     let changed = conn.execute(
         "UPDATE task_node_executions SET
             graph_id=?2, node_id=?3, attempt=?4, status=?5, executor_ref=?6,
             context_json=?7, output_json=?8, validation_json=?9, audit_ref=?10,
             approval_ref=?11, failure_code=?12, error=?13, retry_policy_json=?14,
-            created_at=?15, updated_at=?16, started_at=?17, finished_at=?18
+            created_at=?15, updated_at=?16, started_at=?17, finished_at=?18, external_review_json=?19
          WHERE execution_id=?1",
         params![
             execution.id.as_str(),
@@ -304,6 +329,7 @@ pub(crate) fn update_node_execution_on(
             execution.updated_at,
             execution.started_at,
             execution.finished_at,
+            external_review_json,
         ],
     )?;
     if changed == 0 {
@@ -323,6 +349,8 @@ impl Database {
         &self,
     ) -> Result<(), TaskExecutionPersistenceError> {
         self.apply_product_migration(&TASK_EXECUTION_SCHEMA_MIGRATION)
+            .map_err(TaskExecutionPersistenceError::Database)?;
+        self.apply_product_migration(&EXTERNAL_REVIEW_MIGRATION)
             .map_err(TaskExecutionPersistenceError::Database)
     }
 
@@ -344,6 +372,39 @@ impl Database {
         execution: &NodeExecution,
     ) -> Result<(), TaskExecutionPersistenceError> {
         update_node_execution_on(&self.conn(), execution)
+    }
+
+    /// A user statement cannot overtake a committed result or a newer state.
+    pub(crate) fn record_external_effect_review(
+        &self,
+        original: &NodeExecution,
+        reviewed: &NodeExecution,
+    ) -> Result<bool, TaskExecutionPersistenceError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let unchanged: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_node_executions
+             WHERE execution_id=?1 AND updated_at=?2 AND status=?3 AND failure_code=?4)",
+            params![
+                original.id.as_str(),
+                original.updated_at,
+                original.status.to_string(),
+                original.failure_code
+            ],
+            |row| row.get(0),
+        )?;
+        let completed_child: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM workflow_runs WHERE parent_execution_id=?1
+             AND agent_name='task-harness-workflow' AND status='completed')",
+            [original.id.as_str()],
+            |row| row.get(0),
+        )?;
+        if !unchanged || completed_child {
+            return Ok(false);
+        }
+        update_node_execution_on(&tx, reviewed)?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Recovery changes every affected row or none of them.
@@ -389,7 +450,7 @@ impl Database {
             "SELECT execution_id, graph_id, node_id, attempt, status, executor_ref,
                     context_json, output_json, validation_json, audit_ref, approval_ref,
                     failure_code, error, retry_policy_json, created_at, updated_at,
-                    started_at, finished_at
+                    started_at, finished_at, external_review_json
              FROM task_node_executions
              WHERE graph_id=?1 AND node_id=?2
              ORDER BY attempt, execution_id",
@@ -410,7 +471,7 @@ impl Database {
             "SELECT execution_id, graph_id, node_id, attempt, status, executor_ref,
                     context_json, output_json, validation_json, audit_ref, approval_ref,
                     failure_code, error, retry_policy_json, created_at, updated_at,
-                    started_at, finished_at
+                    started_at, finished_at, external_review_json
              FROM task_node_executions
              ORDER BY graph_id, node_id, attempt, execution_id",
         )?;
@@ -420,8 +481,31 @@ impl Database {
         rows.into_iter().collect()
     }
 
-    /// Fail all dispatching/running/validating rows on startup. The count is
-    /// returned for diagnostics while the row evidence remains queryable.
+    /// Whether the existing gateway journal records a possible mutation for
+    /// this attempt or its owned workflow. Legacy events retain their recorded
+    /// permission-based classification when detailed effect metadata is absent.
+    pub(crate) fn node_execution_has_started_effect(
+        &self,
+        execution_id: &NodeExecutionId,
+    ) -> Result<bool, TaskExecutionPersistenceError> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM security_audit_events e
+               WHERE e.event_type='execution_started'
+                 AND (e.tool_call_id=?1 OR e.conversation_id IN (
+                   SELECT execution_id FROM workflow_runs WHERE parent_execution_id=?1
+                 ))
+                 AND COALESCE(json_extract(e.details_json,'$.context.effect_may_change_state'),
+                   EXISTS(SELECT 1 FROM json_each(e.actions_json) a WHERE a.value IN (
+                     'filesystem.write','shell.execute','process.control','desktop.interact',
+                     'network.request','agent.memory.write','mcp.invoke','agent.delegate','messaging.send'
+                   )))=1
+             )",
+            [execution_id.as_str()], |row| row.get(0),
+        )?)
+    }
+
+    /// Normalize interrupted and cancelled-with-unknown-effect rows at startup.
     pub fn recover_node_executions(
         &self,
         now: i64,
@@ -432,6 +516,13 @@ impl Database {
                 execution.recover_after_restart(now);
                 self.update_node_execution(&execution)?;
                 recovered += 1;
+            } else if execution.status == NodeExecutionStatus::Cancelled
+                && matches!(execution.failure_code(), None | Some("paused"))
+                && self.node_execution_has_started_effect(&execution.id)?
+                && execution.record_uncertain_pause(now)
+            {
+                self.update_node_execution(&execution)?;
+                recovered += 1;
             }
         }
         Ok(recovered)
@@ -440,7 +531,7 @@ impl Database {
 
 const SELECT_NODE_EXECUTION: &str = "SELECT execution_id, graph_id, node_id, attempt, status,
     executor_ref, context_json, output_json, validation_json, audit_ref, approval_ref,
-    failure_code, error, retry_policy_json, created_at, updated_at, started_at, finished_at
+    failure_code, error, retry_policy_json, created_at, updated_at, started_at, finished_at, external_review_json
     FROM task_node_executions WHERE execution_id=?1";
 
 fn row_from_sql(
@@ -465,113 +556,9 @@ fn row_from_sql(
         row.get(15)?,
         row.get(16)?,
         row.get(17)?,
+        row.get(18)?,
     )))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::modules::task::{NodeContext, TaskGraphId, TaskNodeId};
-    use serde_json::json;
-    use std::path::Path;
-
-    fn context() -> NodeContext {
-        NodeContext::new(
-            "goal",
-            "instructions",
-            vec!["resource://one".to_string()],
-            Vec::new(),
-            Vec::new(),
-            vec!["capability.read".to_string()],
-            Vec::new(),
-            vec!["status == success".to_string()],
-        )
-        .unwrap()
-    }
-
-    fn execution(id: &str, attempt: u32) -> NodeExecution {
-        NodeExecution::new(
-            NodeExecutionId::new(id).unwrap(),
-            TaskGraphId::new("graph").unwrap(),
-            TaskNodeId::new("node").unwrap(),
-            attempt,
-            None,
-            context(),
-            100 + i64::from(attempt),
-        )
-        .unwrap()
-    }
-
-    fn database() -> Database {
-        let database = Database::new(Path::new(":memory:")).unwrap();
-        database.initialize_task_world_schema().unwrap();
-        database.initialize_task_execution_schema().unwrap();
-        database
-    }
-
-    #[test]
-    fn migration_1002_is_registered_in_the_v1_namespace() {
-        let database = database();
-        let conn = database.conn();
-        let metadata: (String, String) = conn
-            .query_row(
-                "SELECT name, owner FROM schema_migrations WHERE version=1002",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(
-            metadata,
-            (
-                "1002_task_node_executions".to_string(),
-                "v1_task_world".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn repeated_attempts_coexist_as_append_only_rows() {
-        let database = database();
-        let first = execution("execution-1", 1);
-        let second = execution("execution-2", 2);
-
-        database.save_node_execution(&first).unwrap();
-        database.save_node_execution(&second).unwrap();
-
-        let history = database
-            .load_node_executions(
-                &TaskGraphId::new("graph").unwrap(),
-                &TaskNodeId::new("node").unwrap(),
-            )
-            .unwrap();
-        assert_eq!(history.len(), 2);
-        assert_eq!(history[0].attempt, 1);
-        assert_eq!(history[1].attempt, 2);
-        assert_ne!(history[0].id, history[1].id);
-    }
-
-    #[test]
-    fn active_attempts_reload_as_recovery_required_not_running() {
-        let database = database();
-        let mut active = execution("execution-active", 1);
-        active.transition(NodeExecutionStatus::Ready, 101).unwrap();
-        active
-            .transition(NodeExecutionStatus::Dispatching, 102)
-            .unwrap();
-        active
-            .transition(NodeExecutionStatus::Running, 103)
-            .unwrap();
-        database.save_node_execution(&active).unwrap();
-
-        let recovered = database.recover_node_executions(200).unwrap();
-        assert_eq!(recovered, 1);
-        let loaded = database
-            .load_node_execution(&NodeExecutionId::new("execution-active").unwrap())
-            .unwrap()
-            .unwrap();
-        assert_eq!(loaded.status, NodeExecutionStatus::Failed);
-        assert_eq!(loaded.failure_code(), Some("execution_interrupted"));
-        assert_eq!(loaded.output, None);
-        assert_eq!(json!(loaded.validation), json!(null));
-    }
-}
+mod tests;

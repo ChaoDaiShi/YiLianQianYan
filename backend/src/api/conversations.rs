@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::app::state::AppServer;
 use crate::db::ConversationSummary;
 
+pub mod goal;
 #[path = "conversation_messages.rs"]
 pub mod messages;
 
@@ -35,16 +36,21 @@ pub async fn workspace_update_handler(
     Path(id): Path<String>,
     Json(body): Json<WorkspaceChoice>,
 ) -> Result<Json<serde_json::Value>, StorageApiError> {
+    let workspace_id = match body.workspace_id {
+        Some(id) => Some(id),
+        None => server.db.default_workspace_id().map_err(storage_error)?,
+    };
     server
         .db
-        .set_conversation_workspace(&id, body.workspace_id.as_deref())
+        .set_conversation_workspace(&id, workspace_id.as_deref())
         .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error":e})),
-            )
+            if e == "conversation_goal_workspace_conflict" {
+                (StatusCode::CONFLICT, Json(serde_json::json!({"code":e,"error":"此对话已关联任务，请在该任务的工作空间中继续"})))
+            } else {
+                (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":e})))
+            }
         })?;
-    Ok(Json(serde_json::json!({"workspace_id":body.workspace_id})))
+    Ok(Json(serde_json::json!({"workspace_id":workspace_id})))
 }
 
 pub async fn turns_handler(
@@ -102,6 +108,8 @@ pub async fn list_handler(
 #[derive(Deserialize)]
 pub struct CreateRequest {
     pub title: Option<String>,
+    #[serde(default)]
+    pub use_default_workspace: Option<bool>,
 }
 #[derive(Deserialize)]
 pub struct RenameRequest {
@@ -140,7 +148,10 @@ pub async fn create_handler(
     let title = req.title.unwrap_or_else(|| "新对话".to_string());
     server
         .db
-        .create_conversation(&title)
+        .create_conversation_with_workspace_default(
+            &title,
+            req.use_default_workspace.unwrap_or(true),
+        )
         .map(Json)
         .map_err(storage_error)
 }
@@ -171,9 +182,68 @@ pub async fn delete_handler(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StorageApiError> {
+    let bound = server.db.list_automations().map_err(storage_error)?.into_iter().any(|item| {
+        matches!(item.target, Some(crate::modules::automation::model::AutomationTarget::PersonalAssistant { conversation_id, .. }) if conversation_id == id)
+    });
+    if bound {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(
+                serde_json::json!({"error":"此对话仍关联个人委托，包含执行与文件来源；请在时间任务中归档委托并保留记录。需彻底删除时先明确删除委托，再删除对话。"}),
+            ),
+        ));
+    }
+    let active_error = || {
+        (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "code": "conversation_turn_active",
+                "error": "请先停止或完成当前对话轮次后再删除对话"
+            })),
+        )
+    };
+    let _turn =
+        crate::api::chat::lifecycle::try_acquire_turn(&server, &id).map_err(|_| active_error())?;
+    let _lanes_guard =
+        crate::api::chat::lifecycle::acquire_turn(&server, &format!("lanes:{id}")).await;
+    let lanes = server
+        .db
+        .conversation_lanes(&id)
+        .map_err(|error| storage_error(error.to_string()))?;
+    let _lane_turns = lanes
+        .iter()
+        .map(|lane| {
+            crate::api::chat::lifecycle::try_acquire_turn(&server, &lane.id)
+                .map_err(|_| active_error())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if lanes.iter().any(|lane| {
+        matches!(
+            lane.run_status.as_str(),
+            "running" | "waiting_approval" | "waiting_input"
+        )
+    }) {
+        return Err(active_error());
+    }
+    if server.active_tasks.lock().contains_key(&id)
+        || matches!(
+            server
+                .db
+                .find_conversation(&id)
+                .map_err(storage_error)?
+                .map(|conversation| conversation.run_status),
+            Some(
+                crate::db::ConversationRunStatus::Running
+                    | crate::db::ConversationRunStatus::WaitingApproval
+                    | crate::db::ConversationRunStatus::WaitingInput
+            )
+        )
+    {
+        return Err(active_error());
+    }
     server
         .db
-        .delete_conversation(&id)
+        .delete_conversation_family(&id, lanes.iter().map(|lane| lane.id.as_str()))
         .map(|_| Json(serde_json::json!({"status": "deleted"})))
         .map_err(storage_error)
 }

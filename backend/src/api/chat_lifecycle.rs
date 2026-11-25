@@ -5,8 +5,13 @@ use crate::{
     db::{ConversationRunStatus, Database},
 };
 use parking_lot::Mutex;
-use std::sync::Arc;
+use std::{
+    future::{poll_fn, Future},
+    sync::Arc,
+    task::Poll,
+};
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 
 enum DrainCommand {
     Flush(oneshot::Sender<Result<(), String>>),
@@ -18,6 +23,7 @@ enum DrainCommand {
     },
 }
 pub struct ChatTurnEvents {
+    segment_id: String,
     commands: mpsc::UnboundedSender<DrainCommand>,
     final_state: Mutex<Option<(ConversationRunStatus, Option<String>)>>,
 }
@@ -52,40 +58,6 @@ fn persist_event(
             ));
         }
     }
-    if matches!(
-        event.event_type.as_str(),
-        "tool_start" | "approval_required"
-    ) {
-        if let Some(name) = event.tool_name.as_deref() {
-            let mode = db
-                .conversation_mode(&event.conversation_id)
-                .and_then(|current| {
-                    let next = current.for_tool(name);
-                    if next != current {
-                        db.set_conversation_mode(&event.conversation_id, next)?;
-                        Ok(Some(next))
-                    } else {
-                        Ok(None)
-                    }
-                });
-            match mode {
-                Ok(Some(next)) => {
-                    let _ = stream.send(crate::api::conversation_modes::event(
-                        &event.conversation_id,
-                        next,
-                        true,
-                        &format!("智能体开始使用 {name}"),
-                    ));
-                }
-                Err(error) => {
-                    if failure.is_none() {
-                        *failure = Some(error);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
     if let Err(error) = db.apply_execution_event(&event) {
         if failure.is_none() {
             *failure = Some(error);
@@ -95,6 +67,12 @@ fn persist_event(
         if failure.is_none() {
             *failure = Some(error);
         }
+    }
+    if event.event_type == "approval_resolved" && event.status.as_deref() == Some("cancelled") {
+        pending.retain(|candidate| {
+            candidate.event_type != "approval_required"
+                || candidate.approval_id != event.approval_id
+        });
     }
     if matches!(
         event.event_type.as_str(),
@@ -146,6 +124,7 @@ impl ChatTurnEvents {
             Self {
                 commands,
                 final_state: Mutex::new(None),
+                segment_id: uuid::Uuid::new_v4().to_string(),
             },
             observer,
         )
@@ -182,13 +161,40 @@ impl ChatTurnEvents {
             status = ConversationRunStatus::Failed;
             error = Some(failure);
         }
-        if let Err(failure) =
-            server
-                .db
-                .set_conversation_run_status(conversation, status, error.as_deref())
-        {
-            status = ConversationRunStatus::Failed;
-            error = Some(failure);
+        // Persist a handoff before updating local projections. Recovery never
+        // runs the agent, replays a tool, or sends a channel message.
+        match server.db.record_conversation_segment_outcome(
+            conversation,
+            &self.segment_id,
+            status,
+            error.as_deref(),
+        ) {
+            Ok(receipt) => match crate::execution::reconciliation::project_conversation_outcome(
+                server, &receipt,
+            ) {
+                Ok(committed) => {
+                    if committed != status && committed == ConversationRunStatus::Cancelled {
+                        error = Some("目标已取消，操作未继续执行".into());
+                    }
+                    status = committed;
+                }
+                Err(failure) => {
+                    let _ = server
+                        .db
+                        .settle_conversation_outcome(receipt.sequence, Some(&failure));
+                    status = ConversationRunStatus::Failed;
+                    error = Some(format!("本轮结果已记录，状态同步待恢复：{failure}"));
+                }
+            },
+            Err(failure) => {
+                status = ConversationRunStatus::Failed;
+                error = Some(format!("执行结果交接未能保存：{failure}"));
+                let _ = server.task_world.commit_conversation_outcome(
+                    conversation,
+                    status,
+                    error.as_deref(),
+                );
+            }
         }
         if let Err(failure) = crate::modules::channel::robot::finish_turn(
             server,
@@ -229,6 +235,56 @@ pub fn set_turn_status(
     }
 }
 
+/// Owns initial preparation and execution registration until the turn gate is released.
+pub struct RegisteredChatTurn {
+    server: Arc<AppServer>,
+    conversation: String,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl Drop for RegisteredChatTurn {
+    fn drop(&mut self) {
+        // Field destruction releases the gate only after registration is removed.
+        self.server.active_tasks.lock().remove(&self.conversation);
+    }
+}
+
+pub async fn acquire_registered_turn(
+    server: &Arc<AppServer>,
+    conversation: &str,
+    cancel: &CancellationToken,
+) -> RegisteredChatTurn {
+    let gate = server
+        .chat_turn_gates
+        .lock()
+        .entry(conversation.into())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone();
+    // Keep one lock future in Tokio's FIFO queue. Polling and publishing under
+    // the registry lock is atomic against STOP's lookup/try-acquire decision.
+    let acquisition = gate.lock_owned();
+    tokio::pin!(acquisition);
+    poll_fn(|cx| {
+        let mut active = server.active_tasks.lock();
+        match acquisition.as_mut().poll(cx) {
+            Poll::Ready(guard) => {
+                if server.cloud_revocation_retry_cancel.is_cancelled() {
+                    cancel.cancel();
+                }
+                active.insert(conversation.into(), cancel.clone());
+                Poll::Ready(RegisteredChatTurn {
+                    server: server.clone(),
+                    conversation: conversation.into(),
+                    _guard: guard,
+                })
+            }
+            Poll::Pending => Poll::Pending,
+        }
+        // The synchronous registry lock is dropped before any suspension.
+    })
+    .await
+}
+
 pub async fn acquire_turn(
     server: &AppServer,
     conversation: &str,
@@ -240,6 +296,19 @@ pub async fn acquire_turn(
         .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
         .clone();
     gate.lock_owned().await
+}
+
+pub fn try_acquire_turn(
+    server: &AppServer,
+    conversation: &str,
+) -> Result<tokio::sync::OwnedMutexGuard<()>, tokio::sync::TryLockError> {
+    let gate = server
+        .chat_turn_gates
+        .lock()
+        .entry(conversation.into())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone();
+    gate.try_lock_owned()
 }
 
 #[cfg(test)]

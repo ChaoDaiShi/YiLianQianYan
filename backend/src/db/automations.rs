@@ -2,7 +2,10 @@ use super::{
     migrations::{MigrationOwner, ProductMigrationSpec},
     Database,
 };
-use crate::modules::automation::model::{Automation, Occurrence};
+use crate::modules::automation::{
+    attention::SourceObservation,
+    model::{Automation, Occurrence},
+};
 use rusqlite::{params, OptionalExtension};
 
 const SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
@@ -15,7 +18,21 @@ const AGENT_TURNS:ProductMigrationSpec=ProductMigrationSpec::new(1065,"1065_auto
     "UPDATE automations SET payload=json_set(payload,'$.target',json_object('kind','workflow','graph_id',json_extract(payload,'$.workflow_graph_id'))) WHERE json_type(payload,'$.target') IS NULL;
      UPDATE automation_occurrences SET payload=json_set(payload,'$.robot_run_id',NULL) WHERE json_type(payload,'$.robot_run_id') IS NULL;");
 
+// UNION (without ALL) terminates even if corrupt branch metadata has a cycle.
+// Retain restrictions on identifiable branches created by older app versions.
+pub(super) const PERSONAL_OWNER_QUERY: &str = "WITH RECURSIVE ancestry(id) AS (
+    SELECT ?1 UNION
+    SELECT m.conversation_id FROM ancestry a JOIN message_canvas_branches b ON b.conversation_id=a.id JOIN messages m ON m.id=b.parent_node_id
+    UNION SELECT r.root_conversation_id FROM ancestry a JOIN connector_message_runs r ON r.conversation_id=a.id WHERE r.conversation_id<>r.root_conversation_id
+) SELECT s.value FROM ancestry a JOIN settings s ON s.key='personal_assistant:'||a.id LIMIT 1";
+
 impl Database {
+    pub fn personal_delegation_owner(&self, conversation: &str) -> Result<Option<String>, String> {
+        self.conn()
+            .query_row(PERSONAL_OWNER_QUERY, [conversation], |row| row.get(0))
+            .optional()
+            .map_err(|e| e.to_string())
+    }
     pub fn initialize_automations_schema(&self) -> Result<(), rusqlite::Error> {
         self.apply_product_migration(&SCHEMA)?;
         self.apply_product_migration(&AGENT_TURNS)
@@ -66,6 +83,46 @@ impl Database {
             if value.revision != current.revision + 1 {
                 return Err("时间任务版本已变化，请刷新后重试".into());
             }
+            if matches!(
+                current.target,
+                Some(crate::modules::automation::model::AutomationTarget::PersonalAssistant { .. })
+            ) || matches!(
+                value.target,
+                Some(crate::modules::automation::model::AutomationTarget::PersonalAssistant { .. })
+            ) {
+                let mut before =
+                    serde_json::to_value(&current.target).map_err(|e| e.to_string())?;
+                let mut after = serde_json::to_value(&value.target).map_err(|e| e.to_string())?;
+                let mut reduced = true;
+                for key in ["allow_file_writes", "allow_file_discovery"] {
+                    if after[key].as_bool().unwrap_or(false)
+                        && !before[key].as_bool().unwrap_or(false)
+                    {
+                        reduced = false;
+                    }
+                    if let Some(map) = before.as_object_mut() {
+                        map.remove(key);
+                    }
+                    if let Some(map) = after.as_object_mut() {
+                        map.remove(key);
+                    }
+                }
+                let same_scope = reduced
+                    && before == after
+                    && value.name == current.name
+                    && value.workspace_id == current.workspace_id
+                    && value.workflow_graph_id == current.workflow_graph_id
+                    && value.timezone == current.timezone
+                    && value.archived == current.archived
+                    && serde_json::to_value(&value.schedule).map_err(|e| e.to_string())?
+                        == serde_json::to_value(&current.schedule).map_err(|e| e.to_string())?;
+                if !same_scope {
+                    let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM automation_occurrences WHERE automation_id=?1 AND json_extract(payload,'$.status') IN ('dispatching','running','waiting_approval','waiting_input'))", [&value.id], |row|row.get(0)).map_err(|e|e.to_string())?;
+                    if active {
+                        return Err("委托已开始执行，请先停止当前轮次再修改配置".into());
+                    }
+                }
+            }
         }
         let count = tx
             .execute(query, params![value.id, payload])
@@ -74,14 +131,22 @@ impl Database {
         if count == 0 {
             return Err("时间任务不存在".into());
         }
+        self.automation_schedule_changed.notify_one();
         Ok(())
     }
     pub fn delete_automation(&self, id: &str) -> Result<bool, String> {
-        Ok(self
+        let deleted = self
             .conn()
             .execute("DELETE FROM automations WHERE id=?1", [id])
             .map_err(|e| e.to_string())?
-            > 0)
+            > 0;
+        if deleted {
+            self.automation_schedule_changed.notify_one();
+        }
+        Ok(deleted)
+    }
+    pub(crate) fn automation_schedule_changed(&self) -> &tokio::sync::Notify {
+        &self.automation_schedule_changed
     }
     /// Claim and advance the schedule in one transaction. A repeated tick cannot
     /// dispatch the same occurrence, including after process restart.
@@ -91,6 +156,31 @@ impl Database {
         next: Option<i64>,
         occurrence: &mut Occurrence,
         manual: bool,
+    ) -> Result<bool, String> {
+        self.claim_automation_occurrence_inner(expected, next, occurrence, manual, None)
+    }
+    pub fn claim_automation_file_event(
+        &self,
+        expected: &Automation,
+        fingerprint: &str,
+        observation: &SourceObservation,
+        occurrence: &mut Occurrence,
+    ) -> Result<bool, String> {
+        self.claim_automation_occurrence_inner(
+            expected,
+            None,
+            occurrence,
+            false,
+            Some((fingerprint, observation)),
+        )
+    }
+    fn claim_automation_occurrence_inner(
+        &self,
+        expected: &Automation,
+        next: Option<i64>,
+        occurrence: &mut Occurrence,
+        manual: bool,
+        file_event: Option<(&str, &SourceObservation)>,
     ) -> Result<bool, String> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -106,8 +196,19 @@ impl Database {
             return Ok(false);
         };
         let mut current: Automation = serde_json::from_str(&payload).map_err(|e| e.to_string())?;
-        if current.revision != expected.revision
-            || (!manual
+        let fingerprint = file_event.map(|(fingerprint, _)| fingerprint);
+        if current.archived
+            || current.revision != expected.revision
+            || (fingerprint.is_some()
+                && (!current.enabled
+                    || current.file_fingerprint != expected.file_fingerprint
+                    || !matches!(
+                        current.schedule,
+                        crate::modules::automation::model::Schedule::FileChanged { .. }
+                    )
+                    || current.file_fingerprint.as_deref() == fingerprint))
+            || (fingerprint.is_none()
+                && !manual
                 && (!current.enabled || current.next_run_at != Some(occurrence.scheduled_at)))
         {
             return Ok(false);
@@ -123,6 +224,14 @@ impl Database {
             let item: Occurrence = serde_json::from_str(&value.map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
             if item.status == "dispatching" {
+                active = true;
+                break;
+            }
+            if item.conversation_id.is_some()
+                && item.robot_run_id.is_none()
+                && item.run_id.is_none()
+                && ["running", "waiting_approval", "waiting_input"].contains(&item.status.as_str())
+            {
                 active = true;
                 break;
             }
@@ -154,6 +263,11 @@ impl Database {
             }
         }
         drop(statement);
+        // Busy sources retain the old checkpoint: the next poll coalesces the
+        // latest content instead of losing it or creating skipped history noise.
+        if active && (fingerprint.is_some() || occurrence.request_fingerprint.is_some()) {
+            return Ok(false);
+        }
         if active && occurrence.status == "dispatching" {
             occurrence.status = "skipped".into();
             occurrence.run_id = None;
@@ -163,7 +277,20 @@ impl Database {
         if inserted == 0 {
             return Ok(false);
         }
-        if !manual {
+        if let Some((_, observation)) = file_event {
+            super::automation_observations::insert_source_observation_on(&tx, observation)?;
+        }
+        if let Some(fingerprint) = fingerprint {
+            current.file_fingerprint = Some(fingerprint.into());
+            tx.execute(
+                "UPDATE automations SET payload=?2 WHERE id=?1",
+                params![
+                    current.id,
+                    serde_json::to_string(&current).map_err(|e| e.to_string())?
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        } else if !manual {
             current.next_run_at = next;
             if next.is_none() {
                 current.enabled = false;
@@ -204,6 +331,34 @@ impl Database {
         })
         .collect()
     }
+
+    pub(crate) fn automation_runtime_occurrence(
+        &self,
+        id: &str,
+    ) -> Result<Option<Occurrence>, String> {
+        let row: Option<(String, String)> = self.conn().query_row(
+            "WITH runtime AS (
+                SELECT o.payload, o.created_at, o.rowid AS order_id,
+                       CASE WHEN json_extract(o.payload,'$.status') IN ('dispatching','interrupted')
+                            THEN json_extract(o.payload,'$.status')
+                            ELSE COALESCE(w.status, json_extract(r.payload,'$.status'), json_extract(o.payload,'$.status'))
+                       END AS status
+                FROM automation_occurrences o
+                LEFT JOIN workflow_runs w ON w.run_id=json_extract(o.payload,'$.run_id')
+                LEFT JOIN channel_robot_runs r ON r.id=json_extract(o.payload,'$.robot_run_id')
+                WHERE o.automation_id=?1
+            ) SELECT payload,status FROM runtime WHERE status!='skipped'
+              ORDER BY CASE WHEN status IN ('dispatching','created','queued','running','waiting_approval','awaiting_approval','waiting_input') THEN 0 ELSE 1 END,
+                       created_at DESC,order_id DESC LIMIT 1",
+            [id], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|e| e.to_string())?;
+        row.map(|(payload, status)| {
+            let mut item: Occurrence = serde_json::from_str(&payload).map_err(|e| e.to_string())?;
+            item.status = status;
+            Ok(item)
+        })
+        .transpose()
+    }
     pub fn automation_occurrences_for_recovery(&self) -> Result<Vec<Occurrence>, String> {
         let conn = self.conn();
         let mut statement = conn
@@ -243,6 +398,9 @@ mod tests {
             next_run_at: Some(1000),
             created_at: 1,
             updated_at: 1,
+            file_fingerprint: None,
+            attention: None,
+            archived: false,
         }
     }
     fn item(id: &str, due: i64) -> Occurrence {
@@ -260,6 +418,9 @@ mod tests {
             robot_run_id: None,
             robot_channel_id: None,
             conversation_id: None,
+            assistant_turn_id: None,
+            report: None,
+            request_fingerprint: None,
             status: "dispatching".into(),
             error: None,
             created_at: due,
@@ -322,9 +483,20 @@ mod tests {
         let db = Database::new(std::path::Path::new(":memory:")).unwrap();
         let first = automation();
         db.save_automation(&first, true).unwrap();
+        assert!(db
+            .automation_runtime_occurrence("schedule")
+            .unwrap()
+            .is_none());
         let mut running = item("first", 1000);
         db.claim_automation_occurrence(&first, Some(2000), &mut running, false)
             .unwrap();
+        assert_eq!(
+            db.automation_runtime_occurrence("schedule")
+                .unwrap()
+                .unwrap()
+                .status,
+            "dispatching"
+        );
         running.status = "created".into();
         db.update_automation_occurrence(&running).unwrap();
         db.conn().execute("INSERT INTO workflow_runs(run_id,workflow_graph_id,execution_id,subject_id,agent_name,status,definition_snapshot_json,state_json,created_at,updated_at) VALUES('first','graph','execution','user','test','waiting_approval','{}','[]',1,1)", []).unwrap();
@@ -333,12 +505,26 @@ mod tests {
         db.claim_automation_occurrence(&current, Some(3000), &mut next, false)
             .unwrap();
         assert_eq!(next.status, "skipped");
+        assert_eq!(
+            db.automation_runtime_occurrence("schedule")
+                .unwrap()
+                .unwrap()
+                .status,
+            "waiting_approval"
+        );
         db.conn()
             .execute(
                 "UPDATE workflow_runs SET status='completed' WHERE run_id='first'",
                 [],
             )
             .unwrap();
+        assert_eq!(
+            db.automation_runtime_occurrence("schedule")
+                .unwrap()
+                .unwrap()
+                .status,
+            "completed"
+        );
         let current = db.get_automation("schedule").unwrap().unwrap();
         let mut last = item("third", 3000);
         db.claim_automation_occurrence(&current, Some(4000), &mut last, false)

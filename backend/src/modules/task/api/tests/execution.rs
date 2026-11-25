@@ -280,6 +280,26 @@ async fn real_workflow_harness_edit_rerun_checkpoint_and_attempt_history() {
         .task_world
         .cancel_execution(&id, &second.id, 2, 8)
         .unwrap();
+    let output_for = |execution_id: String| {
+        crate::modules::task::api::execution_routes::list_executions(
+            State(server.clone()),
+            Path((id.to_string(), node_id.to_string())),
+            axum::extract::Query(
+                crate::modules::task::api::execution_routes::ExecutionEvidenceQuery {
+                    include_output: true,
+                    execution_id: Some(execution_id),
+                    ..Default::default()
+                },
+            ),
+        )
+    };
+    let first_output = body(output_for(first.id.to_string()).await).await;
+    assert_eq!(
+        first_output["execution_output"]["workflow_graph_id"],
+        "local-output"
+    );
+    let cancelled_output = body(output_for(second.id.to_string()).await).await;
+    assert!(cancelled_output["execution_output"].is_null());
     let reloaded =
         TaskWorldRuntime::new(&server.db, crate::shared::event::EventHub::new(16)).unwrap();
     let detail = reloaded.get_graph_detail(&id).unwrap();

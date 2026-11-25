@@ -74,6 +74,7 @@ pub async fn resolve_task_agent_approval(
 
     let now = chrono::Utc::now().timestamp_millis();
 
+    let mut failure_detail: Option<String> = None;
     let (agent_status, exec_status, task_status, summary) = if approve {
         let request = SecurityExecutionRequest {
             conversation_id: consumed.conversation_id.clone(),
@@ -82,24 +83,49 @@ pub async fn resolve_task_agent_approval(
             arguments: consumed.arguments.clone(),
             subject: SecuritySubject::from_subject_id(subject_id),
         };
-        match crate::safety::execution_gateway::CURRENT_AGENT_ID
+        let invocation = crate::safety::execution_gateway::CURRENT_AGENT_ID.scope(
+            agent_execution.agent_id.to_string(),
+            gateway.execute_approved(&request, consumed.risk_level),
+        );
+        match crate::execution::owner::CURRENT_EXECUTION_OWNER
             .scope(
-                agent_execution.agent_id.to_string(),
-                gateway.execute_approved(&request, consumed.risk_level),
+                crate::execution::ExecutionOwner::LegacyTask {
+                    task_id: task.id.to_string(),
+                    execution_id: task_execution.id.to_string(),
+                },
+                invocation,
             )
             .await
         {
             Ok(crate::safety::execution_gateway::SecurityExecutionOutcome::Executed {
                 tool_result,
-                ..
-            }) if tool_result.ok => (
-                AgentExecutionStatus::Completed,
-                TaskExecutionStatus::Completed,
-                TaskStatus::Completed,
-                Some(crate::modules::workflow::safe_tool_result_summary(
-                    &tool_result.content,
-                )),
-            ),
+                verification,
+            }) if crate::execution::interpret_tool_result(&tool_result, &verification)
+                .is_verified() =>
+            {
+                (
+                    AgentExecutionStatus::Completed,
+                    TaskExecutionStatus::Completed,
+                    TaskStatus::Completed,
+                    Some(crate::modules::workflow::safe_tool_result_summary(
+                        &tool_result.content,
+                    )),
+                )
+            }
+            Ok(crate::safety::execution_gateway::SecurityExecutionOutcome::Executed {
+                tool_result,
+                verification,
+            }) => {
+                failure_detail = Some(crate::modules::workflow::executor::verified_failure_reason(
+                    &crate::execution::interpret_tool_result(&tool_result, &verification),
+                ));
+                (
+                    AgentExecutionStatus::Failed,
+                    TaskExecutionStatus::Failed,
+                    TaskStatus::Failed,
+                    None,
+                )
+            }
             _ => (
                 AgentExecutionStatus::Failed,
                 TaskExecutionStatus::Failed,
@@ -121,11 +147,13 @@ pub async fn resolve_task_agent_approval(
     agent_execution.finished_at = Some(now);
     agent_execution.updated_at = now;
     if agent_execution.status == AgentExecutionStatus::Failed {
-        agent_execution.error = Some(if approve {
-            "审批通过后执行被安全策略拒绝或失败".to_string()
-        } else {
-            "审批被拒绝".to_string()
-        });
+        agent_execution.error = Some(failure_detail.clone().unwrap_or_else(|| {
+            if approve {
+                "approved action was denied or failed".into()
+            } else {
+                "approval rejected".into()
+            }
+        }));
     }
     db.update_agent_execution(&agent_execution)?;
 
@@ -133,11 +161,13 @@ pub async fn resolve_task_agent_approval(
     task_execution.finished_at = Some(now);
     task_execution.updated_at = now;
     if exec_status == TaskExecutionStatus::Failed {
-        task_execution.error = Some(if approve {
-            "审批通过后执行被安全策略拒绝或失败".to_string()
-        } else {
-            "审批被拒绝".to_string()
-        });
+        task_execution.error = Some(failure_detail.unwrap_or_else(|| {
+            if approve {
+                "approved action was denied or failed".into()
+            } else {
+                "approval rejected".into()
+            }
+        }));
     }
     db.update_task_execution(&task_execution)?;
 

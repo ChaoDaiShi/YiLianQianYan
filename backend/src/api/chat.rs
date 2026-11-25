@@ -8,6 +8,8 @@ use axum::{
     response::sse::{Event, Sse},
     Json,
 };
+#[path = "chat_cli.rs"]
+pub(crate) mod cli;
 use futures::stream::Stream;
 use serde::Deserialize;
 use std::convert::Infallible;
@@ -16,21 +18,29 @@ use tokio_util::sync::CancellationToken;
 
 #[path = "chat_grounding.rs"]
 pub(crate) mod grounding;
+#[path = "chat_lanes.rs"]
+pub(crate) mod lanes;
 #[path = "chat_lifecycle.rs"]
 pub(crate) mod lifecycle;
 #[path = "chat_options.rs"]
 pub(crate) mod options;
+#[path = "chat_recall.rs"]
+pub(crate) mod recall;
 #[path = "chat_runtime.rs"]
 pub(crate) mod runtime;
+#[path = "chat_steering.rs"]
+pub(crate) mod steering;
+#[path = "chat_task_commands.rs"]
+pub(crate) mod task_commands;
+#[path = "chat_understanding.rs"]
+mod understanding;
 
 pub use crate::agent::delegation::GoalRef as ChatGoalRef;
 use crate::agent::engine::{self, AgentEvent};
 use crate::agent::state::AgentState;
-use crate::agent::verifier::DefaultVerifier;
-use crate::app::state::{AppServer, CHAT_MEMORY_TOP_K};
-use crate::db::{Database, MessageRow, RetrieveQuery};
-use crate::integrations::llm::client::LlmClient;
-use crate::safety::SecurityExecutionGateway;
+use crate::app::state::AppServer;
+use crate::db::{Database, MessageRow};
+use crate::modules::task::proofloop::budget::GoalModelReservation;
 use crate::utils::text::truncate_chars;
 
 #[derive(Debug, Deserialize)]
@@ -64,16 +74,18 @@ struct GoalBoundChatContext {
     evidence_ids: Vec<String>,
     deadline: tokio::time::Instant,
     budget: Arc<crate::modules::task::resource_budget::SharedExecutionBudget>,
-    reservation: GoalCallReservation,
+    reservation: GoalModelReservation,
     activity_lease: crate::modules::task::proofloop::budget::BudgetLease,
+    task_lease: crate::modules::task::runtime::TaskGoalChatLease,
 }
 
 pub(crate) struct GoalChatRun {
     pub(crate) scope: crate::agent::delegation::ExecutionScope,
     pub(crate) goal_ref: ChatGoalRef,
     pub(crate) goal_summary: String,
-    reservation: GoalCallReservation,
+    reservation: GoalModelReservation,
     activity_lease: crate::modules::task::proofloop::budget::BudgetLease,
+    _task_lease: crate::modules::task::runtime::TaskGoalChatLease,
 }
 
 impl GoalChatRun {
@@ -99,15 +111,6 @@ impl GoalChatRun {
     }
 }
 
-struct GoalCallReservation {
-    db: Database,
-    reservation_id: String,
-    budget: Arc<crate::modules::task::resource_budget::SharedExecutionBudget>,
-    started_at_ms: i64,
-    started: std::time::Instant,
-    attempted: bool,
-}
-
 pub(crate) type ChatApiError = (StatusCode, Json<serde_json::Value>);
 
 pub(crate) fn chat_error_message(error: ChatApiError) -> String {
@@ -123,46 +126,18 @@ pub(crate) fn chat_error_message(error: ChatApiError) -> String {
     format!("{code}: {message}")
 }
 
-impl GoalCallReservation {
-    fn finish(&mut self) -> Result<(), String> {
-        if self.attempted {
-            return Ok(());
-        }
-        self.attempted = true;
-        let usage = match self.budget.usage() {
-            Ok((model_calls, total_tokens)) => crate::modules::task::proofloop::PlanningUsage {
-                model_calls,
-                total_tokens,
-                started_at_ms: self.started_at_ms,
-                elapsed_ms: Some(self.started.elapsed().as_millis().min(u64::MAX as u128) as u64),
-            },
-            Err(error) => {
-                self.db
-                    .finish_goal_model_call(&self.reservation_id, None)
-                    .map_err(|finish_error| finish_error.to_string())?;
-                return Err(error);
-            }
-        };
-        self.db
-            .finish_goal_model_call(&self.reservation_id, Some(&usage))
-            .map_err(|error| error.to_string())
-    }
-}
-
-impl Drop for GoalCallReservation {
-    fn drop(&mut self) {
-        if !self.attempted {
-            if let Err(error) = self.finish() {
-                tracing::error!(error = %error, "abandoned ProofLoop chat reservation could not be settled");
-            }
-        }
-    }
-}
-
 fn chat_error(status: StatusCode, code: &str, message: impl Into<String>) -> ChatApiError {
     (
         status,
         Json(serde_json::json!({ "code": code, "error": message.into() })),
+    )
+}
+
+fn preparation_cancelled() -> ChatApiError {
+    chat_error(
+        StatusCode::CONFLICT,
+        "chat_cancelled",
+        "已取消本次消息准备，请重新发送",
     )
 }
 
@@ -213,13 +188,39 @@ fn persist_conversation_goal_ref(
         goal_id: reference.goal_id.clone(),
         goal_version: reference.goal_version,
     };
-    let bound = db.bind_conversation_goal(&binding).map_err(|error| {
-        chat_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "proofloop_goal_binding_persist_failed",
-            error,
-        )
-    })?;
+    let contract = db
+        .load_goal_version(&reference.goal_id, reference.goal_version)
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "proofloop_goal_read_failed",
+                error.to_string(),
+            )
+        })?
+        .ok_or_else(|| {
+            chat_error(
+                StatusCode::CONFLICT,
+                "proofloop_goal_not_confirmed",
+                "目标记录不可用",
+            )
+        })?;
+    let bound = db
+        .bind_conversation_goal_with_workspace(&binding, Some(&contract.workspace_id))
+        .map_err(|error| {
+            if error == "conversation_goal_workspace_conflict" {
+                chat_error(
+                    StatusCode::CONFLICT,
+                    "conversation_goal_workspace_conflict",
+                    "对话与目标属于不同工作空间",
+                )
+            } else {
+                chat_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "proofloop_goal_binding_persist_failed",
+                    error,
+                )
+            }
+        })?;
     if !bound {
         return Err(chat_error(
             StatusCode::CONFLICT,
@@ -412,6 +413,7 @@ fn resolve_goal_chat_context(
     server: &AppServer,
     db: &Database,
     reference: &ChatGoalRef,
+    cancel: CancellationToken,
 ) -> Result<GoalBoundChatContext, ChatApiError> {
     if reference.goal_id.trim().is_empty()
         || reference.goal_id.as_str() != reference.goal_id.trim()
@@ -534,6 +536,19 @@ fn resolve_goal_chat_context(
         ));
     }
 
+    let task_lease = server
+        .task_world
+        .register_goal_chat(&graph_id, cancel)
+        .map_err(|error| {
+            let code = match &error {
+                crate::modules::task::TaskWorldRuntimeError::ExecutionCancelled(_) => {
+                    "task_cancelled"
+                }
+                crate::modules::task::TaskWorldRuntimeError::ExecutionPaused(_) => "task_paused",
+                _ => "proofloop_goal_control_unavailable",
+            };
+            chat_error(StatusCode::CONFLICT, code, error.to_string())
+        })?;
     let (report_status, evidence_ids) = current_goal_evidence(
         db,
         &reference.goal_id,
@@ -547,43 +562,9 @@ fn resolve_goal_chat_context(
         .proofloop_budget
         .check(&contract, now)
         .map_err(proof_error_response)?;
-    let combined_usage = db
-        .combined_goal_model_usage(&contract, &draft.planning_usage)
-        .map_err(proof_error_response)?;
-    let Some(used_tokens) = combined_usage.total_tokens else {
-        return Err(chat_error(
-            StatusCode::CONFLICT,
-            "proofloop_usage_unavailable",
-            "目标累计 token 用量尚未核实，无法启动目标范围内的聊天",
-        ));
-    };
-    let remaining_calls = contract
-        .budget
-        .max_model_calls
-        .saturating_sub(combined_usage.model_calls);
-    let remaining_tokens = contract.budget.max_total_tokens.saturating_sub(used_tokens);
-    if remaining_calls == 0 || remaining_tokens == 0 {
-        return Err(chat_error(
-            StatusCode::CONFLICT,
-            "proofloop_budget_exhausted",
-            "目标的模型调用或 token 预算已耗尽",
-        ));
-    }
-    let reservation_id = db
-        .reserve_goal_model_call(&contract, &draft.planning_usage, "goal-chat", now)
-        .map_err(proof_error_response)?;
-    let budget = crate::modules::task::resource_budget::SharedExecutionBudget::new(
-        remaining_calls,
-        remaining_tokens,
-    );
-    let mut reservation = GoalCallReservation {
-        db: db.clone_connection(),
-        reservation_id,
-        budget: Arc::clone(&budget),
-        started_at_ms: now,
-        started: std::time::Instant::now(),
-        attempted: false,
-    };
+    let mut reservation =
+        GoalModelReservation::reserve(db, &draft, "goal-chat").map_err(proof_error_response)?;
+    let budget = reservation.budget();
     let activity_lease = match server.proofloop_budget.begin_model_activity(&draft) {
         Ok(lease) => lease,
         Err(error) => {
@@ -649,6 +630,7 @@ fn resolve_goal_chat_context(
         budget,
         reservation,
         activity_lease,
+        task_lease,
     })
 }
 
@@ -658,9 +640,10 @@ pub(crate) fn resolve_goal_chat_run(
     reference: &ChatGoalRef,
     cancel: CancellationToken,
 ) -> Result<GoalChatRun, ChatApiError> {
-    let context = resolve_goal_chat_context(server, db, reference)?;
+    let context = resolve_goal_chat_context(server, db, reference, cancel.clone())?;
     Ok(GoalChatRun {
         scope: crate::agent::delegation::ExecutionScope {
+            owner: None,
             cancel,
             budget: Some(Arc::clone(&context.budget)),
             handoff_id: None,
@@ -673,6 +656,7 @@ pub(crate) fn resolve_goal_chat_run(
         goal_summary: context.goal_summary,
         reservation: context.reservation,
         activity_lease: context.activity_lease,
+        _task_lease: context.task_lease,
     })
 }
 
@@ -682,7 +666,36 @@ pub async fn chat_handler(
     Json(req): Json<ChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)>
 {
+    let request_received_at = chrono::Utc::now().timestamp_millis();
     let message = req.message.trim().to_string();
+    let cli_provider = cli::Provider::from_profile(req.options.model_profile_id.as_deref());
+    if let Some(provider) = cli_provider {
+        if !crate::modules::onboarding::allowed(&server.db, "external_model") {
+            return Err(chat_error(
+                StatusCode::FORBIDDEN,
+                "external_model_disabled",
+                "当前资料档案已关闭外部模型调用",
+            ));
+        }
+        if !provider.installed() {
+            return Err(chat_error(
+                StatusCode::BAD_REQUEST,
+                "cli_provider_not_installed",
+                "所选 CLI 模型尚未安装或配置",
+            ));
+        }
+        if !req.resource_ids.is_empty()
+            || req.workflow_id.is_some()
+            || req.goal_ref.is_some()
+            || req.options.agent_id.is_some()
+        {
+            return Err(chat_error(
+                StatusCode::BAD_REQUEST,
+                "cli_text_only",
+                "CLI 对话仅接受文本，请移除附件、目标、工作流和指定智能体",
+            ));
+        }
+    }
     if message.is_empty() && req.resource_ids.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -696,12 +709,55 @@ pub async fn chat_handler(
         .as_ref()
         .filter(|id| !id.is_empty())
         .cloned();
+    // Resolve the immutable goal scope while holding the same turn gate used
+    // by explicit binding, before any asynchronous runtime preparation.
+    let cancel_token = CancellationToken::new();
+    let requested_turn_guard = match requested_conversation_id.as_deref() {
+        Some(id) => {
+            let guard = lifecycle::acquire_registered_turn(&server, id, &cancel_token).await;
+            if db
+                .conversation_run_status(id)
+                .map_err(|error| {
+                    chat_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "conversation_read_failed",
+                        error,
+                    )
+                })?
+                .is_none()
+            {
+                return Err(chat_error(
+                    StatusCode::NOT_FOUND,
+                    "conversation_not_found",
+                    "会话已删除或不存在",
+                ));
+            }
+            Some(guard)
+        }
+        None => None,
+    };
     let persisted_goal_ref = match requested_conversation_id.as_deref() {
         Some(conversation_id) => load_conversation_goal_ref(&db, conversation_id)?,
         None => None,
     };
     let conversation_goal_ref =
         resolve_conversation_goal_ref(req.goal_ref.as_ref(), persisted_goal_ref)?;
+    if let Some(id) = requested_conversation_id.as_deref() {
+        if crate::modules::automation::personal::is_delegated(&server, id).map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "personal_scope_failed",
+                error,
+            )
+        })? && (conversation_goal_ref.is_some() || req.workflow_id.is_some())
+        {
+            return Err(chat_error(
+                StatusCode::CONFLICT,
+                "personal_delegation_scope",
+                "个人委托不能使用其他目标或工作流替换范围与预算，请从委托详情管理",
+            ));
+        }
+    }
     let channel_context = requested_conversation_id
         .as_deref()
         .map(|id| db.channel_for_conversation(id))
@@ -722,7 +778,6 @@ pub async fn chat_handler(
             "渠道会话仅处理当前私聊文本",
         ));
     }
-    let cancel_token = CancellationToken::new();
     let goal_run = conversation_goal_ref
         .as_ref()
         .map(|goal_ref| resolve_goal_chat_run(&server, &db, goal_ref, cancel_token.clone()))
@@ -736,7 +791,7 @@ pub async fn chat_handler(
     let conv_id = match requested_conversation_id.clone() {
         Some(id) => id,
         None => {
-            db.create_conversation("新对话")
+            db.create_conversation_with_workspace_default("新对话", conversation_goal_ref.is_none())
                 .map_err(|error| {
                     chat_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -747,7 +802,17 @@ pub async fn chat_handler(
                 .id
         }
     };
-    let turn_guard = lifecycle::acquire_turn(&server, &conv_id).await;
+    let turn_guard = match requested_turn_guard {
+        Some(guard) => guard,
+        None => lifecycle::acquire_registered_turn(&server, &conv_id, &cancel_token).await,
+    };
+    if server.cloud_revocation_retry_cancel.is_cancelled() {
+        return Err(chat_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "app_shutting_down",
+            "应用正在退出",
+        ));
+    }
     if !server
         .approval_store
         .list_pending_for_conversation(&conv_id)
@@ -792,22 +857,106 @@ pub async fn chat_handler(
             })),
         ));
     }
-    let mut runtime = runtime::prepare_with_model(
-        &server,
-        Some(&conv_id),
-        Some(&event_tx),
-        req.options.model_profile_id.as_deref(),
-    )
-    .await
+    let lane = db.conversation_lane(&conv_id).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "conversation_lane_read_failed",
+            error.to_string(),
+        )
+    })?;
+    let mode = if lane.as_ref().is_some_and(|(_, kind)| kind == "chat") {
+        crate::db::conversation_modes::WorkspaceMode::Chat
+    } else {
+        req.options
+            .workspace_mode
+            .unwrap_or(db.conversation_mode(&conv_id).map_err(|error| {
+                chat_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "conversation_mode_read_failed",
+                    error,
+                )
+            })?)
+    };
+    let previous_user = db.last_user_message(&conv_id).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "chat_history_invalid",
+            error,
+        )
+    })?;
+    let ordinary = runtime::ordinary_conversation(&server, &conv_id).map_err(|error| {
+        chat_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "conversation_scope_failed",
+            error,
+        )
+    })?;
+    if cli_provider.is_some() && (!ordinary || goal_bound) {
+        return Err(chat_error(
+            StatusCode::BAD_REQUEST,
+            "cli_scope_invalid",
+            "请在普通聊天会话中使用 CLI 模型",
+        ));
+    }
+    let mut route = ordinary.then(|| {
+        let names: Vec<String> = server
+            .software_runtime
+            .chat_sessions(&conv_id)
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|(r, _)| {
+                let stem = std::path::Path::new(&r.config.executable)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_owned);
+                std::iter::once(r.config.name).chain(stem)
+            })
+            .collect();
+        crate::interaction::chat_understanding::understand_with_software(
+            &message,
+            previous_user.as_ref().map(|(_, text)| text.as_str()),
+            !req.resource_ids.is_empty(),
+            goal_bound,
+            mode,
+            &names,
+        )
+    });
+    let selected_agent = ordinary
+        .then(|| {
+            req.options
+                .agent_id
+                .clone()
+                .or_else(|| route.as_ref().map(|route| route.role(mode).agent_id()))
+        })
+        .flatten();
+    let mut runtime = tokio::select! {
+        biased;
+        _ = cancel_token.cancelled() => return Err(preparation_cancelled()),
+        runtime = runtime::prepare_for_turn(
+            &server,
+            Some(&conv_id),
+            Some(&event_tx),
+            req.options.model_profile_id.as_deref().filter(|_| cli_provider.is_none()),
+            selected_agent.as_deref(),
+        ) => runtime,
+    }
     .map_err(|error| chat_error(StatusCode::BAD_REQUEST, "connector_runtime_invalid", error))?;
-    req.options
-        .apply(&server, &mut runtime)
-        .map_err(|error| chat_error(StatusCode::BAD_REQUEST, "chat_options_invalid", error))?;
-    // Finish fallible model/pool setup before accepting the user message or registering a run.
+    if cli_provider.is_some() {
+        runtime.model_pool_id = None;
+        runtime.model_row = None;
+    } else {
+        req.options
+            .apply(&server, &mut runtime)
+            .map_err(|error| chat_error(StatusCode::BAD_REQUEST, "chat_options_invalid", error))?;
+    }
+    // Finish fallible model/pool setup before accepting the user message.
     let llm_client = runtime::client(&server, &runtime, &conv_id, &event_tx)
         .map_err(|error| chat_error(StatusCode::BAD_REQUEST, "connector_model_invalid", error))?;
     let llm_client = req.options.client(llm_client);
-    db.save_chat_options(&conv_id, &req.options)
+    let mut turn_options = req.options.clone();
+    turn_options.workspace_mode = Some(mode);
+    turn_options.agent_id = selected_agent;
+    db.save_chat_options(&conv_id, &turn_options)
         .map_err(|error| {
             chat_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -815,36 +964,58 @@ pub async fn chat_handler(
                 error,
             )
         })?;
-    let config = runtime.config.clone();
-    // Build one MCP-aware runtime registry snapshot for this whole chat run.
-    // It is used by BOTH the LLM tool definitions and the Security Gateway so
-    // the LLM, evaluation, and execution all see the same tool set.
-    let tool_registry = runtime.tools.clone();
-    let mode = req
-        .options
-        .workspace_mode
-        .unwrap_or(db.conversation_mode(&conv_id).map_err(|e| {
+    if req.options.workspace_mode.is_some() {
+        db.set_conversation_mode(&conv_id, mode).map_err(|error| {
             chat_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "conversation_mode_read_failed",
-                e,
+                "conversation_mode_save_failed",
+                error,
             )
-        })?);
-    db.set_conversation_mode(&conv_id, mode).map_err(|e| {
-        chat_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "conversation_mode_save_failed",
-            e,
-        )
-    })?;
-    let _ = event_tx
-        .send(crate::api::conversation_modes::event(
+        })?;
+    }
+    if let Some(route) = route.as_mut() {
+        use crate::interaction::chat_understanding::{Action, Source};
+        for id in &req.resource_ids {
+            if runtime
+                .context_manifest
+                .entries
+                .iter()
+                .any(|entry| entry.kind == "resource" && entry.source_id == *id)
+            {
+                route.sources.push(Source {
+                    kind: "attachment",
+                    id: id.clone(),
+                });
+            }
+        }
+        if route.actions.contains(&Action::Continue) || route.actions.contains(&Action::Correct) {
+            if let Some((id, _)) = previous_user {
+                route.sources.push(Source {
+                    kind: "previous_user_message",
+                    id,
+                });
+            }
+        }
+        if let Some(reference) = &conversation_goal_ref {
+            route.sources.push(Source {
+                kind: "goal",
+                id: reference.goal_id.clone(),
+            });
+        }
+        understanding::apply(&mut runtime, route);
+    }
+    let config = runtime.config.clone();
+    let tool_registry = runtime.tools.clone();
+    tokio::select! {
+        biased;
+        _ = cancel_token.cancelled() => return Err(preparation_cancelled()),
+        _ = event_tx.send(crate::api::conversation_modes::event(
             &conv_id,
             mode,
             false,
             "当前会话模式",
-        ))
-        .await;
+        )) => {},
+    }
     let mut system_prompt = format!("{}\n\n{}", runtime.prompt, mode.prompt());
 
     // Merge workflow context if workflow_id is provided
@@ -898,88 +1069,7 @@ pub async fn chat_handler(
         system_prompt.push_str(&extra);
     }
 
-    // Retrieve relevant memories using the current user message as the query.
-    // Best-effort enhancement: any retrieval/embedding failure must not block chat.
-    let mut memory_mode = "lexical";
-    let mut query_embedding: Option<Vec<f32>> = None;
-    if !goal_bound
-        && !channel_context
-        && !(runtime.bindings.restrict_memory && runtime.bindings.restrict_knowledge)
-        && config.model.has_embedding()
-    {
-        let llm = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
-        match llm.embed(&message).await {
-            Ok(vec) => {
-                query_embedding = Some(vec);
-                memory_mode = "hybrid";
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "chat query embedding failed, falling back to lexical memory retrieval");
-                memory_mode = "lexical_fallback";
-            }
-        }
-    }
-
-    let retrieval_query = RetrieveQuery {
-        q: message.clone(),
-        top_k: CHAT_MEMORY_TOP_K,
-        category: None,
-    };
-    match db.retrieve_scoped_memories(
-        &retrieval_query,
-        query_embedding.as_deref(),
-        Some(&crate::db::memory_governance::embedding_identity(
-            &config.model,
-        )),
-        Some(&conv_id),
-        true,
-    ) {
-        Ok(mut scored) => {
-            scored.retain(|m| {
-                (!runtime.bindings.restrict_memory || m.memory.category == "knowledge")
-                    && (!runtime.bindings.restrict_knowledge || m.memory.category != "knowledge")
-            });
-            if !scored.is_empty() {
-                server.append_memory_context(&mut system_prompt, &scored);
-                tracing::info!(
-                    mode = memory_mode,
-                    count = scored.len(),
-                    "memory context injected"
-                );
-            }
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "memory retrieval failed; continuing chat without memory context");
-        }
-    }
-
-    grounding::append(
-        &db,
-        &mut system_prompt,
-        &message,
-        runtime.bindings.restrict_knowledge,
-    )
-    .map_err(|error| {
-        chat_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "knowledge_retrieval_failed",
-            error,
-        )
-    })?;
-
-    if let Some(goal_ref) = conversation_goal_ref.as_ref() {
-        persist_conversation_goal_ref(&db, &conv_id, goal_ref)?;
-    }
-
-    // Create cancel token
-    server
-        .active_tasks
-        .lock()
-        .insert(conv_id.clone(), cancel_token.clone());
-
-    // Build agent state from history before persisting the current user message.
-    let mut agent_state = AgentState::new(system_prompt);
-    agent_state.goal_ref = conversation_goal_ref;
+    use crate::agent::memory::context::chat_memory_query;
     let history = db.load_chat_messages(&conv_id).map_err(|error| {
         chat_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -987,6 +1077,97 @@ pub async fn chat_handler(
             error,
         )
     })?;
+    let mut context_manifest = runtime.context_manifest.clone();
+    if let Some(provider) = cli_provider {
+        context_manifest.record(
+            "external_model",
+            provider.profile(),
+            None,
+            crate::execution::context_manifest::ContextStatus::Resolved,
+            0,
+            Some("Text-only provider using the local conversation history"),
+        );
+    }
+    lanes::append_parent_context(&db, &conv_id, &mut system_prompt, &mut context_manifest)?;
+    let recall_reply = if !goal_bound
+        && !channel_context
+        && recall::enabled(&runtime)
+        && crate::modules::onboarding::allowed(&db, "memory")
+    {
+        recall::prepare(
+            &db,
+            &conv_id,
+            &message,
+            &history,
+            &mut system_prompt,
+            &mut context_manifest,
+        )
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "could not recall an earlier chat");
+            Some("暂时无法读取旧对话，请稍后再试。".into())
+        })
+    } else {
+        None
+    };
+    if let Some(route) = route.as_mut() {
+        if cli_provider.is_none()
+            && recall_reply.is_none()
+            && !goal_bound
+            && req.workflow_id.is_none()
+            && req.resource_ids.is_empty()
+        {
+            understanding::refine(route, mode, &llm_client, &runtime, &message, &cancel_token)
+                .await?;
+        }
+        let _ = event_tx
+            .send(understanding::event(
+                &conv_id,
+                route,
+                runtime.agent_id.as_deref(),
+            ))
+            .await;
+    }
+    let memory_resolved_at = if recall_reply.is_none() {
+        let memory_manifest = tokio::select! {
+            biased;
+            _ = cancel_token.cancelled() => return Err(preparation_cancelled()),
+            manifest = grounding::append_memory(
+                &server,
+                &runtime,
+                &conv_id,
+                &mut system_prompt,
+                chat_memory_query(&message, &history),
+                !goal_bound && !channel_context,
+            ) => manifest,
+        };
+        context_manifest.extend(memory_manifest);
+        let memory_resolved_at = chrono::Utc::now().timestamp_millis();
+        let knowledge_manifest = grounding::append_with_manifest(
+            &db,
+            &mut system_prompt,
+            &message,
+            runtime.bindings.restrict_knowledge,
+        )
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "knowledge_retrieval_failed",
+                error,
+            )
+        })?;
+        context_manifest.extend(knowledge_manifest);
+        memory_resolved_at
+    } else {
+        chrono::Utc::now().timestamp_millis()
+    };
+
+    if let Some(goal_ref) = conversation_goal_ref.as_ref() {
+        persist_conversation_goal_ref(&db, &conv_id, goal_ref)?;
+    }
+
+    // Build agent state from history before persisting the current user message.
+    let mut agent_state = AgentState::new(system_prompt);
+    agent_state.goal_ref = conversation_goal_ref;
     agent_state.load_history(history);
     agent_state.compaction_checkpoint =
         db.load_conversation_compaction(&conv_id).map_err(|error| {
@@ -999,30 +1180,49 @@ pub async fn chat_handler(
     let prev_msg_count = agent_state.messages.len();
 
     // Persist the current user message after taking the history snapshot.
+    if cancel_token.is_cancelled() {
+        return Err(preparation_cancelled());
+    }
     let now = chrono::Utc::now().timestamp_millis();
     let user_message_id = uuid::Uuid::new_v4().to_string();
-    db.accept_conversation_turn_with_resources(
-        &MessageRow {
-            id: user_message_id.clone(),
-            conversation_id: conv_id.clone(),
-            role: "user".to_string(),
-            content: message.clone(),
-            tool_calls: None,
-            tool_call_id: None,
-            tool_name: None,
-            tool_result: None,
-            created_at: now,
-        },
-        &req.resource_ids,
-    )
-    .map_err(|error| {
-        server.active_tasks.lock().remove(&conv_id);
-        chat_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "conversation_turn_write_failed",
-            error,
+    let accepted_turn_id = db
+        .accept_conversation_turn_with_resources(
+            &MessageRow {
+                id: user_message_id.clone(),
+                conversation_id: conv_id.clone(),
+                role: "user".to_string(),
+                content: message.clone(),
+                tool_calls: None,
+                tool_call_id: None,
+                tool_name: None,
+                tool_result: None,
+                created_at: now,
+            },
+            &req.resource_ids,
         )
-    })?;
+        .map_err(|error| {
+            chat_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "conversation_turn_write_failed",
+                error,
+            )
+        })?;
+
+    if let Err(error) = crate::execution::context_manifest::save_conversation_manifest(
+        &db,
+        &conv_id,
+        &accepted_turn_id,
+        &context_manifest,
+        Some(
+            crate::execution::context_manifest::ConversationContextTimeline::new(
+                request_received_at,
+                memory_resolved_at,
+                &context_manifest,
+            ),
+        ),
+    ) {
+        tracing::warn!(%error, "accepted turn context metadata could not be persisted");
+    }
 
     // Auto-title: use first user message (trim to 40 chars)
     let title = if message.is_empty() {
@@ -1042,12 +1242,23 @@ pub async fn chat_handler(
     } else {
         message.clone()
     });
-
-    // Log chat request
-    let msg_preview = truncate_chars(&message, 60);
-    server
-        .log_buffer
-        .push("chat", "api", &format!("收到消息: {}", msg_preview));
+    agent_state.set_turn_user_start(agent_state.messages.len() - 1);
+    use crate::execution::chat_context_cache::{ChatContextObservation, CURRENT_CHAT_CONTEXT};
+    let model_id = cli_provider.map_or_else(
+        || runtime.context_model_id(),
+        |provider| provider.profile().into(),
+    );
+    let context_observation = ChatContextObservation::new(
+        &server,
+        &conv_id,
+        &accepted_turn_id,
+        &user_message_id,
+        model_id,
+        &config,
+        &context_manifest,
+    )
+    .map_err(|error| tracing::warn!(%error, "chat context observation unavailable"))
+    .ok();
 
     // Spawn agent loop
     let conv_clone = conv_id.clone();
@@ -1056,41 +1267,81 @@ pub async fn chat_handler(
 
     let db_clone = db.clone();
     let bound_agent = runtime.agent_id.clone();
-    tokio::spawn(async move {
+    let chat_turn_model = crate::execution::context::ChatTurnModel {
+        conversation_id: conv_id.clone(),
+        turn_id: accepted_turn_id.clone(),
+        profile_id: turn_options.model_profile_id.clone(),
+    };
+    let steering = (ordinary && recall_reply.is_none() && cli_provider.is_none())
+        .then(|| steering::register(&server, &conv_id, &accepted_turn_id, cancel_token.clone()));
+    let accepts_steering = steering.is_some();
+    let run_turn_id = accepted_turn_id.clone();
+    tokio::spawn(CURRENT_CHAT_CONTEXT.scope(context_observation, async move {
         let _turn_guard = turn_guard;
-        log_buffer.push("info", "agent", "Agent 循环开始");
-        let security_gateway = SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-            config_clone.sandbox.clone(),
-            server.workspace_root.clone(),
-            Arc::clone(&tool_registry),
-            Arc::new(DefaultVerifier::new(&server.workspace_root)),
-            Arc::new(server.audit_recorder.clone()),
-        )
-        .with_db(Arc::new(db_clone.clone()))
-        .with_agent_context(bound_agent)
-        .with_permissions_config(server.config.clone())
-        .with_grant_enforcement();
-
-        let execution = engine::run_react_loop_with_channel(
-            &mut agent_state,
-            &llm_client,
-            &tool_registry,
-            &server.approval_store,
-            &security_gateway,
-            &config_clone,
-            &conv_clone,
-            &cancel_token,
-            &event_tx,
-            &log_buffer,
-        );
-        let goal_scope = goal_run.as_ref().map(|run| run.scope.clone());
-        let mut result = match goal_scope {
-            Some(scope) => {
-                crate::agent::delegation::EXECUTION_SCOPE
-                    .scope(scope, execution)
-                    .await
+        let mut result = if let Some(reply) = recall_reply {
+            if cancel_token.is_cancelled() {
+                Err("已取消".into())
+            } else {
+                agent_state.add_assistant_message(Some(reply.clone()), None);
+                Ok(engine::publish_reply_done(&conv_clone, &event_tx, reply).await)
             }
-            None => execution.await,
+        } else if let Some(provider) = cli_provider {
+            cli::run(
+                provider,
+                &server,
+                &conv_clone,
+                &run_turn_id,
+                &mut agent_state,
+                &cancel_token,
+                &event_tx,
+            )
+            .await
+        } else {
+            log_buffer.push("info", "agent", "Agent 循环开始");
+            let security_gateway = crate::safety::production_gateway::build(
+                &server,
+                &server.workspace_root,
+                Arc::clone(&tool_registry),
+                bound_agent,
+            );
+            let execution = engine::run_react_loop_with_channel(
+                &mut agent_state,
+                &llm_client,
+                &tool_registry,
+                &server.approval_store,
+                &security_gateway,
+                &config_clone,
+                &conv_clone,
+                &cancel_token,
+                &event_tx,
+                &log_buffer,
+            );
+            let execution = crate::execution::owner::CURRENT_EXECUTION_OWNER.scope(
+                crate::execution::ExecutionOwner::Conversation {
+                    conversation_id: conv_clone.clone(),
+                },
+                execution,
+            );
+            let execution = crate::execution::context::CURRENT_CHAT_TURN_MODEL
+                .scope(Some(chat_turn_model), execution);
+            let goal_scope = goal_run
+                .as_ref()
+                .map(|run| run.scope.clone())
+                .or_else(|| runtime.execution_scope.clone());
+            let run = async {
+                match goal_scope {
+                    Some(scope) => {
+                        crate::agent::delegation::EXECUTION_SCOPE
+                            .scope(scope, execution)
+                            .await
+                    }
+                    None => execution.await,
+                }
+            };
+            match &steering {
+                Some(steering) => steering.run(run).await,
+                None => run.await,
+            }
         };
         if let Some(run) = goal_run {
             if let Err(error) = run.finish() {
@@ -1107,13 +1358,22 @@ pub async fn chat_handler(
         let total_msgs = agent_state.messages.len();
         let new_start = prev_msg_count; // current user starts here and is filtered below
         let now = chrono::Utc::now().timestamp_millis();
-        for msg in &agent_state.messages[new_start.min(total_msgs)..] {
-            if msg.role == "user" || msg.role == "system" {
-                continue;
-            }
-            if let Err(error) = db_clone.persist_chat_message(&conv_clone, msg, now) {
+        let new_start = new_start.min(total_msgs);
+        if let Some(steering) = &steering {
+            if let Err(error) =
+                steering.persist(&db_clone, &conv_clone, &agent_state.messages, new_start)
+            {
                 result = Err(error);
-                break;
+            }
+        } else {
+            for msg in agent_state.messages[new_start..]
+                .iter()
+                .filter(|msg| msg.role != "user" && msg.role != "system")
+            {
+                if let Err(error) = db_clone.persist_chat_message(&conv_clone, msg, now) {
+                    result = Err(error);
+                    break;
+                }
             }
         }
 
@@ -1143,6 +1403,7 @@ pub async fn chat_handler(
                         approval_id: None,
                         verification_success: None,
                         verification_reason: None,
+                        configuration_source: None,
                         should_replan: None,
                     })
                     .await;
@@ -1186,14 +1447,14 @@ pub async fn chat_handler(
             }
         }
         handoff.finish(&server, &conv_clone).await;
-    });
+    }));
 
     // Return SSE stream
     let conv_stream = conv_id.clone();
     let stream = async_stream::stream! {
         yield Ok(Event::default()
             .event("connected")
-            .data(serde_json::json!({"conversation_id": conv_stream,"user_message_id":user_message_id}).to_string()));
+            .data(serde_json::json!({"conversation_id": conv_stream,"user_message_id":user_message_id,"turn_id":accepted_turn_id,"accepts_steering":accepts_steering}).to_string()));
 
         while let Some(event) = stream_rx.recv().await {
             let json = serde_json::to_string(&event).unwrap_or_default();
@@ -1214,21 +1475,14 @@ pub async fn stop_handler(
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let conv_id = body["conversation_id"].as_str().unwrap_or("");
-    if !conv_id.is_empty() {
-        if let Some(token) = server.active_tasks.lock().get(conv_id) {
-            token.cancel();
-            return Json(serde_json::json!({"status": "cancelled"}));
-        }
+    if conv_id.is_empty() {
+        return Json(serde_json::json!({"status":"not_found"}));
     }
-    if !conv_id.is_empty() {
-        let _guard = lifecycle::acquire_turn(&server, conv_id).await;
-        match server.db.cancel_conversation_inputs(conv_id) {
-            Ok(true) => return Json(serde_json::json!({"status":"cancelled"})),
-            Err(error) => return Json(serde_json::json!({"status":"error","error":error})),
-            Ok(false) => {}
-        }
+    match super::chat_stop::stop(server, conv_id).await {
+        Ok(true) => Json(serde_json::json!({"status":"cancelled"})),
+        Ok(false) => Json(serde_json::json!({"status":"not_found"})),
+        Err(error) => Json(serde_json::json!({"status":"error","error":error})),
     }
-    Json(serde_json::json!({"status": "not_found"}))
 }
 
 #[cfg(test)]
@@ -1340,6 +1594,200 @@ mod tests {
         let _ = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn chat_context_receipt_is_scoped_and_rebuilt_from_canonical_history() {
+        let (base_url, requests, provider) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let id = server.db.create_conversation("上下文验收").unwrap().id;
+        let send = |conversation: String, message: &'static str| {
+            send_chat(
+                server.clone(),
+                &token,
+                json!({"conversation_id":conversation,"workspace_mode":"chat","message":message}),
+            )
+        };
+        let snapshot = |conversation: &str| {
+            crate::execution::context_manifest::load_conversation_manifest(&server.db, conversation)
+                .unwrap()
+                .unwrap()
+        };
+        send(id.clone(), "receipt-first-marker").await;
+        let first = snapshot(&id).projection.unwrap();
+        assert_eq!(first.conversation_id, id);
+        assert!(first.branch_id.is_none());
+        assert!(!first.static_budget_cache_hit);
+        assert_eq!(first.content_digest.len(), 64);
+        let turns = server.db.conversation_turns(&id).unwrap();
+        assert_eq!(first.event_cursor, turns[0].user_message_id);
+
+        send(id.clone(), "receipt-second-marker").await;
+        let second = snapshot(&id).projection.unwrap();
+        assert!(second.static_budget_cache_hit);
+        assert_ne!(first.event_cursor, second.event_cursor);
+        assert_ne!(first.content_digest, second.content_digest);
+
+        let profile = build_router(server.clone())
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/v1/profile")
+                    .header(CONTROL_SESSION_HEADER, &token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({"expected_revision":0,"permissions":{"memory":false}}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(profile.status(), StatusCode::OK);
+        send(id.clone(), "receipt-after-permission-change").await;
+        let updated = snapshot(&id).projection.unwrap();
+        assert!(!updated.static_budget_cache_hit);
+        assert_ne!(updated.source_revision, second.source_revision);
+
+        server.config.write().model.name = "receipt-second-model".into();
+        send(id.clone(), "receipt-after-model-change").await;
+        let changed_model = snapshot(&id).projection.unwrap();
+        assert!(!changed_model.static_budget_cache_hit);
+        assert_ne!(changed_model.model_id, updated.model_id);
+        assert_ne!(changed_model.source_revision, updated.source_revision);
+
+        let old_reply = server.db.get_conversation(&id).unwrap().messages[1]
+            .id
+            .clone();
+        let branch = server
+            .db
+            .fork_message_canvas_conversation(&id, &old_reply)
+            .unwrap();
+        send(branch.clone(), "receipt-branch-marker").await;
+        let child = snapshot(&branch).projection.unwrap();
+        assert_eq!(child.branch_id.as_deref(), Some(branch.as_str()));
+        assert!(!child.static_budget_cache_hit);
+        assert_ne!(child.source_revision, changed_model.source_revision);
+
+        server
+            .db
+            .mutate_conversation_message(&id, &old_reply, false)
+            .unwrap();
+        assert!(snapshot(&id).projection.is_none());
+        assert_eq!(
+            snapshot(&branch).projection.unwrap().content_digest,
+            child.content_digest
+        );
+        drop(server);
+        let (restarted, restarted_token) = test_server(&database, &base_url);
+        send_chat(
+            restarted.clone(),
+            &restarted_token,
+            json!({"conversation_id":id,"workspace_mode":"chat","message":"receipt-after-restart-marker"}),
+        ).await;
+        let rebuilt =
+            crate::execution::context_manifest::load_conversation_manifest(&restarted.db, &id)
+                .unwrap()
+                .unwrap()
+                .projection
+                .unwrap();
+        assert!(!rebuilt.static_budget_cache_hit);
+        let requests = requests.lock().await;
+        let sent = requests.last().unwrap()["messages"].to_string();
+        assert!(sent.contains("receipt-first-marker"));
+        assert!(sent.contains("receipt-second-marker"));
+        assert!(!sent.contains("receipt-branch-marker"));
+        let receipt = serde_json::to_string(&rebuilt).unwrap();
+        assert!(!receipt.contains("receipt-first-marker"));
+        assert!(!receipt.contains("receipt-after-restart-marker"));
+        provider.abort();
+    }
+
+    #[tokio::test]
+    async fn interaction_auto_keeps_discussion_read_only_and_uses_work_tools_for_delivery() {
+        let (base_url, requests, provider) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let id = server.db.create_conversation("互动路由").unwrap().id;
+        for (mode, message) in [
+            ("auto", "今天有点累，先别改代码，帮我想想记忆模块怎么做"),
+            ("auto", "请把刚才的方案写入 notes.md"),
+            ("chat", "请把内容写入 notes.md"),
+            ("auto", "请记住，以后导出 CSV 用 UTF-8 编码"),
+        ] {
+            send_chat(
+                server.clone(),
+                &token,
+                json!({
+                    "conversation_id": id, "workspace_mode": mode, "message": message
+                }),
+            )
+            .await;
+        }
+        let requests = requests.lock().await;
+        let has_tool = |index: usize, name: &str| {
+            requests[index]["tools"]
+                .as_array()
+                .is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == name))
+        };
+        assert_eq!(requests.len(), 4);
+        assert!(!has_tool(0, "write_file"));
+        assert!(!has_tool(0, "bash"));
+        assert!(!has_tool(0, "save_memory"));
+        assert!(has_tool(1, "write_file"));
+        assert!(!has_tool(2, "write_file"));
+        assert!(has_tool(3, "save_memory"));
+        assert!(!has_tool(3, "write_file"));
+        assert!(requests[0]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("通用工作"));
+        assert!(requests[2]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("日常交流"));
+        provider.abort();
+    }
+
+    #[tokio::test]
+    async fn interaction_task_status_uses_persisted_turn_without_a_model_request() {
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, "http://127.0.0.1:1");
+        let id = server.db.create_conversation("运行中").unwrap().id;
+        let message = message_row(&id, "user", "原任务", 1);
+        let original = server.db.accept_conversation_turn(&message).unwrap();
+        let app = build_router(server.clone());
+        for (message, reply) in [
+            ("任务状态", "本轮仍在结算执行状态。"),
+            ("取消当前任务", "已向当前轮次发出取消请求。"),
+            ("任务状态", "上一轮已取消。"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/chat/task-command")
+                        .header(CONTROL_SESSION_HEADER, &token)
+                        .header(CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            json!({"conversation_id":id,"message":message}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), 1024).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap()["message"],
+                reply
+            );
+        }
+        let turns = server.db.conversation_turns(&id).unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, original);
+        assert_eq!(turns[0].status, "cancelled");
+    }
+
     fn message_row(
         conversation_id: &str,
         role: &str,
@@ -1366,6 +1814,1155 @@ mod tests {
             .iter()
             .filter(|message| message["role"] == "user" && message["content"] == content)
             .count()
+    }
+
+    #[tokio::test]
+    async fn new_chat_can_continue_an_unsaved_plan_and_clarifies_ambiguous_sources() {
+        let (base_url, requests, mock) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let workspace = crate::workspace::Workspace::new(
+            crate::workspace::WorkspaceId::generate(),
+            "测试项目".into(),
+            String::new(),
+            None,
+            1,
+        )
+        .unwrap();
+        server.db.create_workspace(&workspace).unwrap();
+        let in_workspace = |title: &str| {
+            let chat = server.db.create_conversation(title).unwrap();
+            server
+                .db
+                .set_conversation_workspace(&chat.id, Some(workspace.id.as_str()))
+                .unwrap();
+            chat
+        };
+        let seed = |chat: &crate::db::ConversationSummary, answer: &str| {
+            for (role, text, time) in [
+                ("user", chat.title.as_str(), 10),
+                ("tool", "INTERNAL_TOOL_TRACE", 20),
+                ("assistant", answer, 30),
+            ] {
+                server
+                    .db
+                    .add_message(&message_row(&chat.id, role, text, time))
+                    .unwrap();
+            }
+        };
+        let first = in_workspace("星桥发布方案");
+        seed(&first, "星桥发布方案已确认，第一步先发布到灰度环境。");
+        let second = in_workspace("松涛迁移方案");
+        seed(&second, "松涛迁移方案先导出旧库快照。");
+        let foreign = server.db.create_conversation("星桥发布方案").unwrap();
+        seed(&foreign, "OTHER_WORKSPACE_PLAN");
+
+        let current = in_workspace("新对话");
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":current.id,"message":"接着上次的方案做"}),
+        )
+        .await;
+        assert!(
+            requests.lock().await.is_empty(),
+            "歧义时由本地询问，避免让模型先执行"
+        );
+        let clarification = server
+            .db
+            .get_conversation(&current.id)
+            .unwrap()
+            .messages
+            .pop()
+            .unwrap();
+        assert_eq!(clarification.role, "assistant");
+        assert!(
+            clarification.content.contains("星桥发布方案")
+                && clarification.content.contains("松涛迁移方案")
+        );
+        let chosen = clarification
+            .content
+            .lines()
+            .find(|line| line.contains("星桥发布方案"))
+            .unwrap();
+        let number = chosen.trim().split_once('.').unwrap().0;
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":current.id,"message":"第9条"}),
+        )
+        .await;
+        assert!(requests.lock().await.is_empty());
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":current.id,"message":format!("第{number}条")}),
+        )
+        .await;
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":current.id,"message":"继续"}),
+        )
+        .await;
+
+        let named = in_workspace("新对话");
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":named.id,"message":"接着上次的星桥发布方案做"}),
+        )
+        .await;
+        let missing = in_workspace("新对话");
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":missing.id,"message":"接着上次的火星采样方案做"}),
+        )
+        .await;
+        assert!(server
+            .db
+            .get_conversation(&missing.id)
+            .unwrap()
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("没有找到"));
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"message":"接着上次的方案做"}),
+        )
+        .await;
+        mock.abort();
+        let captured = requests.lock().await;
+        assert_eq!(captured.len(), 4);
+        for request in &captured[..3] {
+            let prompt = request["messages"][0]["content"].as_str().unwrap();
+            assert!(prompt.contains("第一步先发布到灰度环境"));
+            assert!(!prompt.contains("先导出旧库快照"));
+            assert!(
+                !prompt.contains("OTHER_WORKSPACE_PLAN") && !prompt.contains("INTERNAL_TOOL_TRACE")
+            );
+        }
+        let unbound_prompt = captured[3]["messages"][0]["content"].as_str().unwrap();
+        assert!(unbound_prompt.contains("OTHER_WORKSPACE_PLAN"));
+        assert!(!unbound_prompt.contains("第一步先发布到灰度环境"));
+        let snapshot =
+            crate::execution::context_manifest::load_conversation_manifest(&server.db, &named.id)
+                .unwrap()
+                .unwrap();
+        assert!(snapshot
+            .manifest
+            .entries
+            .iter()
+            .any(|entry| entry.kind == "prior_chat" && entry.source_id == first.id));
+    }
+
+    #[tokio::test]
+    async fn new_desktop_chat_uses_the_explicit_default_workspace() {
+        async fn put_default(server: Arc<AppServer>, token: &str, workspace: &str) -> StatusCode {
+            build_router(server)
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/api/workspaces/default")
+                        .header(CONTROL_SESSION_HEADER, token)
+                        .header(CONTENT_TYPE, "application/json")
+                        .body(Body::from(json!({"workspace_id":workspace}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+        let (base_url, _, mock) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let workspace = crate::workspace::Workspace::new(
+            crate::workspace::WorkspaceId::generate(),
+            "默认项目".into(),
+            String::new(),
+            None,
+            1,
+        )
+        .unwrap();
+        server.db.create_workspace(&workspace).unwrap();
+        let existing = server.db.create_conversation("以前的对话").unwrap();
+        assert_eq!(
+            put_default(server.clone(), &token, workspace.id.as_str()).await,
+            StatusCode::OK
+        );
+        let response = build_router(server.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/conversations")
+                    .header(CONTROL_SESSION_HEADER, &token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({"title":"桌面新对话","use_default_workspace":true}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let created: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+        let id = created["id"].as_str().unwrap();
+        assert_eq!(
+            server.db.conversation_workspace(id).unwrap().as_deref(),
+            Some(workspace.id.as_str())
+        );
+        assert!(server
+            .db
+            .conversation_workspace(&existing.id)
+            .unwrap()
+            .is_none());
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"message":"测试直接创建的对话"}),
+        )
+        .await;
+        let created = server
+            .db
+            .list_conversations()
+            .unwrap()
+            .into_iter()
+            .find(|conversation| conversation.title == "测试直接创建的对话")
+            .unwrap();
+        assert_eq!(
+            server
+                .db
+                .conversation_workspace(&created.id)
+                .unwrap()
+                .as_deref(),
+            Some(workspace.id.as_str())
+        );
+        server.db.archive_workspace(&workspace.id, 2, None).unwrap();
+        assert_eq!(
+            put_default(server.clone(), &token, workspace.id.as_str()).await,
+            StatusCode::BAD_REQUEST
+        );
+        send_chat(server.clone(), &token, json!({"message":"归档后的新对话"})).await;
+        let created = server
+            .db
+            .list_conversations()
+            .unwrap()
+            .into_iter()
+            .find(|conversation| conversation.title == "归档后的新对话")
+            .unwrap();
+        assert!(server
+            .db
+            .conversation_workspace(&created.id)
+            .unwrap()
+            .is_none());
+        mock.abort();
+    }
+
+    #[tokio::test]
+    async fn chat_memory_respects_conversation_workspace_and_profile_scopes() {
+        async fn memory_model(
+            State(requests): State<CapturedRequests>,
+            Json(body): Json<Value>,
+        ) -> impl IntoResponse {
+            let last = body["messages"].as_array().unwrap().last().unwrap();
+            let save = match last["content"].as_str().filter(|_| last["role"] == "user") {
+                Some("只在本对话记住 GBK 编码") => {
+                    Some(("conversation", "本对话编码为 GBK"))
+                }
+                Some("记住这个工作空间使用 UTF-16 编码") => {
+                    Some(("workspace", "项目编码为 UTF-16"))
+                }
+                Some("以后所有对话记住 UTF-8 编码偏好") => {
+                    Some(("profile", "默认编码为 UTF-8"))
+                }
+                _ => None,
+            };
+            let (delta, finish) = if let Some((scope, content)) = save {
+                let arguments = json!({"content":content,"category":"preference","scope":scope});
+                (
+                    json!({"tool_calls":[{"index":0,"id":format!("save-{scope}"),"type":"function",
+                    "function":{"name":"save_memory","arguments":arguments.to_string()}}]}),
+                    "tool_calls",
+                )
+            } else {
+                (json!({"content":"好的。"}), "stop")
+            };
+            requests.lock().await.push(body);
+            (
+                [(CONTENT_TYPE, "text/event-stream")],
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"id":"scoped-memory","choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
+                ),
+            )
+        }
+
+        let requests = CapturedRequests::default();
+        let app = Router::new()
+            .route("/chat/completions", post(memory_model))
+            .with_state(requests.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &format!("http://{address}"));
+        let workspace = crate::workspace::Workspace::new(
+            crate::workspace::WorkspaceId::generate(),
+            "编码项目".into(),
+            String::new(),
+            None,
+            1,
+        )
+        .unwrap();
+        server.db.create_workspace(&workspace).unwrap();
+        let origin = server.db.create_conversation("原对话").unwrap();
+        let sibling = server.db.create_conversation("同项目新对话").unwrap();
+        let outside = server.db.create_conversation("其他对话").unwrap();
+        for conversation in [&origin, &sibling] {
+            server
+                .db
+                .set_conversation_workspace(&conversation.id, Some(workspace.id.as_str()))
+                .unwrap();
+        }
+        for message in [
+            "只在本对话记住 GBK 编码",
+            "记住这个工作空间使用 UTF-16 编码",
+            "以后所有对话记住 UTF-8 编码偏好",
+        ] {
+            send_chat(
+                server.clone(),
+                &token,
+                json!({"conversation_id":origin.id,"message":message}),
+            )
+            .await;
+        }
+        let scope_of = |content: &str| {
+            let memories = server
+                .db
+                .list_memories(&crate::db::MemoryQuery {
+                    category: None,
+                    source: None,
+                    q: Some(content.into()),
+                    limit: None,
+                    offset: None,
+                })
+                .unwrap();
+            assert_eq!(memories.len(), 1);
+            let record = server.db.memory_governance(&memories[0].id).unwrap();
+            assert_eq!(record.revision, 1);
+            assert_eq!(
+                server.db.memory_history(&memories[0].id).unwrap()[0].scope,
+                record.scope
+            );
+            record.scope
+        };
+        assert_eq!(
+            scope_of("本对话编码为 GBK"),
+            format!("conversation:{}", origin.id)
+        );
+        assert_eq!(
+            scope_of("项目编码为 UTF-16"),
+            format!("workspace:{}", workspace.id.as_str())
+        );
+        assert_eq!(scope_of("默认编码为 UTF-8"), "profile");
+
+        for (conversation, message) in [
+            (&origin, "说个笑话"),
+            (&sibling, "编码怎么选"),
+            (&outside, "编码怎么选"),
+            (&sibling, "按刚才的来"),
+        ] {
+            send_chat(
+                server.clone(),
+                &token,
+                json!({"conversation_id":conversation.id,"message":message}),
+            )
+            .await;
+        }
+        mock.abort();
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 10);
+        let prompt = |index: usize| requests[index]["messages"][0]["content"].as_str().unwrap();
+        assert!(prompt(6).contains("本对话编码为 GBK"));
+        assert!(prompt(7).contains("项目编码为 UTF-16") && prompt(7).contains("默认编码为 UTF-8"));
+        assert!(!prompt(7).contains("本对话编码为 GBK"));
+        assert!(prompt(8).contains("默认编码为 UTF-8"));
+        assert!(
+            !prompt(8).contains("项目编码为 UTF-16") && !prompt(8).contains("本对话编码为 GBK")
+        );
+        assert!(prompt(9).contains("项目编码为 UTF-16") && prompt(9).contains("默认编码为 UTF-8"));
+        assert!(prompt(6).contains("[preference · 本对话]"));
+        assert!(prompt(7).contains("[preference · 本工作空间]"));
+        assert!(prompt(8).contains("[preference · 当前档案]"));
+    }
+
+    #[tokio::test]
+    async fn chat_corrects_and_withdraws_the_original_memory() {
+        async fn memory_model(
+            State((requests, id)): State<(CapturedRequests, String)>,
+            Json(body): Json<Value>,
+        ) -> impl IntoResponse {
+            let mut requests = requests.lock().await;
+            let index = requests.len();
+            let update = match index {
+                0 => Some(("correct", 1, Some("导出 CSV 使用 UTF-8 编码"))),
+                3 => Some(("withdraw", 2, None)),
+                _ => None,
+            };
+            let prompt = body["messages"][0]["content"].as_str().unwrap_or("");
+            let offered = body["tools"].as_array().is_some_and(|tools| {
+                tools
+                    .iter()
+                    .any(|tool| tool["function"]["name"] == "update_memory")
+            });
+            let (delta, finish) = match update {
+                Some((action, revision, content))
+                    if offered
+                        && prompt.contains(&format!("memory_id={id}; revision={revision}")) =>
+                {
+                    let mut arguments =
+                        json!({"action":action, "memory_id":id, "expected_revision":revision});
+                    if let Some(content) = content {
+                        arguments["content"] = json!(content);
+                    }
+                    (
+                        json!({"tool_calls":[{"index":0,"id":format!("memory-edit-{index}"),"type":"function",
+                        "function":{"name":"update_memory","arguments":arguments.to_string()}}]}),
+                        "tool_calls",
+                    )
+                }
+                _ if index == 2 => (
+                    json!({"content":"你指 CSV 导出的编码，还是日志编码？"}),
+                    "stop",
+                ),
+                _ => (json!({"content":"记忆操作结束。"}), "stop"),
+            };
+            requests.push(body);
+            (
+                [(CONTENT_TYPE, "text/event-stream")],
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"id":"memory-edit","choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
+                ),
+            )
+        }
+
+        let database = TempDatabase::new();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (server, token) = test_server(&database, &format!("http://{address}"));
+        let conversation = server.db.create_conversation("记忆管理").unwrap();
+        let seed = |content: &str| {
+            server
+                .db
+                .create_memory(&crate::db::CreateMemoryRequest {
+                    content: content.into(),
+                    category: "preference".into(),
+                    source: "manual".into(),
+                    source_conversation_id: None,
+                    metadata: None,
+                })
+                .unwrap()
+        };
+        let memory = seed("导出 CSV 使用 GBK 编码");
+        let requests = CapturedRequests::default();
+        let app = Router::new()
+            .route("/chat/completions", post(memory_model))
+            .with_state((requests.clone(), memory.id.clone()));
+        let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":conversation.id,
+            "message":"之前记的编码改成 UTF-8"}),
+        )
+        .await;
+        assert_eq!(
+            server.db.get_memory(&memory.id).unwrap().content,
+            "导出 CSV 使用 UTF-8 编码"
+        );
+        assert_eq!(server.db.memory_governance(&memory.id).unwrap().revision, 2);
+
+        let other = seed("日志使用 Shift-JIS 编码");
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":conversation.id,
+            "message":"撤回之前记的编码"}),
+        )
+        .await;
+        assert_eq!(
+            server.db.memory_governance(&memory.id).unwrap().status,
+            "active"
+        );
+        assert_eq!(
+            server.db.memory_governance(&other.id).unwrap().status,
+            "active"
+        );
+
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":conversation.id,
+            "message":"第一条"}),
+        )
+        .await;
+        let withdrawn = server.db.memory_governance(&memory.id).unwrap();
+        assert_eq!(
+            (withdrawn.status.as_str(), withdrawn.revision),
+            ("withdrawn", 3)
+        );
+        assert_eq!(server.db.memory_governance(&other.id).unwrap().revision, 1);
+        assert_eq!(server.db.memory_history(&memory.id).unwrap().len(), 3);
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":conversation.id,
+            "message":"记得哪些编码偏好？"}),
+        )
+        .await;
+        mock.abort();
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 6);
+        let prompt = requests[2]["messages"][0]["content"].as_str().unwrap();
+        assert!(prompt.contains(&memory.id) && prompt.contains(&other.id));
+        let prompt = requests[5]["messages"][0]["content"].as_str().unwrap();
+        assert!(
+            !prompt.contains("导出 CSV 使用 UTF-8 编码")
+                && prompt.contains("日志使用 Shift-JIS 编码")
+        );
+        for index in [1, 4] {
+            assert!(requests[index]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| {
+                    message["role"] == "tool" && message["name"] == "update_memory"
+                }));
+        }
+    }
+
+    #[tokio::test]
+    async fn long_reply_survives_split_utf8_and_continues_in_one_message() {
+        use futures::StreamExt;
+
+        const TOKEN: &str = "这是一段长回复，包含中文和🙂。\n";
+        const FIRST: &str = "第一部分已经写完。\n第二部";
+        const SECOND: &str = "分会接着写。\n第三";
+        const THIRD: &str = "部分是结尾。";
+        const INTERRUPTED: &str = "已经生成的另一段正文。";
+        async fn long_model(
+            State(requests): State<CapturedRequests>,
+            Json(body): Json<Value>,
+        ) -> impl IntoResponse {
+            let mut requests = requests.lock().await;
+            let index = requests.len();
+            let (token, count, reason) = match index {
+                0 => (TOKEN, 400, "stop"),
+                1 => (FIRST, 1, "length"),
+                2 => (SECOND, 1, "length"),
+                3 => (THIRD, 1, "stop"),
+                _ => (INTERRUPTED, 1, "length"),
+            };
+            requests.push(body);
+            drop(requests);
+            if index >= 5 {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "fixture continuation unavailable",
+                )
+                    .into_response();
+            }
+            let delta = format!(
+                "data: {}\n\n",
+                json!({"choices":[{"index":0,"delta":{"content":token},"finish_reason":null}]}),
+            );
+            let wire = format!(
+                "{}data: {}\n\ndata: [DONE]\n\n",
+                delta.repeat(count),
+                json!({"choices":[{"index":0,"delta":{},"finish_reason":reason}]}),
+            );
+            let cut = wire.find(token.chars().next().unwrap()).unwrap() + 1;
+            let (first, rest) = wire.as_bytes().split_at(cut);
+            let stream =
+                futures::stream::iter([first.to_vec(), rest.to_vec()]).then(|part| async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+                    Ok::<_, std::convert::Infallible>(part)
+                });
+            (
+                [(CONTENT_TYPE, "text/event-stream")],
+                Body::from_stream(stream),
+            )
+                .into_response()
+        }
+        async fn events(
+            server: Arc<AppServer>,
+            token: &str,
+            id: &str,
+            message: &str,
+        ) -> Vec<Value> {
+            let response = build_router(server)
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/chat")
+                        .header(CONTROL_SESSION_HEADER, token)
+                        .header(CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            json!({"conversation_id":id,"message":message}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            std::str::from_utf8(&body)
+                .unwrap()
+                .lines()
+                .filter_map(|line| line.strip_prefix("data:"))
+                .filter_map(|data| serde_json::from_str(data.trim()).ok())
+                .collect()
+        }
+
+        let requests = CapturedRequests::default();
+        let app = Router::new()
+            .route("/chat/completions", post(long_model))
+            .with_state(requests.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &format!("http://{address}"));
+        let conversation = server.db.create_conversation("长回复").unwrap();
+        let id = conversation.id.as_str();
+
+        let expected = TOKEN.repeat(400);
+        let complete = events(server.clone(), &token, id, "写一份完整长文").await;
+        let streamed = complete
+            .iter()
+            .filter(|event| event["type"] == "token")
+            .filter_map(|event| event["token"].as_str())
+            .collect::<String>();
+        assert!(streamed == expected, "长回复的分片必须完整且没有乱码");
+        let done = complete
+            .iter()
+            .find(|event| event["type"] == "done")
+            .unwrap();
+        assert!(done["result"].as_str() == Some(expected.as_str()));
+        let saved = server.db.get_conversation(id).unwrap();
+        assert!(saved.messages.last().unwrap().content == expected);
+
+        let continued = events(server.clone(), &token, id, "展开第二部分").await;
+        let expected = format!("{FIRST}{SECOND}{THIRD}");
+        let streamed = continued
+            .iter()
+            .filter(|event| event["type"] == "token")
+            .filter_map(|event| event["token"].as_str())
+            .collect::<String>();
+        assert_eq!(streamed, expected);
+        let done = continued
+            .iter()
+            .filter(|event| event["type"] == "done")
+            .collect::<Vec<_>>();
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0]["result"], expected);
+        assert!(!continued.iter().any(|event| event["type"] == "error"));
+        let saved = server.db.get_conversation(id).unwrap();
+        assert_eq!(saved.messages.len(), 4);
+        assert_eq!(saved.messages.last().unwrap().content, expected);
+        assert_eq!(saved.messages[2].content, "展开第二部分");
+
+        let interrupted = events(server.clone(), &token, id, "另写一段长回复").await;
+        assert!(interrupted.iter().any(|event| event["type"] == "error"));
+        assert!(!interrupted.iter().any(|event| event["type"] == "done"));
+        let saved = server.db.get_conversation(id).unwrap();
+        assert_eq!(saved.messages.len(), 6);
+        assert_eq!(saved.messages.last().unwrap().content, INTERRUPTED);
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 6);
+        for (index, prefix) in [(2, FIRST.to_owned()), (3, format!("{FIRST}{SECOND}"))] {
+            assert!(requests[index]["tools"].is_null());
+            let messages = requests[index]["messages"].as_array().unwrap();
+            assert_eq!(messages[messages.len() - 2]["role"], "assistant");
+            assert_eq!(messages[messages.len() - 2]["content"], prefix);
+        }
+        mock.abort();
+    }
+
+    #[tokio::test]
+    async fn voice_questions_use_the_bound_conversation_and_its_history() {
+        use crate::shared::{
+            interaction::{ContextAnchorSnapshot, ConversationalAnchor, FocusedSurface},
+            voice::VoiceInputOwner,
+        };
+
+        let (base_url, requests, mock) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let conversation = server.db.create_conversation("开发记录").unwrap();
+        let other = server.db.create_conversation("安装包").unwrap();
+        let prior = "之前已完成工具调用回归。";
+        for message in [
+            message_row(&conversation.id, "user", "记一下开发进度", 1),
+            message_row(&conversation.id, "assistant", prior, 2),
+            message_row(&other.id, "user", "记录安装包的验收方式", 3),
+        ] {
+            server.db.add_message(&message).unwrap();
+        }
+        let started = server.voice_runtime.start_default().unwrap();
+        let mut session = server
+            .voice_runtime
+            .update_context(
+                &started.voice_session_id,
+                started.generation,
+                ContextAnchorSnapshot {
+                    focused_surface: FocusedSurface::Conversation,
+                    conversational_anchor: Some(ConversationalAnchor::new(
+                        &conversation.id,
+                        &conversation.title,
+                        1,
+                    )),
+                    active_task: None,
+                },
+            )
+            .unwrap();
+        for (question, target) in [
+            ("接下来还有哪些要做？", conversation.id.as_str()),
+            ("总结一下这个对话", conversation.id.as_str()),
+            ("安装包怎么验证？", conversation.id.as_str()),
+            ("切换到安装包对话", other.id.as_str()),
+        ] {
+            session = server
+                .voice_runtime
+                .interrupt(&session.voice_session_id, session.generation)
+                .unwrap();
+            let lease = server
+                .voice_runtime
+                .acquire_lease(
+                    &session.voice_session_id,
+                    session.generation,
+                    VoiceInputOwner::BuiltinAsr,
+                )
+                .unwrap();
+            server
+                .voice_runtime
+                .commit_final(
+                    &session.voice_session_id,
+                    session.generation,
+                    &lease.lease_id,
+                    question,
+                )
+                .unwrap();
+            let response = build_router(server.clone()).oneshot(
+                Request::builder().method("POST").uri("/api/voice/turns/dispatch")
+                    .header(CONTROL_SESSION_HEADER, &token).header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"session_id":session.voice_session_id,
+                        "generation":session.generation,"lease_id":lease.lease_id,"final_transcript":question}).to_string()))
+                    .unwrap(),
+            ).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let outcome: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+                    .unwrap();
+            assert_eq!(
+                outcome["continuation"]["conversation_id"], target,
+                "{question}: {outcome}"
+            );
+            assert_eq!(outcome["continuation"]["message"], question);
+            send_chat(
+                server.clone(),
+                &token,
+                json!({
+                    "conversation_id":outcome["continuation"]["conversation_id"],
+                    "message":outcome["continuation"]["message"],
+                }),
+            )
+            .await;
+        }
+        mock.abort();
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 4);
+        for request in &requests[..3] {
+            assert!(request["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| { message["role"] == "assistant" && message["content"] == prior }));
+        }
+        assert!(!requests[3]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["content"] == prior));
+    }
+
+    #[tokio::test]
+    async fn brief_workspace_inspection_reads_the_bound_readme_first() {
+        async fn inspect_model(
+            State((requests, root)): State<(CapturedRequests, PathBuf)>,
+            Json(body): Json<Value>,
+        ) -> impl IntoResponse {
+            let mut requests = requests.lock().await;
+            let messages = body["messages"].as_array().unwrap();
+            let last_result = messages
+                .iter()
+                .rev()
+                .find(|message| message["role"] == "tool");
+            let call = match last_result {
+                Some(result) if result["name"] == "glob" => result["content"]
+                    .as_str()
+                    .unwrap()
+                    .lines()
+                    .find(|path| {
+                        PathBuf::from(path)
+                            .file_name()
+                            .is_some_and(|name| name == "README.md")
+                    })
+                    .map(|path| ("read_file", json!({"path":path}))),
+                None if messages[0]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("默认快速查看当前工作空间") =>
+                {
+                    Some(("glob", json!({"path":root,"pattern":"*"})))
+                }
+                _ => None,
+            };
+            let (delta, finish) = if let Some((name, args)) = call {
+                (
+                    json!({"tool_calls":[{"index":0,"id":format!("overview-{}",requests.len()),
+                    "type":"function","function":{"name":name,"arguments":args.to_string()}}]}),
+                    "tool_calls",
+                )
+            } else {
+                (json!({"content":"工作空间概览已整理。"}), "stop")
+            };
+            requests.push(body);
+            (
+                [(CONTENT_TYPE, "text/event-stream")],
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"id":"overview","choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
+                ),
+            )
+        }
+
+        let database = TempDatabase::new();
+        let root = database.0.with_extension("workspace");
+        std::fs::create_dir(&root).unwrap();
+        let readme = root.join("README.md");
+        std::fs::write(&readme, "# 图书归还管理器\n用于记录图书借还。").unwrap();
+        let other_file = root.join("main.rs");
+        std::fs::write(&other_file, "fn main() {}").unwrap();
+        let requests = CapturedRequests::default();
+        let app = Router::new()
+            .route("/chat/completions", post(inspect_model))
+            .with_state((requests.clone(), root.clone()));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (server, token) = test_server(&database, &format!("http://{address}"));
+        let workspace = crate::workspace::Workspace::new(
+            crate::workspace::WorkspaceId::generate(),
+            "借还管理".into(),
+            String::new(),
+            Some(root.to_str().unwrap().to_owned()),
+            1,
+        )
+        .unwrap();
+        server.db.create_workspace(&workspace).unwrap();
+        let conversation = server.db.create_conversation("工作空间查看").unwrap();
+        server
+            .db
+            .set_conversation_workspace(&conversation.id, Some(workspace.id.as_str()))
+            .unwrap();
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":conversation.id,"message":"查看下"}),
+        )
+        .await;
+        let with_readme = std::mem::take(&mut *requests.lock().await);
+
+        std::fs::remove_file(&readme).unwrap();
+        let conversation = server.db.create_conversation("无入口的工作空间").unwrap();
+        server
+            .db
+            .set_conversation_workspace(&conversation.id, Some(workspace.id.as_str()))
+            .unwrap();
+        send_chat(
+            server,
+            &token,
+            json!({"conversation_id":conversation.id,"message":"简单看看"}),
+        )
+        .await;
+        mock.abort();
+        std::fs::remove_file(&other_file).unwrap();
+        std::fs::remove_dir(&root).unwrap();
+
+        assert_eq!(
+            with_readme.len(),
+            3,
+            "应浏览当前空间根目录，读取入口，然后回复"
+        );
+        let prompt = with_readme[0]["messages"][0]["content"].as_str().unwrap();
+        assert!(prompt.contains("借还管理"));
+        assert!(prompt.contains(root.to_str().unwrap()));
+        assert!(prompt.contains("优先读取 README"));
+        let results = with_readme[2]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["name"], "glob");
+        assert_eq!(results[1]["name"], "read_file");
+        assert!(results[1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("用于记录图书借还"));
+
+        let without_readme = requests.lock().await;
+        assert_eq!(without_readme.len(), 2, "没有入口时直接使用顶层结果回复");
+        let root_listing = without_readme[1]["messages"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap();
+        assert_eq!(root_listing["name"], "glob");
+        assert!(root_listing["content"]
+            .as_str()
+            .unwrap()
+            .contains("main.rs"));
+    }
+
+    #[tokio::test]
+    async fn terse_revision_keeps_the_recent_draft_in_default_chat() {
+        let (base_url, requests, mock) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let conversation = server.db.create_conversation("活动通知").unwrap();
+        let draft = "周六上午九点在图书馆入口集合，参加社区阅读活动。";
+        for message in [
+            message_row(&conversation.id, "user", "帮我写一条活动通知", 1),
+            message_row(&conversation.id, "assistant", draft, 2),
+        ] {
+            server.db.add_message(&message).unwrap();
+        }
+        send_chat(
+            server,
+            &token,
+            json!({"conversation_id":conversation.id,"message":"短一点"}),
+        )
+        .await;
+        mock.abort();
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        let messages = requests[0]["messages"].as_array().unwrap();
+        let prompt = messages[0]["content"].as_str().unwrap();
+        assert!(prompt.contains("“短一点”“换个说法”"));
+        assert!(prompt.contains("直接给修订结果"));
+        assert!(!prompt.contains("目录上下文："));
+        assert_eq!(messages[messages.len() - 2]["content"], draft);
+        assert_eq!(messages.last().unwrap()["content"], "短一点");
+    }
+
+    #[tokio::test]
+    async fn complex_chat_batches_independent_reads_before_finishing_the_plan() {
+        async fn comparison_model(
+            State(requests): State<CapturedRequests>,
+            Json(body): Json<Value>,
+        ) -> impl IntoResponse {
+            let mut requests = requests.lock().await;
+            let round = requests.len();
+            let plan = |status| json!({"todos":[{"id":"compare","content":"读取并比较两个项目文件","status":status}]});
+            let calls = match round {
+                0 => vec![
+                    ("write_todos", plan("in_progress")),
+                    ("read_file", json!({"path":"Cargo.toml"})),
+                    ("read_file", json!({"path":"src/lib.rs"})),
+                ],
+                1 => vec![("write_todos", plan("completed"))],
+                _ => Vec::new(),
+            };
+            let (delta, finish) = if calls.is_empty() {
+                (
+                    json!({"content":"Cargo.toml 定义包，src/lib.rs 导出模块。"}),
+                    "stop",
+                )
+            } else {
+                let calls = calls.into_iter().enumerate().map(|(index, (name, args))|
+                    json!({"index":index,"id":format!("compare-{round}-{index}"),"type":"function",
+                        "function":{"name":name,"arguments":args.to_string()}})
+                ).collect::<Vec<_>>();
+                (json!({"tool_calls":calls}), "tool_calls")
+            };
+            requests.push(body);
+            (
+                [(CONTENT_TYPE, "text/event-stream")],
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"id":"comparison","choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
+                ),
+            )
+        }
+
+        let requests = CapturedRequests::default();
+        let app = Router::new()
+            .route("/chat/completions", post(comparison_model))
+            .with_state(requests.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &format!("http://{address}"));
+        send_chat(
+            server,
+            &token,
+            json!({"message":"比较 Cargo.toml 和 src/lib.rs 的用途，记录计划进度，再总结差异"}),
+        )
+        .await;
+        mock.abort();
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        let prompt = requests[0]["messages"][0]["content"].as_str().unwrap();
+        assert!(prompt.contains("按依赖拆成少量阶段"));
+        assert!(prompt.contains("互不依赖的读取可以在同一轮提交"));
+        let results = requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 3);
+        assert!(results[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("in_progress"));
+        assert!(results[1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("yilian-backend"));
+        assert!(results[2]["content"]
+            .as_str()
+            .unwrap()
+            .contains("pub mod agent;"));
+        let completed_plan = requests[2]["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(completed_plan["name"], "write_todos");
+        assert!(completed_plan["content"]
+            .as_str()
+            .unwrap()
+            .contains("completed"));
+    }
+
+    #[tokio::test]
+    async fn explicit_chat_memory_is_saved_by_one_tool_call() {
+        const CONTENT: &str = "用户偏好导出 CSV 时使用 UTF-8 编码";
+        async fn memory_model(
+            State(requests): State<CapturedRequests>,
+            Json(body): Json<Value>,
+        ) -> impl IntoResponse {
+            let mut requests = requests.lock().await;
+            let (delta, finish) = if requests.is_empty() {
+                let offered = body["tools"].as_array().unwrap().iter().any(|tool| {
+                    tool["function"]["name"] == "save_memory"
+                        && tool["function"]["parameters"]["properties"]["content"]["type"]
+                            == "string"
+                });
+                if offered {
+                    (
+                        json!({"tool_calls":[{"index":0,"id":"save-preference","type":"function",
+                            "function":{"name":"save_memory","arguments":json!({
+                                "content": CONTENT, "category":"preference"
+                            }).to_string()}}]}),
+                        "tool_calls",
+                    )
+                } else {
+                    (json!({"content":"找不到保存记忆的工具"}), "stop")
+                }
+            } else {
+                (json!({"content":"已记住这个导出偏好。"}), "stop")
+            };
+            requests.push(body);
+            (
+                [(CONTENT_TYPE, "text/event-stream")],
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"id":"memory-test","choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
+                ),
+            )
+        }
+
+        let requests = CapturedRequests::default();
+        let app = Router::new()
+            .route("/chat/completions", post(memory_model))
+            .with_state(requests.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &format!("http://{address}"));
+        let conversation = server.db.create_conversation("记忆工具").unwrap();
+        send_chat(
+            server.clone(),
+            &token,
+            json!({"conversation_id":conversation.id,"message":"帮我记一下，以后导出 CSV 用 UTF-8 编码"}),
+        )
+        .await;
+        mock.abort();
+
+        let memories = server
+            .db
+            .list_memories(&crate::db::MemoryQuery {
+                category: None,
+                source: None,
+                q: None,
+                limit: None,
+                offset: None,
+            })
+            .unwrap();
+        assert_eq!(memories.len(), 1, "聊天应实际写入一条记忆");
+        assert_eq!(memories[0].content, CONTENT);
+        assert_eq!(memories[0].category, "preference");
+        assert_eq!(
+            memories[0].source_conversation_id.as_deref(),
+            Some(conversation.id.as_str())
+        );
+        let audit = server
+            .db
+            .list_security_audit_events(&crate::db::SecurityAuditQuery {
+                conversation_id: Some(conversation.id),
+                tool_name: Some("save_memory".into()),
+                decision_status: Some("verified".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(audit.len(), 1);
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2, "保存一次，然后直接回复");
+        let tool_results = requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .collect::<Vec<_>>();
+        assert_eq!(tool_results.len(), 1);
+        assert_eq!(tool_results[0]["name"], "save_memory");
+        assert!(tool_results[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains(&memories[0].id));
     }
 
     #[tokio::test]
@@ -1660,7 +3257,7 @@ mod tests {
                 id: "bound-profile".into(),
                 provider: "openai".into(),
                 label: "Bound profile".into(),
-                model: "bound-request-model".into(),
+                model: "gpt-4o".into(),
                 base_url: url.clone(),
                 api_format: "openai".into(),
                 api_key_ref: key.key,
@@ -1789,14 +3386,42 @@ mod tests {
             },
         };
         save_profile(&server.db, agent.id.as_str(), &profile).unwrap();
+        let response = build_router(server.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/agents/{}/generation-options", agent.id))
+                    .header(CONTROL_SESSION_HEADER, &token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let options: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(options["model"], "gpt-4o");
+        assert_eq!(options["temperature"], true);
+        assert_eq!(options["max_output_tokens"], 100);
         send_chat(
             server.clone(),
             &token,
             json!({"conversation_id":conversation.id,"message":"remember star"}),
         )
         .await;
+        let response = build_router(server.clone())
+            .oneshot(Request::builder()
+                .method("PUT")
+                .uri(format!("/api/agents/{}/profile", agent.id))
+                .header(CONTROL_SESSION_HEADER, &token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({
+                    "user_prompt": "SELECTED USER INSTRUCTION",
+                    "persona_enabled": true,
+                    "persona": {"tone": "PRECISE NEXT TURN", "generation": {"temperature": 0.65, "max_output_tokens": 48}}
+                }).to_string())).unwrap())
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         profile.persona.tone = "PRECISE NEXT TURN".into();
-        save_profile(&server.db, agent.id.as_str(), &profile).unwrap();
         send_chat(
             server.clone(),
             &token,
@@ -1815,11 +3440,19 @@ mod tests {
             .delete_connector_binding(agent.id.as_str(), &memory_binding.id)
             .unwrap();
         server.db.delete_memory(&knowledge.id).unwrap();
+        profile.persona_enabled = false;
+        save_profile(&server.db, agent.id.as_str(), &profile).unwrap();
         send_chat(server.clone(),&token,json!({"conversation_id":conversation.id,"message":"remember star after removing last memory and knowledge"})).await;
         let requests = requests.lock().await;
         assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0]["temperature"], 0.2);
+        assert_eq!(requests[0]["max_tokens"], 100);
+        assert_eq!(requests[1]["temperature"], 0.65);
+        assert_eq!(requests[1]["max_tokens"], 48);
+        assert_eq!(requests[2]["temperature"], 0.2);
+        assert_eq!(requests[2]["max_tokens"], 100);
         for request in requests.iter().take(2) {
-            assert_eq!(request["model"], "bound-request-model");
+            assert_eq!(request["model"], "gpt-4o");
             let text = request["messages"][0]["content"].as_str().unwrap();
             assert!(text.contains("BOUND BACKGROUND ONLY"));
             assert!(text.contains("BOUND KNOWLEDGE ONLY"));
@@ -2092,6 +3725,7 @@ mod tests {
                 approval_id: None,
                 verification_success: None,
                 verification_reason: None,
+                configuration_source: None,
                 should_replan: None,
             },
             AgentEvent {
@@ -2110,6 +3744,7 @@ mod tests {
                 approval_id: None,
                 verification_success: None,
                 verification_reason: None,
+                configuration_source: None,
                 should_replan: None,
             },
             AgentEvent {
@@ -2128,6 +3763,7 @@ mod tests {
                 approval_id: None,
                 verification_success: Some(true),
                 verification_reason: Some("窗口已出现".to_string()),
+                configuration_source: None,
                 should_replan: Some(false),
             },
         ] {
@@ -2162,6 +3798,8 @@ mod tests {
             score: 0.9,
             lexical_score: 0.8,
             vector_score: 0.95,
+            revision: 1,
+            scope: crate::db::MemoryScope::Profile,
         }
     }
 
@@ -2264,7 +3902,7 @@ mod tests {
         send_chat(
             server.clone(),
             &token,
-            json!({"message": "我开发代码时希望怎么控制改动范围？", "conversation_id": conv.id}),
+            json!({"message": "我修改代码时希望怎么控制改动范围？", "conversation_id": conv.id}),
         )
         .await;
 
@@ -2328,6 +3966,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chat_recall_followup_uses_the_current_memory_revision_and_honors_withdrawal() {
+        use crate::db::memory_governance::{CorrectMemoryRequest, WithdrawMemoryRequest};
+
+        let (base_url, requests, mock) = start_mock_llm().await;
+        let database = TempDatabase::new();
+        let (server, token) = test_server(&database, &base_url);
+        let conversation = server.db.create_conversation("导出设置").unwrap();
+        let memory = server
+            .db
+            .create_memory(&crate::db::CreateMemoryRequest {
+                content: "导出 CSV 使用 GBK 编码".into(),
+                category: "preference".into(),
+                source: "manual".into(),
+                source_conversation_id: None,
+                metadata: None,
+            })
+            .unwrap();
+        server
+            .db
+            .correct_memory(
+                &memory.id,
+                &CorrectMemoryRequest {
+                    content: "导出 CSV 使用 UTF-8 编码".into(),
+                    expected_revision: 1,
+                    reason: "用户更正编码".into(),
+                    scope: None,
+                    source_ref: None,
+                },
+            )
+            .unwrap();
+        for row in [
+            message_row(&conversation.id, "user", "说一下导出 CSV 的编码", 1),
+            message_row(&conversation.id, "assistant", "可以讨论编码设置。", 2),
+        ] {
+            server.db.add_message(&row).unwrap();
+        }
+        send_chat(
+            server.clone(),
+            &token,
+            json!({
+                "conversation_id":conversation.id, "message":"你还记得吗？",
+            }),
+        )
+        .await;
+        server
+            .db
+            .withdraw_memory(
+                &memory.id,
+                &WithdrawMemoryRequest {
+                    expected_revision: 2,
+                    reason: "用户撤回该偏好".into(),
+                },
+            )
+            .unwrap();
+        send_chat(
+            server,
+            &token,
+            json!({
+                "conversation_id":conversation.id, "message":"导出 CSV 使用什么编码？",
+            }),
+        )
+        .await;
+        mock.abort();
+        let requests = requests.lock().await;
+        let prompt = |index: usize| requests[index]["messages"][0]["content"].as_str().unwrap();
+        assert!(prompt(0).contains("导出 CSV 使用 UTF-8 编码"));
+        assert!(!prompt(0).contains("导出 CSV 使用 GBK 编码"));
+        assert!(!prompt(1).contains("导出 CSV 使用 UTF-8 编码"));
+        assert!(!prompt(1).contains("导出 CSV 使用 GBK 编码"));
+        assert_eq!(current_user_message_count(&requests[0], "你还记得吗？"), 1);
+    }
+
+    #[tokio::test]
     async fn chat_no_related_memory_omits_section() {
         let (base_url, requests, mock_llm) = start_mock_llm().await;
         let database = TempDatabase::new();
@@ -2362,7 +4073,7 @@ mod tests {
         assert!(!system_msg["content"]
             .as_str()
             .unwrap()
-            .contains("与当前请求相关的长期记忆"));
+            .contains("## Relevant memory"));
         drop(requests);
         mock_llm.abort();
     }

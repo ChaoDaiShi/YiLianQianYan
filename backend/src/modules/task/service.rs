@@ -69,9 +69,11 @@ impl TaskRunner {
             }
         }
         let existing = self.db.list_task_executions(task_id)?;
+        ensure_replay_is_safe(&existing)?;
         let attempt = existing.len() as u32 + 1;
 
         let now = chrono::Utc::now().timestamp_millis();
+        let task_execution_id = TaskExecutionId::generate();
         let ctx = ExecutionContext::new(
             ExecutionId::generate(),
             task_owner_subject(&self.db, &task),
@@ -79,8 +81,12 @@ impl TaskRunner {
             None,
             now,
         );
+        let ctx = ctx.with_owner(crate::execution::ExecutionOwner::LegacyTask {
+            task_id: task_id.to_string(),
+            execution_id: task_execution_id.to_string(),
+        });
         let execution = TaskExecution::new(
-            TaskExecutionId::generate(),
+            task_execution_id,
             task_id.clone(),
             ctx.clone(),
             attempt,
@@ -109,8 +115,15 @@ impl TaskRunner {
         let active = Arc::clone(&self.active);
         let exec_key = execution_id_str.clone();
         tokio::spawn(async move {
-            let result = orchestrator
-                .run(&task_id_owned, &execution_id_owned, &token)
+            let owner = crate::execution::ExecutionOwner::LegacyTask {
+                task_id: task_id_owned.to_string(),
+                execution_id: execution_id_owned.to_string(),
+            };
+            let result = crate::execution::owner::CURRENT_EXECUTION_OWNER
+                .scope(
+                    owner,
+                    orchestrator.run(&task_id_owned, &execution_id_owned, &token),
+                )
                 .await;
             active.lock().remove(&exec_key);
             if let Err(error) = result {
@@ -171,6 +184,9 @@ impl TaskRunner {
         task.updated_at = now;
         task.completed_at = None;
         self.db.update_task(&task)?;
+        crate::modules::workflow::application::task_parent::cancel_legacy_child(
+            &self.db, &execution, now,
+        )?;
         Ok(())
     }
 }
@@ -182,4 +198,44 @@ fn task_owner_subject(db: &Database, _task: &Task) -> String {
         .is_some()
         .then(|| "local-user".to_string())
         .unwrap_or_else(|| "local-user".to_string())
+}
+
+/// Unknown external effects require a fresh, explicitly reviewed delegation;
+/// changing the old task status must not silently replay its last attempt.
+fn ensure_replay_is_safe(executions: &[TaskExecution]) -> Result<(), String> {
+    if let Some(latest) = executions
+        .iter()
+        .max_by_key(|e| (e.created_at, e.id.as_str()))
+    {
+        if latest.status == TaskExecutionStatus::Interrupted
+            || latest
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("external_mutation_uncertain"))
+        {
+            return Err("Previous execution effects are uncertain. Verify the original execution before creating a new delegation; the old task was not replayed".into());
+        }
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod integration_replay_tests {
+    use super::*;
+    #[test]
+    fn integration_legacy_task_unknown_effects_cannot_be_started_or_retried() {
+        let mut e = TaskExecution::new(
+            TaskExecutionId::generate(),
+            TaskId::generate(),
+            ExecutionContext::new(ExecutionId::generate(), "local-user", "test", None, 1),
+            1,
+            1,
+        );
+        e.status = TaskExecutionStatus::Failed;
+        e.error = Some("external_mutation_uncertain: response lost".into());
+        assert!(ensure_replay_is_safe(&[e.clone()]).is_err());
+        e.error = Some("definitive tool rejection".into());
+        assert!(ensure_replay_is_safe(&[e.clone()]).is_ok());
+        e.status = TaskExecutionStatus::Interrupted;
+        assert!(ensure_replay_is_safe(&[e]).is_err());
+    }
 }

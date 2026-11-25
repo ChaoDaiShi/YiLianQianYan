@@ -798,7 +798,19 @@ async fn runner_cancellation_stops_remaining_nodes() {
     runner.run(&mut r, &cancel, noop_persist).await.unwrap();
     assert_eq!(r.status, WorkflowRunStatus::Cancelled);
     assert_eq!(r.node(&id("a")).unwrap().status, NodeRunStatus::Completed);
-    assert_eq!(r.node(&id("b")).unwrap().status, NodeRunStatus::Completed);
+    assert_eq!(r.node(&id("b")).unwrap().status, NodeRunStatus::Cancelled);
+    assert!(
+        cancel.is_cancelled(),
+        "the in-flight executor reached its atomic call"
+    );
+    assert!(
+        r.node(&id("b")).unwrap().result.is_none(),
+        "late success is not promoted"
+    );
+    assert!(
+        r.node(&id("c")).unwrap().started_at.is_none(),
+        "no next action began after stop"
+    );
     assert_eq!(r.node(&id("c")).unwrap().status, NodeRunStatus::Cancelled);
     assert_eq!(
         r.node(&id("output")).unwrap().status,
@@ -1816,4 +1828,131 @@ async fn workflow_approval_resumes_following_agent_with_injected_executor() {
         "approved operation summarized"
     );
     let _ = std::fs::remove_file(db_path);
+}
+
+struct IntegrationRejectVerifier;
+#[async_trait]
+impl crate::agent::verifier::Verifier for IntegrationRejectVerifier {
+    async fn verify(
+        &self,
+        _: &str,
+        _: &serde_json::Value,
+        _: &ToolResult,
+    ) -> crate::agent::verifier::VerificationResult {
+        crate::agent::verifier::VerificationResult::failure(
+            "observed state does not match the action",
+            None,
+        )
+    }
+}
+fn integration_unverified_gateway() -> (Arc<SecurityExecutionGateway>, Database, Arc<AtomicUsize>) {
+    let path = std::env::temp_dir().join(format!(
+        "yilian-integration-verification-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let db = Database::new(&path).unwrap();
+    let count = Arc::new(AtomicUsize::new(0));
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(CountingTool {
+        name: "read_file",
+        executions: Arc::clone(&count),
+    }));
+    let gateway = SecurityExecutionGateway::with_sandbox_registry_and_verifier(
+        SandboxConfig::default(),
+        "workspace",
+        Arc::new(registry),
+        Arc::new(IntegrationRejectVerifier),
+    )
+    .with_db(Arc::new(db.clone_connection()));
+    (Arc::new(gateway), db, count)
+}
+
+#[tokio::test]
+async fn integration_workflow_tool_success_with_failed_verification_is_not_completed() {
+    let (gateway, _db, count) = integration_unverified_gateway();
+    let mut workflow = run(
+        "read",
+        vec![
+            tool_node("read", "read_file", serde_json::json!({"path":"README.md"})),
+            node_of_kind("output", WorkflowNodeKind::Output),
+        ],
+        vec![edge("read", "output")],
+    );
+    run_with_gateway(gateway, &mut workflow).await;
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(workflow.status, WorkflowRunStatus::Failed);
+    assert!(workflow
+        .node(&id("read"))
+        .unwrap()
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("observed state"));
+    assert_eq!(
+        workflow.node(&id("output")).unwrap().status,
+        NodeRunStatus::Pending
+    );
+}
+
+#[tokio::test]
+async fn integration_workflow_approved_tool_still_requires_successful_verification() {
+    let (gateway, db, count) = integration_unverified_gateway();
+    let store = Arc::new(crate::safety::ApprovalStore::new());
+    let mut workflow = run(
+        "read",
+        vec![
+            tool_node("read", "read_file", serde_json::json!({"path":"README.md"})),
+            node_of_kind("output", WorkflowNodeKind::Output),
+        ],
+        vec![edge("read", "output")],
+    );
+    workflow
+        .transition_node(&id("read"), NodeRunStatus::Running, 1001)
+        .unwrap();
+    workflow
+        .transition_node(&id("read"), NodeRunStatus::WaitingApproval, 1002)
+        .unwrap();
+    db.create_workflow_run("verification-fixture", &workflow)
+        .unwrap();
+    let approval = store.create_workflow(
+        workflow.execution_context.execution_id.to_string(),
+        workflow.run_id.to_string(),
+        "read".into(),
+        "approved-read".into(),
+        "read_file".into(),
+        serde_json::json!({"path":"README.md"}),
+        crate::tools::RiskLevel::Low,
+        "controlled approval".into(),
+        "local-user".into(),
+    );
+    resolve_workflow_approval(
+        &gateway,
+        &store,
+        &db,
+        &approval.approval_id,
+        "local-user",
+        true,
+        &CancellationToken::new(),
+        Arc::new(FakeAgentExecutor {
+            text: "unused".into(),
+            fail: false,
+            cancel_on_generate: None,
+        }),
+    )
+    .await
+    .unwrap();
+    let saved = db.get_workflow_run(&workflow.run_id).unwrap().unwrap().run;
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(saved.status, WorkflowRunStatus::Failed);
+    assert_eq!(
+        saved.node(&id("output")).unwrap().status,
+        NodeRunStatus::Pending
+    );
+    assert!(saved
+        .node(&id("read"))
+        .unwrap()
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("observed state"));
 }

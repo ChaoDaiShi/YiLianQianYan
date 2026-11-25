@@ -1,7 +1,7 @@
 use super::import_store::{validate_package, Package, MAX_ENTRIES, MAX_PACKAGE_BYTES};
 use super::imports::{github_asset_url, normalize_package_path, public_address};
 use std::collections::{BTreeMap, HashSet};
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use zip::read::HasZipMetadata;
 
 fn declared_entries(bytes: &[u8]) -> Result<usize, String> {
@@ -114,7 +114,7 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
         }
         files.insert(path, content);
     }
-    // Ordinary Skill archives may contain a single enclosing Skill folder.
+    // An archive may contain a single enclosing package folder.
     if !files.contains_key("SKILL.md")
         && !files.contains_key("plugin.json")
         && !files.contains_key("skill.json")
@@ -125,7 +125,9 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
             .collect();
         if roots.len() == 1 {
             let prefix = format!("{}/", roots.iter().next().unwrap());
-            if files.contains_key(&format!("{prefix}SKILL.md"))
+            if ["plugin.json", "skill.json", "SKILL.md"]
+                .iter()
+                .any(|name| files.contains_key(&format!("{prefix}{name}")))
                 && files.keys().all(|path| path.starts_with(&prefix))
             {
                 files = files
@@ -139,36 +141,10 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
             }
         }
     }
-    let mut package = if let Some(manifest) = files.get("plugin.json") {
-        let manifest = crate::plugin::manifest::parse_manifest(manifest)
-            .map_err(|_| "invalid_plugin_manifest")?;
-        for path in manifest
-            .contributes
-            .skills
-            .iter()
-            .chain(&manifest.contributes.agents)
-            .chain(&manifest.contributes.workflows)
-        {
-            normalize_package_path(path)?;
-            if !files.contains_key(path) {
-                return Err("missing_plugin_contribution".into());
-            }
-            if file_encodings.contains_key(path) {
-                return Err("plugin_contribution_requires_utf8".into());
-            }
-        }
-        Package {
-            id: manifest.id,
-            name: manifest.name,
-            version: manifest.version,
-            kind: "plugin".into(),
-            source: source.into(),
-            permissions: manifest.permissions,
-            content_hash: String::new(),
-            files,
-            file_encodings,
-        }
-    } else {
+    if files.contains_key("plugin.json") {
+        return plugin_package(files, file_encodings, source);
+    }
+    let mut package = {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         struct SkillManifest {
@@ -229,6 +205,128 @@ pub fn inspect_zip(bytes: &[u8], source: &str) -> Result<Package, String> {
     };
     validate_package(&mut package)?;
     Ok(package)
+}
+
+fn plugin_package(
+    files: BTreeMap<String, String>,
+    file_encodings: BTreeMap<String, String>,
+    source: &str,
+) -> Result<Package, String> {
+    let manifest = files.get("plugin.json").ok_or("plugin_manifest_missing")?;
+    if file_encodings.contains_key("plugin.json") {
+        return Err("invalid_plugin_manifest".into());
+    }
+    let manifest =
+        crate::plugin::manifest::parse_manifest(manifest).map_err(|_| "invalid_plugin_manifest")?;
+    for path in manifest
+        .contributes
+        .skills
+        .iter()
+        .chain(&manifest.contributes.agents)
+        .chain(&manifest.contributes.workflows)
+        .chain(&manifest.contributes.services)
+    {
+        normalize_package_path(path)?;
+        if !files.contains_key(path) {
+            return Err(format!("missing_plugin_contribution: {path}"));
+        }
+        if file_encodings.contains_key(path) {
+            return Err(format!("plugin_contribution_requires_utf8: {path}"));
+        }
+    }
+    let mut package = Package {
+        id: manifest.id,
+        name: manifest.name,
+        version: manifest.version,
+        kind: "plugin".into(),
+        source: source.into(),
+        permissions: manifest.permissions,
+        content_hash: String::new(),
+        files,
+        file_encodings,
+    };
+    validate_package(&mut package)?;
+    Ok(package)
+}
+
+pub fn inspect_plugin_source(entries: BTreeMap<String, String>) -> Result<Package, String> {
+    use base64::Engine;
+    if entries.is_empty() || entries.len() > MAX_ENTRIES {
+        return Err("plugin_source_entry_limit".into());
+    }
+    let mut files = BTreeMap::new();
+    let mut encodings = BTreeMap::new();
+    for (path, encoded) in entries {
+        let path = normalize_package_path(&path)?;
+        if files.keys().any(|other: &String| {
+            other.starts_with(&format!("{path}/")) || path.starts_with(&format!("{other}/"))
+        }) {
+            return Err("zip_file_directory_collision".into());
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|_| "invalid_package_resource")?;
+        let (content, encoding) = super::import_store::encode_resource(&bytes);
+        if let Some(encoding) = encoding {
+            encodings.insert(path.clone(), encoding);
+        }
+        if files.insert(path, content).is_some() {
+            return Err("oversized_or_duplicate_package_file".into());
+        }
+    }
+    plugin_package(files, encodings, "plugin_directory")
+}
+
+pub fn plugin_template(id: &str, name: &str, version: &str) -> Result<Vec<u8>, String> {
+    let skill_path = "skills/starter/SKILL.md";
+    let manifest = serde_json::json!({
+        "schema_version": 1, "id": id, "name": name, "version": version,
+        "description": "忆涟千言插件开发模板",
+        "permissions": ["skill.instructions.read"],
+        "contributes": {
+            "skills": [skill_path],
+            "features": [{"id":"starter","title":"示例技能","target":{"kind":"skill","contribution":skill_path}}],
+        },
+    });
+    let files = BTreeMap::from([
+        ("plugin.json".into(), serde_json::to_string_pretty(&manifest).map_err(|_| "invalid_plugin_manifest")?),
+        (skill_path.into(), "---\nname: starter\ndescription: 一个用于验证插件开发流程的示例技能。\n---\n\n# 示例技能\n\n阅读用户给出的材料，提取三个要点。\n".into()),
+        ("README.md".into(), "# 插件开发模板\n\n- 在 plugin.json 中声明插件信息、权限和入口。\n- 编辑 skills/starter/SKILL.md 修改示例技能。\n- 在忆涟千言的「能力 → 插件」中选择「导入插件」，可直接选择包含 plugin.json 的目录，也可选择 ZIP。\n- 检查预览后安装，再手动启用。更新时保留插件 ID 并修改版本。\n".into()),
+    ]);
+    let package = plugin_package(files, BTreeMap::new(), "zip")?;
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (path, content) in package.files {
+        zip.start_file(path, zip::write::SimpleFileOptions::default())
+            .map_err(|_| "plugin_template_unavailable")?;
+        zip.write_all(content.as_bytes())
+            .map_err(|_| "plugin_template_unavailable")?;
+    }
+    Ok(zip
+        .finish()
+        .map_err(|_| "plugin_template_unavailable")?
+        .into_inner())
+}
+
+#[cfg(test)]
+#[test]
+fn template_and_extracted_directory_have_the_same_package_identity() {
+    use base64::Engine;
+    let zip = plugin_template("example.starter", "插件示例", "0.1.0").unwrap();
+    let package = inspect_zip(&zip, "zip").unwrap();
+    let files = package
+        .files
+        .iter()
+        .map(|(path, text)| {
+            (
+                path.clone(),
+                base64::engine::general_purpose::STANDARD.encode(text.as_bytes()),
+            )
+        })
+        .collect();
+    let directory = inspect_plugin_source(files).unwrap();
+    assert_eq!(package.id, "example.starter");
+    assert_eq!(package.content_hash, directory.content_hash);
+    assert!(package.files.contains_key("skills/starter/SKILL.md"));
 }
 
 /// Public, immutable GitHub assets only; redirects and proxy-based rebinding are disabled.

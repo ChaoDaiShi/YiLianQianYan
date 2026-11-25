@@ -230,6 +230,11 @@ impl HttpRequestTool {
             Ok(response) => {
                 let status = response.status();
                 let headers = safe_response_headers(response.headers());
+                let last_modified = response
+                    .headers()
+                    .get("last-modified")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned);
                 let body = match response.text().await {
                     Ok(body) => body,
                     Err(error) => {
@@ -249,14 +254,32 @@ impl HttpRequestTool {
                 } else {
                     body_display
                 };
-                ToolResult::success(format!(
-                    "HTTP {} {}\n响应状态: {}\n响应头:\n{}\n\n响应体:\n{}",
-                    method,
-                    safe_url_display(&url),
-                    status,
-                    headers,
-                    body_display
-                ))
+                let structured = args["observation_metadata"]
+                    .as_bool()
+                    .unwrap_or(false)
+                    .then(|| {
+                        use sha2::{Digest, Sha256};
+                        let preview = args["observation_preview"]
+                            .as_bool()
+                            .unwrap_or(false)
+                            .then(|| truncate_chars(&body, 2048));
+                        serde_json::json!({
+                            "status":status.as_u16(), "last_modified":last_modified,
+                            "fingerprint":format!("{:x}", Sha256::digest(body.as_bytes())),
+                            "preview":preview,
+                        })
+                    });
+                ToolResult::success_with_structured(
+                    format!(
+                        "HTTP {} {}\n响应状态: {}\n响应头:\n{}\n\n响应体:\n{}",
+                        method,
+                        safe_url_display(&url),
+                        status,
+                        headers,
+                        body_display
+                    ),
+                    structured,
+                )
             }
             Err(error) => ToolResult::error(format!("HTTP请求失败: {}", error.without_url())),
         }

@@ -1,4 +1,67 @@
 use super::*;
+
+#[test]
+fn curated_entry_resolves_exact_unicode_excerpt_and_retains_removed_source() {
+    let db = Database::new(std::path::Path::new(":memory:")).unwrap();
+    let (document, _) = db
+        .import_knowledge(
+            "resource",
+            "原文.txt",
+            "text/plain",
+            "file",
+            20,
+            "甲𠮷甲证据乙甲",
+        )
+        .unwrap();
+    let hit = db.search_knowledge("证据").unwrap().remove(0);
+    let draft = KnowledgeEntryDraft {
+        topic: "项目资料".into(),
+        title: "原文结论".into(),
+        summary: "用户整理的知识正文".into(),
+        sources: vec![KnowledgeSourceAnchor {
+            document_id: document.id.clone(),
+            version: hit.version,
+            start_char: 3,
+            end_char: 5,
+        }],
+    };
+    let entry = db.save_knowledge_entry(None, &draft).unwrap();
+    assert_eq!(entry.sources[0].excerpt.as_deref(), Some("证据"));
+    assert_eq!(entry.sources[0].status, KnowledgeSourceStatus::Available);
+
+    db.conn()
+        .execute(
+            "UPDATE knowledge_documents SET text_content='甲𠮷甲其他乙甲' WHERE id=?1",
+            [&document.id],
+        )
+        .unwrap();
+    let changed = db.knowledge_entry(&entry.entry.id).unwrap().unwrap();
+    assert_eq!(changed.sources[0].status, KnowledgeSourceStatus::Changed);
+    assert!(changed.sources[0].excerpt.is_none());
+    assert!(db.save_knowledge_entry(None, &draft).is_err());
+
+    assert!(db.delete_knowledge_document(&document.id).unwrap());
+    let removed = db.knowledge_entry(&entry.entry.id).unwrap().unwrap();
+    assert_eq!(removed.sources[0].status, KnowledgeSourceStatus::Removed);
+    assert_eq!(removed.sources[0].document_name, "原文.txt");
+    assert_eq!(removed.entry.summary, "用户整理的知识正文");
+    assert!(removed.sources[0].excerpt.is_none());
+    assert!(db.knowledge_documents().unwrap().is_empty());
+
+    let edited = db
+        .save_knowledge_entry(
+            Some(&entry.entry.id),
+            &KnowledgeEntryDraft {
+                summary: "更新后的摘要".into(),
+                ..draft
+            },
+        )
+        .unwrap();
+    assert_eq!(edited.sources[0].status, KnowledgeSourceStatus::Removed);
+    assert_eq!(edited.entry.summary, "更新后的摘要");
+    assert!(db.delete_knowledge_entry(&entry.entry.id).unwrap());
+    assert!(db.knowledge_entry(&entry.entry.id).unwrap().is_none());
+}
 #[test]
 fn knowledge_import_is_complete_searchable_idempotent_and_deletes_only_its_chunks() {
     let path = std::env::temp_dir().join(format!("knowledge-{}.db", uuid::Uuid::new_v4()));
@@ -81,6 +144,91 @@ fn chunking_respects_unicode_and_keeps_all_text() {
 }
 
 #[test]
+fn chunking_prefers_whole_paragraphs_and_sentences_over_the_fixed_limit() {
+    let paragraph = format!("{}\n\n", "𠮷".repeat(870));
+    let sentence = format!("{}。", "文".repeat(780));
+    let tail = "后".repeat(540);
+    let text = format!("{paragraph}{sentence}{tail}");
+    assert_eq!(split_document(&text), vec![paragraph, sentence, tail]);
+}
+
+#[test]
+fn import_keeps_headings_sheets_and_slides_with_their_own_content() {
+    let path = std::env::temp_dir().join(format!("knowledge-sections-{}.db", uuid::Uuid::new_v4()));
+    let db = Database::new(&path).unwrap();
+    let first_sheet = format!("[成本]\n{}\t420\n", "甲".repeat(950));
+    let second_sheet = format!("[结余]\n{}\t380\n", "乙".repeat(790));
+    for (name, mime, first, second) in [
+        (
+            "指南.md",
+            "text/markdown",
+            "# 概述\r\n介绍。\r\n\r\n",
+            "## 步骤\r\n步骤说明。\r\n",
+        ),
+        (
+            "汇总.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            first_sheet.as_str(),
+            second_sheet.as_str(),
+        ),
+        (
+            "简报.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "第 1 页\n背景\n",
+            "第 2 页\n结论\n备注：\n核对来源\n",
+        ),
+    ] {
+        let text = format!("{first}{second}");
+        let (document, _) = db
+            .import_knowledge(name, name, mime, name, text.len() as i64, &text)
+            .unwrap();
+        let chunks = db.knowledge_chunks(Some(&document.id), None).unwrap();
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| chunk.content.as_str())
+                .collect::<Vec<_>>(),
+            vec![first, second],
+            "{name}"
+        );
+        assert_eq!(
+            db.knowledge_text(&document.id).unwrap().as_deref(),
+            Some(text.as_str())
+        );
+    }
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn canonical_search_excerpt_respects_sections_and_reports_its_true_offset() {
+    let path = std::env::temp_dir().join(format!(
+        "knowledge-structured-search-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let db = Database::new(&path).unwrap();
+    let prior = format!("# 背景\n{}\n\n", "𠮷".repeat(380));
+    let section = "## 统计结果\n指标 | 数量\nORCHID_FOCUS | 420\n";
+    let text = format!("{prior}{section}## 附录\n与结果无关。");
+    db.import_knowledge(
+        "r",
+        "资料.md",
+        "text/markdown",
+        "structure",
+        text.len() as i64,
+        &text,
+    )
+    .unwrap();
+    let hits = db.search_knowledge("ORCHID_FOCUS").unwrap();
+    assert_eq!(hits[0].start_char, prior.chars().count());
+    assert_eq!(hits[0].content, section);
+    let context = db.knowledge_context("ORCHID_FOCUS", 2).unwrap();
+    assert_eq!(context[0].content, section);
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn trailing_whitespace_remains_in_canonical_text_and_real_chunk_content() {
     let path =
         std::env::temp_dir().join(format!("knowledge-whitespace-{}.db", uuid::Uuid::new_v4()));
@@ -104,6 +252,12 @@ fn trailing_whitespace_remains_in_canonical_text_and_real_chunk_content() {
     let chunks = db.knowledge_chunks(Some(&document.id), None).unwrap();
     assert_eq!(chunks.len(), 2);
     assert_eq!(chunks[1].content, " \n\t");
+    assert_eq!(chunks[1].start_char, Some(1200));
+    assert_eq!(chunks[1].end_char, Some(1203));
+    assert_eq!(
+        chunks[1].version.as_deref(),
+        Some(knowledge_text_version(&text).as_str())
+    );
     assert_eq!(
         chunks
             .iter()

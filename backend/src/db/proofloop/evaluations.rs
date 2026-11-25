@@ -43,6 +43,12 @@ impl Database {
                 created_at,
             ],
         )?;
+        drop(conn);
+        self.publish_goal_change(
+            &report.graph_id,
+            "acceptance_updated",
+            serde_json::json!({"report_id":report.report_id,"status":report.status}),
+        );
         Ok(())
     }
 
@@ -51,6 +57,27 @@ impl Database {
         report: &AcceptanceReport,
         evidence: &EvidenceSnapshot,
         created_at: i64,
+    ) -> Result<(), ProofLoopDbError> {
+        self.save_acceptance_report_current(report, evidence, created_at, true)
+    }
+
+    /// Background evaluation cannot overwrite an existing report or a human
+    /// review committed after its optimistic evidence read.
+    pub fn insert_acceptance_report_if_current(
+        &self,
+        report: &AcceptanceReport,
+        evidence: &EvidenceSnapshot,
+        created_at: i64,
+    ) -> Result<(), ProofLoopDbError> {
+        self.save_acceptance_report_current(report, evidence, created_at, false)
+    }
+
+    fn save_acceptance_report_current(
+        &self,
+        report: &AcceptanceReport,
+        evidence: &EvidenceSnapshot,
+        created_at: i64,
+        replace_existing: bool,
     ) -> Result<(), ProofLoopDbError> {
         self.initialize_proofloop_eval_schema()?;
         let evidence_json =
@@ -86,6 +113,46 @@ impl Database {
             return Err(ProofLoopDbError::Integrity(
                 "任务图版本已改变，请重新验收".into(),
             ));
+        }
+
+        if !replace_existing {
+            let control: Option<String> = transaction
+                .query_row(
+                    "SELECT state FROM task_world_execution_controls WHERE graph_id=?1",
+                    [&evidence.graph_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let active:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM conversation_goal_bindings b JOIN conversations c ON c.id=b.conversation_id WHERE b.goal_id=?1 AND b.goal_version=?2 AND c.run_status IN ('running','waiting_approval','waiting_input'))",params![evidence.goal_id,evidence.goal_version],|r|r.get(0))?;
+            if control.as_deref() != Some("running") || active {
+                return Err(ProofLoopDbError::Integrity(
+                    "background acceptance evidence is currently active or paused".into(),
+                ));
+            }
+            let mut stmt=transaction.prepare("SELECT e.execution_id,e.status FROM task_node_executions e WHERE e.graph_id=?1 AND e.node_id IN (SELECT json_extract(value,'$.id') FROM task_world_supervisor_snapshots t,json_each(t.graph_json,'$.nodes') WHERE t.graph_id=?1) AND NOT EXISTS(SELECT 1 FROM task_node_executions newer WHERE newer.graph_id=e.graph_id AND newer.node_id=e.node_id AND newer.attempt>e.attempt)")?;
+            let latest = stmt
+                .query_map([&evidence.graph_id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let current_ids = latest
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            let expected_ids = evidence
+                .executions
+                .iter()
+                .map(|e| e.execution_id.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            if current_ids != expected_ids
+                || latest.iter().any(|(_, status)| {
+                    !matches!(status.as_str(), "succeeded" | "failed" | "blocked")
+                })
+            {
+                return Err(ProofLoopDbError::Integrity(
+                    "background acceptance attempts changed before commit".into(),
+                ));
+            }
         }
 
         for selected in &evidence.executions {
@@ -133,12 +200,12 @@ impl Database {
             }
         }
 
-        transaction.execute(
+        let affected=transaction.execute(
             "INSERT INTO proofloop_acceptance_reports
              (report_id, goal_id, goal_version, graph_id, graph_revision, evidence_json, report_json, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(report_id) DO UPDATE SET
-                report_json = excluded.report_json",
+                report_json = excluded.report_json WHERE ?9",
             params![
                 report.report_id,
                 report.goal_id,
@@ -148,9 +215,26 @@ impl Database {
                 evidence_json,
                 report_json,
                 created_at,
+                replace_existing,
             ],
         )?;
+        if affected > 0 {
+            crate::db::memory_candidates::stage_verified_report(
+                &transaction,
+                report,
+                evidence,
+                created_at,
+            )?;
+        }
         transaction.commit()?;
+        drop(conn);
+        if affected > 0 {
+            self.publish_goal_change(
+                &report.graph_id,
+                "acceptance_updated",
+                serde_json::json!({"report_id":report.report_id,"status":report.status}),
+            );
+        }
         Ok(())
     }
 

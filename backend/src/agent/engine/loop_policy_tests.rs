@@ -207,6 +207,45 @@ async fn keyboard_navigation_completes_across_separate_model_rounds_and_a_single
 }
 
 #[tokio::test]
+async fn nested_execution_does_not_apply_or_close_the_parent_steering_mailbox() {
+    let db = crate::db::Database::new(std::path::Path::new(":memory:")).unwrap();
+    let conversation = db.create_conversation("parent").unwrap().id;
+    let turn = db
+        .accept_conversation_turn(&crate::db::MessageRow {
+            id: "parent-user".into(),
+            conversation_id: conversation.clone(),
+            role: "user".into(),
+            content: "保留原任务上下文".into(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_result: None,
+            created_at: 1,
+        })
+        .unwrap();
+    let steering = Arc::new(super::super::steering::Steering::new(
+        conversation.clone(),
+        turn.clone(),
+        CancellationToken::new(),
+    ));
+    let child = steering
+        .run(async {
+            let child = run(vec![], true, false).await;
+            assert!(steering
+                .submit(&db, &conversation, &turn, "回复用中文")
+                .is_ok());
+            child
+        })
+        .await;
+    assert!(matches!(child.outcome, Ok(RunOutcome::Done { .. })));
+    assert!(child
+        .events
+        .iter()
+        .all(|event| event.event_type != "steering_applied"));
+    assert!(steering.pending());
+}
+
+#[tokio::test]
 async fn successful_identical_keypresses_can_repeat_more_than_three_times() {
     let scenario = run(
         vec![vec![json!({"action":"press","key":"Down"})]; 8],
@@ -247,6 +286,15 @@ async fn identical_verification_failures_stop_after_recording_three_executed_res
             .count(),
         3
     );
+    let first_result = scenario
+        .state
+        .messages
+        .iter()
+        .find(|message| message.role == "tool")
+        .and_then(|message| message.content.as_deref())
+        .unwrap();
+    assert!(first_result.contains("target still unavailable"));
+    assert!(first_result.contains("input action accepted"));
 }
 
 #[tokio::test]

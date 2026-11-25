@@ -67,35 +67,44 @@ fn default_iterations() -> u32 {
     10
 }
 
-pub fn change_plugin_runtime(
-    server: &AppServer,
-    record: &InstalledPackage,
-    action: &str,
-) -> Result<(), String> {
-    if !matches!(action, "enable" | "disable" | "uninstall" | "rollback") {
-        return Ok(());
-    }
-    let manifest = manifest(&record.package)?;
-    let enabling = action == "enable";
-    let now = chrono::Utc::now().timestamp_millis();
+struct PreparedContributions {
+    workflows: Vec<(
+        String,
+        String,
+        String,
+        crate::modules::workflow::WorkflowGraphDefinition,
+    )>,
+    agents: Vec<(String, AgentContribution)>,
+}
+
+pub(super) fn validate_import(package: &Package) -> Result<(), String> {
+    prepare_contributions(package, &manifest(package)?)?;
+    Ok(())
+}
+
+fn prepare_contributions(
+    package: &Package,
+    manifest: &crate::plugin::PluginManifest,
+) -> Result<PreparedContributions, String> {
     let mut workflows = Vec::new();
     let mut agents = Vec::new();
     // Parse and validate all structured contributions before writing anything.
     for path in &manifest.contributes.workflows {
         let value: serde_json::Value = serde_json::from_str(
-            record
-                .package
+            package
                 .files
                 .get(path)
                 .ok_or("plugin_contribution_missing")?,
         )
-        .map_err(|_| "invalid_plugin_workflow")?;
+        .map_err(|_| format!("invalid_plugin_workflow: {path}"))?;
         let definition: crate::modules::workflow::WorkflowGraphDefinition =
             serde_json::from_value(value.get("definition").cloned().unwrap_or(value.clone()))
-                .map_err(|_| "invalid_plugin_workflow")?;
-        definition.validate().map_err(|e| e.to_string())?;
+                .map_err(|_| format!("invalid_plugin_workflow: {path}"))?;
+        definition
+            .validate()
+            .map_err(|e| format!("invalid_plugin_workflow: {path}: {e}"))?;
         workflows.push((
-            contribution_id(&record.package.id, path),
+            contribution_id(&package.id, path),
             value
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -111,18 +120,50 @@ pub fn change_plugin_runtime(
     }
     for path in &manifest.contributes.agents {
         let agent: AgentContribution = serde_json::from_str(
-            record
-                .package
+            package
                 .files
                 .get(path)
                 .ok_or("plugin_contribution_missing")?,
         )
-        .map_err(|_| "invalid_plugin_agent")?;
+        .map_err(|_| format!("invalid_plugin_agent: {path}"))?;
         if agent.name.trim().is_empty() || agent.max_iterations == 0 || agent.max_iterations > 60 {
-            return Err("invalid_plugin_agent".into());
+            return Err(format!("invalid_plugin_agent: {path}"));
         }
-        agents.push((contribution_id(&record.package.id, path), agent));
+        agents.push((contribution_id(&package.id, path), agent));
     }
+    Ok(PreparedContributions { workflows, agents })
+}
+
+pub fn change_plugin_runtime(
+    server: &AppServer,
+    record: &InstalledPackage,
+    action: &str,
+) -> Result<(), String> {
+    if !matches!(action, "enable" | "disable" | "uninstall" | "rollback") {
+        return Ok(());
+    }
+    let manifest = manifest(&record.package)?;
+    let enabling = action == "enable";
+    if !enabling {
+        server.plugin_services.stop_plugin(&record.package.id)?;
+        for path in &manifest.contributes.services {
+            let definition = crate::plugin::service::ServiceDefinition::parse(
+                record
+                    .package
+                    .files
+                    .get(path)
+                    .ok_or("plugin_contribution_missing")?,
+                &manifest,
+            )?;
+            server.mcp_runtime_manager.remove_plugin_server(
+                &crate::api::plugin_services::managed_mcp_id(&record.package.id, &definition.id),
+            );
+        }
+        server.invalidate_capability_registry();
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    let PreparedContributions { workflows, agents } =
+        prepare_contributions(&record.package, &manifest)?;
     let mut saved = Vec::new();
     for path in &manifest.contributes.skills {
         let store = server
@@ -218,7 +259,7 @@ mod tests {
         let server = std::sync::Arc::new(
             AppServer::new(&root.join("test.db"), &root.to_string_lossy()).unwrap(),
         );
-        let manifest = serde_json::json!({"schema_version":1,"id":"demo.plugin","name":"Demo","version":"1.0.0","contributes":{"skills":["skills/SKILL.md"],"agents":["agents/demo.json"],"workflows":["workflows/demo.json"],"features":[{"id":"flow","title":"Run Demo","target":{"kind":"workflow","contribution":"workflows/demo.json"}}]}});
+        let manifest = serde_json::json!({"schema_version":1,"id":"demo.plugin","name":"Demo","version":"1.0.0","contributes":{"skills":["skills/SKILL.md"],"agents":["agents/demo.json"],"workflows":["workflows/demo.json"],"features":[{"id":"flow","title":"Run Demo","placements":["more","workspace"],"target":{"kind":"workflow","contribution":"workflows/demo.json"}}]}});
         let mut package = Package { id:"demo.plugin".into(),name:"Demo".into(),version:"1.0.0".into(),kind:"plugin".into(),source:"test".into(),permissions:vec![],content_hash:String::new(),file_encodings:BTreeMap::new(),files:BTreeMap::from([
             ("plugin.json".into(),manifest.to_string()),
             ("skills/SKILL.md".into(),"# Installed plugin skill".into()),
@@ -247,6 +288,10 @@ mod tests {
             "A real bundled reference"
         );
         let axum::Json(features) = list_plugin_features(State(server.clone())).await.unwrap();
+        assert_eq!(
+            features["features"][0]["placements"],
+            serde_json::json!(["more", "workspace"])
+        );
         assert_eq!(
             features["features"][0]["resource_id"],
             enabled.resources["workflows/demo.json"]

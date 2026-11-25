@@ -430,6 +430,23 @@ impl Database {
                     }
                 }
                 PushStatus::Conflict => {
+                    if entity_type == "memory" && operation == SyncOperation::Delete {
+                        let remote = result.authoritative.as_ref();
+                        let revision = remote
+                            .map(|record| record.revision)
+                            .or(result.authoritative_revision);
+                        if let Some(revision) = revision {
+                            let operation = remote
+                                .map(|record| record.operation)
+                                .unwrap_or(SyncOperation::Upsert);
+                            if super::memory_purge::handle_remote(
+                                &tx, &entity_id, revision, operation, now,
+                            )? {
+                                report.conflicts += 1;
+                                continue;
+                            }
+                        }
+                    }
                     let auth_rev = result.authoritative_revision.unwrap_or(local_revision);
                     let remote_payload = result
                         .authoritative

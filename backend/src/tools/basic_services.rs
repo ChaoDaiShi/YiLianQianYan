@@ -1,6 +1,8 @@
 use crate::{db::conversation_outputs::ConversationOutput, shared::resource::ResourceService};
 use crate::{
-    db::{basic_services::BasicServiceProfile, model_pools::ModelPool, Database},
+    db::{
+        basic_services::BasicServiceProfile, workspace_service_settings::ServiceSelection, Database,
+    },
     integrations::{llm::model_pool::ModelRouteEvent, secret::SecretResolver},
     modules::settings::application::basic_services::{
         invoke_profile, invoke_service_pool, service_request, BasicServiceRequest,
@@ -17,6 +19,7 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
 mod selection;
+mod vision;
 
 const VISION_IMAGE_REQUIRED: &str =
     "识图需要显式提供当前对话已绑定图片的 resource_id 或图片 image_url；仅有文字提示不能用于识图。";
@@ -37,6 +40,7 @@ fn validate_vision_input(args: &Value) -> Result<(), &'static str> {
 }
 
 static OUTPUT_INGEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+#[derive(Clone)]
 pub struct BasicServiceTool {
     db: Database,
     resolver: Arc<SecretResolver>,
@@ -143,16 +147,7 @@ impl BasicServiceTool {
         let bytes = service
             .read_bytes(id)
             .map_err(|_| "识图资源文件缺失或完整性校验失败")?;
-        let preview =
-            crate::modules::resource::extract_preview(&resource.name, &resource.mime_type, &bytes);
-        if preview.status != "ready" {
-            return Err("识图资源不是有效图片".into());
-        }
-        Ok(Some(format!(
-            "data:{};base64,{}",
-            resource.mime_type,
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        )))
+        vision::resource_data_url(&resource.mime_type, bytes).map(Some)
     }
 
     async fn persist_image(
@@ -332,11 +327,11 @@ impl Tool for BasicServiceTool {
                 return Ok(descriptor);
             }
         }
-        let (_, profiles) = self
+        let resolved = self
             .selected()
             .map_err(DescriptorError::InvalidDescriptor)?;
         let mut urls = Vec::new();
-        for p in &profiles {
+        for p in &resolved.selection.profiles {
             let url = self
                 .endpoint(p)
                 .map_err(DescriptorError::InvalidDescriptor)?;
@@ -420,10 +415,11 @@ impl Tool for BasicServiceTool {
                 Err(error) => return ToolResult::error(error),
             }
         }
-        let (pool, profiles) = match self.selected() {
+        let resolved = match self.selected() {
             Ok(p) => p,
             Err(e) => return ToolResult::error(e),
         };
+        let ServiceSelection { pool, profiles } = resolved.selection;
         for p in &profiles {
             let endpoint = match self
                 .endpoint(p)
@@ -445,7 +441,13 @@ impl Tool for BasicServiceTool {
             }
         }
         let image_url = if self.kind == "vision" {
-            match self.vision_image(&args) {
+            let tool = self.clone();
+            let input = args.clone();
+            let image = tokio::task::spawn_blocking(move || tool.vision_image(&input))
+                .await
+                .map_err(|_| "识图输入处理失败".to_owned())
+                .and_then(|result| result);
+            match image {
                 Ok(image) => image,
                 Err(error) => return ToolResult::error(error),
             }
@@ -481,11 +483,27 @@ impl Tool for BasicServiceTool {
         } else {
             invoke_profile(&self.db, &self.resolver, &profiles[0], request).await
         };
-        match result {
+        let mut source = resolved.source;
+        let profile_id = result
+            .as_ref()
+            .ok()
+            .and_then(|response| response.get("profile_id"))
+            .and_then(Value::as_str);
+        if let Some(profile) = profiles.iter().find(|p| Some(p.id.as_str()) == profile_id) {
+            source.set_invoked_profile(profile);
+        }
+        let with_source = |mut result: ToolResult| {
+            if let Some(structured) = &mut result.structured {
+                structured["configuration_source"] = json!(source);
+            }
+            result.configuration_source = Some(source.clone());
+            result
+        };
+        let output = match result {
             Ok(result) => {
                 if self.kind == "image" {
                     let Some(image) = result.get("image_url").and_then(Value::as_str) else {
-                        return ToolResult::error("生图服务未返回图片内容");
+                        return with_source(ToolResult::error("生图服务未返回图片内容"));
                     };
                     let is_data = image.starts_with("data:");
                     if !is_data
@@ -496,7 +514,7 @@ impl Tool for BasicServiceTool {
                                 || url.password().is_some()
                         })
                     {
-                        return ToolResult::error("生图服务返回无效图片地址");
+                        return with_source(ToolResult::error("生图服务返回无效图片地址"));
                     }
                     let output = match self.db.create_conversation_image_output(
                         &self.conversation_id,
@@ -511,17 +529,17 @@ impl Tool for BasicServiceTool {
                         if is_data { None } else { Some(image) },
                     ) {
                         Ok(output) => output,
-                        Err(error) => return ToolResult::error(error),
+                        Err(error) => return with_source(ToolResult::error(error)),
                     };
                     if !is_data {
-                        return Self::output_result(output);
+                        return with_source(Self::output_result(output));
                     }
                     let bytes = decode_image_data_url(image);
                     let saved = match bytes {
                         Ok(bytes) => self.persist_image(&output, bytes).await,
                         Err(error) => Err(error),
                     };
-                    return match saved {
+                    return with_source(match saved {
                         Ok(output) => Self::output_result(output),
                         Err(error) => {
                             if let Err(persistence) = self.db.fail_conversation_output(
@@ -529,13 +547,13 @@ impl Tool for BasicServiceTool {
                                 &output.id,
                                 &error,
                             ) {
-                                return ToolResult::error(persistence);
+                                return with_source(ToolResult::error(persistence));
                             }
                             ToolResult::error(error).with_structured(Some(
                                 json!({"output_id":output.id,"status":"download_failed"}),
                             ))
                         }
-                    };
+                    });
                 }
                 let text = if let Some(image) = result.get("image_url").and_then(Value::as_str) {
                     format!("![生成的图像]({image})")
@@ -556,7 +574,8 @@ impl Tool for BasicServiceTool {
                     "model_routes": events.into_inner().unwrap()
                 })))
             }
-        }
+        };
+        with_source(output)
     }
 }
 fn decode_image_data_url(value: &str) -> Result<Vec<u8>, String> {

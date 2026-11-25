@@ -142,7 +142,21 @@ pub async fn resolve(
             "审批工具与执行能力不匹配",
         );
     }
-    let gateway = match super::capability_execution::gateway(&server, &consumed.tool_name).await {
+    let owner = super::capability_execution::execution_owner(&execution);
+    let selection = crate::execution::context_manifest::load_manifest(&server.db, &owner).and_then(
+        |manifest| crate::modules::harness_profiles::from_manifest(&server.db, manifest.as_ref()),
+    );
+    let gateway = match match selection {
+        Ok(selection) => {
+            super::capability_execution::gateway_selected(
+                &server,
+                &consumed.tool_name,
+                selection.as_ref(),
+            )
+            .await
+        }
+        Err(error) => Err(super::super::AdapterError::Execution(error)),
+    } {
         Ok(gateway) => gateway,
         Err(_) => {
             return fail(
@@ -179,10 +193,18 @@ pub async fn resolve(
             None => std::future::pending::<()>().await,
         }
     };
+    let gateway_call = crate::execution::owner::CURRENT_EXECUTION_OWNER.scope(
+        owner,
+        gateway.execute_approved(&request, consumed.risk_level),
+    );
     let outcome = tokio::select! {biased;
-        _=cancel.cancelled()=>return Err("task_execution_cancelled".into()),
+        _=cancel.cancelled()=>{
+            server.task_world.settle_paused_execution(&execution.graph_id, &execution.id, now())
+                .map_err(|error|error.to_string())?;
+            return Err("task_execution_cancelled".into());
+        },
         _=deadline=>{cancel.cancel();return fail(&server,&execution,"proofloop_budget_exhausted_result_unknown","目标耗时预算已耗尽，远程结果需核实");},
-        outcome=gateway.execute_approved(&request,consumed.risk_level)=>outcome,
+        outcome=gateway_call=>outcome,
     };
     if let Some(lease) = budget_lease {
         if lease.finish().is_err() {

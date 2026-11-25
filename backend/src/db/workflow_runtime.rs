@@ -12,7 +12,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use super::Database;
 use crate::execution::{ExecutionContext, ExecutionId};
 use crate::modules::workflow::{
-    NodeRunState, WorkflowGraphDefinition, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
+    NodeRunState, NodeRunStatus, WorkflowGraphDefinition, WorkflowRun, WorkflowRunId,
+    WorkflowRunStatus,
 };
 
 /// A persisted executable workflow graph.
@@ -108,7 +109,7 @@ fn run_row_to_stored(
     created_at: i64,
     updated_at: i64,
 ) -> Result<StoredWorkflowRun, String> {
-    let run = reconstruct_run(
+    let mut run = reconstruct_run(
         run_id,
         execution_id,
         subject_id,
@@ -120,6 +121,10 @@ fn run_row_to_stored(
         created_at,
         updated_at,
     )?;
+    run.execution_context.owner = Some(crate::execution::ExecutionOwner::Workflow {
+        workflow_graph_id: workflow_graph_id.clone().unwrap_or_default(),
+        run_id: run.run_id.to_string(),
+    });
     Ok(StoredWorkflowRun {
         workflow_graph_id: workflow_graph_id.unwrap_or_default(),
         run,
@@ -130,6 +135,7 @@ fn run_row_to_stored(
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowRunQuery {
     pub workflow_graph_id: Option<String>,
+    pub parent_execution_id: Option<String>,
     pub status: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
@@ -284,6 +290,63 @@ impl Database {
 
     // ---- workflow_runs ---------------------------------------------------
 
+    /// Standalone runs are process-local. Settle their saved state at startup
+    /// so the old runtime is visible without dispatching any node again.
+    pub fn interrupt_standalone_workflow_runs(&self, now: i64) -> Result<(), String> {
+        let ids = {
+            let conn = self.conn();
+            let mut statement = conn
+                .prepare(
+                    "SELECT run_id FROM workflow_runs
+                     WHERE parent_execution_id IS NULL
+                       AND status IN ('created', 'running', 'waiting_approval')",
+                )
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?
+        };
+        for id in ids {
+            let id = WorkflowRunId::new(id).map_err(|error| error.to_string())?;
+            let Some(stored) = self.get_workflow_run(&id)? else {
+                continue;
+            };
+            let mut run = stored.run;
+            let interrupted = run
+                .node_states
+                .iter()
+                .position(|node| {
+                    matches!(
+                        node.status,
+                        NodeRunStatus::Running | NodeRunStatus::WaitingApproval
+                    )
+                })
+                .or_else(|| {
+                    run.node_states
+                        .iter()
+                        .position(|node| !node.status.is_terminal())
+                });
+            for (index, node) in run.node_states.iter_mut().enumerate() {
+                if node.status.is_terminal() {
+                    continue;
+                }
+                node.finished_at = Some(now);
+                if Some(index) == interrupted {
+                    node.status = NodeRunStatus::Failed;
+                    node.error = Some("上次工作流因应用退出而中断。请先核对已执行的步骤。".into());
+                } else {
+                    node.status = NodeRunStatus::Skipped;
+                }
+            }
+            run.status = WorkflowRunStatus::Failed;
+            run.updated_at = now;
+            self.update_workflow_run(&stored.workflow_graph_id, &run)?;
+        }
+        Ok(())
+    }
+
     pub fn create_workflow_run(
         &self,
         workflow_graph_id: &str,
@@ -406,6 +469,10 @@ impl Database {
             sql.push_str(&format!(" AND workflow_graph_id = ?{}", values.len() + 1));
             values.push(Box::new(graph_id.clone()));
         }
+        if let Some(parent_id) = &query.parent_execution_id {
+            sql.push_str(&format!(" AND parent_execution_id = ?{}", values.len() + 1));
+            values.push(Box::new(parent_id.clone()));
+        }
         if let Some(status) = &query.status {
             // Status is already stored as a canonical snake_case string; reject
             // unknown values rather than silently matching nothing.
@@ -485,21 +552,25 @@ impl Database {
         let definition_snapshot_json = encode_json(&run.definition)?;
         let state_json = encode_json(&run.node_states)?;
         let conn = self.conn();
-        conn.execute(
-            "UPDATE workflow_runs
+        let changed = conn
+            .execute(
+                "UPDATE workflow_runs
                 SET workflow_graph_id=?2, status=?3, definition_snapshot_json=?4,
                     state_json=?5, updated_at=?6
-              WHERE run_id=?1",
-            rusqlite::params![
-                run.run_id.as_str(),
-                workflow_graph_id,
-                run.status.to_string(),
-                definition_snapshot_json,
-                state_json,
-                run.updated_at,
-            ],
-        )
-        .map_err(|error| error.to_string())?;
+              WHERE run_id=?1 AND (status NOT IN ('cancelled','completed','failed') OR status=?3)",
+                rusqlite::params![
+                    run.run_id.as_str(),
+                    workflow_graph_id,
+                    run.status.to_string(),
+                    definition_snapshot_json,
+                    state_json,
+                    run.updated_at,
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        if changed == 0 {
+            return Err("workflow is missing or already terminal; late state discarded".into());
+        }
         Ok(())
     }
 }

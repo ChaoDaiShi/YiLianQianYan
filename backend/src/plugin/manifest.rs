@@ -3,7 +3,7 @@
 //
 // A plugin is a *declarative package*: it describes data contributions (agents,
 // skills, workflows, MCP templates) and requested permissions. It can never
-// load native code, eval JS, exec Python, or run arbitrary binaries.
+// load native code. External services are separate, explicitly started processes.
 // ============================================================
 
 use serde::{Deserialize, Serialize};
@@ -69,6 +69,8 @@ pub struct McpServerTemplate {
 #[serde(deny_unknown_fields)]
 pub struct PluginContributions {
     #[serde(default)]
+    pub services: Vec<String>,
+    #[serde(default)]
     pub agents: Vec<String>,
     #[serde(default)]
     pub skills: Vec<String>,
@@ -89,6 +91,18 @@ pub struct PluginFeatureTarget {
     pub kind: String,
     pub contribution: String,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginFeaturePlacement {
+    More,
+    Workspace,
+}
+
+fn default_feature_placements() -> Vec<PluginFeaturePlacement> {
+    vec![PluginFeaturePlacement::More]
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginFeature {
@@ -96,6 +110,8 @@ pub struct PluginFeature {
     pub title: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default = "default_feature_placements")]
+    pub placements: Vec<PluginFeaturePlacement>,
     pub target: PluginFeatureTarget,
 }
 
@@ -167,6 +183,7 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), ManifestError>
         return Err(ManifestError::TooManyPermissions);
     }
     if manifest.contributes.agents.len() > MAX_PLUGIN_CONTRIBUTIONS_PER_KIND
+        || manifest.contributes.services.len() > MAX_PLUGIN_CONTRIBUTIONS_PER_KIND
         || manifest.contributes.skills.len() > MAX_PLUGIN_CONTRIBUTIONS_PER_KIND
         || manifest.contributes.workflows.len() > MAX_PLUGIN_CONTRIBUTIONS_PER_KIND
         || manifest.contributes.mcp_server_templates.len() > MAX_PLUGIN_CONTRIBUTIONS_PER_KIND
@@ -177,6 +194,11 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), ManifestError>
         return Err(ManifestError::TooManyContributions);
     }
     super::settings::validate(&manifest.contributes.settings)?;
+    if !manifest.contributes.services.is_empty()
+        && !manifest.permissions.iter().any(|p| p == "process.manage")
+    {
+        return Err(ManifestError::InvalidJson);
+    }
     let mut feature_ids = std::collections::HashSet::new();
     for feature in &manifest.contributes.features {
         PluginId::new(&feature.id)?;
@@ -184,6 +206,7 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), ManifestError>
             "skill" => &manifest.contributes.skills,
             "workflow" => &manifest.contributes.workflows,
             "agent" => &manifest.contributes.agents,
+            "service" => &manifest.contributes.services,
             _ => return Err(ManifestError::InvalidJson),
         };
         if feature.title.trim().is_empty()

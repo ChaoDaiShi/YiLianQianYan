@@ -10,7 +10,10 @@ use serde::Serialize;
 use crate::{
     app::state::AppServer,
     db::{SecurityAuditEvent, SecurityAuditQuery},
-    safety::{redact_error, AuditError, AuditExportV1, AuditHealth, POLICY_VERSION},
+    safety::{
+        redact_error, AuditError, AuditExportV1, AuditHealth, BuiltInRole, SecuritySubject,
+        POLICY_VERSION,
+    },
 };
 
 #[derive(Debug, Serialize)]
@@ -26,12 +29,50 @@ pub struct SecurityHealthResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct SecuritySubjectResponse {
+    pub subject_id: String,
+    pub role: BuiltInRole,
+    pub level: &'static str,
+    pub label: &'static str,
+}
+
+#[derive(Debug, Serialize)]
 pub struct SecurityApiError {
     pub error: &'static str,
     pub message: String,
 }
 
 type ApiError = (StatusCode, Json<SecurityApiError>);
+
+pub async fn security_subject(
+    State(server): State<Arc<AppServer>>,
+) -> Result<Json<SecuritySubjectResponse>, ApiError> {
+    let subject_id = SecuritySubject::local_user().subject_id;
+    let role_key = server.db.resolve_active_role_binding(&subject_id);
+    let role = BuiltInRole::ALL
+        .into_iter()
+        .find(|role| Some(role.as_str()) == role_key.as_deref())
+        .ok_or_else(|| {
+            (
+                StatusCode::FORBIDDEN,
+                Json(SecurityApiError {
+                    error: "role_binding_unavailable",
+                    message: "当前主体无有效权限角色".into(),
+                }),
+            )
+        })?;
+    let (level, label) = match role {
+        BuiltInRole::Owner => ("super", "超级级"),
+        BuiltInRole::Standard => ("user", "用户级"),
+        BuiltInRole::Restricted => ("yilian", "忆涟级"),
+    };
+    Ok(Json(SecuritySubjectResponse {
+        subject_id,
+        role,
+        level,
+        label,
+    }))
+}
 
 pub async fn list_audit(
     State(server): State<Arc<AppServer>>,

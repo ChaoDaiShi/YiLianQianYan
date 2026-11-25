@@ -218,7 +218,10 @@ impl DraftService {
                     .with_planning_usage(planning_usage),
             );
         }
-        let draft_id = format!("draft-{}", uuid::Uuid::new_v4());
+        let draft_id = match request.source.as_ref() {
+            Some(source) => source.draft_id()?,
+            None => format!("draft-{}", uuid::Uuid::new_v4()),
+        };
         let compilation = compile_candidate(&contract, &candidate, &snapshot, &graph_id, &[]);
 
         let status = match compilation.status {
@@ -228,6 +231,7 @@ impl DraftService {
         };
 
         let draft = ProofDraft {
+            source: request.source,
             planning_review,
             draft_id,
             revision: 1,
@@ -367,6 +371,14 @@ impl DraftService {
                 "已确认的草稿不可直接修改，请基于新目标创建草稿",
             ));
         }
+        if existing.source.is_some()
+            && request.contract.workspace_id != existing.contract.workspace_id
+        {
+            return Err(ProofError::new(
+                "invalid_attention_source",
+                "关注草稿须保留来源所属的工作空间",
+            ));
+        }
 
         let graph_id = TaskGraphId::new(&existing.graph_id).map_err(|e| {
             ProofError::new("invalid_graph_id", format!("草稿关联的图标识无效: {e}"))
@@ -401,6 +413,7 @@ impl DraftService {
         };
 
         let updated_draft = ProofDraft {
+            source: existing.source,
             planning_review: None,
             draft_id: existing.draft_id,
             revision: next_draft_revision(existing.revision)?,

@@ -3,7 +3,8 @@
 //
 // Every request is an independent HTTP POST (no Mcp-Session-Id, no persistent
 // GET stream). Supports JSON and request-scoped SSE responses. Redirects are
-// rejected. Auth headers resolve from environment-variable *names* only.
+// rejected. User-managed servers use environment names, while managed cloud
+// services resolve their own origin-bound credential immediately before sending.
 // ============================================================
 
 use std::collections::BTreeMap;
@@ -21,6 +22,7 @@ use super::super::protocol::model::{
 use super::super::protocol::version::MODERN_MCP_VERSION;
 use super::super::security::header::{encode_header_value, reject_crlf};
 use super::McpTransport;
+use crate::plugin::cloud_auth::CloudBearer;
 
 pub const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -46,6 +48,7 @@ fn mcp_name_for(method: &str, params: &serde_json::Value) -> Option<String> {
 pub struct HttpTransport {
     url: String,
     headers_from_env: BTreeMap<String, String>,
+    cloud_bearer: Option<CloudBearer>,
     client: reqwest::Client,
 }
 
@@ -54,14 +57,33 @@ impl HttpTransport {
         url: String,
         headers_from_env: BTreeMap<String, String>,
     ) -> Result<Self, McpRuntimeError> {
+        Self::with_client(url, headers_from_env, reqwest::Client::builder())
+    }
+
+    pub(crate) fn managed_local(url: String) -> Result<Self, McpRuntimeError> {
+        Self::with_client(url, BTreeMap::new(), reqwest::Client::builder().no_proxy())
+    }
+
+    pub(crate) fn managed_cloud(url: String, bearer: CloudBearer) -> Result<Self, McpRuntimeError> {
+        let mut transport = Self::new(url, BTreeMap::new())?;
+        transport.cloud_bearer = Some(bearer);
+        Ok(transport)
+    }
+
+    fn with_client(
+        url: String,
+        headers_from_env: BTreeMap<String, String>,
+        client: reqwest::ClientBuilder,
+    ) -> Result<Self, McpRuntimeError> {
         validate_mcp_url(&url).map_err(|_| McpRuntimeError::Misconfigured)?;
-        let client = reqwest::Client::builder()
+        let client = client
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| McpRuntimeError::Transport(e.to_string()))?;
         Ok(Self {
             url,
             headers_from_env,
+            cloud_bearer: None,
             client,
         })
     }
@@ -75,6 +97,22 @@ impl HttpTransport {
             headers.insert(name.clone(), value);
         }
         Ok(headers)
+    }
+
+    async fn authorize_cloud(
+        &self,
+        mut request: reqwest::Request,
+    ) -> Result<reqwest::Request, McpRuntimeError> {
+        if let Some(bearer) = &self.cloud_bearer {
+            let authorization = bearer
+                .authorization(request.url().as_str())
+                .await
+                .map_err(McpRuntimeError::Transport)?;
+            request
+                .headers_mut()
+                .insert(reqwest::header::AUTHORIZATION, authorization);
+        }
+        Ok(request)
     }
 
     async fn send_inner(
@@ -113,9 +151,17 @@ impl HttpTransport {
             http_req = http_req.header(name, encode_header_value(value));
         }
 
+        let http_req = http_req
+            .body(body)
+            .build()
+            .map_err(|error| McpRuntimeError::Transport(error.to_string()))?;
+        let http_req = tokio::select! {
+            _ = cancel.cancelled() => return Err(McpRuntimeError::Cancelled),
+            request = self.authorize_cloud(http_req) => request?,
+        };
         let response = tokio::select! {
             _ = cancel.cancelled() => return Err(McpRuntimeError::Cancelled),
-            r = http_req.body(body).send() => r.map_err(|e| McpRuntimeError::Transport(e.to_string()))?,
+            r = self.client.execute(http_req) => r.map_err(|e| McpRuntimeError::Transport(e.to_string()))?,
         };
 
         let status = response.status();
@@ -307,5 +353,53 @@ impl McpTransport for HttpTransport {
 
     fn protocol_version(&self) -> super::super::protocol::model::McpProtocolVersion {
         super::super::protocol::model::McpProtocolVersion::V2026_07_28
+    }
+}
+
+#[cfg(test)]
+mod cloud_tests {
+    use super::*;
+    use crate::integrations::secret::{InMemorySecretStore, SecretResolver, SecretStore};
+    use crate::plugin::cloud_auth::{new_reference, replace_on, revoke_on};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn managed_cloud_http_prepares_bearer_only_for_its_https_origin() {
+        let store = Arc::new(InMemorySecretStore::new());
+        let resolver = Arc::new(SecretResolver::new(store.clone()));
+        let db = crate::db::Database::new(std::path::Path::new(":memory:")).unwrap();
+        let url = url::Url::parse("https://transport.example.test/mcp").unwrap();
+        let service = "owned-cloud-service";
+        let reference = new_reference(service);
+        store
+            .put(
+                &reference,
+                secrecy::SecretString::from("fixture-bearer".to_owned()),
+            )
+            .await
+            .unwrap();
+        replace_on(&db.conn(), service, &url.origin(), reference).unwrap();
+        let bearer = CloudBearer::new(&db, resolver, service.into(), url.origin());
+        let transport = HttpTransport::managed_cloud(url.to_string(), bearer).unwrap();
+
+        let message = transport.client.post(url).body("{}").build().unwrap();
+        let request = transport.authorize_cloud(message).await.unwrap();
+        let header = &request.headers()[reqwest::header::AUTHORIZATION];
+        assert_eq!(header.to_str().unwrap(), "Bearer fixture-bearer");
+        assert!(header.is_sensitive());
+        let foreign = transport
+            .client
+            .post("https://transport.example.test:9443/mcp")
+            .build()
+            .unwrap();
+        assert!(transport.authorize_cloud(foreign).await.is_err());
+
+        revoke_on(&db.conn(), service).unwrap();
+        let same = transport
+            .client
+            .post(request.url().clone())
+            .build()
+            .unwrap();
+        assert!(transport.authorize_cloud(same).await.is_err());
     }
 }

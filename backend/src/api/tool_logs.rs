@@ -114,6 +114,7 @@ fn query_tool_logs(db: &Database, query: &ToolLogsQuery) -> Result<ToolLogsRespo
                         verification_status: row.get(9)?,
                         verification_reason: verification_reason.map(|value| redact_error(&value)),
                         result: result.map(|value| redact_result(&value)),
+                        configuration_source: None,
                         sequence: row.get(12)?,
                         started_at: row.get(13)?,
                         finished_at: row.get(14)?,

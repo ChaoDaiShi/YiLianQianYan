@@ -4,6 +4,7 @@ pub use crate::modules::settings::application::basic_services::{
 use crate::{
     app::state::AppServer,
     db::basic_services::{BasicServiceInput, BasicServiceProfile},
+    modules::settings::application::model_defaults,
 };
 use axum::{
     extract::{Path, State},
@@ -63,6 +64,15 @@ async fn remove(
     State(s): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, Error> {
+    if let Some(profile) = s.db.get_basic_service_profile(&id).map_err(error)? {
+        if model_defaults::active_account_model(&s, &profile.service_kind)
+            .map_err(error)?
+            .as_deref()
+            == Some(id.as_str())
+        {
+            return Err(error("该档案仍是默认服务，请先更换默认配置".into()));
+        }
+    }
     s.db.delete_basic_service_profile(&id).map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -76,7 +86,16 @@ async fn set_default(
     Path(kind): Path<String>,
     Json(source): Json<Source>,
 ) -> Result<Json<Value>, Error> {
-    if source.source == "pool" {
+    if model_defaults::uses_single_default(&kind) {
+        let profile =
+            s.db.get_basic_service_profile(&source.id)
+                .map_err(error)?
+                .filter(|profile| source.source == "profile" && profile.service_kind == kind)
+                .ok_or_else(|| error("默认模型用途不匹配".into()))?;
+        model_defaults::use_account_model(&s, &profile)
+            .await
+            .map_err(error)?;
+    } else if source.source == "pool" {
         let pool =
             s.db.get_model_pool(&source.id)
                 .map_err(error)?
@@ -100,6 +119,11 @@ async fn default_source(
     State(s): State<Arc<AppServer>>,
     Path(kind): Path<String>,
 ) -> Result<Json<Value>, Error> {
+    if model_defaults::uses_single_default(&kind) {
+        return Ok(Json(
+            json!({"source":"profile","id":model_defaults::active_account_model(&s, &kind).map_err(error)?}),
+        ));
+    }
     if let Some(id) =
         s.db.get_model_pool_binding(&format!("service:{kind}"))
             .map_err(error)?

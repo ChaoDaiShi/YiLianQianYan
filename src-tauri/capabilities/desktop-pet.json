@@ -1,0 +1,11 @@
+{
+  "identifier": "desktop-pet",
+  "description": "Drag and close the desktop pet window",
+  "webviews": ["desktop-pet"],
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

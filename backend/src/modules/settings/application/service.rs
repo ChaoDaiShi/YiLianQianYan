@@ -9,7 +9,13 @@ use crate::modules::settings::domain::readiness::{
 };
 
 pub(crate) async fn build_redacted_config(server: &AppServer) -> serde_json::Value {
-    let config = server.config.read().clone();
+    let (config, revision) = {
+        let config = server.config.read();
+        match server.db.get_settings_revision() {
+            Ok(revision) => (config.clone(), revision),
+            Err(error) => return serde_json::json!({"error": error}),
+        }
+    };
     let mut value = serde_json::to_value(&config).unwrap_or_else(|_| serde_json::json!({}));
     if let Some(agent) = value
         .get_mut("agent")
@@ -120,6 +126,7 @@ pub(crate) async fn build_redacted_config(server: &AppServer) -> serde_json::Val
         pending
     };
     if let Some(obj) = value.as_object_mut() {
+        obj.insert("revision".to_string(), serde_json::Value::from(revision));
         obj.insert(
             "secret_store_status".to_string(),
             serde_json::to_value(server.secret_resolver.status().await).unwrap(),

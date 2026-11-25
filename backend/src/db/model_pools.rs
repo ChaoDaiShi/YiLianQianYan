@@ -46,14 +46,7 @@ impl Database {
         .collect()
     }
     pub fn get_model_pool(&self, id: &str) -> Result<Option<ModelPool>, String> {
-        self.conn()
-            .query_row("SELECT payload FROM model_pools WHERE id=?1", [id], |r| {
-                r.get::<_, String>(0)
-            })
-            .optional()
-            .map_err(|e| e.to_string())?
-            .map(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
-            .transpose()
+        get_model_pool_on(&self.conn(), id)
     }
     pub fn save_model_pool(&self, id: &str, input: ModelPoolInput) -> Result<ModelPool, String> {
         if input.label.trim().is_empty()
@@ -74,9 +67,7 @@ impl Database {
                     return Err("同一模型在池中只能出现一次".into());
                 }
                 if input.service_kind == "chat" {
-                    if self.get_llm_model(profile)?.is_none() {
-                        return Err("候选模型不存在".into());
-                    }
+                    self.chat_pool_candidate(profile)?;
                 } else {
                     let p = self
                         .get_basic_service_profile(profile)?
@@ -126,13 +117,24 @@ impl Database {
         }
         Ok(pool)
     }
+
+    pub(crate) fn chat_pool_candidate(&self, id: &str) -> Result<super::LlmModelRow, String> {
+        let model = self.get_llm_model(id)?.ok_or("候选模型不存在")?;
+        if model.api_format != "openai" {
+            return Err("候选模型不支持 OpenAI 兼容对话协议".into());
+        }
+        Ok(model)
+    }
     pub fn delete_model_pool(&self, id: &str, revision: u64) -> Result<(), String> {
-        let conn = self.conn();
-        let connector_count:i64=conn.query_row("SELECT count(*) FROM connector_bindings WHERE model_source='pool' AND target_id=?1",[format!("model:{id}")],|r|r.get(0)).map_err(|e|e.to_string())?;
+        let mut conn = self.conn();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let connector_count:i64=tx.query_row("SELECT count(*) FROM connector_bindings WHERE model_source='pool' AND target_id=?1",[format!("model:{id}")],|r|r.get(0)).map_err(|e|e.to_string())?;
         if connector_count > 0 {
             return Err("模型池仍被连接器引用，请先解除绑定".into());
         }
-        let count: i64 = conn
+        let count: i64 = tx
             .query_row(
                 "SELECT count(*) FROM model_pool_bindings WHERE pool_id=?1",
                 [id],
@@ -142,7 +144,14 @@ impl Database {
         if count > 0 {
             return Err("模型池仍被默认配置或智能体引用，请先解除绑定".into());
         }
-        if conn
+        if super::workspace_service_settings::workspace_service_reference_exists(
+            &tx, "pool", id, None,
+        )
+        .map_err(|e| e.to_string())?
+        {
+            return Err("模型池仍被工作空间引用，请先移除覆盖".into());
+        }
+        if tx
             .execute(
                 "DELETE FROM model_pools WHERE id=?1 AND revision=?2",
                 params![id, revision],
@@ -152,7 +161,7 @@ impl Database {
         {
             return Err("revision_conflict".into());
         }
-        Ok(())
+        tx.commit().map_err(|e| e.to_string())
     }
     pub fn set_model_pool_binding(
         &self,
@@ -185,6 +194,19 @@ impl Database {
             .optional()
             .map_err(|e| e.to_string())
     }
+}
+
+pub(super) fn get_model_pool_on(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> Result<Option<ModelPool>, String> {
+    conn.query_row("SELECT payload FROM model_pools WHERE id=?1", [id], |r| {
+        r.get::<_, String>(0)
+    })
+    .optional()
+    .map_err(|e| e.to_string())?
+    .map(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
+    .transpose()
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderAccount {

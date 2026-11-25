@@ -305,7 +305,8 @@ async fn list_workflow_runs_orders_newest_first_and_filters() {
         State(server.clone()),
         Query(ListWorkflowRunsParams::default()),
     )
-    .await;
+    .await
+    .unwrap();
     let runs = all.0["runs"].as_array().unwrap();
     assert_eq!(runs.len(), 3);
     assert_eq!(runs[0]["run_id"], r3);
@@ -316,13 +317,15 @@ async fn list_workflow_runs_orders_newest_first_and_filters() {
     let filtered = list_workflow_runs(
         State(server.clone()),
         Query(ListWorkflowRunsParams {
+            parent_execution_id: None,
             workflow_graph_id: Some(graph_a.clone()),
             status: None,
             limit: None,
             offset: None,
         }),
     )
-    .await;
+    .await
+    .unwrap();
     let runs = filtered.0["runs"].as_array().unwrap();
     assert_eq!(runs.len(), 2);
     assert!(runs.iter().all(|r| r["workflow_graph_id"] == graph_a));
@@ -331,13 +334,15 @@ async fn list_workflow_runs_orders_newest_first_and_filters() {
     let failed = list_workflow_runs(
         State(server.clone()),
         Query(ListWorkflowRunsParams {
+            parent_execution_id: None,
             workflow_graph_id: None,
             status: Some("failed".to_string()),
             limit: None,
             offset: None,
         }),
     )
-    .await;
+    .await
+    .unwrap();
     let runs = failed.0["runs"].as_array().unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0]["run_id"], r2);
@@ -346,15 +351,79 @@ async fn list_workflow_runs_orders_newest_first_and_filters() {
     let limited = list_workflow_runs(
         State(server.clone()),
         Query(ListWorkflowRunsParams {
+            parent_execution_id: None,
             workflow_graph_id: None,
             status: None,
             limit: Some(2),
             offset: None,
         }),
     )
-    .await;
+    .await
+    .unwrap();
     let runs = limited.0["runs"].as_array().unwrap();
     assert_eq!(runs.len(), 2);
 
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn workflow_child_lookup_and_restart_keep_parent_and_snapshot_distinct() {
+    let (path, server) = test_server();
+    let graph_id = create_graph_id(&server).await;
+    let standalone = persist_run(&server, &graph_id, WorkflowRunStatus::Running, 100);
+    let parent_id = ExecutionId::generate();
+    let mut definition = output_graph();
+    definition.nodes[0].config = WorkflowNodeConfig::Output {
+        template: Some("run-specific output".into()),
+    };
+    let context = ExecutionContext::new(
+        ExecutionId::generate(),
+        "local-user",
+        "task-harness-workflow",
+        Some(parent_id.clone()),
+        200,
+    );
+    let child = WorkflowRun::new(WorkflowRunId::generate(), context, definition, 200).unwrap();
+    server.db.create_workflow_run(&graph_id, &child).unwrap();
+
+    server.db.interrupt_standalone_workflow_runs(300).unwrap();
+    let settled = server
+        .db
+        .get_workflow_run(&WorkflowRunId::new(standalone).unwrap())
+        .unwrap()
+        .unwrap()
+        .run;
+    assert_eq!(settled.status, WorkflowRunStatus::Failed);
+    assert_eq!(settled.node_states[0].status, NodeRunStatus::Failed);
+    assert!(settled.node_states[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("中断"));
+
+    let runs = list_workflow_runs(
+        State(server.clone()),
+        Query(ListWorkflowRunsParams {
+            parent_execution_id: Some(parent_id.to_string()),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(runs["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(runs["runs"][0]["run_id"], child.run_id.as_str());
+    assert_eq!(runs["runs"][0]["status"], "created");
+    assert!(runs["runs"][0]["nodes"][0].get("input").is_none());
+
+    let detail = get_workflow_run(State(server), Path(child.run_id.to_string()))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(detail["parent_execution_id"], parent_id.as_str());
+    assert_eq!(
+        detail["nodes"][0]["input"]["template"],
+        "run-specific output"
+    );
     let _ = std::fs::remove_file(&path);
 }

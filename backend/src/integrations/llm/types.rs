@@ -87,6 +87,8 @@ pub struct ToolCallFunction {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatCompletionResponse {
     pub id: String,
+    #[serde(default)]
+    pub model: Option<String>,
     pub choices: Vec<Choice>,
     #[serde(default)]
     pub usage: Option<Usage>,
@@ -164,6 +166,7 @@ pub struct StreamAccumulator {
     pub content: String,
     pub tool_calls: Vec<AccumulatedToolCall>,
     pub usage: Option<Usage>,
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

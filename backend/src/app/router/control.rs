@@ -67,6 +67,7 @@ pub(super) fn control_plane_cors() -> CorsLayer {
         ])
         .allow_headers([
             CONTENT_TYPE,
+            HeaderName::from_static("last-event-id"),
             HeaderName::from_static(CONTROL_SESSION_HEADER),
             HeaderName::from_static("x-yilian-voice-session"),
             HeaderName::from_static("x-yilian-voice-generation"),

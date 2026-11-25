@@ -2,10 +2,12 @@
 // Memory CRUD operations — long-term AI memory persistence
 // ============================================================
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use super::Database;
+
+pub(super) mod lexical;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
@@ -30,6 +32,35 @@ pub struct CreateMemoryRequest {
     pub source: String,
     pub source_conversation_id: Option<String>,
     pub metadata: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MemoryScope {
+    #[default]
+    Profile,
+    Workspace,
+    Conversation,
+}
+
+impl MemoryScope {
+    fn from_storage(scope: &str) -> Self {
+        if scope.starts_with("conversation:") {
+            Self::Conversation
+        } else if scope.starts_with("workspace:") {
+            Self::Workspace
+        } else {
+            Self::Profile
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Profile => "当前档案",
+            Self::Workspace => "本工作空间",
+            Self::Conversation => "本对话",
+        }
+    }
 }
 
 fn default_category() -> String {
@@ -82,6 +113,10 @@ pub struct ScoredMemory {
     /// Vector/cosine-similarity component of the score.
     #[serde(default)]
     pub vector_score: f64,
+    #[serde(skip)]
+    pub(crate) revision: i64,
+    #[serde(skip)]
+    pub(crate) scope: MemoryScope,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -102,6 +137,29 @@ fn default_top_k() -> usize {
 }
 
 const MAX_TOP_K: usize = 50;
+
+#[derive(Default)]
+pub(crate) struct MemoryRecallScope<'a> {
+    pub conversation_id: Option<&'a str>,
+    pub workspace_id: Option<&'a str>,
+    pub exclude_documents: bool,
+    pub exclude_knowledge: bool,
+    pub include_conversation_pins: bool,
+}
+
+fn read_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
+    Ok(Memory {
+        id: row.get(0)?,
+        content: row.get(1)?,
+        category: row.get(2)?,
+        source: row.get(3)?,
+        source_conversation_id: row.get(4)?,
+        embedding: row.get(5)?,
+        metadata: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
 
 // Lexical-only scoring weights (Retrieval v2)
 const TEXT_WEIGHT: f64 = 0.75;
@@ -247,6 +305,27 @@ fn compute_text_score(query: &str, content: &str) -> f64 {
 
 impl Database {
     pub fn create_memory(&self, req: &CreateMemoryRequest) -> Result<Memory, String> {
+        self.create_memory_with_scope(req, MemoryScope::Profile)
+    }
+
+    pub(crate) fn create_memory_with_scope(
+        &self,
+        req: &CreateMemoryRequest,
+        scope: MemoryScope,
+    ) -> Result<Memory, String> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let memory = Self::create_memory_on(&tx, req, scope, None)?;
+        tx.commit().map_err(|error| error.to_string())?;
+        Ok(memory)
+    }
+
+    pub(super) fn create_memory_on(
+        tx: &rusqlite::Transaction<'_>,
+        req: &CreateMemoryRequest,
+        scope: MemoryScope,
+        source_workspace: Option<&str>,
+    ) -> Result<Memory, String> {
         if req.content.trim().is_empty() || req.content.chars().count() > 2000 {
             return Err("invalid_memory_content".into());
         }
@@ -259,35 +338,50 @@ impl Database {
         if req.source != "document" && crate::safety::contains_sensitive_content(&req.content) {
             return Err("sensitive_memory_content".into());
         }
-        let conn = self.conn();
+        let stored_scope = match scope {
+            MemoryScope::Profile => "profile".into(),
+            MemoryScope::Conversation => format!(
+                "conversation:{}",
+                req.source_conversation_id
+                    .as_deref()
+                    .ok_or("memory_conversation_required")?
+            ),
+            MemoryScope::Workspace => {
+                let workspace: String = tx
+                    .query_row(
+                        "SELECT id FROM workspaces WHERE status='active' AND id=COALESCE(?1,
+                           (SELECT value FROM settings WHERE key='conversation_workspace:'||?2))",
+                        params![source_workspace, req.source_conversation_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|error| error.to_string())?
+                    .ok_or("memory_workspace_required")?;
+                format!("workspace:{workspace}")
+            }
+        };
         if req.source != "document" {
             let normalized = super::memory_governance::normalize_memory(&req.content);
-            let mut stmt=conn.prepare("SELECT m.id,m.content,m.category,m.source,m.source_conversation_id,m.embedding,m.metadata,m.created_at,m.updated_at FROM memories m JOIN memory_governance g ON g.memory_id=m.id WHERE m.category=?1 AND g.status='active' AND g.scope='profile' AND m.source!='document' AND NOT EXISTS(SELECT 1 FROM knowledge_document_chunks c WHERE c.memory_id=m.id)").map_err(|e|e.to_string())?;
+            let relation =
+                super::memory_candidates::relationship::read_metadata(req.metadata.as_deref());
+            let mut stmt=tx.prepare("SELECT m.id,m.content,m.category,m.source,m.source_conversation_id,m.embedding,m.metadata,m.created_at,m.updated_at FROM memories m JOIN memory_governance g ON g.memory_id=m.id WHERE m.category=?1 AND g.status='active' AND g.scope=?2 AND m.source!='document' AND NOT EXISTS(SELECT 1 FROM knowledge_document_chunks c WHERE c.memory_id=m.id)").map_err(|e|e.to_string())?;
             let existing = stmt
-                .query_map([&req.category], |r| {
-                    Ok(Memory {
-                        id: r.get(0)?,
-                        content: r.get(1)?,
-                        category: r.get(2)?,
-                        source: r.get(3)?,
-                        source_conversation_id: r.get(4)?,
-                        embedding: r.get(5)?,
-                        metadata: r.get(6)?,
-                        created_at: r.get(7)?,
-                        updated_at: r.get(8)?,
-                    })
-                })
+                .query_map(params![req.category, stored_scope], read_memory)
                 .map_err(|e| e.to_string())?;
             for memory in existing {
                 let memory = memory.map_err(|e| e.to_string())?;
-                if super::memory_governance::normalize_memory(&memory.content) == normalized {
+                if super::memory_candidates::relationship::same_memory(
+                    relation.as_ref(),
+                    super::memory_governance::normalize_memory(&memory.content) == normalized,
+                    memory.metadata.as_deref(),
+                ) {
                     return Ok(memory);
                 }
             }
         }
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        conn.execute(
+        tx.execute(
             "INSERT INTO memories (id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
@@ -296,6 +390,18 @@ impl Database {
                 now, now
             ],
         ).map_err(|e| e.to_string())?;
+        if scope != MemoryScope::Profile {
+            tx.execute(
+                "UPDATE memory_governance SET scope=?1 WHERE memory_id=?2",
+                params![stored_scope, id],
+            )
+            .map_err(|error| error.to_string())?;
+            tx.execute(
+                "UPDATE memory_versions SET scope=?1 WHERE memory_id=?2 AND revision=1",
+                params![stored_scope, id],
+            )
+            .map_err(|error| error.to_string())?;
+        }
         Ok(Memory {
             id,
             content: req.content.clone(),
@@ -335,21 +441,35 @@ impl Database {
     }
 
     pub fn list_memories(&self, query: &MemoryQuery) -> Result<Vec<Memory>, String> {
-        self.list_memory_candidates(query, false)
+        self.list_memory_rows(query, false)
     }
 
-    fn list_memory_candidates(
-        &self,
-        query: &MemoryQuery,
-        exclude_documents: bool,
-    ) -> Result<Vec<Memory>, String> {
+    pub fn list_memory_library(&self, query: &MemoryQuery) -> Result<Vec<Memory>, String> {
+        self.list_memory_rows(query, true)
+    }
+
+    fn list_memory_rows(&self, query: &MemoryQuery, library: bool) -> Result<Vec<Memory>, String> {
         let conn = self.conn();
+        Self::list_memory_rows_on(&conn, query, library, None)
+    }
+
+    pub(super) fn list_memory_rows_on(
+        conn: &rusqlite::Connection,
+        query: &MemoryQuery,
+        library: bool,
+        graph_status: Option<&str>,
+    ) -> Result<Vec<Memory>, String> {
         let mut sql = String::from(
             "SELECT id, content, category, source, source_conversation_id, embedding, metadata, created_at, updated_at
-             FROM memories WHERE EXISTS(SELECT 1 FROM memory_governance g WHERE g.memory_id=memories.id AND g.status='active')"
+             FROM memories WHERE EXISTS(SELECT 1 FROM memory_governance g WHERE g.memory_id=memories.id"
         );
-        if exclude_documents {
-            sql.push_str(" AND NOT EXISTS(SELECT 1 FROM knowledge_document_chunks c WHERE c.memory_id=memories.id)");
+        match graph_status {
+            Some("withdrawn") => sql.push_str(" AND g.status='withdrawn')"),
+            Some(_) => sql.push_str(" AND g.status='active' AND (g.valid_from IS NULL OR g.valid_from<=CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)) AND (g.valid_until IS NULL OR g.valid_until>CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)))"),
+            None => sql.push_str(" AND g.status='active')"),
+        }
+        if library {
+            sql.push_str(" AND NOT EXISTS(SELECT 1 FROM knowledge_document_chunks k WHERE k.memory_id=memories.id)");
         }
         let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -381,19 +501,7 @@ impl Database {
             params_vec.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(param_refs.as_slice(), |row| {
-                Ok(Memory {
-                    id: row.get(0)?,
-                    content: row.get(1)?,
-                    category: row.get(2)?,
-                    source: row.get(3)?,
-                    source_conversation_id: row.get(4)?,
-                    embedding: row.get(5)?,
-                    metadata: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
-                })
-            })
+            .query_map(param_refs.as_slice(), read_memory)
             .map_err(|e| e.to_string())?;
 
         rows.collect::<Result<Vec<_>, _>>()
@@ -401,6 +509,15 @@ impl Database {
     }
 
     pub fn update_memory(&self, id: &str, req: &UpdateMemoryRequest) -> Result<Memory, String> {
+        self.update_memory_at_revision(id, req, None)
+    }
+
+    pub(crate) fn update_memory_at_revision(
+        &self,
+        id: &str,
+        req: &UpdateMemoryRequest,
+        expected_revision: Option<i64>,
+    ) -> Result<Memory, String> {
         if self.knowledge_chunk_document(id)?.is_some() {
             return Err("knowledge_document_owned_chunk".into());
         }
@@ -419,13 +536,55 @@ impl Database {
         }
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let previous = tx
+            .query_row(
+                "SELECT m.content,m.category,m.metadata FROM memories m
+             JOIN memory_governance g ON g.memory_id=m.id WHERE m.id=?1 AND g.status='active'
+             AND (?2 IS NULL OR (g.revision=?2 AND (g.valid_from IS NULL OR g.valid_from<=?3)
+                                    AND (g.valid_until IS NULL OR g.valid_until>?3)))",
+                params![id, expected_revision, chrono::Utc::now().timestamp_millis()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or("memory_revision_conflict")?;
+        let content = req
+            .content
+            .as_deref()
+            .filter(|value| value.trim() != previous.0.trim());
+        let category = req.category.as_deref().filter(|value| *value != previous.1);
+        let metadata = req.metadata.as_deref().filter(|value| {
+            if previous.2.as_deref() == Some(*value) {
+                return false;
+            }
+            !previous.2.as_deref().is_some_and(|previous| {
+                match (
+                    serde_json::from_str::<serde_json::Value>(previous),
+                    serde_json::from_str::<serde_json::Value>(value),
+                ) {
+                    (Ok(previous), Ok(next)) => previous == next,
+                    _ => false,
+                }
+            })
+        });
+        if content.is_none() && category.is_none() && metadata.is_none() {
+            drop(tx);
+            drop(conn);
+            return self.get_memory(id);
+        }
         tx.execute(
             "UPDATE memory_governance SET reason='edited through memory API' WHERE memory_id=?1",
             [id],
         )
         .map_err(|e| e.to_string())?;
         let changed=tx.execute("UPDATE memories SET content=COALESCE(?1,content),category=COALESCE(?2,category),metadata=COALESCE(?3,metadata),updated_at=?4 WHERE id=?5 AND EXISTS(SELECT 1 FROM memory_governance WHERE memory_id=?5 AND status='active')",
-            params![req.content,req.category,req.metadata,chrono::Utc::now().timestamp_millis(),id]).map_err(|e|e.to_string())?;
+            params![content,category,metadata,chrono::Utc::now().timestamp_millis(),id]).map_err(|e|e.to_string())?;
         if changed != 1 {
             return Err("memory_revision_conflict".into());
         }
@@ -435,25 +594,7 @@ impl Database {
     }
 
     pub fn delete_memory(&self, id: &str) -> Result<(), String> {
-        let identity = self.get_or_create_cloud_identity().ok();
-        let mut conn = self.conn();
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM memories WHERE id = ?1", params![id])
-            .map_err(|e| e.to_string())?;
-        super::connectors::remove_connector_entity_on(&tx, "memory", id)
-            .map_err(|e| e.to_string())?;
-        super::connectors::remove_connector_entity_on(&tx, "knowledge", id)
-            .map_err(|e| e.to_string())?;
-        if let Some(identity) = identity {
-            let _ = crate::db::cloud::capture::record_local_deletion_tx(
-                &tx,
-                "memory",
-                id,
-                &identity.device_id,
-            );
-        }
-        tx.commit().map_err(|e| e.to_string())?;
-        Ok(())
+        self.delete_memories_by_ids(&[id.to_owned()]).map(|_| ())
     }
 
     /// Search memories by keyword (returns up to `limit` most relevant results)
@@ -593,7 +734,7 @@ impl Database {
         query: &RetrieveQuery,
         query_embedding: Option<&[f32]>,
     ) -> Result<Vec<ScoredMemory>, String> {
-        self.retrieve_memory_candidates(query, query_embedding, false, None, None, None)
+        self.retrieve_memory_candidates(query, query_embedding, None, MemoryRecallScope::default())
     }
 
     pub fn retrieve_chat_memories(
@@ -601,7 +742,15 @@ impl Database {
         query: &RetrieveQuery,
         query_embedding: Option<&[f32]>,
     ) -> Result<Vec<ScoredMemory>, String> {
-        self.retrieve_memory_candidates(query, query_embedding, true, None, None, None)
+        self.retrieve_memory_candidates(
+            query,
+            query_embedding,
+            None,
+            MemoryRecallScope {
+                exclude_documents: true,
+                ..Default::default()
+            },
+        )
     }
 
     /// Scope and embedding identity are enforced before relevance scoring.
@@ -613,17 +762,15 @@ impl Database {
         conversation_id: Option<&str>,
         exclude_documents: bool,
     ) -> Result<Vec<ScoredMemory>, String> {
-        let workspace = conversation_id
-            .map(|id| self.conversation_workspace(id))
-            .transpose()?
-            .flatten();
         self.retrieve_memory_candidates(
             query,
             query_embedding,
-            exclude_documents,
             embedding_model,
-            conversation_id,
-            workspace.as_deref(),
+            MemoryRecallScope {
+                conversation_id,
+                exclude_documents,
+                ..Default::default()
+            },
         )
     }
 
@@ -637,70 +784,106 @@ impl Database {
         self.retrieve_memory_candidates(
             query,
             query_embedding,
-            true,
             embedding_model,
-            None,
-            Some(workspace_id),
+            MemoryRecallScope {
+                workspace_id: Some(workspace_id),
+                exclude_documents: true,
+                ..Default::default()
+            },
         )
     }
 
-    fn retrieve_memory_candidates(
+    pub(crate) fn retrieve_memory_candidates(
         &self,
         query: &RetrieveQuery,
         query_embedding: Option<&[f32]>,
-        exclude_documents: bool,
         embedding_model: Option<&str>,
-        conversation_id: Option<&str>,
-        workspace_id: Option<&str>,
+        scope: MemoryRecallScope<'_>,
     ) -> Result<Vec<ScoredMemory>, String> {
-        let candidates = self.list_memory_candidates(
-            &MemoryQuery {
-                category: query.category.clone(),
-                source: None,
-                q: None,
-                limit: Some(i64::MAX as usize),
-                offset: None,
-            },
-            exclude_documents,
-        )?;
-
-        let generation = embedding_model
-            .map(|model| self.memory_embedding_generation(model))
+        let lexical_query = lexical::LexicalQuery::new(&query.q);
+        if lexical_query.is_empty() && query_embedding.is_none() && !scope.include_conversation_pins
+        {
+            return Ok(Vec::new());
+        }
+        let workspace = scope
+            .conversation_id
+            .map(|id| self.conversation_workspace(id))
             .transpose()?
             .flatten();
-        let mut permitted = Vec::new();
-        for mut memory in candidates {
-            let governance = self.memory_governance(&memory.id)?;
-            if governance.scope != "profile"
-                && conversation_id
-                    .map(|id| format!("conversation:{id}"))
-                    .as_deref()
-                    != Some(governance.scope.as_str())
-                && workspace_id.map(|id| format!("workspace:{id}")).as_deref()
-                    != Some(governance.scope.as_str())
-            {
-                continue;
-            }
-            if let Some(model) = embedding_model {
-                if governance.embedding_revision != Some(governance.revision)
-                    || governance.embedding_model.as_deref() != Some(model)
-                    || governance.embedding_generation != generation
-                    || governance.stored_embedding_hash.as_deref()
-                        != Some(governance.content_hash.as_str())
-                {
-                    memory.embedding = None;
-                }
-            }
-            permitted.push(memory);
-        }
+        let conversation_scope = scope.conversation_id.map(|id| format!("conversation:{id}"));
+        let workspace_scope = workspace
+            .as_deref()
+            .or(scope.workspace_id)
+            .map(|id| format!("workspace:{id}"));
+        // Read content and its current governance metadata in the same snapshot.
+        let permitted = {
+            let conn = self.conn();
+            let mut statement = conn.prepare(
+                "SELECT m.id,m.content,m.category,m.source,m.source_conversation_id,
+                    CASE WHEN ?6 IS NULL OR (g.embedding_revision=g.revision
+                        AND g.embedding_model=?6 AND g.embedding_generation IS cfg.generation)
+                        THEN m.embedding END,
+                    m.metadata,m.created_at,m.updated_at,g.embedding_hash,g.revision,g.scope,
+                    CASE WHEN ?8 IS NULL THEN 0
+                    ELSE m.rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?8) END
+                 FROM memories m JOIN memory_governance g ON g.memory_id=m.id
+                 LEFT JOIN memory_embedding_config cfg ON cfg.id=1 AND cfg.model=?6
+                 WHERE g.status='active' AND (g.scope='profile' OR g.scope=?2 OR g.scope=?3)
+                    AND (g.valid_from IS NULL OR g.valid_from<=?7)
+                    AND (g.valid_until IS NULL OR g.valid_until>?7)
+                    AND (?1 IS NULL OR m.category=?1)
+                    AND (NOT ?4 OR NOT EXISTS(SELECT 1 FROM knowledge_document_chunks c WHERE c.memory_id=m.id))
+                    AND (NOT ?5 OR m.category!='knowledge')",
+            ).map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map(
+                    params![
+                        query.category,
+                        conversation_scope,
+                        workspace_scope,
+                        scope.exclude_documents,
+                        scope.exclude_knowledge,
+                        embedding_model,
+                        chrono::Utc::now().timestamp_millis(),
+                        lexical_query.fts_expression(),
+                    ],
+                    |row| {
+                        let mut memory = read_memory(row)?;
+                        if embedding_model.is_some() && memory.embedding.is_some() {
+                            let hash: Option<String> = row.get(9)?;
+                            if hash.as_deref()
+                                != Some(
+                                    super::memory_governance::content_hash(&memory.content)
+                                        .as_str(),
+                                )
+                            {
+                                memory.embedding = None;
+                            }
+                        }
+                        let scope = MemoryScope::from_storage(&row.get::<_, String>(11)?);
+                        Ok((
+                            memory,
+                            row.get::<_, i64>(10)?,
+                            scope,
+                            row.get::<_, bool>(12)?,
+                        ))
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?
+        };
         let now = chrono::Utc::now().timestamp_millis();
         let use_hybrid = query_embedding.is_some();
         let q_embed = query_embedding;
 
         let mut scored: Vec<ScoredMemory> = permitted
             .into_iter()
-            .filter_map(|mem| {
-                let text_score = compute_text_score(&query.q, &mem.content);
+            .filter_map(|(mem, revision, memory_scope, fts_match)| {
+                let text_score =
+                    lexical_query
+                        .score(&mem.content)
+                        .max(if fts_match { 0.25 } else { 0.0 });
 
                 // Vector score
                 let vector_score = if use_hybrid {
@@ -718,7 +901,10 @@ impl Database {
                 };
 
                 // Candidate filtering
-                if text_score == 0.0 && vector_score < MIN_VECTOR_RELEVANCE {
+                let relevant = text_score > 0.0 || vector_score >= MIN_VECTOR_RELEVANCE;
+                let pinned =
+                    scope.include_conversation_pins && memory_scope == MemoryScope::Conversation;
+                if !relevant && !pinned {
                     return None;
                 }
 
@@ -739,9 +925,15 @@ impl Database {
 
                 Some(ScoredMemory {
                     memory: mem,
-                    score: (final_score * 1000.0).round() / 1000.0,
+                    score: if relevant {
+                        (final_score * 1000.0).round() / 1000.0
+                    } else {
+                        0.0
+                    },
                     lexical_score: text_score,
                     vector_score,
+                    revision,
+                    scope: memory_scope,
                 })
             })
             .collect();
@@ -750,6 +942,7 @@ impl Database {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.scope.cmp(&a.scope))
                 .then_with(|| b.memory.updated_at.cmp(&a.memory.updated_at))
         });
 
@@ -758,32 +951,101 @@ impl Database {
         Ok(scored)
     }
 
-    /// Batch delete memories (reserved for future use)
+    /// Delete the requested memories through the same purge transaction.
     pub fn delete_memories_by_ids(&self, ids: &[String]) -> Result<usize, String> {
+        let identity = self
+            .get_or_create_cloud_identity()
+            .map_err(|e| e.to_string())?;
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let mut existing = Vec::new();
+        {
+            let mut query = tx
+                .prepare("SELECT 1 FROM memories WHERE id=?1")
+                .map_err(|e| e.to_string())?;
+            for id in ids {
+                if query
+                    .query_row([id], |_| Ok(()))
+                    .optional()
+                    .map_err(|e| e.to_string())?
+                    .is_some()
+                {
+                    existing.push(id.as_str());
+                }
+            }
+        }
+        self.record_memory_purge(super::memory_purge_journal::PurgeKind::Memory, &existing)
+            .map_err(|e| e.to_string())?;
         let mut count = 0;
         for id in ids {
-            let deleted = tx
-                .execute("DELETE FROM memories WHERE id=?1", params![id])
-                .map_err(|e| e.to_string())?;
-            if deleted > 0 {
-                super::connectors::remove_connector_entity_on(&tx, "memory", id)
-                    .map_err(|e| e.to_string())?;
-                super::connectors::remove_connector_entity_on(&tx, "knowledge", id)
-                    .map_err(|e| e.to_string())?;
-                count += deleted;
-            }
+            count += delete_memory_on(&tx, id, &identity.device_id).map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(count)
     }
 }
 
+pub(super) fn delete_memory_on(
+    tx: &rusqlite::Transaction<'_>,
+    id: &str,
+    device: &str,
+) -> rusqlite::Result<usize> {
+    let removed = tx.execute("DELETE FROM memories WHERE id=?1", [id])?;
+    if removed > 0 {
+        super::memory_activity::record_memory_removal(tx, chrono::Utc::now().timestamp_millis())?;
+        super::cloud::capture::record_local_deletion_tx(tx, "memory", id, device)?;
+    }
+    super::connectors::remove_connector_entity_on(tx, "memory", id)?;
+    super::connectors::remove_connector_entity_on(tx, "knowledge", id)?;
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CreateMemoryRequest, UpdateMemoryRequest};
+    use super::{CreateMemoryRequest, RetrieveQuery, UpdateMemoryRequest};
     use crate::db::Database;
+
+    #[test]
+    fn recall_uses_words_and_phrases_instead_of_scattered_characters() {
+        let db = Database::new(std::path::Path::new(":memory:")).unwrap();
+        for content in [
+            "用户偏好导出 CSV 使用 UTF-8",
+            "出口审批流程",
+            "rustic 风格",
+            "Rust 安全执行",
+        ] {
+            db.create_memory(&CreateMemoryRequest {
+                content: content.into(),
+                category: "note".into(),
+                source: "manual".into(),
+                source_conversation_id: None,
+                metadata: None,
+            })
+            .unwrap();
+        }
+        for (q, expected) in [
+            ("导出 CSV 的配置", "用户偏好导出 CSV 使用 UTF-8"),
+            ("Rust", "Rust 安全执行"),
+        ] {
+            let results = db
+                .retrieve_memories(&RetrieveQuery {
+                    q: q.into(),
+                    top_k: 10,
+                    category: None,
+                })
+                .unwrap();
+            assert_eq!(
+                results
+                    .iter()
+                    .map(|item| item.memory.content.as_str())
+                    .collect::<Vec<_>>(),
+                vec![expected],
+                "{q}"
+            );
+        }
+    }
 
     fn test_database() -> (Database, std::path::PathBuf) {
         let path = std::env::temp_dir().join(format!(

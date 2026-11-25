@@ -25,6 +25,7 @@ pub struct UpdateWorkflowGraphRequest {
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowRunsParams {
     pub workflow_graph_id: Option<String>,
+    pub parent_execution_id: Option<String>,
     pub status: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,

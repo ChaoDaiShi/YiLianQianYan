@@ -43,7 +43,7 @@ pub fn restrict_runtime(
     runtime.bindings.knowledge.clear();
     runtime.bindings.restrict_memory = true;
     runtime.bindings.restrict_knowledge = true;
-    runtime.prompt = presets::prompt(db, preset.as_ref())?;
+    (runtime.prompt, runtime.generation) = presets::prompt(db, preset.as_ref())?;
     Ok(())
 }
 

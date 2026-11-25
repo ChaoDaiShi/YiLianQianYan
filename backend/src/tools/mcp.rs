@@ -311,19 +311,49 @@ impl Tool for McpToolAdapter {
     /// (never a panic, never propagated as an `Err`). Approval decisions are
     /// handled upstream by the SecurityExecutionGateway.
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
+        self.execute_inner(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        context: &crate::tools::trait_def::ToolExecutionContext,
+    ) -> ToolResult {
+        self.execute_inner(args, Some(context)).await
+    }
+}
+
+impl McpToolAdapter {
+    async fn execute_inner(
+        &self,
+        args: serde_json::Value,
+        context: Option<&crate::tools::trait_def::ToolExecutionContext>,
+    ) -> ToolResult {
         // Managed runtime path (production): route through McpRuntimeManager.
         if let Some(manager) = &self.manager {
             let cancel = tokio_util::sync::CancellationToken::new();
-            return match manager
-                .call_tool(&self.server_id, &self.remote_tool_name, args, &cancel)
-                .await
-            {
-                Ok(result) if !result.is_error => {
-                    ToolResult::success_with_structured(result.text, result.structured_content)
-                }
-                Ok(result) => {
-                    ToolResult::error(result.text).with_structured(result.structured_content)
-                }
+            let result = if let Some(context) = context {
+                manager
+                    .call_tool_with_context(
+                        &self.server_id,
+                        &self.remote_tool_name,
+                        args,
+                        &cancel,
+                        Some(context),
+                    )
+                    .await
+            } else {
+                manager
+                    .call_tool(&self.server_id, &self.remote_tool_name, args, &cancel)
+                    .await
+            };
+            return match result {
+                Ok(result) if !result.is_error => normalize_mcp_outcome(
+                    ToolResult::success_with_structured(result.text, result.structured_content),
+                ),
+                Ok(result) => normalize_mcp_outcome(
+                    ToolResult::error(result.text).with_structured(result.structured_content),
+                ),
                 Err(error) => {
                     let safe = crate::utils::text::truncate_chars(&error.to_string(), 500);
                     ToolResult::error(format!("MCP tool execution failed: {safe}"))
@@ -338,13 +368,36 @@ impl Tool for McpToolAdapter {
         )
         .await
         {
-            Ok(result) => result,
+            Ok(result) => normalize_mcp_outcome(result),
             Err(error) => {
                 let safe = crate::utils::text::truncate_chars(&error.to_string(), 500);
                 ToolResult::error(format!("MCP tool execution failed: {safe}"))
             }
         }
     }
+}
+
+/// Provider completion is not proof of a completed external mutation. Keep the
+/// operation identity and all structured evidence, but prevent an explicit
+/// unknown result from being promoted by the generic MCP success envelope.
+fn normalize_mcp_outcome(mut result: ToolResult) -> ToolResult {
+    let unknown = result.structured.as_ref().is_some_and(|value| {
+        value
+            .get("result_state")
+            .and_then(serde_json::Value::as_str)
+            == Some("unknown")
+    });
+    if unknown {
+        if let Some(serde_json::Value::Object(value)) = result.structured.as_mut() {
+            value.insert("state".into(), serde_json::json!("result_unknown"));
+        }
+        result.ok = false;
+        result.error = Some(
+            "External operation result is unknown; inspect original operation before any retry"
+                .into(),
+        );
+    }
+    result
 }
 
 /// Register a batch of discovered MCP tools into a runtime registry snapshot.
@@ -434,6 +487,45 @@ mod tests {
         let tool_ns = sanitize_tool_name(tool.name.as_str()).unwrap();
         let tag = derive_binding_tag(server, tool).unwrap();
         build_exposed_name(&ns, &tag, &tool_ns).unwrap()
+    }
+
+    #[test]
+    fn mcp_unknown_mutation_preserves_operation_and_blocks_success() {
+        use crate::agent::verifier::VerificationResult;
+        use crate::execution::outcome::{interpret_tool_result, VerifiedExecutionResult};
+        let source = ToolResult::success_with_structured(
+            "click returned",
+            Some(serde_json::json!({
+                "result_state":"unknown", "submitted":null, "operation_id":"original-operation",
+                "evidence_id":"original-evidence", "state":"completed"
+            })),
+        );
+        let result = normalize_mcp_outcome(source);
+        assert!(!result.ok);
+        assert_eq!(
+            result.structured.as_ref().unwrap()["operation_id"],
+            "original-operation"
+        );
+        assert_eq!(
+            result.structured.as_ref().unwrap()["evidence_id"],
+            "original-evidence"
+        );
+        assert!(matches!(
+            interpret_tool_result(&result, &VerificationResult::success("transport ok", None)),
+            VerifiedExecutionResult::ResultUnknown { .. }
+        ));
+    }
+
+    #[test]
+    fn mcp_completed_results_and_failures_keep_their_existing_envelope() {
+        let success = ToolResult::success_with_structured(
+            "observed",
+            Some(serde_json::json!({"result_state":"clicked"})),
+        );
+        assert!(normalize_mcp_outcome(success).ok);
+        let failure = normalize_mcp_outcome(ToolResult::error("permission revoked"));
+        assert!(!failure.ok);
+        assert_eq!(failure.error.as_deref(), Some("permission revoked"));
     }
 
     #[test]

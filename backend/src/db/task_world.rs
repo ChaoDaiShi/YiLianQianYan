@@ -212,6 +212,29 @@ impl Database {
         &self,
         control: &TaskExecutionControl,
     ) -> Result<(), TaskWorldPersistenceError> {
+        Self::save_execution_control_on(&self.conn(), control)
+    }
+
+    pub(crate) fn save_task_pause(
+        &self,
+        control: &TaskExecutionControl,
+        attempts: &[crate::modules::task::NodeExecution],
+    ) -> Result<(), TaskWorldPersistenceError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for attempt in attempts {
+            super::task_execution::update_node_execution_on(&tx, attempt)
+                .map_err(|error| TaskWorldPersistenceError::Integrity(error.to_string()))?;
+        }
+        Self::save_execution_control_on(&tx, control)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn save_execution_control_on(
+        conn: &rusqlite::Connection,
+        control: &TaskExecutionControl,
+    ) -> Result<(), TaskWorldPersistenceError> {
         let generation = i64::try_from(control.generation).map_err(|_| {
             TaskWorldPersistenceError::Integrity(format!(
                 "execution control generation {} cannot be represented by SQLite INTEGER",
@@ -219,7 +242,6 @@ impl Database {
             ))
         })?;
         let paused_nodes = encode_json("paused_nodes_json", &control.paused_nodes)?;
-        let conn = self.conn();
         conn.execute(
             "INSERT INTO task_world_execution_controls
                 (graph_id, state, generation, paused_nodes_json, updated_at)

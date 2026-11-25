@@ -120,10 +120,17 @@ pub struct DiscoveredSubagent {
 
 /// Shared application server state
 pub struct AppServer {
+    pub software_runtime: Arc<crate::software::SoftwareRuntime>,
+    pub plugin_services: Arc<crate::plugin::service_runtime::PluginServiceRuntime>,
+    pub(crate) memory_indexer: crate::api::memories::indexing::MemoryIndexer,
+    pub(crate) chat_context_cache: Arc<crate::execution::chat_context_cache::ChatContextCache>,
     pub db: Database,
     pub app_data_dir: std::path::PathBuf,
     pub config: Arc<RwLock<AppConfig>>,
+    pub(crate) settings_update_lock: tokio::sync::Mutex<()>,
     pub tool_registry: Arc<ToolRegistry>,
+    /// Same visible desktop browser host; unavailable in standalone web mode.
+    pub browser_runtime: Arc<crate::browser::BrowserRuntime>,
     /// Application-lifetime registry shared by Bash, ProcessTool, and every
     /// production SecurityExecutionGateway.
     pub managed_process_registry: SharedManagedProcessRegistry,
@@ -133,6 +140,7 @@ pub struct AppServer {
     pub workspace_root: String,
     /// Active generation tasks (conversation_id → cancel token)
     pub active_tasks: Mutex<HashMap<String, CancellationToken>>,
+    pub(crate) chat_steering: Mutex<HashMap<String, Arc<crate::agent::steering::Steering>>>,
     /// Serializes persistence handoff between a chat turn and its approval continuation.
     pub chat_turn_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Active workflow runs (run_id → cancel token). Distinct from `active_tasks`
@@ -174,6 +182,8 @@ pub struct AppServer {
     /// Authoritative v1 Task World registry and persistence boundary.
     pub task_world: TaskWorldRuntime,
     pub proofloop_budget: Arc<crate::modules::task::proofloop::budget::GoalBudgetMeter>,
+    pub(crate) resource_budget: crate::modules::resource::policy::Budget,
+    pub(crate) memory_pressure: Arc<std::sync::atomic::AtomicBool>,
     pub delegation_slots: Arc<Semaphore>,
     pub external_agent_slots: Arc<Semaphore>,
     /// Isolated ScopedDb wrapper binding database with active scope lease and gate latch.
@@ -272,6 +282,7 @@ impl AppServer {
     /// Migrate legacy plaintext secrets into the SecretStore (write → verify →
     /// clear → persist refs). Must run BEFORE `register_mcp_servers_from_db`.
     pub async fn migrate_secrets(&self) -> crate::integrations::secret::SecretMigrationReport {
+        let _settings_update = self.settings_update_lock.lock().await;
         let mut config = self.config.write();
         let mut mcp_servers = self.db.list_mcp_servers().unwrap_or_default();
         let report =
@@ -480,17 +491,32 @@ impl AppServer {
     /// The returned snapshot is independent of `self.tool_registry` (which stays
     /// the immutable builtin registry).
     pub async fn build_agent_tool_registry(&self) -> Arc<ToolRegistry> {
+        self.build_agent_tool_registry_scoped(None).await
+    }
+
+    pub(crate) async fn build_agent_tool_registry_scoped(
+        &self,
+        scope: Option<&crate::modules::harness_profiles::ToolScope>,
+    ) -> Arc<ToolRegistry> {
         // ── Phase A: Child Source snapshot (builtins + MCP) ──
         let mut base_registry = ToolRegistry::with_defaults_and_process_registry(
             &self.workspace_root,
             Arc::clone(&self.managed_process_registry),
         );
-        base_registry.register(Arc::new(crate::tools::LoadSkillTool::with_discovery(
-            Arc::clone(&self.skill_discovery),
-        )));
+        base_registry.register_visible_browser(Arc::clone(&self.browser_runtime));
+        base_registry.register_software(Arc::clone(&self.software_runtime));
+        let mut skill =
+            crate::tools::LoadSkillTool::with_discovery(Arc::clone(&self.skill_discovery));
+        if let Some(scope) = scope {
+            skill = skill.with_allowed_names(scope.skill_names.clone());
+        }
+        base_registry.register(Arc::new(skill));
         base_registry.register(Arc::new(AiSearchTool::new(
             self.db.clone_connection(),
             Arc::clone(&self.secret_store),
+        )));
+        base_registry.register(Arc::new(crate::tools::memory::SaveMemoryTool(
+            self.db.clone_connection(),
         )));
         for kind in ["vision", "image"] {
             base_registry.register(Arc::new(
@@ -526,7 +552,11 @@ impl AppServer {
             {
                 continue;
             }
-            let Some(db_server) = db_servers.get(&runtime.server_id) else {
+            let managed = runtime.plugin_mcp_server();
+            let Some(db_server) = managed
+                .as_ref()
+                .or_else(|| db_servers.get(&runtime.server_id))
+            else {
                 continue;
             };
             let local_tools: Vec<crate::integrations::mcp::legacy_stdio::McpTool> = runtime
@@ -560,7 +590,10 @@ impl AppServer {
                 .collect(),
         );
         // Freeze the Child Source snapshot (builtins + MCP, never subagents).
-        let child_source_registry = Arc::new(base_registry);
+        let child_source_registry = match scope {
+            Some(scope) => Arc::new(base_registry.filtered(|name| scope.allows(name))),
+            None => Arc::new(base_registry),
+        };
 
         // ── Phase B: Parent registry = Child Source copy + Subagents ──
         let mut parent_registry = ToolRegistry::new();
@@ -571,7 +604,7 @@ impl AppServer {
 
         let executor: Arc<dyn crate::tools::subagent::SubagentExecutor> = Arc::new(
             crate::agent::subagent_runtime::LocalSubagentExecutor::new(
-                self.config.read().clone(),
+                Arc::clone(&self.config),
                 self.workspace_root.clone(),
                 Arc::clone(&child_source_registry),
                 self.db.clone_connection(),
@@ -589,38 +622,30 @@ impl AppServer {
             executor,
         );
         tracing::info!(registered, "Subagent tools registered for runtime registry");
-        let external_gateway = Arc::new(
-            crate::safety::SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-                self.config.read().sandbox.clone(),
-                self.workspace_root.clone(),
-                Arc::clone(&child_source_registry),
-                Arc::new(crate::agent::verifier::DefaultVerifier::new(
-                    &self.workspace_root,
-                )),
-                Arc::new(self.audit_recorder.clone()),
-            )
-            .with_permissions_config(self.config.clone())
-            .with_db(Arc::new(self.db.clone_connection()))
-            .with_grant_enforcement(),
-        );
-        for config in self.config.read().external_agents.clone() {
-            let handler: Arc<dyn crate::integrations::acp::AcpPermissionHandler> =
-                Arc::new(crate::integrations::acp::GatewayAcpPermissionHandler::new(
-                    Arc::clone(&external_gateway),
-                    config.cwd.clone(),
-                    crate::safety::SecuritySubject::local_user(),
-                ));
-            if let Err(error) = crate::integrations::acp::register_configured_acp_agent_with_slot(
-                &mut parent_registry,
-                config,
-                Some(handler),
-                Arc::clone(&self.external_agent_slots),
-            ) {
-                tracing::warn!(error=%error,"Configured external agent is unavailable");
+        let external_agents = self.config.read().external_agents.clone();
+        if !external_agents.is_empty() {
+            let permissions = Arc::new(
+                crate::integrations::acp::gateway_permission::DelegatedAcpPermissions::new(
+                    self,
+                    &child_source_registry,
+                ),
+            );
+            for config in external_agents {
+                if let Err(error) = crate::integrations::acp::tool::register_delegated_acp_agent(
+                    &mut parent_registry,
+                    config,
+                    Arc::clone(&permissions),
+                    Arc::clone(&self.external_agent_slots),
+                ) {
+                    tracing::warn!(error=%error,"Configured external agent is unavailable");
+                }
             }
         }
 
-        Arc::new(parent_registry)
+        match scope {
+            Some(scope) => Arc::new(parent_registry.filtered(|name| scope.allows(name))),
+            None => Arc::new(parent_registry),
+        }
     }
 
     /// Invalidate the lazily-cached capability registry snapshot.
@@ -677,7 +702,14 @@ impl AppServer {
         };
         drop(config);
         *self.skill_discovery.write() =
-            crate::tools::skill::SkillDiscovery::discover(&directories, &self.workspace_root);
+            if let Some(bundle) = self.browser_runtime.local_fixture_bundled_skills() {
+                crate::tools::skill::SkillDiscovery::discover_local_fixture(
+                    &self.workspace_root,
+                    bundle,
+                )
+            } else {
+                crate::tools::skill::SkillDiscovery::discover(&directories, &self.workspace_root)
+            };
         self.invalidate_capability_registry();
     }
 

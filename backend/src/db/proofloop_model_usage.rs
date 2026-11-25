@@ -42,6 +42,17 @@ impl Database {
         source: &str,
         at: i64,
     ) -> Result<String, ProofError> {
+        self.reserve_goal_model_call_with_remaining(goal, planning, source, at)
+            .map(|(id, _, _)| id)
+    }
+
+    pub(crate) fn reserve_goal_model_call_with_remaining(
+        &self,
+        goal: &GoalContract,
+        planning: &PlanningUsage,
+        source: &str,
+        at: i64,
+    ) -> Result<(String, u32, u64), ProofError> {
         self.initialize_proofloop_model_usage()?;
         let Some(initial_tokens) = planning.total_tokens else {
             return Err(error("规划用量未知，不能确认剩余模型预算"));
@@ -54,9 +65,15 @@ impl Database {
         if unknown > 0 {
             return Err(error("模型调用尚未完成结算"));
         }
-        if planning.model_calls.saturating_add(count) >= goal.budget.max_model_calls
-            || initial_tokens.saturating_add(tokens) >= goal.budget.max_total_tokens
-        {
+        let remaining_calls = goal
+            .budget
+            .max_model_calls
+            .saturating_sub(planning.model_calls.saturating_add(count));
+        let remaining_tokens = goal
+            .budget
+            .max_total_tokens
+            .saturating_sub(initial_tokens.saturating_add(tokens));
+        if remaining_calls == 0 || remaining_tokens == 0 {
             return Err(ProofError::new(
                 "proofloop_budget_exhausted",
                 "目标的模型预算已耗尽",
@@ -65,7 +82,7 @@ impl Database {
         let id = uuid::Uuid::new_v4().to_string();
         tx.execute("INSERT INTO proofloop_model_invocations(invocation_id,goal_id,goal_version,source,total_tokens,elapsed_ms,status,created_at) VALUES(?1,?2,?3,?4,NULL,NULL,'pending',?5)",rusqlite::params![id,goal.goal_id,goal.version,source,at]).map_err(error)?;
         tx.commit().map_err(error)?;
-        Ok(id)
+        Ok((id, remaining_calls, remaining_tokens))
     }
     pub fn finish_goal_model_call(
         &self,

@@ -12,6 +12,7 @@
 // Gateway; execution remains the existing runtimes.
 // ============================================================
 
+pub mod availability;
 pub mod builtin;
 pub mod import_archive;
 pub mod import_owner;

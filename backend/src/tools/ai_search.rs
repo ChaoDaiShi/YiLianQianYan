@@ -5,7 +5,7 @@ use super::{RiskLevel, Tool, ToolExecutionContext, ToolResult};
 use crate::{
     db::Database,
     integrations::secret::SecretStore,
-    modules::cloud::search::SearchRequest,
+    modules::cloud::search::{SearchRequest, SearchResponse},
     safety::{
         DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
         ToolSecurityDescriptor,
@@ -162,24 +162,113 @@ impl Tool for AiSearchTool {
         )
         .await
         {
-            Ok(mut response) => {
-                for result in &mut response.results {
-                    result.snippet = result
-                        .snippet
-                        .take()
-                        .map(|value| crate::utils::text::truncate_chars(&value, 2_000));
-                    result.content = result
-                        .content
-                        .take()
-                        .map(|value| crate::utils::text::truncate_chars(&value, 6_000));
-                }
-                let count = response.results.len();
-                ToolResult::success_with_structured(
-                    format!("搜索完成，共返回 {count} 条结果，请保留来源链接。"),
-                    serde_json::to_value(response).ok(),
-                )
-            }
+            Ok(response) => search_tool_result(response),
             Err(error) => ToolResult::error(error.to_string()),
         }
+    }
+}
+
+fn search_tool_result(mut response: SearchResponse) -> ToolResult {
+    use crate::utils::text::truncate_chars;
+
+    let count = response.results.len();
+    let mut output =
+        format!("搜索完成，共返回 {count} 条结果。以下公开资料供核对，请保留来源链接。");
+    for result in &mut response.results {
+        result.snippet = result
+            .snippet
+            .take()
+            .map(|value| truncate_chars(&value, 2_000));
+        result.content = result
+            .content
+            .take()
+            .map(|value| truncate_chars(&value, 6_000));
+        output.push_str(&format!(
+            "\n\n{}\n{}",
+            truncate_chars(&result.title, 120),
+            result.url
+        ));
+        if let Some(excerpt) = result
+            .snippet
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+            .or(result.content.as_deref())
+        {
+            output.push('\n');
+            output.push_str(&truncate_chars(excerpt, 440));
+        }
+    }
+    ToolResult::success_with_structured(output, serde_json::to_value(response).ok())
+}
+
+pub(crate) fn display_result(name: &str, result: &ToolResult) -> String {
+    if name != "ai_search" || !result.ok {
+        return result.content.clone();
+    }
+    let Some(response) = result
+        .structured
+        .as_ref()
+        .and_then(|value| serde_json::from_value::<SearchResponse>(value.clone()).ok())
+    else {
+        return result.content.clone();
+    };
+    let sources = response.results.into_iter().filter_map(|item| {
+        let url = url::Url::parse(&item.url).ok()?;
+        if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() {
+            return None;
+        }
+        let domain = url.host_str()?;
+        Some(serde_json::json!({
+            "url": url.as_str(), "domain": domain,
+            "title": crate::utils::text::truncate_chars(&item.title, 120),
+            "excerpt": item.snippet.or(item.content).map(|text| crate::utils::text::truncate_chars(&text, 420)),
+        }))
+    }).take(10).collect::<Vec<_>>();
+    serde_json::json!({"kind":"web_search_sources", "text":result.content, "sources":sources})
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::cloud::search::SearchResult;
+
+    #[test]
+    fn search_tool_result_gives_the_model_titles_links_and_excerpts() {
+        let result = search_tool_result(SearchResponse {
+            request_id: "fixture".into(),
+            total_results: 2,
+            search_time_ms: 15,
+            results: vec![
+                SearchResult {
+                    title: "文档一".into(),
+                    url: "https://example.org/first".into(),
+                    snippet: Some("第一份材料摘要".into()),
+                    content: None,
+                },
+                SearchResult {
+                    title: "文档二".into(),
+                    url: "https://example.org/second".into(),
+                    snippet: None,
+                    content: Some("第二份材料正文".repeat(1000)),
+                },
+            ],
+        });
+        let model_text = crate::agent::engine::summarize_tool_result(&result.content);
+        for expected in [
+            "文档一",
+            "https://example.org/first",
+            "第一份材料摘要",
+            "文档二",
+            "https://example.org/second",
+            "第二份材料正文",
+        ] {
+            assert!(model_text.contains(expected), "Missing {expected}");
+        }
+        assert!(model_text.chars().count() < 2000);
+        assert_eq!(
+            result.structured.unwrap()["results"][1]["url"],
+            "https://example.org/second"
+        );
     }
 }

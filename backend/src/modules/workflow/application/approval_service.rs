@@ -52,6 +52,30 @@ pub async fn resolve_workflow_approval(
         .clone()
         .ok_or_else(|| "审批未绑定工作流节点".to_string())?;
 
+    // Invalid/superseded parents are rejected before consuming the user's
+    // decision. Reload again after consumption to close the normal race.
+    let candidate = db
+        .get_workflow_run(&WorkflowRunId::new(workflow_run_id.clone()).map_err(|e| e.to_string())?)?
+        .ok_or("workflow run missing")?;
+    if approve {
+        crate::modules::capability::import_store::require_active_plugin_resource(
+            db,
+            &candidate.workflow_graph_id,
+        )?;
+    }
+    let candidate_node =
+        WorkflowNodeId::new(workflow_node_id.clone()).map_err(|e| e.to_string())?;
+    if candidate.run.status.is_terminal()
+        || cancel.is_cancelled()
+        || !candidate
+            .run
+            .node(&candidate_node)
+            .is_some_and(|node| node.status == NodeRunStatus::WaitingApproval)
+    {
+        return Err("workflow no longer waits for this original approval".into());
+    }
+    super::task_parent::ensure_parent_waiting(db, &candidate.run, approval_id)?;
+
     // Consume exactly once (replay protection).
     let approval = if approve {
         approval_store.consume_for_approval(approval_id, &lookup.conversation_id)
@@ -71,13 +95,19 @@ pub async fn resolve_workflow_approval(
         return Err("工作流已结束，不能继续执行此审批".into());
     }
 
+    super::task_parent::ensure_parent_waiting(db, &run, approval_id)?;
+
     let node_id = WorkflowNodeId::new(workflow_node_id).map_err(|error| error.to_string())?;
-    if run.node(&node_id).is_none() {
+    if !run
+        .node(&node_id)
+        .is_some_and(|node| node.status == NodeRunStatus::WaitingApproval)
+    {
         return Err("工作流节点不存在".to_string());
     }
 
     let now = chrono::Utc::now().timestamp_millis();
     if approve {
+        crate::modules::capability::import_store::require_active_plugin_resource(db, &graph_id)?;
         // Re-evaluate and execute the original approved call (TOCTOU-safe).
         let request = SecurityExecutionRequest {
             conversation_id: approval.conversation_id.clone(),
@@ -86,26 +116,47 @@ pub async fn resolve_workflow_approval(
             arguments: approval.arguments.clone(),
             subject: SecuritySubject::from_subject_id(approval.subject_id.clone()),
         };
-        let outcome = match run.execution_context.agent_id.as_ref() {
-            Some(agent) => {
-                crate::safety::execution_gateway::CURRENT_AGENT_ID
-                    .scope(
-                        agent.to_string(),
-                        gateway.execute_approved(&request, approval.risk_level),
-                    )
-                    .await
-            }
-            None => {
-                gateway
-                    .execute_approved(&request, approval.risk_level)
-                    .await
+        let invocation = async {
+            match run.execution_context.agent_id.as_ref() {
+                Some(agent) => {
+                    crate::safety::execution_gateway::CURRENT_AGENT_ID
+                        .scope(
+                            agent.to_string(),
+                            gateway.execute_approved(&request, approval.risk_level),
+                        )
+                        .await
+                }
+                None => {
+                    gateway
+                        .execute_approved(&request, approval.risk_level)
+                        .await
+                }
             }
         };
+        let owner = run.execution_context.owner.clone().unwrap_or_else(|| {
+            crate::execution::ExecutionOwner::Workflow {
+                workflow_graph_id: graph_id.clone(),
+                run_id: run.run_id.to_string(),
+            }
+        });
+        let outcome = crate::execution::owner::CURRENT_EXECUTION_OWNER
+            .scope(owner, invocation)
+            .await;
 
+        if cancel.is_cancelled() {
+            run.cancel(chrono::Utc::now().timestamp_millis());
+            db.update_workflow_run(&graph_id, &run)?;
+            return Ok(());
+        }
         run.transition_node(&node_id, NodeRunStatus::Running, now)
             .map_err(|error| error.to_string())?;
         match outcome {
-            Ok(SecurityExecutionOutcome::Executed { tool_result, .. }) if tool_result.ok => {
+            Ok(SecurityExecutionOutcome::Executed {
+                tool_result,
+                verification,
+            }) if crate::execution::interpret_tool_result(&tool_result, &verification)
+                .is_verified() =>
+            {
                 if let Some(node) = run.node_mut(&node_id) {
                     node.result = Some(NodeRunResult::new(safe_tool_result_summary(
                         &tool_result.content,
@@ -116,9 +167,12 @@ pub async fn resolve_workflow_approval(
             }
             outcome => {
                 let error = match outcome {
-                    Ok(SecurityExecutionOutcome::Executed { tool_result, .. }) => {
-                        tool_result.error.unwrap_or(tool_result.content)
-                    }
+                    Ok(SecurityExecutionOutcome::Executed {
+                        tool_result,
+                        verification,
+                    }) => super::super::executor::verified_failure_reason(
+                        &crate::execution::interpret_tool_result(&tool_result, &verification),
+                    ),
                     Ok(
                         SecurityExecutionOutcome::Denied { reason }
                         | SecurityExecutionOutcome::RequiresApproval { reason, .. },

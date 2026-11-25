@@ -40,6 +40,304 @@ fn source_registry() -> ToolRegistry {
     reg
 }
 
+#[tokio::test]
+async fn integration_child_write_uses_live_scoped_rule_and_records_delegator() {
+    use crate::config::types::{PermissionMode, SandboxProfile};
+    use crate::db::access_rules::{AccessMode, AccessRule};
+    use crate::db::SecurityAuditQuery;
+    use crate::integrations::secret::InMemorySecretStore;
+    use crate::safety::execution_gateway::SecurityExecutionOutcome;
+    use crate::safety::{
+        grant::{GrantEffect, GrantResource, GrantSource, SecurityGrant},
+        ControlSession, PermissionId, SecurityExecutionRequest, SecuritySubject,
+        CONTROL_SESSION_HEADER,
+    };
+    use axum::{
+        body::{to_bytes, Body},
+        http::{header::CONTENT_TYPE, Request, StatusCode},
+        routing::post,
+        Json, Router,
+    };
+    use serde_json::{json, Value};
+    use tokio::sync::Notify;
+    use tower::ServiceExt;
+
+    let root = std::env::temp_dir().join(format!("yilian-child-identity-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    let definition = workspace.join(".agents/agents/researcher");
+    std::fs::create_dir_all(&definition).unwrap();
+    std::fs::write(
+        definition.join("AGENT.md"),
+        "---\nname: researcher\ndescription: Fixture researcher\ntools: [write_file]\n---\n\nWrite the fixture output.",
+    )
+    .unwrap();
+    let destination = workspace.join("allowed");
+    std::fs::create_dir_all(&destination).unwrap();
+    let output = destination.join("report.txt");
+    let outside_scope = workspace.join("ungranted.txt");
+    let pending = Arc::new(Notify::new());
+    let resume_provider = Arc::new(Notify::new());
+    let provider = Router::new().route(
+        "/chat/completions",
+        post({
+            let output = output.clone();
+            let outside_scope = outside_scope.clone();
+            let pending = Arc::clone(&pending);
+            let resume_provider = Arc::clone(&resume_provider);
+            move |Json(body): Json<Value>| {
+                let output = output.clone();
+                let outside_scope = outside_scope.clone();
+                let pending = Arc::clone(&pending);
+                let resume_provider = Arc::clone(&resume_provider);
+                async move {
+                    let messages = body["messages"].as_array().unwrap();
+                    let is_first = !messages.iter().any(|message| message["role"] == "tool");
+                    let (delta, finish) = if is_first {
+                        let task = messages
+                            .iter()
+                            .find(|message| message["role"] == "user")
+                            .and_then(|message| message["content"].as_str());
+                        if task == Some("Wait before writing") {
+                            pending.notify_one();
+                            resume_provider.notified().await;
+                        }
+                        let path = if task == Some("Write outside child scope") {
+                            outside_scope
+                        } else {
+                            output
+                        };
+                        let args = json!({"path":path,"content":"scoped result"}).to_string();
+                        (
+                            json!({"tool_calls":[{"index":0,"id":"child-write","type":"function",
+                            "function":{"name":"write_file","arguments":args}}]}),
+                            "tool_calls",
+                        )
+                    } else {
+                        (json!({"content":"Fixture finished"}), "stop")
+                    };
+                    let chunk = json!({
+                        "id":"fixture-child-model",
+                        "choices":[{"index":0,"delta":delta,"finish_reason":finish}],
+                        "usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}
+                    });
+                    (
+                        [(CONTENT_TYPE, "text/event-stream")],
+                        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+                    )
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let provider = tokio::spawn(async move { axum::serve(listener, provider).await.unwrap() });
+    let workspace_path = workspace.to_str().unwrap();
+    let control = ControlSession::generate();
+    let server = Arc::new(
+        crate::app::state::AppServer::new_with_control_session_and_store(
+            &root.join("test.db"),
+            workspace_path,
+            control.clone(),
+            Arc::new(InMemorySecretStore::new()),
+        )
+        .unwrap(),
+    );
+    {
+        let mut config = server.config.write();
+        config.model.provider = "lmstudio".into();
+        config.model.name = "delegation-fixture".into();
+        config.model.base_url = format!("http://{addr}");
+        config.model.api_key.clear();
+        config.model.api_key_env.clear();
+        config.model.api_key_ref = None;
+        config.permissions.mode = PermissionMode::FullAccess;
+        config.sandbox.profile = SandboxProfile::WorkspaceWrite;
+    }
+    let parent_rule = AccessRule {
+        id: "parent-only".into(),
+        scope: "agent".into(),
+        subject_id: Some("principal-parent".into()),
+        permission_id: PermissionId::FilesystemWrite,
+        resource: None,
+        mode: AccessMode::Full,
+    };
+    let child_rule = AccessRule {
+        id: "child-resource".into(),
+        scope: "resource".into(),
+        subject_id: Some("subagent:researcher".into()),
+        permission_id: PermissionId::FilesystemWrite,
+        resource: Some(GrantResource::Filesystem {
+            root: destination.to_str().unwrap().into(),
+            recursive: true,
+        }),
+        mode: AccessMode::Full,
+    };
+    let rules_api = crate::api::build_router(Arc::clone(&server));
+    let save_rules = |rules: Vec<AccessRule>| {
+        let api = rules_api.clone();
+        let control = control.clone();
+        async move {
+            let result = api
+                .oneshot(
+                    Request::put("/api/security/access-rules")
+                        .header(CONTROL_SESSION_HEADER, control.token())
+                        .header(CONTENT_TYPE, "application/json")
+                        .body(Body::from(json!({"rules": rules}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.status(), StatusCode::OK);
+            let response: Value =
+                serde_json::from_slice(&to_bytes(result.into_body(), 8192).await.unwrap()).unwrap();
+            assert!(response["subagents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|subject| subject["subject_id"] == "subagent:researcher"));
+        }
+    };
+    save_rules(vec![parent_rule.clone()]).await;
+    let registry = server.build_agent_tool_registry().await;
+    let gateway = crate::safety::production_gateway::build(
+        &server,
+        workspace_path,
+        registry,
+        Some("principal-parent".into()),
+    );
+    let request = |tool_call_id: &str, task: &str| SecurityExecutionRequest {
+        conversation_id: "parent-conversation".into(),
+        tool_call_id: tool_call_id.into(),
+        tool_name: "subagent_researcher".into(),
+        arguments: json!({"task":task, "subject_id":"local-user"}),
+        subject: SecuritySubject::local_user(),
+    };
+
+    let unauthorized = gateway
+        .execute(&request("parent-no-grant", "Write report"), RiskLevel::Low)
+        .await
+        .unwrap();
+    assert!(matches!(
+        unauthorized,
+        SecurityExecutionOutcome::Executed { .. }
+    ));
+    assert!(
+        !output.exists(),
+        "child inherited the parent's write permission"
+    );
+
+    save_rules(vec![parent_rule.clone(), child_rule.clone()]).await;
+    let authorized = gateway
+        .execute(
+            &request("parent-with-grant", "Write report"),
+            RiskLevel::Low,
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(authorized, SecurityExecutionOutcome::Executed { tool_result, .. } if tool_result.ok)
+    );
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), "scoped result");
+    std::fs::remove_file(&output).unwrap();
+
+    let out_of_scope = gateway
+        .execute(
+            &request("parent-outside-scope", "Write outside child scope"),
+            RiskLevel::Low,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        out_of_scope,
+        SecurityExecutionOutcome::Executed { .. }
+    ));
+    assert!(
+        !outside_scope.exists(),
+        "the grant reached outside its directory"
+    );
+
+    let revoke_during_child = async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), pending.notified())
+            .await
+            .unwrap();
+        save_rules(vec![parent_rule.clone()]).await;
+        resume_provider.notify_one();
+    };
+    let revoked_request = request("parent-during-revocation", "Wait before writing");
+    let (revoked, ()) = tokio::join!(
+        gateway.execute(&revoked_request, RiskLevel::Low),
+        revoke_during_child
+    );
+    assert!(matches!(
+        revoked.unwrap(),
+        SecurityExecutionOutcome::Executed { .. }
+    ));
+    assert!(
+        !output.exists(),
+        "child reused a permission revoked while its model was running"
+    );
+
+    save_rules(vec![parent_rule, child_rule]).await;
+    let revoke_parent = async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), pending.notified())
+            .await
+            .unwrap();
+        server
+            .db
+            .create_grant(&SecurityGrant {
+                id: "revoked-parent-delegation".into(),
+                subject_id: "local-user".into(),
+                effect: GrantEffect::Deny,
+                permission: PermissionId::AgentDelegate,
+                resource: GrantResource::Any,
+                source: GrantSource::User,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                expires_at: None,
+            })
+            .unwrap();
+        resume_provider.notify_one();
+    };
+    let request = request("parent-delegation-revoked", "Wait before writing");
+    let (denied, ()) = tokio::join!(gateway.execute(&request, RiskLevel::Low), revoke_parent);
+    assert!(matches!(
+        denied.unwrap(),
+        SecurityExecutionOutcome::Executed { .. }
+    ));
+    assert!(!output.exists(), "child reused a revoked parent delegation");
+
+    let audit = server
+        .db
+        .list_security_audit_events(&SecurityAuditQuery::default())
+        .unwrap();
+    let child_decisions: Vec<_> = audit
+        .iter()
+        .filter(|event| {
+            event.tool_call_id.as_deref() == Some("child-write")
+                && event.event_type == "policy_decided"
+        })
+        .collect();
+    assert_eq!(child_decisions.len(), 5);
+    assert!(child_decisions
+        .iter()
+        .all(|event| event.subject_id == "subagent:researcher"));
+    assert!(child_decisions
+        .iter()
+        .any(|event| event.decision_status.as_deref() == Some("allow")
+            && event.details["context"]["delegation"]["parent_tool_call_id"]
+                == "parent-with-grant"));
+    assert!(child_decisions
+        .iter()
+        .any(|event| event.decision_status.as_deref() == Some("deny")
+            && event.details["context"]["delegation"]["parent_tool_call_id"]
+                == "parent-delegation-revoked"
+            && event.details["context"]["reason"] == "delegation permission was revoked"));
+    drop(gateway);
+    drop(rules_api);
+    drop(server);
+    provider.abort();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn spec(name: &str) -> SubagentExecutionSpec {
     SubagentExecutionSpec {
         name: name.to_string(),
@@ -79,6 +377,7 @@ fn structured_tools_are_intersected_with_the_trusted_definition() {
 #[test]
 fn goal_and_evidence_references_require_active_execution_context() {
     let scope = crate::agent::delegation::ExecutionScope {
+        owner: None,
         cancel: tokio_util::sync::CancellationToken::new(),
         budget: None,
         handoff_id: None,

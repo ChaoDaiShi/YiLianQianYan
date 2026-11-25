@@ -6,6 +6,7 @@
 pub mod agent;
 pub mod api;
 pub mod app;
+pub mod browser;
 pub mod config;
 pub mod db;
 pub mod execution;
@@ -16,6 +17,7 @@ pub mod modules;
 pub mod plugin;
 pub mod safety;
 pub mod shared;
+pub mod software;
 pub mod tools;
 pub mod utils;
 pub mod workspace;
@@ -23,6 +25,10 @@ pub mod workspace;
 /// Create the server instance (but don't start listening yet).
 pub use app::bootstrap::create_server;
 /// Serving entrypoints for the standalone binary and Tauri embedding.
-pub use app::lifecycle::{serve, serve_in_background, serve_in_background_with_control_token};
+pub use app::lifecycle::{
+    serve, serve_in_background, serve_in_background_with_browser,
+    serve_in_background_with_control_token, serve_in_background_with_desktop_events,
+    serve_in_background_with_software,
+};
 pub use app::state::AppServer;
 pub use db::Database;

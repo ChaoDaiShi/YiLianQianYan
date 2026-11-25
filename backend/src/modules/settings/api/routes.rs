@@ -7,6 +7,7 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
+use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::app::state::AppServer;
@@ -18,11 +19,18 @@ pub async fn get_handler(State(server): State<Arc<AppServer>>) -> Json<serde_jso
     Json(service::build_redacted_config(&server).await)
 }
 
+#[derive(Deserialize)]
+pub struct UpdateSettingsRequest {
+    #[serde(flatten)]
+    pub(super) config: AppConfig,
+    pub(super) expected_revision: Option<u64>,
+}
+
 pub async fn update_handler(
     State(server): State<Arc<AppServer>>,
-    Json(incoming): Json<AppConfig>,
-) -> Json<serde_json::Value> {
-    update::apply(&server, incoming).await
+    Json(incoming): Json<UpdateSettingsRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    update::apply(&server, incoming.config, incoming.expected_revision).await
 }
 
 pub async fn verify_provider_handler(

@@ -5,6 +5,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::modules::settings::application::ServiceConfigurationSource;
 use crate::safety::{describe_builtin_tool, DescriptorError, ToolSecurityDescriptor};
 
 /// Context supplied only by the SecurityExecutionGateway for side-effecting
@@ -13,7 +14,11 @@ use crate::safety::{describe_builtin_tool, DescriptorError, ToolSecurityDescript
 pub struct ToolExecutionContext {
     pub(crate) managed_process_registry: crate::isolation::SharedManagedProcessRegistry,
     pub(crate) tool_call_id: String,
+    pub(crate) conversation_id: Option<String>,
+    authorization_epoch: Option<u64>,
     pub(crate) authorized_resources: Vec<crate::safety::grant::AuthorizedResource>,
+    invocation: Option<crate::safety::subject::ToolInvocation>,
+    delegation: Option<crate::safety::subject::DelegatedSubject>,
 }
 
 impl ToolExecutionContext {
@@ -25,8 +30,46 @@ impl ToolExecutionContext {
         Self {
             managed_process_registry,
             tool_call_id: tool_call_id.into(),
+            conversation_id: None,
+            authorization_epoch: None,
             authorized_resources,
+            invocation: None,
+            delegation: None,
         }
+    }
+
+    pub(crate) fn with_conversation_id(mut self, conversation_id: String) -> Self {
+        self.conversation_id = Some(conversation_id);
+        self
+    }
+    pub(crate) fn conversation_id(&self) -> Option<&str> {
+        self.conversation_id.as_deref()
+    }
+
+    pub(crate) fn with_invocation(
+        mut self,
+        invocation: crate::safety::subject::ToolInvocation,
+        delegation: Option<crate::safety::subject::DelegatedSubject>,
+    ) -> Self {
+        self.invocation = Some(invocation);
+        self.delegation = delegation;
+        self
+    }
+
+    pub(crate) fn invocation(&self) -> Option<&crate::safety::subject::ToolInvocation> {
+        self.invocation.as_ref()
+    }
+
+    pub(crate) fn delegation(&self) -> Option<&crate::safety::subject::DelegatedSubject> {
+        self.delegation.as_ref()
+    }
+
+    pub(crate) fn with_authorization_epoch(mut self, epoch: Option<u64>) -> Self {
+        self.authorization_epoch = epoch;
+        self
+    }
+    pub(crate) fn authorization_epoch(&self) -> Option<u64> {
+        self.authorization_epoch
     }
 
     pub(crate) fn authorized_network(
@@ -152,6 +195,9 @@ pub struct ToolResult {
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structured: Option<serde_json::Value>,
+    /// Set by the platform service tool from the configuration used for this call.
+    #[serde(skip)]
+    pub(crate) configuration_source: Option<ServiceConfigurationSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -163,6 +209,7 @@ impl ToolResult {
             ok: true,
             error: None,
             structured: None,
+            configuration_source: None,
         }
     }
 
@@ -173,6 +220,7 @@ impl ToolResult {
             error: Some(content.clone()),
             content,
             structured: None,
+            configuration_source: None,
         }
     }
 
@@ -214,6 +262,16 @@ pub trait Tool: Send + Sync {
     /// JSON Schema describing the tool's parameters
     fn parameters(&self) -> serde_json::Value;
 
+    /// Resolve local references before creating the security request. Approved calls replay
+    /// the stored arguments directly, so they cannot silently select a different resource.
+    fn prepare_call_arguments(
+        &self,
+        _conversation: &str,
+        _args: &mut serde_json::Value,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Default risk level of this tool.
     /// The final risk is computed by SafetyPolicy as
     /// max(tool default risk, argument-based risk).
@@ -223,6 +281,11 @@ pub trait Tool: Send + Sync {
 
     /// Describe the permissions, resources, risk, and side effects requested
     /// by this concrete Tool Call. Unknown tool names fail closed.
+    /// Optional trusted revocation generation, never model input or authority.
+    fn authorization_epoch(&self) -> Option<u64> {
+        None
+    }
+
     fn security_descriptor(
         &self,
         args: &serde_json::Value,

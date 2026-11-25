@@ -91,6 +91,9 @@ fn default_timeout() -> u64 {
 }
 
 fn validate_payload(payload: &LlmModelPayload) -> Result<(), String> {
+    use crate::modules::settings::domain::policy::{
+        valid_model_max_tokens, valid_model_temperature, valid_model_timeout,
+    };
     if payload.provider.trim().is_empty()
         || payload.label.trim().is_empty()
         || payload.model.trim().is_empty()
@@ -105,19 +108,19 @@ fn validate_payload(payload: &LlmModelPayload) -> Result<(), String> {
     if payload.api_format.trim() != "openai" {
         return Err("当前仅支持 OpenAI 兼容格式".to_string());
     }
-    if !payload.temperature.is_finite() || !(0.0..=2.0).contains(&payload.temperature) {
+    if !valid_model_temperature(payload.temperature) {
         return Err("温度必须在 0 到 2 之间".to_string());
     }
-    if payload.max_tokens == 0 || payload.max_tokens > 1_000_000 {
+    if !valid_model_max_tokens(payload.max_tokens) {
         return Err("最大 Token 必须在 1 到 1000000 之间".to_string());
     }
-    if payload.invoke_timeout_ms < 1_000 || payload.invoke_timeout_ms > 600_000 {
+    if !valid_model_timeout(payload.invoke_timeout_ms) {
         return Err("超时必须在 1000 到 600000 毫秒之间".to_string());
     }
     Ok(())
 }
 
-fn to_model_config(row: &LlmModelRow) -> ModelConfig {
+pub(super) fn to_model_config(row: &LlmModelRow) -> ModelConfig {
     ModelConfig {
         provider: row.provider.clone(),
         name: row.model.clone(),
@@ -211,7 +214,7 @@ pub async fn create_handler(
     State(server): State<Arc<AppServer>>,
     Json(mut payload): Json<LlmModelPayload>,
 ) -> Result<(StatusCode, Json<LlmModelView>), (StatusCode, Json<serde_json::Value>)> {
-    let mut account = if let Some(account_id) = &payload.provider_account_id {
+    let account = if let Some(account_id) = &payload.provider_account_id {
         Some(
             server
                 .db
@@ -249,7 +252,10 @@ pub async fn create_handler(
     }
     let row = server
         .db
-        .create_llm_model(&input_for(id, &payload, secret_ref.key.clone()))
+        .create_llm_model_for_account(
+            &input_for(id, &payload, secret_ref.key.clone()),
+            account.as_ref().map(|a| a.id.as_str()),
+        )
         .map_err(internal_error)?;
     if !payload.api_key.trim().is_empty() {
         record_secret_event(
@@ -260,10 +266,6 @@ pub async fn create_handler(
             "create",
             true,
         );
-    }
-    if let Some(a) = account.as_mut() {
-        a.profile_ids.push(row.id.clone());
-        server.db.save_provider_account(a).map_err(internal_error)?;
     }
     Ok((StatusCode::CREATED, Json(to_view(&server, row).await)))
 }
@@ -331,14 +333,8 @@ pub async fn delete_handler(
         .map_err(internal_error)?
         .iter()
         .any(|p| p.tiers.iter().any(|t| t.profile_ids.contains(&id)))
-        || server
-            .db
-            .list_provider_accounts()
-            .map_err(internal_error)?
-            .iter()
-            .any(|a| a.profile_ids.contains(&id))
     {
-        return Err(bad_request("模型仍被账户或模型池引用，请先移除引用".into()));
+        return Err(bad_request("模型仍被模型池引用，请先移除引用".into()));
     }
     let secret_ref = SecretRef::new(row.api_key_ref);
     let account_owned = server
@@ -517,6 +513,8 @@ pub(crate) fn normalize_provider_error(error: &LlmError) -> &'static str {
         LlmError::Api(_) => "PROVIDER_UNREACHABLE",
         LlmError::Parse(_)
         | LlmError::Stream(_)
+        | LlmError::Redirect
+        | LlmError::ExternalModelDisabled
         | LlmError::EmbeddingNotConfigured
         | LlmError::InvalidEmbeddingResponse(_) => "INVALID_CONFIGURATION",
     }

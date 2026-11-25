@@ -1,3 +1,4 @@
+use super::attention::{AttentionState, WatchSource};
 use chrono::{Datelike, Duration, LocalResult, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
@@ -5,15 +6,48 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Schedule {
-    Once { local_at: String },
-    Daily { time: String },
-    Weekly { time: String, weekdays: Vec<u32> },
+    FileChanged {
+        path: String,
+    },
+    Watch {
+        source: WatchSource,
+        min_interval_secs: u64,
+        expires_at: i64,
+        max_checks: u32,
+        max_retries: u32,
+    },
+    Once {
+        local_at: String,
+    },
+    Daily {
+        time: String,
+    },
+    Weekly {
+        time: String,
+        weekdays: Vec<u32>,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AutomationTarget {
-    Workflow { graph_id: String },
-    AgentTurn { mission_id: String },
+    Workflow {
+        graph_id: String,
+    },
+    AgentTurn {
+        mission_id: String,
+    },
+    PersonalAssistant {
+        goal: String,
+        #[serde(default)]
+        conversation_id: String,
+        #[serde(default)]
+        root_path: String,
+        #[serde(default)]
+        allow_file_writes: bool,
+        #[serde(default)]
+        allow_file_discovery: bool,
+        max_runs: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +65,13 @@ pub struct Automation {
     pub next_run_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Server-owned durable fingerprint. Caller input cannot advance this cursor.
+    #[serde(default)]
+    pub file_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention: Option<AttentionState>,
+    #[serde(default)]
+    pub archived: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,10 +106,46 @@ pub struct Occurrence {
     pub robot_channel_id: Option<String>,
     #[serde(default)]
     pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub assistant_turn_id: Option<String>,
+    #[serde(default)]
+    pub report: Option<String>,
+    #[serde(default)]
+    pub request_fingerprint: Option<String>,
     pub status: String,
     pub error: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationPhase {
+    Suspended,
+    Waking,
+    Running,
+    WaitingApproval,
+    WaitingInput,
+}
+
+impl AutomationPhase {
+    pub fn from_status(status: &str) -> Self {
+        match status {
+            "dispatching" | "created" | "queued" => Self::Waking,
+            "running" => Self::Running,
+            "waiting_approval" | "awaiting_approval" => Self::WaitingApproval,
+            "waiting_input" => Self::WaitingInput,
+            _ => Self::Suspended,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct AutomationRuntimeView {
+    pub phase: AutomationPhase,
+    pub latest_status: Option<String>,
+    pub last_woke_at: Option<i64>,
+    pub trigger: Option<String>,
 }
 
 /// Local recurrence uses IANA rules. Missing DST wall times are skipped;
@@ -77,6 +154,12 @@ pub fn next_after(schedule: &Schedule, timezone: &str, after: i64) -> Result<Opt
     let zone: Tz = timezone
         .parse()
         .map_err(|_| "请输入有效 IANA 时区，例如 Asia/Shanghai".to_string())?;
+    if matches!(schedule, Schedule::FileChanged { .. }) {
+        return Ok(None);
+    }
+    if matches!(schedule, Schedule::Watch { .. }) {
+        return Ok(Some(after));
+    }
     let after_utc = Utc
         .timestamp_millis_opt(after)
         .single()
@@ -101,7 +184,9 @@ pub fn next_after(schedule: &Schedule, timezone: &str, after: i64) -> Result<Opt
             }
             (time, Some(weekdays))
         }
-        Schedule::Once { .. } => unreachable!(),
+        Schedule::Once { .. } | Schedule::FileChanged { .. } | Schedule::Watch { .. } => {
+            unreachable!()
+        }
     };
     let time =
         NaiveTime::parse_from_str(time, "%H:%M").map_err(|_| "时间格式应为 HH:mm".to_string())?;

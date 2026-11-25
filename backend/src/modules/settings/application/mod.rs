@@ -6,3 +6,6 @@ pub mod service;
 pub mod update;
 
 pub mod basic_services;
+pub(crate) mod model_defaults;
+pub(crate) mod workspace_services;
+pub use workspace_services::ServiceConfigurationSource;

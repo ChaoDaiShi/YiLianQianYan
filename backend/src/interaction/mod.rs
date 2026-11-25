@@ -6,6 +6,7 @@
 //! native application capability.
 
 mod approval_adapter;
+pub(crate) mod chat_understanding;
 mod conversation_adapter;
 mod graph_proposal;
 mod narration;
@@ -18,6 +19,7 @@ pub use approval_adapter::{
 pub use conversation_adapter::{ConversationVoiceAdapter, ConversationVoiceAdapterError};
 pub use graph_proposal::{GraphProposalError, GraphProposalService};
 pub use narration::{NarrationRequest, TaskNarrator};
+pub(crate) use router::text_task_command;
 pub use router::InteractionRouter;
 pub use voice_dispatch::InteractionVoiceDispatch;
 

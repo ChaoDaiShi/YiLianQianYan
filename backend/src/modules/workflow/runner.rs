@@ -32,6 +32,9 @@ impl<E: WorkflowNodeExecutor> WorkflowRunner<E> {
         mut persist: impl FnMut(&WorkflowRun) -> Result<(), String>,
     ) -> Result<(), WorkflowExecutionError> {
         loop {
+            if run.status.is_terminal() {
+                return Ok(());
+            }
             if cancel.is_cancelled() {
                 run.cancel(now_ms());
                 let _ = persist(run);
@@ -65,6 +68,14 @@ impl<E: WorkflowNodeExecutor> WorkflowRunner<E> {
                 .executor
                 .execute(&run.execution_context, &run.run_id, node)
                 .await;
+
+            // An atomic tool may finish after stop. Its late result cannot
+            // restart scheduling or overwrite cancellation with success.
+            if cancel.is_cancelled() {
+                run.cancel(now_ms());
+                persist(run).map_err(WorkflowExecutionError::Persistence)?;
+                return Ok(());
+            }
 
             match outcome {
                 Ok(NodeExecutionOutcome::Completed { result }) => {
