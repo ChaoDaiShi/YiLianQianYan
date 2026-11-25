@@ -23,6 +23,7 @@ pub(super) async fn decide(
     preview: Option<&str>,
     current_facts: Value,
     expires_at: i64,
+    clock: &(impl Fn() -> i64 + Sync),
 ) -> Result<AttentionDecision, String> {
     let client = match resolve_model_source(server, Some(conversation))? {
         ChatModelSource::Fixed { config, row } => {
@@ -67,7 +68,7 @@ pub(super) async fn decide(
             .to_string(),
         ),
     ];
-    let remaining = expires_at.saturating_sub(chrono::Utc::now().timestamp_millis());
+    let remaining = expires_at.saturating_sub(clock());
     if remaining <= 0 {
         return Err("关注已到截止时间".into());
     }

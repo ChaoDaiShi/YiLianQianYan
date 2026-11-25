@@ -6,16 +6,25 @@ async fn attention_deadline_blocks_late_http_and_drops_late_proposal() {
         let f = Fixture::new();
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
+        let now = chrono::Utc::now().timestamp_millis();
+        let expires = now + 60_000;
+        let clock = Arc::new(std::sync::atomic::AtomicI64::new(now));
+        let source_clock = clock.clone();
+        let model_clock = clock.clone();
         let app = Router::new()
-            .route("/status", get(move || async move {
-                if delay_source { tokio::time::sleep(std::time::Duration::from_millis(700)).await; }
-                "clock fixture"
+            .route("/status", get(move || {
+                let clock = source_clock.clone();
+                async move {
+                    if delay_source { clock.store(expires, Ordering::SeqCst); }
+                    "clock fixture"
+                }
             }))
             .route("/chat/completions", post(move || {
                 let observed = observed.clone();
+                let clock = model_clock.clone();
                 async move {
                     observed.fetch_add(1, Ordering::SeqCst);
-                    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                    clock.store(expires, Ordering::SeqCst);
                     let decision = json!({"action":"propose","reason":"changed","recheck_in_secs":30,"proposal":"Verify late evidence"});
                     Json(json!({"id":"late","choices":[{"index":0,"message":{"role":"assistant","content":decision.to_string()},"finish_reason":"stop"}]}))
                 }
@@ -27,16 +36,20 @@ async fn attention_deadline_blocks_late_http_and_drops_late_proposal() {
         let mut watch = f
             .create(json!({"kind":"http","url":format!("http://{address}/status")}))
             .await;
-        let now = chrono::Utc::now().timestamp_millis();
         watch.next_run_at = Some(now);
         if let crate::modules::automation::model::Schedule::Watch { expires_at, .. } =
             &mut watch.schedule
         {
-            *expires_at = now + 400;
+            *expires_at = expires;
         }
         watch.revision += 1;
         f.server.db.save_automation(&watch, false).unwrap();
-        let stopped = f.check(&watch).await;
+        super::super::attention::check_with_clock(&f.server, &watch, now, || {
+            clock.load(Ordering::SeqCst)
+        })
+        .await
+        .unwrap();
+        let stopped = f.get(&watch.id);
         assert!(!stopped.enabled);
         let stopped = stopped.attention.unwrap();
         assert!(stopped.proposal.is_none(), "{stopped:?}");

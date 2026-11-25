@@ -104,6 +104,18 @@ pub(super) async fn check(
     expected: &Automation,
     now: i64,
 ) -> Result<(), String> {
+    check_with_clock(server, expected, now, || {
+        chrono::Utc::now().timestamp_millis()
+    })
+    .await
+}
+
+pub(super) async fn check_with_clock(
+    server: &Arc<AppServer>,
+    expected: &Automation,
+    now: i64,
+    clock: impl Fn() -> i64 + Send + Sync,
+) -> Result<(), String> {
     let Some(automation) = server.db.claim_attention_check(expected, now)? else {
         return Ok(());
     };
@@ -152,7 +164,7 @@ pub(super) async fn check(
     {
         return Ok(());
     }
-    let observed_at = now.max(chrono::Utc::now().timestamp_millis());
+    let observed_at = now.max(clock());
     state.last_checked_at = Some(observed_at);
     let mut evidence = SourceObservation {
         id: check_id,
@@ -257,7 +269,7 @@ pub(super) async fn check(
                             state.decision_key = Some(key);
                             state.observation_id = Some(evidence.id.clone());
                         }
-                        if observed_at.max(chrono::Utc::now().timestamp_millis()) >= *expires_at {
+                        if observed_at.max(clock()) >= *expires_at {
                             state.stop("关注已到截止时间");
                             None
                         } else {
@@ -269,10 +281,10 @@ pub(super) async fn check(
                                 sample.preview.as_deref(),
                                 facts,
                                 *expires_at,
+                                &clock,
                             )
                             .await;
-                            if observed_at.max(chrono::Utc::now().timestamp_millis()) >= *expires_at
-                            {
+                            if observed_at.max(clock()) >= *expires_at {
                                 state.stop("关注已到截止时间");
                                 None
                             } else {
@@ -310,7 +322,7 @@ pub(super) async fn check(
             }
         }
     };
-    let finish_at = observed_at.max(chrono::Utc::now().timestamp_millis());
+    let finish_at = observed_at.max(clock());
     let next = delay
         .map(|seconds| {
             finish_at.saturating_add(seconds.saturating_mul(1000).min(i64::MAX as u64) as i64)
