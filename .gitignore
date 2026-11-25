@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 target/
+frontend/public/desktop-pet/cubism/
 
 # Auto-generated
 src-tauri/gen/
@@ -36,6 +37,13 @@ Thumbs.db
 智能体/
 昔涟.jpeg
 docs/*
+!docs/workspace-pages-rich-chat.md
+!docs/architecture/
+docs/architecture/*
+!docs/architecture/local-embedding-and-cli-chat.md
+!docs/implementation/
+docs/implementation/*
+!docs/implementation/2026-11-24-capability-upgrade/
 !docs/v1-release/
 docs/v1-release/*
 !docs/v1-release/requirements.md
