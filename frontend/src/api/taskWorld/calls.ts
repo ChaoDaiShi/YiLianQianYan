@@ -6,6 +6,7 @@ import { requestTaskWorld } from "./transport";
 import { graphSummary } from "./transport";
 import type {
   ApiResult,
+  ExternalEffectReview,
   CanvasView,
   TaskCheckpointSummary,
   TaskGraphDefinition,
@@ -180,6 +181,24 @@ export async function getTaskNodeSuccessfulOutput(graphId: string, nodeId: strin
   return result.ok?{ok:true,data:result.data.latest_successful_output}:result;
 }
 
+export async function getTaskNodeExecutionOutput(graphId: string, nodeId: string, executionId: string): Promise<ApiResult<unknown>> {
+  const query = new URLSearchParams({ include_output: "true", execution_id: executionId });
+  const result = await requestTaskWorld<{ execution_output: unknown }>("GET",
+    `/api/task-world/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/executions?${query}`);
+  return result.ok ? { ok: true, data: result.data.execution_output } : result;
+}
+
+export async function getTaskNodeExecutionEvidence(graphId: string, nodeId: string, executionId: string) {
+  const query = new URLSearchParams({ include_output: "true", include_snapshot: "true", execution_id: executionId });
+  const result = await requestTaskWorld<{ execution_output: unknown; executions: TaskNodeExecutionSummary[]; execution_snapshot: { external_review?: ExternalEffectReview } | null }>("GET",
+    `/api/task-world/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/executions?${query}`);
+  return result.ok ? { ok: true as const, data: {
+    output: result.data.execution_output,
+    review: result.data.execution_snapshot?.external_review ?? null,
+    execution: result.data.executions.find(item => item.execution_id === executionId),
+  } } : result;
+}
+
 export async function cancelTaskExecution(
   graphId: string,
   executionId: string,
@@ -190,6 +209,13 @@ export async function cancelTaskExecution(
     `/api/task-world/graphs/${encodeURIComponent(graphId)}/executions/${encodeURIComponent(executionId)}/cancel`,
     { expected_revision: expectedRevision },
   );
+  return result.ok ? { ok: true, data: result.data.execution } : result;
+}
+
+export async function reviewTaskExecutionNoEffect(graphId: string, executionId: string, expectedRevision: number, note: string): Promise<ApiResult<TaskNodeExecutionSummary>> {
+  const result = await requestTaskWorld<TaskExecutionResponse>("POST",
+    `/api/task-world/graphs/${encodeURIComponent(graphId)}/executions/${encodeURIComponent(executionId)}/review`,
+    { expected_revision: expectedRevision, outcome: "no_effect", note });
   return result.ok ? { ok: true, data: result.data.execution } : result;
 }
 

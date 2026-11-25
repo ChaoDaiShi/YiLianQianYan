@@ -35,12 +35,11 @@ export default function ToolDiagnosticsPanel() {
       <Select aria-label="工具执行状态" value={status} size="sm" options={[{ value: "error", label: "仅看报错" }, { value: "all", label: "全部执行" }]} onChange={event => { setEntries([]); setStatus(event.target.value as "error" | "all"); }} />
       <Button variant="secondary" size="sm" onClick={() => void refresh()}><RefreshCw className="h-3.5 w-3.5" />刷新</Button>
     </div>
-    <p className="tool-diagnostics-hint">记录保存在对应会话中，可查看工具参数、返回结果和验证原因。系统日志清空不会删除这些记录。</p>
     {error ? <ErrorState title={error} action={<Button variant="secondary" onClick={() => void refresh()}>重试</Button>} /> : null}
     {loading ? <Skeleton className="h-24" /> : !error && visible.length === 0 ? <EmptyState icon={<Wrench className="h-7 w-7" />} title={status === "error" ? "暂无工具报错" : "暂无工具执行记录"} description={search ? "调整搜索词后重试。" : "执行工具后，记录会显示在这里。"} /> : null}
     {visible.length > 0 ? <div className="tool-diagnostics-table-scroll"><table className="tool-diagnostics-table"><thead><tr><th>时间</th><th>工具</th><th>状态</th><th>会话</th><th>结果 / 原因</th></tr></thead><tbody>{visible.map(entry => {
       const state = toolDiagnosticStatus(entry);
-      return <tr key={`${entry.conversationId}:${entry.toolCallId}`}><td><time>{formatLogTimestamp(entry.updatedAt)}</time></td><td><button type="button" onClick={() => setSelected(entry)} aria-label={`查看工具执行 ${entry.name} ${entry.toolCallId}`}>{entry.name}</button></td><td><Badge tone={state.tone}>{state.label}</Badge></td><td title={entry.conversationTitle}>{entry.conversationTitle}</td><td><button type="button" className="tool-diagnostic-summary" onClick={() => setSelected(entry)}>{entry.verificationStatus === "failed" ? entry.verificationReason : entry.result ?? entry.reason ?? "暂无返回内容"}</button></td></tr>;
+      return <tr key={`${entry.conversationId}:${entry.toolCallId}`}><td><time>{formatLogTimestamp(entry.updatedAt)}</time></td><td><button type="button" onClick={() => setSelected(entry)} aria-label={`查看工具执行 ${entry.name} ${entry.toolCallId}`}>{entry.name}</button></td><td><Badge tone={state.tone}>{state.label}</Badge></td><td title={entry.conversationTitle}>{entry.conversationTitle}</td><td><span className="tool-diagnostic-summary">{entry.verificationStatus === "failed" ? entry.verificationReason : entry.result ?? entry.reason ?? "暂无返回内容"}</span></td></tr>;
     })}</tbody></table></div> : null}
     <div className="tool-diagnostics-footer">显示 {visible.length} 条 / 符合状态 {total} 条 · 最近 500 条 · 自动刷新</div>
     <Modal open={selected !== null} title="工具执行详情" size="lg" onClose={() => setSelected(null)}>

@@ -48,7 +48,7 @@ impl Budget {
     }
 }
 fn stage(phase: &'static str) {
-    #[cfg(all(debug_assertions, feature = "native-software-fixture"))]
+    #[cfg(all(debug_assertions, feature = "native-browser-fixture"))]
     eprintln!("software_uia_stage:{phase}");
     tracing::debug!(phase, "Native UI Automation stage");
 }

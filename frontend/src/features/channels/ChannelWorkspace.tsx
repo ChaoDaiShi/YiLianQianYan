@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, MessageSquareText, Search, UsersRound } from "lucide-react";
-import { listChannelSessions, type ChannelMessage, type ChannelProvider, type ChannelSession, type ExternalChannel, type ChannelPreset } from "../../api/channels";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { MessageSquareText, Search } from "lucide-react";
+import { listChannelSessions, type ChannelMessage, type ChannelSession, type ExternalChannel, type ChannelPreset } from "../../api/channels";
+import { getRobotPolicy, listRobotDirectory, listRobotGroupMembers, type RobotDirectoryItem, type RobotDirectoryKind } from "../../api/channelRobot";
 import Button from "../../components/ui/Button";
+import Select from "../../components/ui/Select";
+import type { PlatformContent } from "../software/SoftwareMountShell";
 import ChannelInbox from "./ChannelInbox";
+import ChannelPeerAvatar, { qqAvatarUrl } from "./ChannelPeerAvatar";
 import ChannelDirectory from "./ChannelDirectory";
 import ChannelRobotPanel from "./ChannelRobotPanel";
+import { channelStatusLabel } from "./channelsModel";
 
 export type ChannelWorkspaceSection = "conversations" | "contacts" | "activity";
 
@@ -16,7 +21,6 @@ const sectionCopy: Record<ChannelWorkspaceSection, string> = {
 
 export default function ChannelWorkspace({
   channels,
-  providers,
   presets,
   channel,
   section,
@@ -25,9 +29,10 @@ export default function ChannelWorkspace({
   revision,
   onSelectChannel,
   onSectionChange,
+  accountAction,
+  render,
 }: {
   channels: ExternalChannel[];
-  providers: ChannelProvider[];
   presets: ChannelPreset[];
   channel: ExternalChannel | null;
   section: ChannelWorkspaceSection;
@@ -36,8 +41,12 @@ export default function ChannelWorkspace({
   revision: number;
   onSelectChannel: (id: string) => void;
   onSectionChange: (section: ChannelWorkspaceSection) => void;
+  accountAction: PlatformContent;
+  render: (content: ReactNode, navigation: PlatformContent) => ReactNode;
 }) {
   const [sessions, setSessions] = useState<ChannelSession[]>([]);
+  const [contacts, setContacts] = useState<RobotDirectoryItem[]>([]);
+  const [groupMembers, setGroupMembers] = useState<{ groupId: string; names: Map<string, string> } | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const sessionsRef = useRef<ChannelSession[]>([]);
   const [messages, setMessages] = useState<ChannelMessage[]>([]);
@@ -91,71 +100,111 @@ export default function ChannelWorkspace({
 
   useEffect(() => { void refreshSessions(); }, [channelId, revision, refreshSessions]);
 
+  const channelSessions = sessions.filter(session => session.channel_id === channelId);
+  const hasPrivateSessions = channelSessions.some(session => session.peer_type === "private");
+  const hasGroupSessions = channelSessions.some(session => session.peer_type === "group");
+  const qqEnabled = channel?.provider === "onebot11" && channel.enabled;
+  const accountId = channel?.self_id;
+  useEffect(() => {
+    setContacts([]);
+    if (!qqEnabled || (!hasPrivateSessions && !hasGroupSessions)) return;
+    let active = true;
+    async function loadContacts() {
+      const { policy } = await getRobotPolicy(channelId);
+      if (!active || (policy.account_id && policy.account_id !== accountId)) return;
+      const kinds: RobotDirectoryKind[] = [];
+      if (hasPrivateSessions && policy.read_friends) kinds.push("friends");
+      if (hasGroupSessions && policy.read_groups) kinds.push("groups");
+      const results = await Promise.allSettled(kinds.map(kind => listRobotDirectory(channelId, kind)));
+      if (active) setContacts(results.flatMap(result => result.status === "fulfilled" ? result.value.items : []));
+    }
+    void loadContacts().catch(() => {});
+    return () => { active = false; };
+  }, [channelId, accountId, qqEnabled, hasPrivateSessions, hasGroupSessions, revision, policyRevision]);
+
   const onMessagesChange = useCallback((items: ChannelMessage[]) => {
     setMessages(items);
     const knownConversations = new Set(sessionsRef.current.map(session => session.conversation_id));
     if (items.some(message => !knownConversations.has(message.conversation_id))) void refreshSessions();
   }, [refreshSessions]);
-  const filteredSessions = sessions.filter(session => {
-    const latest = messages.filter(message => message.conversation_id === session.conversation_id).sort((a, b) => b.created_at - a.created_at)[0];
-    const label = latest?.peer_type === "group" ? "群 " + session.peer_id : latest?.sender_id ?? session.peer_id;
-    return (label + " " + session.peer_id).toLocaleLowerCase().includes(sessionQuery.trim().toLocaleLowerCase());
+  const latestByConversation = useMemo(() => {
+    const latest = new Map<string, ChannelMessage>();
+    for (const message of messages) {
+      const previous = latest.get(message.conversation_id);
+      if (!previous || message.created_at > previous.created_at) latest.set(message.conversation_id, message);
+    }
+    return latest;
+  }, [messages]);
+  const contactsByPeer = useMemo(() => new Map(contacts.map(contact => [`${contact.peer_type}:${contact.id}`, contact])), [contacts]);
+  const query = sessionQuery.trim().toLocaleLowerCase();
+  const sessionRows = channelSessions.map(session => {
+    const latest = latestByConversation.get(session.conversation_id);
+    const contact = contactsByPeer.get(`${session.peer_type}:${session.peer_id}`);
+    const name = contact?.name.trim();
+    const label = name && name !== session.peer_id ? name : session.peer_type === "group" ? `群 ${session.peer_id}` : session.peer_id;
+    return { session, latest, label, avatar: contact ? qqAvatarUrl(contact.id, contact.peer_type === "group") : undefined };
   });
-  const selectedSession = sessions.find(item => item.conversation_id === selectedConversationId) ?? null;
-  const provider = channel ? providers.find(item => item.id === channel.provider) : undefined;
+  const filteredSessions = sessionRows.filter(({ session, label }) => (label + " " + session.peer_id).toLocaleLowerCase().includes(query));
+  const selectedPeer = sessionRows.find(item => item.session.conversation_id === selectedConversationId);
+  const selectedSession = selectedPeer?.session;
+  const qqGroupId = qqEnabled && selectedSession?.peer_type === "group" ? selectedSession.peer_id : undefined;
+  const connectionNotice = channel && channel.status !== "connected" && channel.status !== "receiving" ? channelStatusLabel(channel.status) : "";
 
-  return <div className="channels-workspace-shell">
-    <aside className="channel-left-rail" aria-label="渠道与导航">
-      <div className="channel-left-rail-heading"><span>应用与账号</span><small>{channels.length} 个账号</small></div>
-      <div className="channel-account-list" aria-label="消息账号">
-        {channels.map(item => {
-          const itemProvider = providers.find(entry => entry.id === item.provider);
-          return <button key={item.id} type="button" aria-pressed={channel?.id === item.id} className={channel?.id === item.id ? "selected" : ""} onClick={() => onSelectChannel(item.id)}>
-            <span className="channel-account-mark" data-provider={item.provider}>{item.provider === "onebot11" ? "Q" : item.provider === "wechat_onebot" || item.provider === "wechat_ilink" ? "微" : itemProvider?.label.slice(0, 1) ?? "·"}</span>
-            <span><strong>{item.name}</strong><small>{itemProvider?.label ?? item.provider} · {item.enabled ? "启用" : "停用"}</small></span>
-            <i aria-label={item.status} data-status={item.status} />
-          </button>;
-        })}
-        {!channels.length && <p className="channel-workspace-muted">尚无消息账号。</p>}
-      </div>
-      {channel && <nav className="channel-workspace-nav" aria-label="工作区">
-        <div className="channel-left-rail-heading"><span>导航</span></div>
-        <button type="button" aria-current={section === "conversations" ? "page" : undefined} onClick={() => onSectionChange("conversations")}><MessageSquareText size={15} />会话</button>
-        {channel.provider === "onebot11" && <button type="button" aria-current={section === "contacts" ? "page" : undefined} onClick={() => onSectionChange("contacts")}><UsersRound size={15} />通讯录</button>}
-        {channel.provider === "onebot11" && <button type="button" aria-current={section === "activity" ? "page" : undefined} onClick={() => onSectionChange("activity")}><Bot size={15} />机器人活动</button>}
-      </nav>}
-      {channel && section === "conversations" && <section className="channel-session-section" aria-label="会话列表">
-        <div className="channel-session-heading"><strong>会话</strong><span>{sessions.length}</span></div>
-        <label className="channel-workspace-search"><Search size={14} /><input aria-label="搜索会话" value={sessionQuery} onChange={event => setSessionQuery(event.target.value)} placeholder="搜索会话" /></label>
+  useEffect(() => {
+    setGroupMembers(null);
+    if (!qqGroupId) return;
+    let active = true;
+    void listRobotGroupMembers(channelId, qqGroupId)
+      .then(({ items }) => {
+        if (active) setGroupMembers({ groupId: qqGroupId, names: new Map(items.map(item => [item.id, item.name])) });
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [channelId, accountId, qqGroupId, revision, policyRevision]);
+
+  const navigation: PlatformContent = closeNavigation => (
+    <section className="channel-platform-content" aria-label="会话与账号">
+      {channels.length > 1 && <div className="channel-rail-account">
+        <Select size="sm" aria-label="渠道账号" value={channelId} options={channels.map(item => ({ value: item.id, label: item.name }))} onChange={event => onSelectChannel(event.target.value)} />
+      </div>}
+      {channel && <section className="channel-session-section" aria-label="会话列表">
+        <div className="channel-rail-toolbar">
+          <label className="channel-workspace-search"><Search size={14} aria-hidden="true" /><input aria-label="搜索会话" value={sessionQuery} onChange={event => setSessionQuery(event.target.value)} placeholder="搜索会话" /></label>
+          {accountAction(closeNavigation)}
+        </div>
         {sessionError && <div className="channel-session-error"><p className="channels-error" role="alert">{sessionError}</p><Button variant="ghost" size="sm" disabled={sessionsLoading} loading={sessionsLoading} onClick={() => void refreshSessions()}>重试会话列表</Button></div>}
         {sessionsLoading && <p role="status" className="channel-workspace-muted">正在读取会话…</p>}
-        <div className="channel-session-list">
-          {filteredSessions.map(session => {
-            const related = messages.filter(message => message.conversation_id === session.conversation_id).sort((a, b) => b.created_at - a.created_at);
-            const latest = related[0];
-            const title = latest?.peer_type === "group" ? "群 " + session.peer_id : latest?.sender_id ?? session.peer_id;
-            return <button key={session.id} type="button" aria-pressed={selectedConversationId === session.conversation_id} className={selectedConversationId === session.conversation_id ? "selected" : ""} onClick={() => setSelectedConversationId(session.conversation_id)}>
-              <span className="channel-session-avatar">{session.peer_type === "group" ? <UsersRound size={16} /> : <MessageSquareText size={16} />}</span>
-              <span className="channel-session-copy"><strong>{title}</strong><small>{latest?.content ?? "尚无已记录的收信内容"}</small><time>{latest ? new Date(latest.created_at).toLocaleTimeString() : new Date(session.created_at).toLocaleTimeString()}</time></span>
+        {filteredSessions.length > 0 && <div className="channel-session-list">
+          {filteredSessions.map(({ session, latest, label, avatar }) => {
+            const active = section === "conversations" && selectedConversationId === session.conversation_id;
+            return <button key={session.id} type="button" aria-pressed={active} className={active ? "selected" : ""}
+              onClick={() => { setSelectedConversationId(session.conversation_id); onSectionChange("conversations"); closeNavigation?.(); }}>
+              <ChannelPeerAvatar group={session.peer_type === "group"} src={avatar} />
+              <span className="channel-session-copy"><strong title={label}>{label}</strong><time>{new Date(latest?.created_at ?? session.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time><small>{latest?.content ?? "暂无消息预览"}</small></span>
             </button>;
           })}
-          {!sessionsLoading && !filteredSessions.length && !sessionError && <p className="channel-workspace-muted">没有已保存会话，仍会读取新消息。</p>}
-        </div>
+        </div>}
+        {!sessionsLoading && !filteredSessions.length && !sessionError && <p className="channel-workspace-muted">{query ? "没有匹配的会话" : "等待收到新消息"}</p>}
       </section>}
-      {channel && section === "contacts" && <p className="channel-rail-note">目录与历史由 QQ OneBot 查询；微信接入不会复用这些工具。</p>}
-      {channel && section === "activity" && <p className="channel-rail-note">运行步骤显示在中央详情区。</p>}
-    </aside>
+    </section>
+  );
 
-    <main className="channel-workspace-main">
+  return render(
+    <section className="channel-workspace-main" aria-label="聊天内容">
       {channel ? <header className="channel-main-heading">
-        <div><h2>{section === "conversations" ? selectedSession ? (selectedSession.peer_type === "group" ? "群 " : "") + selectedSession.peer_id : "消息会话" : sectionCopy[section]}</h2><p>{channel.name} · {section === "conversations" ? "本机已保存的消息记录" : section === "contacts" ? provider?.label + " 远端通讯录" : provider?.label + " 目标运行"}</p></div>
-        {section === "conversations" && selectedSession && <span className="channel-session-type">{selectedSession.peer_type === "group" ? "群会话" : "私聊会话"}</span>}
+        <div className="channel-chat-identity">
+          {section === "conversations" && selectedPeer && <ChannelPeerAvatar group={selectedPeer.session.peer_type === "group"} src={selectedPeer.avatar} />}
+          <h2 title={section === "conversations" ? selectedPeer?.label : undefined}>{section === "conversations" ? selectedPeer?.label ?? "消息会话" : sectionCopy[section]}</h2>
+        </div>
+        {connectionNotice && <span className="channel-chat-state" data-status={channel.status}>{connectionNotice}</span>}
+        {!connectionNotice && channel.reply_mode === "automatic" && <span className="channel-chat-state">自动回复</span>}
       </header> : null}
       {!channel ? <div className="channel-workspace-empty"><span className="channel-workspace-empty-icon"><MessageSquareText size={18} /></span><h2>添加一个消息账号</h2><p>接入后，会话与平台运行状态会显示在这里。</p></div>
         : section === "conversations"
-          ? <ChannelInbox key={channel.id + ":" + (selectedSession?.conversation_id ?? "all")} channel={channel} revision={revision} conversationId={selectedSession?.conversation_id} onMessagesChange={onMessagesChange} />
+          ? <ChannelInbox key={channel.id + ":" + (selectedSession?.conversation_id ?? "all")} channel={channel} revision={revision} conversationId={selectedSession?.conversation_id} groupId={qqGroupId} groupMemberNames={groupMembers?.groupId === qqGroupId ? groupMembers?.names : undefined} onMessagesChange={onMessagesChange} />
         : section === "contacts" ? <ChannelDirectory channel={channel} />
           : <ChannelRobotPanel key={channel.id} channel={channel} presets={presets} initialRunId={initialRunId} policyRevision={policyRevision} />}
-    </main>
-  </div>;
+    </section>,
+    navigation,
+  );
 }

@@ -85,7 +85,12 @@ pub(super) fn sample(
             &controls,
             registration.config.allow_content,
             registration.config.allow_window_ocr,
-            || host.recognize_window(target).ok(),
+            || {
+                runtime.check_window_pixels().ok()?;
+                let text = host.recognize_window(target).ok()?;
+                runtime.check_window_pixels().ok()?;
+                Some(text)
+            },
         );
         (source, lines, None)
     };

@@ -81,7 +81,7 @@ export async function v1R3({page,frontendPort,backendPort,controlToken,evidenceD
     assert.equal(await service.getByRole("button",{name:"新建模型池",exact:true}).count(),0);
     await capture("r3-service-"+section);
   }
-  await page.goto(origin+"/settings");
+  await page.goto(origin+"/settings?view=canvas");
   for(const name of ["编辑模型与服务","编辑语音"]){
     const group=page.getByRole("button",{name,exact:true});
     await group.waitFor();

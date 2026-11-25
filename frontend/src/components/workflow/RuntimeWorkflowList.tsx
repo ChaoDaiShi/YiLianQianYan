@@ -112,7 +112,7 @@ export default function RuntimeWorkflowList({
             <div
               key={graph.id}
               onClick={() => onEdit(graph)}
-              className={`group flex flex-col gap-2 rounded-[var(--radius-md)] border p-3 cursor-pointer transition-all ${
+              className={`glass-card group flex flex-col gap-2 rounded-[var(--radius-md)] border p-3 cursor-pointer transition-all ${
                 isSelected
                   ? "border-[var(--accent-primary)] bg-[var(--surface-solid)] ring-1 ring-[var(--accent-primary)]/40 shadow-sm"
                   : "border-[var(--border-soft)] bg-[var(--surface-solid)] hover:border-[var(--border)] hover:bg-[var(--surface-hover)]"

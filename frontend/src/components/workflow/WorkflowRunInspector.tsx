@@ -11,6 +11,7 @@ import {
   type WorkflowRunStatus,
 } from "../../api/client";
 import type { PendingApproval } from "../../types/approval";
+import { WorkflowContextManifest } from "../../features/execution/ContextManifestView";
 import WorkflowApprovalCard from "./WorkflowApprovalCard";
 
 const NODE_ICONS: Record<string, string> = {
@@ -53,6 +54,39 @@ const RUN_TONE: Record<string, "default" | "success" | "warning" | "danger" | "i
   cancelled: "default",
 };
 
+const NODE_PROGRESS_COLOR: Record<WorkflowNodeRunStatus, string> = {
+  completed: "var(--success)",
+  running: "var(--accent-primary)",
+  waiting_approval: "var(--warning)",
+  failed: "var(--danger)",
+  cancelled: "var(--text-faint)",
+  skipped: "var(--text-muted)",
+  pending: "var(--border-soft)",
+  ready: "var(--border-soft)",
+};
+const SETTLED_NODE_STATUSES = new Set<WorkflowNodeRunStatus>(["completed", "failed", "skipped", "cancelled"]);
+const TERMINAL_RUN_STATUSES = new Set<WorkflowRunStatus>(["completed", "failed", "cancelled"]);
+
+function WorkflowRunProgress({ nodes }: { nodes: WorkflowNodeRun[] }) {
+  if (!nodes.length) return null;
+  const settled = nodes.filter(node => SETTLED_NODE_STATUSES.has(node.status)).length;
+  const segments = nodes.map((node, index) => {
+    const start = index / nodes.length * 100;
+    const end = (index + 1) / nodes.length * 100;
+    return `${NODE_PROGRESS_COLOR[node.status]} ${start}% ${end}%`;
+  });
+  const active = nodes.find(node => node.status === "waiting_approval" || node.status === "running");
+  return <div className="flex items-center gap-3 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3" role="status">
+    <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${segments.join(", ")})` }} aria-hidden="true">
+      <span className="grid h-11 w-11 place-items-center rounded-full bg-[var(--surface-solid)] text-xs font-semibold">{settled}/{nodes.length}</span>
+    </div>
+    <div className="min-w-0 text-xs text-[var(--text-secondary)]">
+      <p className="font-semibold text-[var(--text-primary)]">已处理 {settled} / {nodes.length} 个节点</p>
+      {active && <p className="break-all">{NODE_STATUS_LABELS[active.status]} · {active.node_id}</p>}
+    </div>
+  </div>;
+}
+
 export interface WorkflowRunInspectorProps {
   runId: string;
   onClose: () => void;
@@ -62,6 +96,7 @@ export interface WorkflowRunInspectorProps {
   onLocateNode?: (id: string) => void;
   onRunLoaded?: (run: WorkflowRunRecord) => void;
   onOpenGraph?: (graphId: string) => void;
+  allowCancel?: boolean;
 }
 
 export default function WorkflowRunInspector({
@@ -73,65 +108,75 @@ export default function WorkflowRunInspector({
   onLocateNode,
   onRunLoaded,
   onOpenGraph,
+  allowCancel = true,
 }: WorkflowRunInspectorProps) {
+  const [contextOpen, setContextOpen] = useState(false);
+  useEffect(() => { setContextOpen(false); }, [runId]);
   const [run, setRun] = useState<WorkflowRunRecord | null>(null);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
   const [error, setError] = useState("");
-  const [polling, setPolling] = useState(true);
   const [cancelling, setCancelling] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [cancelError, setCancelError] = useState("");
+  const requestVersion = useRef(0);
+  const cancelPending = useRef(false);
 
-  const terminal = run
-    ? run.status === "completed" || run.status === "failed" || run.status === "cancelled"
-    : false;
+  const terminal = run ? TERMINAL_RUN_STATUSES.has(run.status) : false;
 
   const load = useCallback(async () => {
+    if (cancelPending.current) return;
+    const version = ++requestVersion.current;
     const res = await getWorkflowRun(runId);
+    if (version !== requestVersion.current) return;
     if (res.ok) {
       setRun(res.data);
       setError("");
       onRunLoaded?.(res.data);
       if (res.data.status === "waiting_approval") {
         const pending = await listPendingApprovals();
-        if (pending) {
-          const match = pending.find((a) => a.workflow_run_id === runId);
-          setApproval(match || null);
+        if (version === requestVersion.current) {
+          setApproval(pending?.find((a) => a.workflow_run_id === runId) ?? null);
         }
       } else {
         setApproval(null);
       }
+      return res.data.status;
     } else {
       setError(res.error || "无法加载工作流运行详情");
     }
   }, [runId, onRunLoaded]);
 
   useEffect(() => {
-    load();
-    timerRef.current = setInterval(load, 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [load]);
-
-  useEffect(() => {
-    if (terminal && timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-      setPolling(false);
+    if (cancelling) return;
+    let active = true;
+    let timer: number | undefined;
+    async function poll() {
+      const status = await load();
+      if (active && (!status || !TERMINAL_RUN_STATUSES.has(status))) {
+        timer = window.setTimeout(() => void poll(), 1000);
+      }
     }
-  }, [terminal]);
+    void poll();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      requestVersion.current++;
+    };
+  }, [load, cancelling]);
 
   const handleCancel = async () => {
-    if (cancelling) return;
+    if (cancelPending.current) return;
+    cancelPending.current = true;
+    requestVersion.current++;
     setCancelling(true);
+    setCancelError("");
     const res = await cancelWorkflowRun(runId);
     if (res.ok) {
       setRun(res.data);
       onRunLoaded?.(res.data);
     } else {
-      setError(res.error || "取消运行失败");
+      setCancelError(res.error || "取消运行失败");
     }
-    await load();
+    cancelPending.current = false;
     setCancelling(false);
   };
 
@@ -174,9 +219,11 @@ export default function WorkflowRunInspector({
         </Badge>
       }
       description={`执行 ${run!.execution_id.slice(0, 8)}… · 创建于 ${new Date(run!.created_at).toLocaleTimeString()} · 更新于 ${new Date(run!.updated_at).toLocaleTimeString()}`}
+      headerClassName="flex-wrap"
       actions={<>
+        <Button size="sm" variant="secondary" onClick={() => setContextOpen(value => !value)}>{contextOpen ? "返回执行记录" : "上下文来源"}</Button>
         {onOpenGraph && run!.workflow_graph_id && <Button size="sm" variant="secondary" onClick={() => onOpenGraph(run!.workflow_graph_id!)}><GitBranch className="w-3.5 h-3.5" />打开工作流</Button>}
-        {!terminal ? (
+        {allowCancel && !terminal ? (
           <Button
             size="sm"
             variant="secondary"
@@ -194,7 +241,12 @@ export default function WorkflowRunInspector({
       bodyClassName="space-y-3.5 p-4"
     >
 
-      {error && <p role="alert" className="text-xs text-[var(--danger)]">{error}</p>}
+      {contextOpen ? <WorkflowContextManifest runId={runId} /> : <>
+      {(error || cancelError) && <div className="space-y-2">
+        <p role="alert" className="text-xs text-[var(--danger)]">{cancelError || `状态更新失败：${error}。下方显示上次读取的记录。`}</p>
+        {error && <Button size="sm" variant="secondary" onClick={() => void load()}>重新读取状态</Button>}
+      </div>}
+      <WorkflowRunProgress nodes={run!.nodes} />
       {approval && <WorkflowApprovalCard approval={approval} onDecision={load} />}
 
       {/* Selected canvas node not found in this run callout */}
@@ -208,10 +260,10 @@ export default function WorkflowRunInspector({
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs text-[var(--text-secondary)] px-1">
           <span>节点步骤 ({run!.nodes.length})</span>
-          {polling && !terminal && (
+          {!terminal && !error && (
             <span className="flex items-center gap-1 text-[var(--text-faint)]">
               <Loader2 className="w-3 h-3 animate-spin" />
-              轮询中…
+              同步状态…
             </span>
           )}
         </div>
@@ -222,13 +274,14 @@ export default function WorkflowRunInspector({
               key={node.node_id}
               node={node}
               isSelected={selectedNodeId === node.node_id}
-              onSelect={() => onNodeSelect?.(node.node_id)}
+              onSelect={onNodeSelect ? () => onNodeSelect(node.node_id) : undefined}
               onHighlight={(highlight) => onNodeHighlight?.(highlight ? node.node_id : null)}
               onLocate={onLocateNode ? () => onLocateNode(node.node_id) : undefined}
             />
           ))}
         </div>
       </div>
+      </>}
     </Inspector>
   );
 }
@@ -242,7 +295,7 @@ function NodeRow({
 }: {
   node: WorkflowNodeRun;
   isSelected: boolean;
-  onSelect: () => void;
+  onSelect?: () => void;
   onHighlight: (highlight: boolean) => void;
   onLocate?: () => void;
 }) {
@@ -269,16 +322,16 @@ function NodeRow({
       onClick={onSelect}
       onMouseEnter={() => onHighlight(true)}
       onMouseLeave={() => onHighlight(false)}
-      className={`group flex items-start gap-2.5 py-2 px-2 rounded-[var(--radius-sm)] cursor-pointer transition-colors ${
+      className={`group flex items-start gap-2.5 py-2 px-2 rounded-[var(--radius-sm)] transition-colors ${
         isSelected
           ? "bg-[var(--accent-primary)]/10 ring-1 ring-[var(--accent-primary)]"
-          : "hover:bg-[var(--surface-hover)]"
+          : onSelect ? "cursor-pointer hover:bg-[var(--surface-hover)]" : ""
       }`}
-      role="button"
-      tabIndex={0}
-      aria-label={`节点步骤 ${node.node_id}，状态 ${NODE_STATUS_LABELS[node.status] || node.status}`}
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      aria-label={onSelect ? `节点步骤 ${node.node_id}，状态 ${NODE_STATUS_LABELS[node.status] || node.status}` : undefined}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.target === e.currentTarget && onSelect && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
           onSelect();
         }
@@ -293,9 +346,9 @@ function NodeRow({
       </span>
 
       <div className="flex-1 min-w-0 space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <code className="text-xs font-mono font-semibold truncate text-[var(--text)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <code className="text-xs font-mono font-semibold break-all text-[var(--text)]">
               {node.node_id}
             </code>
             <span
@@ -333,9 +386,15 @@ function NodeRow({
           </div>
         </div>
 
+        {node.input && (
+          <details onClick={event => event.stopPropagation()} className="rounded bg-[var(--surface-muted)] p-2 text-xs">
+            <summary className="focus-ring-token cursor-pointer">查看本次输入</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-all select-text">{JSON.stringify(node.input, null, 2)}</pre>
+          </details>
+        )}
         {node.result?.summary && (
           <details onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} className="text-xs bg-[var(--surface-muted)] rounded p-2 leading-relaxed">
-            <summary className="cursor-pointer text-[var(--accent-primary)]">查看节点结果</summary>
+            <summary className="focus-ring-token cursor-pointer">查看结果摘要</summary>
             <p className="mt-2 whitespace-pre-wrap break-words text-[var(--text-secondary)] select-text">{node.result.summary}</p>
           </details>
         )}

@@ -4,8 +4,10 @@
 
 pub mod access_rules;
 mod artifact_provenance;
+mod automation_observations;
 pub mod automations;
 pub mod basic_services;
+pub mod browser_sites;
 pub mod channel_robot;
 pub mod channels;
 pub mod cloud;
@@ -13,13 +15,17 @@ pub mod connector_messages;
 pub mod connectors;
 mod conversation_goal;
 pub mod conversation_inputs;
+pub(crate) mod conversation_lanes;
 pub mod conversation_messages;
 pub mod conversation_modes;
 pub mod conversation_outputs;
 pub mod conversation_presentation;
+pub(crate) mod conversation_recall;
 pub mod conversation_turns;
 mod conversations;
 pub mod creations;
+pub mod execution_outcomes;
+mod goal_events;
 pub mod knowledge;
 pub mod knowledge_build;
 pub mod learning;
@@ -37,8 +43,9 @@ mod proofloop;
 mod proofloop_model_usage;
 mod resource_bindings;
 mod resources;
+pub(crate) mod rich_content;
 mod security_audit;
-mod settings;
+pub(crate) mod settings;
 pub mod settings_canvas;
 mod skill_candidates;
 mod skill_usage;
@@ -46,9 +53,12 @@ mod task;
 mod task_canvas;
 mod task_execution;
 mod task_world;
+mod upgrade_backup;
 mod workflow_runtime;
 mod workflows;
 mod workspace;
+pub(crate) mod workspace_pages;
+pub(crate) mod workspace_service_settings;
 
 #[cfg(test)]
 mod llm_models_tests;
@@ -80,6 +90,8 @@ use std::sync::{Arc, Mutex};
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
     memory_purge_journal: Option<std::path::PathBuf>,
+    goal_events: Arc<Mutex<Option<crate::shared::event::EventHub>>>,
+    automation_schedule_changed: Arc<tokio::sync::Notify>,
 }
 
 impl Database {
@@ -90,9 +102,12 @@ impl Database {
         }
         let conn = Connection::open(path)?;
         let adopted_v09 = migrations::table_exists(&conn, "conversations")?;
+        upgrade_backup::snapshot_if_needed(path, &conn)?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
             memory_purge_journal: memory_purge_journal::journal_path(path),
+            goal_events: Arc::new(Mutex::new(None)),
+            automation_schedule_changed: Arc::new(tokio::sync::Notify::new()),
         };
         db.run_v09_bootstrap()?;
         db.run_versioned_migrations(adopted_v09)?;
@@ -103,9 +118,21 @@ impl Database {
         db.initialize_connector_messages_schema()?;
         db.initialize_knowledge_schema()?;
         db.initialize_conversation_turns()?;
+        db.apply_product_migration(&migrations::MigrationSpec::new(
+            1130,
+            "1130_cli_chat_turns",
+            migrations::MigrationOwner::V1TaskWorld,
+            include_str!("cli_chat_turns.sql"),
+        ))?;
+        db.initialize_conversation_lanes()?;
         db.initialize_conversation_inputs()?;
         db.initialize_conversation_outputs()?;
+        db.initialize_rich_components()?;
+        db.initialize_workspace_pages()?;
         db.initialize_automations_schema()?;
+        db.initialize_automation_observations()?;
+        db.initialize_execution_handoffs()?;
+        db.initialize_browser_sites()?;
         db.initialize_learning()?;
         db.initialize_creations()?;
         db.initialize_channels()?;
@@ -114,6 +141,12 @@ impl Database {
         db.initialize_channel_peers()?;
         db.migrate_memory_governance()
             .map_err(rusqlite::Error::InvalidParameterName)?;
+        db.apply_product_migration(&migrations::MigrationSpec::new(
+            1131,
+            "1131_memory_fts",
+            migrations::MigrationOwner::V1TaskWorld,
+            include_str!("memory_fts.sql"),
+        ))?;
         db.initialize_memory_activity()?;
         db.initialize_memory_graph_versions()?;
         db.initialize_memory_candidates()?;
@@ -122,8 +155,21 @@ impl Database {
         db.initialize_access_rules_schema()?;
         db.init_model_pools()
             .map_err(rusqlite::Error::InvalidParameterName)?;
+        db.initialize_workspace_service_settings()?;
+        db.apply_product_migration(&migrations::MigrationSpec::new(
+            1110,
+            "1110_local_onboarding",
+            migrations::MigrationOwner::V1TaskWorld,
+            include_str!("onboarding.sql"),
+        ))?;
         db.init_provider_accounts()
             .map_err(rusqlite::Error::InvalidParameterName)?;
+        db.apply_product_migration(&migrations::MigrationSpec::new(
+            1111,
+            "1111_activity_events",
+            migrations::MigrationOwner::V1TaskWorld,
+            include_str!("activity_events.sql"),
+        ))?;
         db.replay_memory_purges()?;
         // Seed after migrations so the lock is released between calls
         db.seed_builtin_workflows()?;
@@ -184,6 +230,7 @@ impl Database {
                 verification_status TEXT NOT NULL DEFAULT 'not_requested',
                 verification_reason TEXT,
                 result TEXT,
+                configuration_source_json TEXT,
                 sequence INTEGER NOT NULL,
                 started_at INTEGER,
                 finished_at INTEGER,
@@ -583,6 +630,15 @@ impl Database {
         if !column_exists(&conn, "conversations", "run_finished_at")? {
             conn.execute_batch("ALTER TABLE conversations ADD COLUMN run_finished_at INTEGER")?;
         }
+        if !column_exists(
+            &conn,
+            "conversation_execution_records",
+            "configuration_source_json",
+        )? {
+            conn.execute_batch(
+                "ALTER TABLE conversation_execution_records ADD COLUMN configuration_source_json TEXT",
+            )?;
+        }
         conn.execute(
             "UPDATE conversations
              SET run_status='completed', run_finished_at=COALESCE(run_finished_at, updated_at)
@@ -596,6 +652,11 @@ impl Database {
 
         if !column_exists(&conn, "mcp_servers", "env_secret_refs")? {
             conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN env_secret_refs TEXT")?;
+        }
+        if !column_exists(&conn, "workspaces", "project_json")? {
+            conn.execute_batch(
+                "ALTER TABLE workspaces ADD COLUMN project_json TEXT NOT NULL DEFAULT '{}'",
+            )?;
         }
 
         let now = chrono::Utc::now().timestamp_millis();

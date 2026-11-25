@@ -10,12 +10,12 @@ import { MONITOR_CARDS } from "./productPreferences";
 import { useVisibleRefresh } from "./useVisibleRefresh";
 import "./monitoringToolbox.css";
 
-const LABELS: Record<string, string> = { health: "服务健康", processes: "进程", resources: "系统资源", approvals: "待审批", diagnostics: "诊断" };
+const LABELS: Record<string, string> = { health: "服务版本", processes: "进程", resources: "设备资源", approvals: "审批概况", diagnostics: "诊断" };
 export default function MonitoringToolbox({ data, health }: { data: Record<string, unknown> | null; health: Record<string, unknown> | null }) {
   const { preferences, loaded, error, save } = useProductPreferences();
   const [layout, setLayout] = useState(preferences.monitor);
   const [saving, setSaving] = useState(false);
-  const [approvals, setApprovals] = useState<PendingApproval[] | null>(null);
+  const [approvals, setApprovals] = useState<PendingApproval[] | null | undefined>(undefined);
   const [diagnostics, setDiagnostics] = useState<Record<string, unknown> | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const location = useLocation(); const navigate = useNavigate();
@@ -28,19 +28,26 @@ export default function MonitoringToolbox({ data, health }: { data: Record<strin
   }, []);
   useVisibleRefresh(refresh);
   const values: Record<string, string> = {
-    health: typeof health?.status === "string" ? health.status : "unavailable",
+    health: [health?.version && "应用 " + health.version, health?.policy_version && "策略 " + health.policy_version].filter(Boolean).join(" · ") || "版本暂时不可用",
     processes: typeof data?.process_count === "number" ? `${data.process_count} 个系统进程` : "unavailable",
-    resources: data?.memory && typeof data.memory === "object" ? `内存 ${(data.memory as Record<string, unknown>).used_gb ?? "unavailable"} / ${(data.memory as Record<string, unknown>).total_gb ?? "unavailable"} GB` : "unavailable",
-    approvals: approvals === null ? "unavailable" : approvals.length === 0 ? "暂无待审批操作" : `${approvals.length} 项待审批`,
+    resources: Array.isArray(data?.disks) && Array.isArray(data?.gpu) ? data.disks.length + " 个磁盘 · " + data.gpu.length + " 个 GPU" : "设备资源暂时不可用",
+    approvals: approvals === undefined ? "正在读取待审批" : approvals === null ? "暂时无法读取审批状态" : approvals.length === 0 ? "暂无待审批操作" : `${approvals.length} 项待审批`,
     diagnostics: diagnostics ? `进程隔离：${diagnostics.process_containment === true ? "可用" : "unavailable"}；受限令牌：${diagnostics.restricted_token === true ? "可用" : "unavailable"}` : "unavailable",
   };
   const enabled = preferences.enabled_modules.includes("monitoring");
-  return <section className="mb-5 rounded-xl border border-[var(--border-soft)] p-4" aria-label="监控工具箱">
-    <div className="mb-3 flex flex-wrap items-center gap-2"><h2 className="mr-auto font-medium">监控工具箱</h2><Button variant="secondary" size="sm" onClick={() => { setApprovalOpen(true); void refresh(); }}>审批入口</Button>
+  return <>
+    <section className="preview-monitor-overview" aria-label="待审批状态">
+      <h2>待审批</h2>
+      <p role="status">{values.approvals}</p>
+      <Button variant="secondary" size="sm" onClick={() => { setApprovalOpen(true); void refresh(); }}>审批入口</Button>
+    </section>
+    {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
+    <details className="preview-monitor-details mb-4">
+    <summary>监控工具箱</summary>
+    <div className="mb-3 flex flex-wrap items-center gap-2">
       <select aria-label="监控布局模式" value={layout.mode} disabled={!enabled} onChange={(event) => setLayout({ ...layout, mode: event.target.value as "grid" | "free" })}><option value="grid">网格</option><option value="free">自由布局</option></select>
       <Button size="sm" disabled={!loaded || saving || !enabled} onClick={() => { setSaving(true); void save({ ...preferences, monitor: layout }).catch(() => undefined).finally(() => setSaving(false)); }}>保存布局</Button>
     </div>
-    {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
     {!enabled ? <p>监控模块已禁用，可在侧栏“定制导航”中重新开启。审批入口仍可使用。</p> : <>
       <div className="mb-3 flex flex-wrap gap-2">{MONITOR_CARDS.filter((id) => !layout.cards.some((card) => card.id === id)).map((id) => <button type="button" key={id} onClick={() => setLayout({ ...layout, cards: [...layout.cards, { id, x: 0, y: 0, width: 2, height: 1 }] })}>添加{LABELS[id]}</button>)}</div>
       {layout.cards.length === 0 && <p className="text-sm">工具箱为空，选择需要显示的卡片。</p>}
@@ -55,9 +62,10 @@ export default function MonitoringToolbox({ data, health }: { data: Record<strin
         </article>)}
       </div><p className="mt-2 text-xs text-[var(--text-faint)]">仅显示实际接口数据；页面隐藏时停止自动刷新，前台最多每 30 秒刷新一次。</p>
     </>}
+    </details>
     <Modal open={approvalOpen} onClose={() => { setApprovalOpen(false); const params = new URLSearchParams(location.search); if (params.get("card") === "approvals") { params.delete("card"); const search = params.toString(); navigate({ pathname: location.pathname, search: search ? `?${search}` : "" }, { replace: true }); } }} title="待审批操作">
-      {approvals === null ? <p role="status">审批数据 unavailable，请稍后重试。</p> : approvals.length === 0 ? <p>暂无待审批操作。</p> : approvals.map((approval) => approval.task_graph_id ? <TaskCanvasApproval key={approval.approval_id} approval={approval} onResolved={refresh}/> : <div key={approval.approval_id} className="mb-3"><p>{approval.tool_name}</p><Button variant="secondary" onClick={() => navigate(`/chat/${encodeURIComponent(approval.conversation_id)}`)}>前往对应对话核对并审批</Button></div>)}
+      {approvals === undefined ? <p role="status">正在读取待审批操作…</p> : approvals === null ? <p role="alert">暂时无法读取审批，请重试。</p> : approvals.length === 0 ? <p>暂无待审批操作。</p> : approvals.map((approval) => approval.task_graph_id ? <TaskCanvasApproval key={approval.approval_id} approval={approval} onResolved={refresh}/> : <div key={approval.approval_id} className="mb-3"><p>{approval.tool_name}</p><Button variant="secondary" onClick={() => navigate(`/chat/${encodeURIComponent(approval.conversation_id)}`)}>前往对应对话核对并审批</Button></div>)}
       <Button variant="secondary" onClick={() => void refresh()}>刷新审批</Button>
     </Modal>
-  </section>;
+  </>;
 }

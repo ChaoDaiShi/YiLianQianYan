@@ -897,7 +897,7 @@ async fn approval_cancel_records_resolution_without_execution() {
 }
 
 #[tokio::test]
-async fn agent_utf8_message_survives_logging_preview_and_persistence() {
+async fn agent_utf8_message_survives_request_and_persistence_without_body_logging() {
     let workspace = TestWorkspace::new("agent-utf8");
     let mock_llm = start_mock_llm(vec![sse_text("中文内容检查完成😀")]).await;
     let (server, token) = test_server(
@@ -948,6 +948,8 @@ async fn agent_utf8_message_survives_logging_preview_and_persistence() {
         .iter()
         .all(|entry| !entry.content.contains('\u{FFFD}')));
     let logs = server.log_buffer.recent(100);
-    assert!(logs.iter().any(|entry| entry.message.contains(message)));
+    assert!(logs.iter().any(|entry| entry.message == "Agent 循环开始"));
+    assert!(logs.iter().any(|entry| entry.message == "Agent 完成"));
+    assert!(logs.iter().all(|entry| !entry.message.contains(message)));
     assert!(logs.iter().all(|entry| !entry.message.contains('\u{FFFD}')));
 }

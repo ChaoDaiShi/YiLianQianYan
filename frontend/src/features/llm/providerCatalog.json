@@ -535,6 +535,23 @@
       "embedding": "openai"
     }
   },
+  "llamacpp": {
+    "id": "llamacpp",
+    "label": "llama.cpp（本地）",
+    "baseUrl": "http://127.0.0.1:8080/v1",
+    "model": "",
+    "official_docs_url": "https://github.com/ggml-org/llama.cpp/tree/master/tools/server",
+    "category": "local",
+    "services": ["chat"],
+    "last_checked": "2026-11-24",
+    "regions": [
+      {"id": "configured", "label": "本机服务地址", "base_url": "http://127.0.0.1:8080/v1"}
+    ],
+    "auth_fields": [
+      {"key": "api_key", "label": "API Key", "secret": true, "required": false}
+    ],
+    "adapter_by_service": {"chat": "openai"}
+  },
   "lmstudio": {
     "id": "lmstudio",
     "label": "LM Studio（本地）",

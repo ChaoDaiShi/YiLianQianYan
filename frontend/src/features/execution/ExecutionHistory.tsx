@@ -11,6 +11,7 @@ import {
 import type {
   ExecutionRecord,
   ExecutionStatus,
+  ServiceConfigurationSource,
   VerificationStatus,
 } from "./model";
 
@@ -30,6 +31,14 @@ const VERIFICATION_LABELS: Record<VerificationStatus, string> = {
   pending: "验证中",
   passed: "已验证",
   failed: "验证失败",
+};
+
+const APPROVAL_LABELS = { not_required: "", pending: "待审批", approved: "已批准", rejected: "已拒绝", cancelled: "审批已取消", expired: "审批已过期" } as const;
+
+const SOURCE_SCOPES: Record<ServiceConfigurationSource["scope"], string> = {
+  global: "全局",
+  workspace: "工作区",
+  agent: "智能体",
 };
 
 function verificationTone(
@@ -80,6 +89,7 @@ function ExecutionHistoryItem({
       : null;
   const detailsId = `execution-details-${record.toolCallId}`;
   const hasArgs = Object.keys(record.args).length > 0;
+  const source = record.configurationSource;
 
   useEffect(() => {
     if (!expanded) return;
@@ -135,10 +145,11 @@ function ExecutionHistoryItem({
           </span>
         </span>
 
-        {record.verificationStatus !== "not_requested" && <span className="mt-1 flex flex-wrap gap-1.5">
-          <Badge tone={verificationTone(record.verificationStatus)}>
+        {(record.verificationStatus !== "not_requested" || record.approvalStatus !== "not_required") && <span className="mt-1 flex flex-wrap gap-1.5">
+          {record.approvalStatus !== "not_required" && <Badge tone={record.approvalStatus === "approved" ? "success" : "warning"}>{APPROVAL_LABELS[record.approvalStatus]}</Badge>}
+          {record.verificationStatus !== "not_requested" && <Badge tone={verificationTone(record.verificationStatus)}>
             {VERIFICATION_LABELS[record.verificationStatus]}
-          </Badge>
+          </Badge>}
         </span>}
 
         {failedPresentation ? (
@@ -247,6 +258,23 @@ function ExecutionHistoryItem({
                 </dd>
               </div>
             ) : null}
+            {source && (
+              <div>
+                <dt className="text-[var(--text-faint)]">模型配置来源</dt>
+                <dd className="execution-history-technical-value">
+                  {SOURCE_SCOPES[source.scope]} · {source.source === "pool" ? "模型池" : "档案"}
+                  {` · ${source.label} (${source.id}) · 版本 ${source.revision}`}
+                </dd>
+              </div>
+            )}
+            {source?.actual_profile && (
+              <div>
+                <dt className="text-[var(--text-faint)]">实际调用模型</dt>
+                <dd className="execution-history-technical-value">
+                  {`${source.actual_profile.model} (${source.actual_profile.id}) · 档案版本 ${source.actual_profile.revision}`}
+                </dd>
+              </div>
+            )}
             {record.verificationReason ? (
               <div>
                 <dt className="text-[var(--text-faint)]">验证信息</dt>

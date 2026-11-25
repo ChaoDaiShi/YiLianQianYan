@@ -56,6 +56,16 @@ fn window_ocr_requires_a_separate_grant_and_a_visible_window() {
     assert!(truncated);
     host.hidden.store(true, Ordering::Release);
     assert_eq!(read().unwrap_err().code, "window_not_visible");
+    host.hidden.store(false, Ordering::Release);
+    runtime
+        .db
+        .conn()
+        .execute(
+            "UPDATE local_onboarding SET profile=?1",
+            [r#"{"permissions":{"screen":false}}"#],
+        )
+        .unwrap();
+    assert_eq!(read().unwrap_err().code, "screen_capture_disabled");
 }
 
 #[test]

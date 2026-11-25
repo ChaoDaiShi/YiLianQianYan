@@ -164,6 +164,7 @@ pub(super) fn invocation_error(error: LlmError, phase: &str) -> String {
             format!("模型服务返回HTTP {status}；请检查模型配置及JSON Output支持")
         }
         LlmError::Parse(_) => "模型服务响应不符合对话API格式".into(),
+        LlmError::Redirect => LlmError::Redirect.to_string(),
         _ => "已配置模型服务未完成请求，请查看模型用量或路由记录".into(),
     };
     format!("{phase}：{detail}")

@@ -10,6 +10,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
 yilian-backend = { path = "../backend" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
@@ -21,16 +25,26 @@ tauri = { version = "2", features = ["macos-private-api"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
+windows-future = "0.2"
 base64 = "0.22"
-windows = { version = "0.61", features = ["Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_Storage_Xps", "ApplicationModel", "UI_Notifications_Management", "Win32_System_WinRT", "Win32_System_Com", "Win32_Foundation", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading", "Win32_UI_HiDpi", "Win32_UI_Accessibility", "Win32_System_Variant", "Win32_System_Ole", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader"] }
+webview2-com = "0.38.2"
+windows = { version = "0.61", features = ["Foundation", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_Storage_Xps", "Win32_Storage_FileSystem", "ApplicationModel", "UI_Notifications_Management", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_System_Com", "Win32_Foundation", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading", "Win32_UI_HiDpi", "Win32_UI_Accessibility", "Win32_System_Variant", "Win32_System_Ole", "Win32_Graphics_Gdi", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_LibraryLoader", "Win32_System_Diagnostics_ToolHelp"] }
 
-serde_json = "1"
-tokio-util = { version = "0.7", features = ["rt"] }
+[[bin]]
+name = "yi-lian-qian-yan"
+path = "src/main.rs"
 
 [features]
-native-software-fixture = []
+default = []
+native-browser-fixture = []
+native-software-fixture = ["native-browser-fixture"]
+
+[[bin]]
+name = "yilian-native-browser-fixture"
+path = "src/main.rs"
+required-features = ["native-browser-fixture"]
 
 [[bin]]
 name = "yilian-software-fixture"
 path = "src/bin/software_fixture.rs"
-required-features = ["native-software-fixture"]
+required-features = ["native-browser-fixture"]

@@ -94,6 +94,22 @@ describe("memoryStore persistence error resilience", () => {
     expect(state.memories).toEqual([]);
   });
 
+  it("does not restore a purged memory from a list already in flight", async () => {
+    let finishList!: (records: Array<typeof mockMemory>) => void;
+    vi.mocked(memoryApi.listMemories).mockImplementationOnce(() => new Promise(resolve => { finishList = resolve; }));
+    vi.mocked(memoryApi.deleteMemory).mockResolvedValueOnce({ status: "deleted" });
+    const other = { ...mockMemory, id: "mem-2", content: "另一条记忆" };
+    useMemoryStore.setState({ memories: [mockMemory, other] });
+
+    const staleRead = useMemoryStore.getState().loadMemories();
+    await useMemoryStore.getState().removeMemory(mockMemory.id);
+    finishList([mockMemory, other]);
+    await staleRead;
+
+    expect(useMemoryStore.getState().memories).toEqual([other]);
+    expect(useMemoryStore.getState().isLoading).toBe(false);
+  });
+
   it("editMemory preserves original item if update fails", async () => {
     useMemoryStore.setState({ memories: [mockMemory] });
     vi.mocked(memoryApi.updateMemory).mockRejectedValueOnce(

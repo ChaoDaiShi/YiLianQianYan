@@ -5,9 +5,14 @@ import ApprovalCard from "../../components/approval/ApprovalCard";
 import ExecutionHistory from "./ExecutionHistory";
 import type { AgentRunState } from "./model";
 import { selectCurrentAction, selectExecutionHistory } from "./selectors";
+import type { Message } from "../../types";
+import ConversationTurnChain from "./ConversationTurnChain";
 
 interface ExecutionSidebarProps {
   state: AgentRunState;
+  messages?: Message[];
+  persistedMessages?: Message[];
+  chainRefreshKey?: string;
   pendingApprovals: PendingApproval[];
   resolving: Record<string, boolean>;
   onApprove: (approval: PendingApproval) => void;
@@ -18,6 +23,9 @@ interface ExecutionSidebarProps {
 
 export default function ExecutionSidebar({
   state,
+  messages,
+  persistedMessages,
+  chainRefreshKey,
   pendingApprovals,
   resolving,
   onApprove,
@@ -89,6 +97,9 @@ export default function ExecutionSidebar({
             {conversationApprovals.map((approval) => <ApprovalCard key={approval.approval_id} approval={approval} resolving={resolving[approval.approval_id]} onApprove={onApprove} onReject={onReject} />)}
           </section>
         )}
+        {state.conversationId && messages && <ConversationTurnChain key={state.conversationId}
+          conversationId={state.conversationId} messages={messages} persistedMessages={persistedMessages}
+          history={history} pendingApprovals={conversationApprovals} refreshKey={chainRefreshKey ?? ""} runError={state.terminalError} />}
         <section aria-labelledby="current-action-heading">
           <h3
             id="current-action-heading"

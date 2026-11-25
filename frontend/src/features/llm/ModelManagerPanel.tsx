@@ -14,6 +14,7 @@ import { Badge, Button, Input } from "../../components/ui";
 import ModelPresetSelect from "./ModelPresetSelect";
 import ModelTree from "./ModelTree";
 import TokenUsageChart from "./TokenUsageChart";
+import ModelCatalogField from "./ModelCatalogField";
 import { buildUsageQuery, providerLabel, PROVIDER_PRESETS, type ProviderPresetId } from "./llmModelUtils";
 
 function dateString(date: Date) {
@@ -259,7 +260,7 @@ export default function ModelManagerPanel({ legacyModel, actions }: ModelManager
 
       <div className="grid gap-2">
         {models.map((model) => (
-          <div key={model.id} data-model-id={model.id} className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3">
+          <div key={model.id} data-model-id={model.id} className="glass-card rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="flex items-center gap-2"><span className="truncate text-sm font-medium">{model.label}</span>{model.active ? <Badge tone="success">使用中</Badge> : null}{model.verified_at ? <Badge tone="info"><CheckCircle2 className="h-3 w-3" />已验证</Badge> : <Badge tone="default"><CircleAlert className="h-3 w-3" />未验证</Badge>}</div>
@@ -283,7 +284,7 @@ export default function ModelManagerPanel({ legacyModel, actions }: ModelManager
         <div className="grid gap-3 sm:grid-cols-2">
           <div><label className="mb-1.5 block text-sm font-medium">服务商</label><select value={form.provider} onChange={(event) => changeProvider(event.target.value as ProviderPresetId)} className="w-full rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3 py-2 text-sm text-[var(--text)]"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="qwen">千问</option><option value="glm">GLM</option><option value="custom">自定义 OpenAI 兼容</option></select></div>
           <Input label="显示名称" value={form.label} onChange={(event) => patchForm("label", event.target.value)} placeholder="例如：主力模型" />
-          <Input label="模型名称" value={form.model} onChange={(event) => patchForm("model", event.target.value)} placeholder="例如：deepseek-chat" />
+          <ModelCatalogField provider={form.provider} baseUrl={form.base_url} apiKey={form.api_key} apiKeyEnv={form.api_key_env} modelId={editingId ?? undefined} preserveValue={Boolean(editingId)} value={form.model} onChange={id => patchForm("model", id)} />
           <Input label="API 地址" value={form.base_url} onChange={(event) => patchForm("base_url", event.target.value)} placeholder="https://.../v1" />
           {(!editingId || replaceProfileApiKey) ? <Input label="API Key" type="password" value={form.api_key ?? ""} onChange={(event) => patchForm("api_key", event.target.value)} placeholder="输入后安全保存" /> : <div className="flex items-end"><Button variant="secondary" size="sm" onClick={() => setReplaceProfileApiKey(true)}>替换密钥</Button></div>}
           <Input label="环境变量名（可选）" value={form.api_key_env ?? ""} onChange={(event) => patchForm("api_key_env", event.target.value)} placeholder="OPENAI_API_KEY" />

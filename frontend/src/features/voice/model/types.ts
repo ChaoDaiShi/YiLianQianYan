@@ -40,7 +40,7 @@ export interface GlobalVoiceContextBridgeValue {
   session: GlobalVoiceSession | null;
   updateContext: (patch: GlobalVoiceContextPatch) => void;
   chatVoiceControls: ChatVoiceControls | null;
-  requestGlobalVoiceSession: () => void;
+  requestGlobalVoiceSession: (anchor?: ConversationalAnchor) => void;
   speakAssistantMessage: (text: string) => void;
 }
 

@@ -36,6 +36,15 @@ export type ConnectionStatus =
   | "interrupted"
   | "error";
 
+export interface ServiceConfigurationSource {
+  scope: "global" | "workspace" | "agent";
+  source: "profile" | "pool";
+  id: string;
+  label: string;
+  revision: number;
+  actual_profile?: { id: string; model: string; revision: number };
+}
+
 export interface ExecutionRecord {
   toolCallId: string;
   conversationId: string;
@@ -49,6 +58,7 @@ export interface ExecutionRecord {
   verificationStatus: VerificationStatus;
   verificationReason?: string;
   result?: string;
+  configurationSource?: ServiceConfigurationSource;
   startedAt?: number;
   finishedAt?: number;
   sequence: number;
@@ -57,6 +67,7 @@ export interface ExecutionRecord {
 export interface AgentRunState {
   conversationId: string | null;
   content: string;
+  replyCheckpoint: string;
   reasoning: string;
   records: Record<string, ExecutionRecord>;
   order: string[];

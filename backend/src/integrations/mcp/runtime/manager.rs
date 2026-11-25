@@ -13,6 +13,8 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use crate::{api::plugin_services::PluginMcpBinding, plugin::service_runtime::TaskServiceUse};
+
 use super::super::config::McpTransportConfig;
 use super::super::protocol::jsonrpc::{JsonRpcMessage, JsonRpcRequest};
 use super::super::protocol::model::{
@@ -49,6 +51,7 @@ pub struct McpServerRuntime {
     pub last_error: Option<String>,
     pub last_refresh: Option<i64>,
     transport: Option<Arc<dyn McpTransport>>,
+    plugin: Option<Arc<PluginMcpBinding>>,
 }
 
 impl McpServerRuntime {
@@ -67,6 +70,30 @@ impl McpServerRuntime {
             last_error: None,
             last_refresh: None,
             transport: None,
+            plugin: None,
+        }
+    }
+
+    pub(crate) fn plugin_instance(&self) -> Option<uuid::Uuid> {
+        self.plugin.as_ref().map(|plugin| plugin.instance)
+    }
+
+    pub(crate) fn plugin_mcp_server(&self) -> Option<crate::db::McpServer> {
+        self.plugin
+            .as_ref()?
+            .source(&self.server_id, &self.name, &self.config)
+    }
+
+    async fn plugin_use(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Option<TaskServiceUse>, McpRuntimeError> {
+        match &self.plugin {
+            Some(plugin) => tokio::select! {
+                () = cancel.cancelled() => Err(McpRuntimeError::Cancelled),
+                usage = plugin.acquire() => usage.map(Some),
+            },
+            None => Ok(None),
         }
     }
 }
@@ -138,6 +165,37 @@ impl McpRuntimeManager {
         );
     }
 
+    pub(crate) fn register_plugin_server(
+        &self,
+        server_id: String,
+        name: String,
+        url: String,
+        plugin: PluginMcpBinding,
+    ) {
+        self.invalidate_server_cache(&server_id);
+        let mut runtime = McpServerRuntime::new(
+            server_id.clone(),
+            name,
+            McpTransportConfig::StreamableHttp {
+                url,
+                headers_from_env: Default::default(),
+            },
+        );
+        runtime.plugin = Some(Arc::new(plugin));
+        self.servers.write().insert(server_id, Arc::new(runtime));
+    }
+
+    pub(crate) fn remove_plugin_server(&self, server_id: &str) {
+        let mut servers = self.servers.write();
+        if servers
+            .get(server_id)
+            .is_some_and(|server| server.plugin.is_some())
+        {
+            servers.remove(server_id);
+            self.invalidate_server_cache(server_id);
+        }
+    }
+
     pub fn list_servers(&self) -> Vec<Arc<McpServerRuntime>> {
         let mut v: Vec<_> = self.servers.read().values().cloned().collect();
         v.sort_by(|a, b| a.server_id.cmp(&b.server_id));
@@ -207,8 +265,22 @@ impl McpRuntimeManager {
         let Some(runtime) = self.get_server(server_id) else {
             return Err(McpRuntimeError::ServerNotFound);
         };
-        let transport = self.build_transport(&runtime.config)?;
         let cancel = CancellationToken::new();
+        let _use = runtime.plugin_use(&cancel).await?;
+        let transport: Arc<dyn McpTransport> = match (&runtime.plugin, &runtime.config) {
+            (Some(binding), McpTransportConfig::StreamableHttp { url, .. })
+                if binding.is_local() =>
+            {
+                Arc::new(HttpTransport::managed_local(url.clone())?)
+            }
+            (Some(binding), McpTransportConfig::StreamableHttp { url, .. }) => {
+                match binding.cloud_bearer() {
+                    Some(bearer) => Arc::new(HttpTransport::managed_cloud(url.clone(), bearer)?),
+                    None => self.build_transport(&runtime.config)?,
+                }
+            }
+            _ => self.build_transport(&runtime.config)?,
+        };
         let negotiation = transport.connect(&cancel).await?;
 
         // Capability-gated catalog discovery: never send an unsupported RPC.
@@ -255,10 +327,16 @@ impl McpRuntimeManager {
             last_error: None,
             last_refresh: Some(chrono::Utc::now().timestamp_millis()),
             transport: Some(transport),
+            plugin: runtime.plugin.clone(),
         });
-        self.servers
-            .write()
-            .insert(server_id.to_string(), refreshed);
+        let mut servers = self.servers.write();
+        if !servers
+            .get(server_id)
+            .is_some_and(|latest| Arc::ptr_eq(latest, &runtime))
+        {
+            return Err(McpRuntimeError::ServerNotFound);
+        }
+        servers.insert(server_id.to_string(), refreshed);
         Ok(())
     }
 
@@ -425,9 +503,24 @@ impl McpRuntimeManager {
         arguments: serde_json::Value,
         cancel: &CancellationToken,
     ) -> Result<McpToolCallResult, McpRuntimeError> {
+        self.call_tool_with_context(server_id, tool_name, arguments, cancel, None)
+            .await
+    }
+
+    pub(crate) async fn call_tool_with_context(
+        &self,
+        server_id: &str,
+        tool_name: &str,
+        arguments: serde_json::Value,
+        cancel: &CancellationToken,
+        context: Option<&crate::tools::trait_def::ToolExecutionContext>,
+    ) -> Result<McpToolCallResult, McpRuntimeError> {
         let runtime = self
             .get_server(server_id)
             .ok_or(McpRuntimeError::ServerNotFound)?;
+        if runtime.plugin.is_some() && context.and_then(|context| context.invocation()).is_none() {
+            return Err(McpRuntimeError::Unauthorized);
+        }
         if !runtime.capabilities.tools {
             return Err(McpRuntimeError::CapabilityUnsupported("tools".to_string()));
         }
@@ -439,8 +532,9 @@ impl McpRuntimeManager {
         if !runtime.tools.iter().any(|t| t.name == tool_name) {
             return Err(McpRuntimeError::ToolNotFound(tool_name.to_string()));
         }
+        let usage = runtime.plugin_use(cancel).await?;
         // x-mcp-header: derive Mcp-Param-* headers from the tool's bindings.
-        let extra_headers = runtime
+        let mut extra_headers = runtime
             .tools
             .iter()
             .find(|t| t.name == tool_name)
@@ -462,6 +556,23 @@ impl McpRuntimeManager {
             .map_err(|e| McpRuntimeError::Protocol(e))?
             .unwrap_or_default();
 
+        let model_lease = match (&runtime.plugin, &usage, context) {
+            (Some(plugin), Some(usage), Some(context)) => {
+                crate::api::plugin_model_proxy::authorize_call(
+                    plugin,
+                    server_id,
+                    tool_name,
+                    context,
+                    &usage.ended,
+                )
+                .await
+            }
+            _ => None,
+        };
+        if let Some(lease) = &model_lease {
+            lease.add_headers(&mut extra_headers);
+        }
+
         let mut params = serde_json::json!({ "name": tool_name, "arguments": arguments });
         if runtime.protocol_version == McpProtocolVersion::V2026_07_28 {
             attach_request_metadata(&mut params, env!("CARGO_PKG_VERSION"));
@@ -471,6 +582,7 @@ impl McpRuntimeManager {
         let message = transport
             .send_with_options(&request, &options, cancel)
             .await?;
+        drop(model_lease);
         let result = match message {
             JsonRpcMessage::Success(s) => s.result,
             JsonRpcMessage::Error(e) => return Err(McpRuntimeError::ServerError(e.error.message)),
@@ -542,6 +654,7 @@ impl McpRuntimeManager {
             .transport
             .as_ref()
             .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
+        let _use = runtime.plugin_use(cancel).await?;
         let params = serde_json::json!({ "uri": uri });
         let cache_key = super::cache::McpCache::key(server_id, "resources/read", &params);
         if let Some(super::cache::McpCacheValue::ResourceRead(contents)) =
@@ -618,6 +731,7 @@ impl McpRuntimeManager {
             .transport
             .as_ref()
             .ok_or(McpRuntimeError::Transport("not connected".to_string()))?;
+        let _use = runtime.plugin_use(cancel).await?;
         let params = serde_json::json!({ "name": name, "arguments": arguments });
         let result = self
             .send(

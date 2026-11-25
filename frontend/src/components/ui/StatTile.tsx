@@ -30,7 +30,7 @@ export default function StatTile({
   return (
     <div
       className={cn(
-        "flex flex-col justify-between rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 shadow-card-token transition-all duration-[var(--motion-fast)]",
+        "glass-card flex flex-col justify-between rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 shadow-card-token transition-all duration-[var(--motion-fast)]",
         className
       )}
     >

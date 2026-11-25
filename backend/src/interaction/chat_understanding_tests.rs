@@ -34,7 +34,7 @@ fn evaluates_distinct_conversation_scenarios() {
         ),
     ];
     for (message, context, exchange, scope) in scenarios {
-        let actual = understand(message, context, false, false, WorkspaceMode::Chat);
+        let actual = understand(message, context, false, false, WorkspaceMode::Auto);
         assert_eq!(
             (actual.exchange, actual.scope),
             (exchange, scope),
@@ -70,13 +70,13 @@ fn wechat_draft_instruction_permits_only_draft_work() {
         "微信当前群里打个 cs 先别发",
         "在微信的 cs一群 里写个 cs",
     ] {
-        let intent = understand(text, None, false, false, WorkspaceMode::Chat);
+        let intent = understand(text, None, false, false, WorkspaceMode::Auto);
         assert_eq!(
             serde_json::to_value(intent.scope).unwrap(),
             "wechat_draft",
             "{text}"
         );
-        assert_eq!(intent.role(WorkspaceMode::Chat), Role::General);
+        assert_eq!(intent.role(WorkspaceMode::Auto), Role::General);
     }
     for text in [
         "在微信输入 cs，先别执行",
@@ -87,7 +87,7 @@ fn wechat_draft_instruction_permits_only_draft_work() {
         "只读微信，看看群里输入了什么",
     ] {
         assert_ne!(
-            serde_json::to_value(understand(text, None, false, false, WorkspaceMode::Chat).scope)
+            serde_json::to_value(understand(text, None, false, false, WorkspaceMode::Auto).scope)
                 .unwrap(),
             "wechat_draft",
             "{text}"
@@ -104,7 +104,7 @@ fn follows_an_explicit_reference_to_the_wechat_editor() {
             Some("看看微信当前群聊"),
             false,
             false,
-            WorkspaceMode::Chat
+            WorkspaceMode::Auto
         )
         .scope,
         Scope::WechatDraft
@@ -115,7 +115,7 @@ fn follows_an_explicit_reference_to_the_wechat_editor() {
             Some("看看浏览器页面"),
             false,
             false,
-            WorkspaceMode::Chat
+            WorkspaceMode::Auto
         )
         .scope,
         Scope::WechatDraft
@@ -127,7 +127,7 @@ fn natural_wechat_draft_followup_reuses_the_previous_editor_only() {
     let previous = Some("帮我在微信的 cs一群 把草稿补成 cs2，先别发。");
     for request in ["改成 cs3，先别发。", "把刚才的草稿换成 cs3", "再加个 2"] {
         assert_eq!(
-            understand(request, previous, false, false, WorkspaceMode::Chat).scope,
+            understand(request, previous, false, false, WorkspaceMode::Auto).scope,
             Scope::WechatDraft,
             "{request}"
         );
@@ -139,7 +139,7 @@ fn natural_wechat_draft_followup_reuses_the_previous_editor_only() {
         "改成 cs3 然后发送",
     ] {
         assert_ne!(
-            understand(request, previous, false, false, WorkspaceMode::Chat).scope,
+            understand(request, previous, false, false, WorkspaceMode::Auto).scope,
             Scope::WechatDraft,
             "{request}"
         );
@@ -150,7 +150,7 @@ fn natural_wechat_draft_followup_reuses_the_previous_editor_only() {
             Some("微信支付怎么用？"),
             false,
             false,
-            WorkspaceMode::Chat
+            WorkspaceMode::Auto
         )
         .scope,
         Scope::WechatDraft
@@ -167,7 +167,7 @@ fn mounted_window_requests_separate_observation_from_action() {
         ("在挂载窗口里勾选自动换行", "software_control"),
         ("只读，看看挂载窗口里的按钮", "software_read"),
     ] {
-        let route = understand(request, None, false, false, WorkspaceMode::Chat);
+        let route = understand(request, None, false, false, WorkspaceMode::Auto);
         assert_eq!(
             serde_json::to_value(route.scope).unwrap(),
             scope,

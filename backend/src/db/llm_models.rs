@@ -1,6 +1,7 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use super::model_pools::ProviderAccount;
 use super::Database;
 use crate::config::types::ModelConfig;
 use crate::integrations::secret::SecretRef;
@@ -108,9 +109,59 @@ pub struct LlmUsageReport {
 
 impl Database {
     pub fn create_llm_model(&self, input: &LlmModelInput) -> Result<LlmModelRow, String> {
+        self.create_llm_model_for_account(input, None)
+    }
+
+    pub fn create_llm_model_for_account(
+        &self,
+        input: &LlmModelInput,
+        account_id: Option<&str>,
+    ) -> Result<LlmModelRow, String> {
         let now = chrono::Utc::now().timestamp_millis();
-        let conn = self.conn();
-        conn.execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        if let Some(account_id) = account_id {
+            let payload = tx
+                .query_row(
+                    "SELECT payload FROM provider_accounts WHERE id = ?1",
+                    [account_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .ok_or("厂商账户不存在")?;
+            let mut account: ProviderAccount =
+                serde_json::from_str(&payload).map_err(|e| e.to_string())?;
+            if account.provider_id != input.provider
+                || account.base_url.trim_end_matches('/') != input.base_url
+                || account
+                    .credential_id
+                    .as_ref()
+                    .is_some_and(|reference| reference != &input.api_key_ref)
+            {
+                return Err("厂商账户已更新，请重新读取账户".into());
+            }
+            let existing = tx.query_row(
+                "SELECT id FROM llm_models WHERE model=?1 AND id IN (SELECT value FROM json_each(?2)) ORDER BY active DESC, updated_at DESC LIMIT 1",
+                params![input.model, serde_json::to_string(&account.profile_ids).map_err(|error| error.to_string())?],
+                |row| row.get::<_, String>(0),
+            ).optional().map_err(|error| error.to_string())?;
+            if let Some(id) = existing {
+                tx.commit().map_err(|error| error.to_string())?;
+                drop(conn);
+                return self.get_llm_model(&id)?.ok_or("模型不存在".into());
+            }
+            account.profile_ids.push(input.id.clone());
+            tx.execute(
+                "UPDATE provider_accounts SET payload=?1 WHERE id=?2",
+                params![
+                    serde_json::to_string(&account).map_err(|e| e.to_string())?,
+                    account_id
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.execute(
             "INSERT INTO llm_models (
                 id, provider, label, model, base_url, api_format, api_key_ref,
                 api_key_env, temperature, max_tokens, invoke_timeout_ms,
@@ -132,6 +183,7 @@ impl Database {
             ],
         )
         .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         drop(conn);
         self.get_llm_model(&input.id)
             .and_then(|model| model.ok_or_else(|| "model was not created".to_string()))
@@ -156,20 +208,7 @@ impl Database {
     }
 
     pub fn get_llm_model(&self, id: &str) -> Result<Option<LlmModelRow>, String> {
-        let conn = self.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, provider, label, model, base_url, api_format, api_key_ref,
-                        api_key_env, temperature, max_tokens, invoke_timeout_ms,
-                        active, verified_at, last_error, created_at, updated_at
-                 FROM llm_models WHERE id = ?1",
-            )
-            .map_err(|e| e.to_string())?;
-        match stmt.query_row(params![id], map_llm_model) {
-            Ok(model) => Ok(Some(model)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.to_string()),
-        }
+        get_llm_model_on(&self.conn(), id).map_err(|e| e.to_string())
     }
 
     pub fn update_llm_model(&self, input: &LlmModelInput) -> Result<LlmModelRow, String> {
@@ -208,11 +247,45 @@ impl Database {
 
     pub fn delete_llm_model(&self, id: &str) -> Result<(), String> {
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        if super::workspace_service_settings::workspace_service_reference_exists(
+            &tx,
+            "profile",
+            id,
+            Some(true),
+        )
+        .map_err(|e| e.to_string())?
+        {
+            return Err("模型档案仍被工作空间引用，请先移除覆盖".into());
+        }
         let deleted = tx
             .execute("DELETE FROM llm_models WHERE id=?1", params![id])
             .map_err(|e| e.to_string())?;
         if deleted > 0 {
+            let accounts = {
+                let mut statement = tx.prepare("SELECT payload FROM provider_accounts WHERE EXISTS(SELECT 1 FROM json_each(payload, '$.profile_ids') WHERE value = ?1)")
+                    .map_err(|e| e.to_string())?;
+                let rows = statement
+                    .query_map([id], |row| row.get::<_, String>(0))
+                    .map_err(|e| e.to_string())?;
+                rows.collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?
+            };
+            for payload in accounts {
+                let mut account: ProviderAccount =
+                    serde_json::from_str(&payload).map_err(|e| e.to_string())?;
+                account.profile_ids.retain(|profile_id| profile_id != id);
+                tx.execute(
+                    "UPDATE provider_accounts SET payload=?1 WHERE id=?2",
+                    params![
+                        serde_json::to_string(&account).map_err(|e| e.to_string())?,
+                        account.id
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
             super::connectors::remove_connector_entity_on(&tx, "model", id)
                 .map_err(|e| e.to_string())?;
         }
@@ -432,6 +505,21 @@ impl Database {
     }
 }
 
+pub(super) fn get_llm_model_on(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> rusqlite::Result<Option<LlmModelRow>> {
+    conn.query_row(
+        "SELECT id, provider, label, model, base_url, api_format, api_key_ref,
+                api_key_env, temperature, max_tokens, invoke_timeout_ms,
+                active, verified_at, last_error, created_at, updated_at
+         FROM llm_models WHERE id = ?1",
+        params![id],
+        map_llm_model,
+    )
+    .optional()
+}
+
 fn map_llm_model(row: &rusqlite::Row<'_>) -> rusqlite::Result<LlmModelRow> {
     Ok(LlmModelRow {
         id: row.get(0)?,
@@ -454,115 +542,4 @@ fn map_llm_model(row: &rusqlite::Row<'_>) -> rusqlite::Result<LlmModelRow> {
 }
 
 #[cfg(test)]
-mod monitor_usage_tests {
-    use super::*;
-    #[test]
-    fn basic_pool_tokens_join_usage_without_counting_image_units_as_tokens() {
-        let db = Database::new(std::path::Path::new(":memory:")).unwrap();
-        let at = chrono::DateTime::parse_from_rfc3339("2026-10-20T16:30:00Z")
-            .unwrap()
-            .timestamp_millis();
-        db.save_provider_account(&crate::db::model_pools::ProviderAccount {
-            id: "vision-account".into(),
-            provider_id: "vision-provider".into(),
-            label: "Vision".into(),
-            base_url: "https://example.invalid".into(),
-            credential_id: None,
-            profile_ids: vec![],
-        })
-        .unwrap();
-        for (id, kind) in [("vision-profile", "vision"), ("image-profile", "image")] {
-            db.save_basic_service_profile(
-                id,
-                crate::db::basic_services::BasicServiceInput {
-                    label: id.into(),
-                    provider_account_id: "vision-account".into(),
-                    service_kind: kind.into(),
-                    model: format!("actual-{kind}"),
-                    adapter: "openai".into(),
-                    parameters: serde_json::json!({}),
-                    expected_revision: None,
-                },
-            )
-            .unwrap();
-        }
-        db.conn().execute("INSERT INTO model_pool_attempts(id,request_id,model_id,tier,started_at,ended_at,usage) VALUES('vision-attempt','r','vision-profile',1,?1,?1,'{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}'),('image-attempt','r','image-profile',1,?1,?1,'{\"image_count\":1}')",[at]).unwrap();
-        let report = db
-            .aggregate_llm_usage_in_timezone(None, at - 1, at + 1, 480)
-            .unwrap();
-        assert_eq!(
-            (
-                report.prompt_tokens,
-                report.completion_tokens,
-                report.total_tokens,
-                report.known_usage_count
-            ),
-            (7, 3, 10, 1)
-        );
-        assert_eq!(report.days[0].date, "2026-10-21");
-        let vision = report
-            .models
-            .iter()
-            .find(|m| m.model_id == "vision-profile")
-            .unwrap();
-        assert_eq!(
-            (&*vision.provider, &*vision.model, vision.known_usage_count),
-            ("vision-provider", "actual-vision", 1)
-        );
-        let image = report
-            .models
-            .iter()
-            .find(|m| m.model_id == "image-profile")
-            .unwrap();
-        assert_eq!((image.total_tokens, image.known_usage_count), (0, 0));
-        let filtered = db
-            .aggregate_llm_usage_in_timezone(Some("vision-profile"), at - 1, at + 1, 480)
-            .unwrap();
-        assert_eq!(filtered.total_tokens, 10);
-        assert_eq!(filtered.models.len(), 1);
-    }
-    #[test]
-    fn local_usage_days_keep_unknown_failed_attempts_separate_and_filter_models() {
-        let db = Database::new(std::path::Path::new(":memory:")).unwrap();
-        db.conn().execute("INSERT INTO llm_models(id,provider,label,model,base_url,api_key_ref,created_at,updated_at) VALUES('model-a','local','Model A','actual-a','http://127.0.0.1:18001/v1','fixture-a',1,1),('model-b','local','Model B','actual-b','http://127.0.0.1:18002/v1','fixture-b',1,1)",[]).unwrap();
-        let base = chrono::DateTime::parse_from_rfc3339("2026-10-20T15:30:00Z")
-            .unwrap()
-            .timestamp_millis();
-        for (id, recorded_at, prompt, completion) in
-            [("known-a", base, 4, 1), ("known-b", base + 3600000, 6, 4)]
-        {
-            db.record_llm_usage(&LlmUsageInput {
-                id: id.into(),
-                model_id: "model-a".into(),
-                provider: "local".into(),
-                model: "actual-a".into(),
-                prompt_tokens: prompt,
-                completion_tokens: completion,
-                total_tokens: prompt + completion,
-                recorded_at,
-                source: "test".into(),
-            })
-            .unwrap();
-        }
-        db.conn().execute("INSERT INTO model_pool_attempts(id,request_id,model_id,tier,started_at,ended_at,failure,usage) VALUES('known-a','request-a','model-a',0,?1,?1,'timeout','{}'),('unknown-b','request-b','model-b',1,?1,?1,'rate_limit',NULL),('pending-c','request-c','model-b',1,?1,NULL,NULL,NULL)",[base]).unwrap();
-        let report = db
-            .aggregate_llm_usage_in_timezone(None, base - 1000, base + 7200000, 480)
-            .unwrap();
-        assert_eq!(report.total_tokens, 15);
-        assert_eq!(report.known_usage_count, 2);
-        assert_eq!(report.unknown_usage_count, 1);
-        assert_eq!(report.failed_attempt_count, 2);
-        assert_eq!(report.pending_attempt_count, 1);
-        assert_eq!(report.days[0].date, "2026-10-20");
-        assert_eq!(report.days[1].date, "2026-10-21");
-        let filtered = db
-            .aggregate_llm_usage_in_timezone(Some("model-a"), base - 1000, base + 7200000, 480)
-            .unwrap();
-        assert_eq!(filtered.models.len(), 1);
-        assert_eq!(filtered.unknown_usage_count, 0);
-        assert_eq!(filtered.failed_attempt_count, 1);
-        assert!(db
-            .aggregate_llm_usage_in_timezone(None, base, base + 1000, 900)
-            .is_err());
-    }
-}
+mod monitor_usage_tests;

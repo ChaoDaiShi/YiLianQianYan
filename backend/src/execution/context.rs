@@ -12,6 +12,30 @@ use serde::{Deserialize, Serialize};
 use super::ExecutionError;
 use crate::modules::task::model::{AgentExecutionId, TaskExecutionId, TaskId};
 
+/// The explicit model choice of one accepted conversation turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ChatTurnModel {
+    pub conversation_id: String,
+    pub turn_id: String,
+    pub profile_id: Option<String>,
+}
+
+tokio::task_local! {
+    pub(crate) static CURRENT_CHAT_TURN_MODEL: Option<ChatTurnModel>;
+}
+
+pub(crate) fn chat_turn_model(conversation_id: &str) -> Option<ChatTurnModel> {
+    CURRENT_CHAT_TURN_MODEL
+        .try_with(|model| {
+            model
+                .as_ref()
+                .filter(|model| model.conversation_id == conversation_id)
+                .cloned()
+        })
+        .ok()
+        .flatten()
+}
+
 /// A validated execution identifier.
 ///
 /// Wraps a non-empty, control-character-free string so callers cannot
@@ -61,6 +85,9 @@ impl std::fmt::Display for ExecutionId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionContext {
     pub execution_id: ExecutionId,
+    /// Server-resolved provenance only; it never grants authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<super::ExecutionOwner>,
     pub subject_id: String,
     pub agent_name: String,
     /// Trusted persisted agent identity, assigned by the runtime.
@@ -87,6 +114,7 @@ impl ExecutionContext {
     ) -> Self {
         Self {
             execution_id,
+            owner: None,
             subject_id: subject_id.into(),
             agent_name: agent_name.into(),
             agent_id: None,
@@ -98,6 +126,11 @@ impl ExecutionContext {
         }
     }
 
+    pub fn with_owner(mut self, owner: super::ExecutionOwner) -> Self {
+        self.owner = Some(owner);
+        self
+    }
+
     /// Attach task provenance to this execution context.
     pub fn with_task_binding(
         mut self,
@@ -105,6 +138,10 @@ impl ExecutionContext {
         task_execution_id: TaskExecutionId,
         agent_execution_id: AgentExecutionId,
     ) -> Self {
+        self.owner = Some(super::ExecutionOwner::LegacyTask {
+            task_id: task_id.to_string(),
+            execution_id: task_execution_id.to_string(),
+        });
         self.task_id = Some(task_id);
         self.task_execution_id = Some(task_execution_id);
         self.agent_execution_id = Some(agent_execution_id);
@@ -115,6 +152,27 @@ impl ExecutionContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integration_execution_context_reads_legacy_json_and_roundtrips_typed_owner() {
+        let legacy = serde_json::json!({
+            "execution_id": "legacy-execution", "subject_id": "local-user", "agent_name": "workflow",
+            "parent_execution_id": null, "created_at": 1
+        });
+        let context: ExecutionContext = serde_json::from_value(legacy).unwrap();
+        assert!(context.owner.is_none());
+        let owner = crate::execution::ExecutionOwner::Workflow {
+            workflow_graph_id: "workflow".into(),
+            run_id: "run".into(),
+        };
+        let typed = context.with_owner(owner.clone());
+        let value = serde_json::to_value(&typed).unwrap();
+        assert_eq!(value["owner"]["kind"], "workflow");
+        let restored: ExecutionContext = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.owner, Some(owner));
+        assert_eq!(restored.execution_id.as_str(), "legacy-execution");
+        assert_eq!(restored.subject_id, "local-user");
+    }
 
     #[test]
     fn execution_id_rejects_empty() {

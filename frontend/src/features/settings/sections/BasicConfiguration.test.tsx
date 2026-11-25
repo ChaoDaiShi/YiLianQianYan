@@ -6,9 +6,9 @@ describe("basic service navigation",()=>{
  it("opens independent image service controls without a model pool prerequisite",()=>{
   for(const kind of ["vision","image"] as const){
    const html=renderToStaticMarkup(<BasicServicePanel kind={kind}/>);
-   expect(html).toContain(kind==="vision"?"图像识别服务":"图像生成服务");
-   expect(html).toContain(kind==="vision"?"新建识图服务":"新建生图服务");
-   expect(html).toContain('aria-label="服务档案"');
+   expect(html).toContain(kind==="vision"?"图像理解":"图像生成");
+   expect(html).toContain("正在读取服务配置");
+   expect(html).toContain("保存并设为默认");
    expect(html).not.toContain("高级：模型池调度");
    expect(html).not.toContain("新建模型池");
    expect(html).not.toContain("厂商账户与模型池");

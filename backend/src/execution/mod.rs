@@ -16,6 +16,8 @@
 
 pub mod context;
 pub mod error;
+pub mod outcome;
+pub mod owner;
 pub mod status;
 
 #[cfg(test)]
@@ -23,4 +25,13 @@ mod tests;
 
 pub use context::{ExecutionContext, ExecutionId};
 pub use error::ExecutionError;
+pub use outcome::{interpret_tool_result, VerifiedExecutionResult};
+pub use owner::ExecutionOwner;
 pub use status::ExecutionStatus;
+
+pub mod reconciliation;
+
+pub mod origin;
+
+pub(crate) mod chat_context_cache;
+pub mod context_manifest;

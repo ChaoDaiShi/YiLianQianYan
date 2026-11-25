@@ -8,7 +8,7 @@ function compact(value: number) {
 export default function TokenUsageChart({ report }: { report: LlmUsageReport | null }) {
   const max = Math.max(...(report?.days ?? []).map((day) => day.total_tokens), 1);
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4">
+    <div className="glass-card rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="inline-flex items-center gap-2 text-sm font-medium"><BarChart3 className="h-4 w-4 text-[var(--accent-primary)]" />Token 消耗</div>
         <span className="text-xs text-[var(--text-muted)]">总计 {compact(report?.total_tokens ?? 0)}</span>

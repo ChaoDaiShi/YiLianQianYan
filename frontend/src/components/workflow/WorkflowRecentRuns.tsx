@@ -62,7 +62,7 @@ export default function WorkflowRecentRuns({
   }, [runs, load]);
 
   return (
-    <div className="rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 space-y-3">
+    <div className="glass-card rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 space-y-3">
       <div className="flex items-center justify-between gap-2 border-b border-[var(--border-soft)] pb-2">
         <div className="flex items-center gap-2">
           <WorkspaceIcon name="run-history" size={24} variant="mono" className="text-[var(--text-secondary)]" />

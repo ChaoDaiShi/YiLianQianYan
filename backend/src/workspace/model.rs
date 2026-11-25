@@ -42,6 +42,7 @@ impl std::fmt::Display for WorkspaceId {
 pub enum WorkspaceStatus {
     Active,
     Archived,
+    Deleted,
 }
 
 impl std::fmt::Display for WorkspaceStatus {
@@ -49,7 +50,40 @@ impl std::fmt::Display for WorkspaceStatus {
         f.write_str(match self {
             Self::Active => "active",
             Self::Archived => "archived",
+            Self::Deleted => "deleted",
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceProjectStage {
+    Planning,
+    InProgress,
+    Testing,
+    Released,
+    OnHold,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceProject {
+    pub stage: Option<WorkspaceProjectStage>,
+    pub frontend: String,
+    pub backend: String,
+}
+
+impl WorkspaceProject {
+    pub fn normalize(mut self) -> Result<Self, WorkspaceFieldError> {
+        self.frontend = self.frontend.trim().to_owned();
+        self.backend = self.backend.trim().to_owned();
+        if [&self.frontend, &self.backend]
+            .iter()
+            .any(|note| note.chars().count() > 1000)
+        {
+            return Err(WorkspaceFieldError::ProjectNoteTooLong);
+        }
+        Ok(self)
     }
 }
 
@@ -65,6 +99,8 @@ pub struct Workspace {
     pub description: String,
     pub root_path: Option<String>,
     pub status: WorkspaceStatus,
+    #[serde(default)]
+    pub project: WorkspaceProject,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -85,6 +121,7 @@ impl Workspace {
             description: description.trim().to_string(),
             root_path,
             status: WorkspaceStatus::Active,
+            project: WorkspaceProject::default(),
             created_at: now,
             updated_at: now,
         })
@@ -102,4 +139,6 @@ pub enum WorkspaceFieldError {
     NameTooLong,
     #[error("workspace description exceeds 4000 characters")]
     DescriptionTooLong,
+    #[error("前端或后端说明不能超过 1000 字")]
+    ProjectNoteTooLong,
 }

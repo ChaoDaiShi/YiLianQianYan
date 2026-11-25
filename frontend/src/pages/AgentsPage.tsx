@@ -52,7 +52,7 @@ export default function AgentsPage() {
     finally { setCreating(false); }
   };
 
-  return <PageShell variant="workspace" title="智能体" description="为不同工作选择合适的角色与表达方式。"
+  return <PageShell variant="workspace" title="智能体"
     className="capability-page page-canvas ui-opt-capabilities ui-opt-agents management-agents-page"
     contentClassName="management-agents-content"
     actions={<Button onClick={handleOpenCreate}><Plus className="h-4 w-4" />新建智能体</Button>}>
@@ -78,12 +78,12 @@ export default function AgentsPage() {
       </aside>
       <section className="management-agent-editor scrollbar-thin" aria-label="当前角色编辑区">
         {selectedId === "default" || selectedAgent ? <PersonaEditor key={selectedId} agentId={selectedId} agentName={selectedAgent?.name || "默认角色"} onSaved={() => void reload()}>
-          <details className="management-disclosure"><summary>能力与资料</summary><div className="management-disclosure-body">
-            {selectedAgent ? <><p>当前定义中的工具与能力</p><div className="capability-token-list">{selectedAgent.allowed_tools.map(tool => <span key={tool}>{tool}</span>)}{selectedAgent.capabilities.map(capability => <span key={capability}>{capability}</span>)}{selectedAgent.allowed_tools.length + selectedAgent.capabilities.length === 0 && <span>未配置专属工具与能力</span>}</div></> : <p>使用当前默认运行配置。能力与资料的绑定在画布中管理。</p>}
-            <p>这里仅查看配置；能力、资料及授权继续使用现有管理入口。</p>
-          </div></details>
-          <details className="management-disclosure"><summary>模型与运行配置</summary><div className="management-disclosure-body">
-            {selectedAgent ? <AgentRuntimeDetails agent={selectedAgent} /> : <p>使用设置中的默认模型与运行配置。</p>}
+          <details className="management-disclosure"><summary>能力与运行配置</summary><div className="management-disclosure-body">
+            {selectedAgent ? <>
+              <p>工具与能力</p>
+              <div className="capability-token-list">{selectedAgent.allowed_tools.map(tool => <span key={tool}>{tool}</span>)}{selectedAgent.capabilities.map(capability => <span key={capability}>{capability}</span>)}{selectedAgent.allowed_tools.length + selectedAgent.capabilities.length === 0 && <span>未配置专属工具与能力</span>}</div>
+              <AgentRuntimeDetails agent={selectedAgent} />
+            </> : <p>使用设置中的默认模型与运行配置。能力和资料在画布中绑定。</p>}
           </div></details>
         </PersonaEditor> : <EmptyState title="选择一个智能体" description="在左侧选择角色后编辑名称、风格与用户提示词。" />}
       </section>

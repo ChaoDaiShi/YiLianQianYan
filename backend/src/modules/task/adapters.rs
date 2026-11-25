@@ -188,6 +188,17 @@ pub trait WorkflowExecutionProvider: Send + Sync {
         workflow_id: &str,
         context: &super::NodeContext,
     ) -> Result<Option<Value>, AdapterError>;
+
+    /// Additive contract: legacy providers return a completed value; production
+    /// workflows preserve a real suspended child instead of failing it.
+    async fn dispatch(
+        &self,
+        workflow_id: &str,
+        execution: &NodeExecution,
+    ) -> Result<ExecutorDispatch, AdapterError> {
+        let output = self.execute(workflow_id, &execution.context).await?;
+        Ok(ExecutorDispatch::Completed { output })
+    }
 }
 
 pub struct WorkflowExecutor {
@@ -217,12 +228,11 @@ impl TaskExecutorAdapter for WorkflowExecutor {
                 actual: plan.kind,
             });
         }
-        let output = self
-            .provider
-            .execute(&plan.provider, &execution.context)
-            .await?;
-        ensure_output_bound(output.as_ref())?;
-        Ok(ExecutorDispatch::Completed { output })
+        let result = self.provider.dispatch(&plan.provider, execution).await?;
+        if let ExecutorDispatch::Completed { output } = &result {
+            ensure_output_bound(output.as_ref())?;
+        }
+        Ok(result)
     }
 }
 

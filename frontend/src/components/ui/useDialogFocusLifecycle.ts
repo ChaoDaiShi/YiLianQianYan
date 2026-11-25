@@ -4,9 +4,10 @@ const FOCUSABLE_SELECTOR = [
   "a[href]",
   "area[href]",
   "button:not([disabled])",
-  "input:not([disabled])",
+  "input:not([type=hidden]):not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
+  "details > summary:first-of-type",
   "iframe",
   "[contenteditable=true]",
   "[tabindex]:not([tabindex='-1'])",
@@ -15,7 +16,7 @@ const FOCUSABLE_SELECTOR = [
 function getFocusableElements(panel: HTMLElement): HTMLElement[] {
   return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
     (element) => {
-      if (element.hidden || element.closest("[inert]")) return false;
+      if (element.tabIndex < 0 || element.matches(":disabled") || !element.getClientRects().length || element.closest("[inert]")) return false;
       const style = window.getComputedStyle(element);
       return style.display !== "none" && style.visibility !== "hidden";
     },
@@ -90,6 +91,7 @@ export function useDialogFocusLifecycle({
     const opener = openerRef.current;
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         // Only the top-most dialog in the stack handles Escape
         const isTopDialog = dialogStack[dialogStack.length - 1] === id;

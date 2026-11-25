@@ -1,4 +1,12 @@
+pub mod attention;
+#[cfg(test)]
+mod attention_tests;
+mod file_events;
 pub mod model;
+pub mod personal;
+mod scheduler;
+
+pub use scheduler::start_scheduler;
 
 use crate::{
     app::state::AppServer,
@@ -9,9 +17,11 @@ use crate::{
     },
     workspace::{Workspace, WorkspaceId, WorkspaceStatus},
 };
-use model::{next_after, Automation, AutomationInput, AutomationTarget, Occurrence};
+use model::{
+    next_after, Automation, AutomationInput, AutomationPhase, AutomationRuntimeView,
+    AutomationTarget, Occurrence,
+};
 use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
 
 pub fn workspace(server: &AppServer, id: &str) -> Result<Workspace, String> {
     let id = WorkspaceId::new(id).map_err(|e| e.to_string())?;
@@ -29,6 +39,9 @@ pub fn save(
 ) -> Result<Automation, String> {
     if input.name.trim().is_empty() {
         return Err("任务名称不能为空".into());
+    }
+    if input.name.trim().chars().count() > 120 {
+        return Err("任务名称最多 120 字符".into());
     }
     workspace(server, &input.workspace_id)?;
     let target = input
@@ -52,10 +65,17 @@ pub fn save(
             crate::modules::channel::robot::channel(server, &mission.channel_id)?;
             String::new()
         }
+        AutomationTarget::PersonalAssistant { goal, max_runs, .. } => {
+            personal::validate(goal, *max_runs)?;
+            String::new()
+        }
     };
     let now = chrono::Utc::now().timestamp_millis();
     let next = next_after(&input.schedule, &input.timezone, now)?;
-    if input.enabled && next.is_none() {
+    if input.enabled
+        && next.is_none()
+        && !matches!(input.schedule, model::Schedule::FileChanged { .. })
+    {
         return Err("一次性计划时间已过去，请选择未来时间".into());
     }
     let existing = id
@@ -66,6 +86,9 @@ pub fn save(
         return Err("时间任务不存在".into());
     }
     if let Some(current) = &existing {
+        if current.archived {
+            return Err("委托已归档，请先恢复归档再编辑".into());
+        }
         if input.expected_revision != Some(current.revision) {
             return Err("时间任务已被修改，请刷新后再保存".into());
         }
@@ -75,7 +98,7 @@ pub fn save(
         .as_ref()
         .map(|item| now.max(item.updated_at + 1))
         .unwrap_or(now);
-    let value = Automation {
+    let mut value = Automation {
         revision,
         id: id
             .map(str::to_owned)
@@ -88,9 +111,16 @@ pub fn save(
         schedule: input.schedule,
         enabled: input.enabled,
         next_run_at: if input.enabled { next } else { None },
-        created_at: existing.map(|a| a.created_at).unwrap_or(now),
+        created_at: existing.as_ref().map(|a| a.created_at).unwrap_or(now),
         updated_at,
+        file_fingerprint: None,
+        attention: None,
+        archived: false,
     };
+    // Validate the source before prepare_save creates a conversation.
+    file_events::prepare(server, &mut value)?;
+    attention::prepare(server, &mut value, existing.as_ref(), now)?;
+    personal::prepare_save(server, &mut value, existing.as_ref())?;
     server.db.save_automation(&value, id.is_none())?;
     Ok(value)
 }
@@ -102,12 +132,16 @@ pub fn set_enabled(
     expected_revision: u64,
 ) -> Result<Automation, String> {
     let mut current = server.db.get_automation(id)?.ok_or("时间任务不存在")?;
+    if enabled && current.archived {
+        return Err("委托已归档，请先恢复归档".into());
+    }
     if current.revision != expected_revision {
         return Err("时间任务已被修改，请刷新后再操作".into());
     }
     if !enabled {
         current.revision += 1;
         current.enabled = false;
+        attention::stop(&mut current, "用户已暂停关注");
         current.next_run_at = None;
         current.updated_at = chrono::Utc::now()
             .timestamp_millis()
@@ -153,11 +187,20 @@ fn occurrence(
         scheduled_at,
         workspace_id: automation.workspace_id.clone(),
         workflow_graph_id: automation.workflow_graph_id.clone(),
-        run_id: (!missed && !matches!(automation.target, Some(AutomationTarget::AgentTurn { .. })))
-            .then_some(id),
+        run_id: (!missed
+            && !matches!(
+                automation.target,
+                Some(
+                    AutomationTarget::AgentTurn { .. } | AutomationTarget::PersonalAssistant { .. }
+                )
+            ))
+        .then_some(id),
         robot_run_id: None,
         robot_channel_id: None,
         conversation_id: None,
+        assistant_turn_id: None,
+        report: None,
+        request_fingerprint: None,
         status: if missed { "skipped" } else { "dispatching" }.into(),
         error: missed.then(|| "已错过执行时间，本次不自动补跑".into()),
         created_at: now,
@@ -165,11 +208,68 @@ fn occurrence(
     }
 }
 
+pub fn runtime_view(server: &AppServer, id: &str) -> Result<AutomationRuntimeView, String> {
+    let item = server.db.automation_runtime_occurrence(id)?;
+    Ok(AutomationRuntimeView {
+        phase: item.as_ref().map_or(AutomationPhase::Suspended, |item| {
+            AutomationPhase::from_status(&item.status)
+        }),
+        last_woke_at: item.as_ref().map(|item| item.created_at),
+        trigger: item.as_ref().map(|item| item.trigger.clone()),
+        latest_status: item.map(|item| item.status),
+    })
+}
+
+fn publish_runtime(server: &AppServer, item: &Occurrence) {
+    let _ = server.event_hub.publish(crate::shared::event::YiEvent::new(
+        "automation.runtime.updated",
+        "automation",
+        serde_json::json!({ "automation_id": item.automation_id,
+            "phase": AutomationPhase::from_status(&item.status), "status": item.status,
+            "last_woke_at": item.created_at, "trigger": item.trigger }),
+    ));
+}
+
+fn persist_runtime(server: &AppServer, item: &Occurrence) -> Result<(), String> {
+    server.db.update_automation_occurrence(item)?;
+    publish_runtime(server, item);
+    Ok(())
+}
+
 async fn dispatch(
     server: &Arc<AppServer>,
     automation: &Automation,
     occurrence: &mut Occurrence,
 ) -> Result<(), String> {
+    if matches!(
+        automation.target,
+        Some(AutomationTarget::PersonalAssistant { .. })
+    ) {
+        return personal::dispatch(server, automation, occurrence).await;
+    }
+    let _guard = crate::api::chat::lifecycle::acquire_turn(
+        server,
+        &format!("automation-dispatch:{}", automation.id),
+    )
+    .await;
+    if !server
+        .db
+        .automation_runtime_occurrence(&automation.id)?
+        .is_some_and(|item| item.id == occurrence.id && item.status == "dispatching")
+    {
+        return Ok(());
+    }
+    if !server
+        .db
+        .get_automation(&automation.id)?
+        .is_some_and(|current| current.revision == automation.revision)
+    {
+        occurrence.status = "blocked".into();
+        occurrence.run_id = None;
+        occurrence.error = Some("任务计划已变更，本次未启动".into());
+        return persist_runtime(server, occurrence);
+    }
+    publish_runtime(server, occurrence);
     if let Some(AutomationTarget::AgentTurn { mission_id }) = &automation.target {
         let result = async {
             workspace(server, &automation.workspace_id)?;
@@ -196,7 +296,7 @@ async fn dispatch(
             }
         }
         occurrence.updated_at = chrono::Utc::now().timestamp_millis();
-        return server.db.update_automation_occurrence(occurrence);
+        return persist_runtime(server, occurrence);
     }
     let result = async {
         let workspace = workspace(server, &automation.workspace_id)?;
@@ -254,11 +354,72 @@ async fn dispatch(
         }
     }
     occurrence.updated_at = chrono::Utc::now().timestamp_millis();
-    server.db.update_automation_occurrence(occurrence)
+    persist_runtime(server, occurrence)
+}
+
+pub async fn stop(server: &Arc<AppServer>, id: &str) -> Result<Automation, String> {
+    let automation = server.db.get_automation(id)?.ok_or("定时任务不存在")?;
+    if matches!(
+        automation.target,
+        Some(AutomationTarget::PersonalAssistant { .. })
+    ) {
+        return personal::stop(server, id).await;
+    }
+    let _guard =
+        crate::api::chat::lifecycle::acquire_turn(server, &format!("automation-dispatch:{id}"))
+            .await;
+    let automation = server.db.get_automation(id)?.ok_or("定时任务不存在")?;
+    let paused = set_enabled(server, id, false, automation.revision)?;
+    if let Some(mut item) = server.db.automation_runtime_occurrence(id)? {
+        if AutomationPhase::from_status(&item.status) == AutomationPhase::Suspended {
+            return Ok(paused);
+        }
+        if item.status == "dispatching" {
+            item.run_id = None;
+            item.status = "cancelled".into();
+        } else if let Some(run) = &item.run_id {
+            item.status = run_service::cancel_workflow_run(server, run)
+                .await
+                .map_err(|error| error.to_string())?
+                .1
+                .status
+                .to_string();
+        } else if let Some(run) = &item.robot_run_id {
+            item.status = crate::modules::channel::robot::stop(server, run)
+                .await?
+                .status;
+        }
+        item.updated_at = chrono::Utc::now().timestamp_millis();
+        persist_runtime(server, &item)?;
+    }
+    Ok(paused)
 }
 
 pub async fn run_now(server: &Arc<AppServer>, id: &str) -> Result<Occurrence, String> {
     let automation = server.db.get_automation(id)?.ok_or("时间任务不存在")?;
+    let _management_guard = if matches!(
+        automation.target,
+        Some(AutomationTarget::PersonalAssistant { .. })
+    ) {
+        Some(
+            crate::api::chat::lifecycle::acquire_turn(server, &format!("personal-management:{id}"))
+                .await,
+        )
+    } else {
+        None
+    };
+    run_now_managed(server, id).await
+}
+
+/// The HTTP manager holds the per-delegation gate across preflight and claim.
+pub(crate) async fn run_now_managed(
+    server: &Arc<AppServer>,
+    id: &str,
+) -> Result<Occurrence, String> {
+    let automation = server.db.get_automation(id)?.ok_or("时间任务不存在")?;
+    if automation.archived {
+        return Err("委托已归档，请先恢复归档".into());
+    }
     let mut item = occurrence(
         &automation,
         chrono::Utc::now().timestamp_millis(),
@@ -312,134 +473,4 @@ pub fn history(server: &AppServer, id: &str) -> Result<Vec<Occurrence>, String> 
         }
     }
     Ok(items)
-}
-
-/// Bootstrap calls this once after database migrations. Shutdown cancels future
-/// ticks; running workflows retain their existing cancellation and approval UI.
-pub fn start_scheduler(
-    server: Arc<AppServer>,
-    shutdown: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let previous = match server.db.automation_occurrences_for_recovery() {
-            Ok(items) => items,
-            Err(error) => {
-                tracing::error!(%error, "automation startup recovery failed");
-                return;
-            }
-        };
-        for mut item in previous {
-            if let Some(id) = item.robot_run_id.as_deref() {
-                match server.db.robot_run(id) {
-                    Ok(Some(mut run)) if run.active() => {
-                        run.status = "stopped".into();
-                        run.error = Some("应用在运行期间退出，本次已中断，不会自动重跑".into());
-                        run.updated_at = chrono::Utc::now().timestamp_millis();
-                        item.status = "interrupted".into();
-                        item.error = run.error.clone();
-                        item.updated_at = run.updated_at;
-                        if let Err(error) = server
-                            .db
-                            .save_robot_run(&run)
-                            .and_then(|_| server.db.update_automation_occurrence(&item))
-                        {
-                            tracing::error!(%error,"机器人定时任务恢复失败");
-                            return;
-                        }
-                    }
-                    Err(error) => {
-                        tracing::error!(%error,"机器人任务记录读取失败");
-                        return;
-                    }
-                    _ => {}
-                }
-                continue;
-            }
-            let mut interrupted = item.status == "dispatching";
-            if let Some(run_id) = &item.run_id {
-                let result = async {
-                    let id = WorkflowRunId::new(run_id.clone()).map_err(|e| e.to_string())?;
-                    if let Some(stored) = server.db.get_workflow_run(&id)? {
-                        if !stored.run.status.is_terminal() {
-                            run_service::cancel_workflow_run(&server, run_id)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            return Ok::<(bool, bool), String>((true, true));
-                        }
-                        return Ok((false, true));
-                    }
-                    Ok((false, false))
-                }
-                .await;
-                match result {
-                    Ok((active, exists)) => {
-                        interrupted |= active;
-                        if !exists {
-                            item.run_id = None;
-                        }
-                    }
-                    Err(error) => {
-                        tracing::error!(%error, "automation run recovery failed");
-                        return;
-                    }
-                }
-            }
-            if interrupted {
-                item.status = "interrupted".into();
-                item.error = Some("应用在运行期间退出，本次已中断，不会自动重跑".into());
-                item.updated_at = chrono::Utc::now().timestamp_millis();
-                if let Err(error) = server.db.update_automation_occurrence(&item) {
-                    tracing::error!(%error, "automation recovery persistence failed");
-                    return;
-                }
-            }
-        }
-        let mut startup = true;
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! { _ = shutdown.cancelled() => break, _ = interval.tick() => {} }
-            let now = chrono::Utc::now().timestamp_millis();
-            let automations = match server.db.list_automations() {
-                Ok(value) => value,
-                Err(error) => {
-                    tracing::error!(%error, "automation schedule read failed");
-                    continue;
-                }
-            };
-            for automation in automations {
-                if !automation.enabled {
-                    continue;
-                }
-                let Some(due) = automation.next_run_at.filter(|due| *due <= now) else {
-                    continue;
-                };
-                let missed = startup || now - due > 30_000;
-                let next = match next_after(&automation.schedule, &automation.timezone, now) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        tracing::error!(%error, automation_id=%automation.id, "automation schedule invalid");
-                        continue;
-                    }
-                };
-                let mut item = occurrence(&automation, due, false, missed);
-                match server
-                    .db
-                    .claim_automation_occurrence(&automation, next, &mut item, false)
-                {
-                    Ok(true) if item.status == "dispatching" => {
-                        let server = Arc::clone(&server);
-                        tokio::spawn(async move {
-                            if let Err(error) = dispatch(&server, &automation, &mut item).await {
-                                tracing::error!(%error, "automation dispatch persistence failed");
-                            }
-                        });
-                    }
-                    Ok(_) => {}
-                    Err(error) => tracing::error!(%error, "automation occurrence claim failed"),
-                }
-            }
-            startup = false;
-        }
-    })
 }

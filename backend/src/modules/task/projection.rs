@@ -123,6 +123,7 @@ pub struct TaskGraphDetail {
     pub graph: TaskGraphSummary,
     pub graph_id: String,
     pub revision: u64,
+    pub control_state: super::TaskExecutionControlState,
     pub nodes: Vec<TaskNodeDetail>,
     pub edges: Vec<TaskEdge>,
     pub revisions: Vec<TaskRevisionSummary>,
@@ -176,6 +177,7 @@ impl TaskGraphDetail {
         Self {
             graph_id: graph_summary.id.clone(),
             revision: graph_summary.revision,
+            control_state: super::TaskExecutionControlState::Running,
             graph: graph_summary,
             nodes,
             edges: graph.edges.clone(),

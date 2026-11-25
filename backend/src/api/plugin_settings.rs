@@ -71,6 +71,28 @@ fn find(db: &Database, plugin: &str, id: &str) -> Result<Entry, Error> {
 fn key(plugin: &str, id: &str) -> String {
     format!("plugin_config:{plugin}:{id}")
 }
+pub(crate) fn read_values(
+    db: &Database,
+    plugin: &str,
+    id: &str,
+    setting: &PluginSetting,
+) -> Result<BTreeMap<String, Value>, String> {
+    let stored: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT value FROM settings WHERE key=?1",
+            [key(plugin, id)],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let values = match stored {
+        Some(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string())?,
+        None => setting.defaults(),
+    };
+    setting.validate_values(&values)?;
+    Ok(values)
+}
 pub fn router() -> Router<Arc<AppServer>> {
     Router::new()
         .route("/api/plugins/settings", get(list))
@@ -86,24 +108,7 @@ async fn load(
     Path((plugin, id)): Path<(String, String)>,
 ) -> Result<Json<Value>, Error> {
     let entry = find(&server.db, &plugin, &id)?;
-    let stored: Option<String> = server
-        .db
-        .conn()
-        .query_row(
-            "SELECT value FROM settings WHERE key=?1",
-            [key(&plugin, &id)],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let values = match stored {
-        Some(raw) => serde_json::from_str::<BTreeMap<String, Value>>(&raw)
-            .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
-        None => entry.setting.defaults(),
-    };
-    entry
-        .setting
-        .validate_values(&values)
+    let values = read_values(&server.db, &plugin, &id, &entry.setting)
         .map_err(|e| error(StatusCode::CONFLICT, e))?;
     Ok(Json(json!({"entry":entry,"values":values})))
 }
@@ -117,6 +122,7 @@ async fn save(
     Path((plugin, id)): Path<(String, String)>,
     Json(update): Json<Update>,
 ) -> Result<Json<Value>, Error> {
+    let _operation = server.plugin_services.operations.lock();
     let entry = find(&server.db, &plugin, &id)?;
     entry
         .setting

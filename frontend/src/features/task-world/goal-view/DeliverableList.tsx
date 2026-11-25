@@ -4,7 +4,7 @@ import type { TaskGraphDetail } from "../../../api/taskWorld";
 import type { ArtifactRecord } from "../../../api/evidence";
 import type { GoalViewState } from "./goalViewModel";
 
-const DELIVERABLE_STATUS: Record<GoalViewState["deliverables"][number]["state"], string> = {
+export const DELIVERABLE_STATUS: Record<GoalViewState["deliverables"][number]["state"], string> = {
   pass: "已验收",
   fail: "未通过",
   not_checked: "尚未验收",
@@ -13,6 +13,7 @@ const DELIVERABLE_STATUS: Record<GoalViewState["deliverables"][number]["state"],
 };
 
 interface DeliverableListProps {
+  sectionId?: string;
   deliverables: GoalViewState["deliverables"];
   artifacts: ArtifactRecord[];
   snapshot: EvidenceSnapshot | null;
@@ -24,6 +25,7 @@ interface DeliverableListProps {
 }
 
 export default function DeliverableList({
+  sectionId = "goal-deliverables",
   deliverables,
   artifacts,
   snapshot,
@@ -50,7 +52,7 @@ export default function DeliverableList({
   };
 
   return (
-    <section className="goal-view-card" id="goal-deliverables" aria-label="目标交付物">
+    <section className="goal-view-card" id={sectionId} aria-label="目标交付物">
       <div className="goal-view-section-heading">
         <div>
           <h2>交付物</h2>

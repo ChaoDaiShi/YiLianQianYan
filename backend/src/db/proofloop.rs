@@ -180,7 +180,9 @@ impl Database {
             let changed = tx.execute("UPDATE proofloop_drafts SET status='confirmed',confirmed_graph_revision=?1,payload_json=?2,updated_at=?3 WHERE draft_id=?4 AND revision=?5 AND status!='confirmed'",params![supervisor.graph_revision().value(),payload,now,draft.draft_id,draft.revision])?;
             if changed != 1 { return Err(rusqlite::Error::InvalidParameterName("proofloop_stale_revision".into())); }
             Ok(())
-        })
+        })?;
+        self.publish_goal_change(&draft.graph_id, "goal_confirmed", serde_json::json!({}));
+        Ok(())
     }
 
     pub fn repair_rounds_used(&self, goal_id: &str, version: u32) -> Result<u32, ProofLoopDbError> {

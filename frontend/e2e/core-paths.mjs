@@ -16,12 +16,14 @@ import { typedBindingU31 } from "./typed-binding-u31.mjs";
 import { proofloop } from "./proofloop.mjs";
 import { workbenchRevision5 } from "./workbench-revision5.mjs";
 import { runWorkbenchRevision7 } from "./workbench-revision7.mjs";
+import { capabilityUpgrade } from "./capability-upgrade.mjs";
 import { v1R3 } from "./v1-r3.mjs";
 import { runWorkbenchRevision6 } from "./workbench-revision6.mjs";
 import { workbenchRevision4 } from "./workbench-revision4.mjs";
 import { settingsRevision3 } from "./settings-revision3.mjs";
 import { connectorRevision2 } from "./connector-revision2.mjs";
 import { connectorWorkbench } from "./connector-workbench.mjs";
+import { runRichWorkspace } from "./rich-workspace.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..");
 const frontendRoot = resolve(process.env.YILIAN_E2E_FRONTEND_ROOT ?? resolve(import.meta.dirname, ".."));
@@ -60,13 +62,15 @@ const workbenchStage = process.env.YILIAN_E2E_WORKBENCH;
 const uiStage = process.env.YILIAN_E2E_UI_MATRIX;
 const workbenchRevision5Stage=process.argv.includes("--workbench-revision5");
 const workbenchRevision7Stage=process.argv.includes("--workbench-revision7");
+const richWorkspaceStage=process.argv.includes("--rich-workspace");
+const upgradeStage=process.argv.includes("--capability-upgrade");
 const workbenchRevision6Stage=process.argv.includes("--workbench-revision6");
 const workbenchRevision4Stage=process.argv.includes("--workbench-revision4");
 const settingsRevision3Stage=process.argv.includes("--settings-revision3");
 const connectorRevision2Stage=process.argv.includes("--connector-revision2");
 const connectorStage = workbenchRevision7Stage || workbenchRevision6Stage || workbenchRevision5Stage || workbenchRevision4Stage || settingsRevision3Stage || connectorRevision2Stage || process.argv.includes("--connectors") || process.env.YILIAN_E2E_CONNECTORS === "1";
 const childEnvironment = { ...process.env };
-if (connectorStage) {
+  if (connectorStage || upgradeStage || richWorkspaceStage) {
   for (const name of Object.keys(childEnvironment)) {
     if (/KEY|TOKEN|SECRET|PASSWORD/i.test(name)) delete childEnvironment[name];
   }
@@ -135,7 +139,7 @@ try {
   await mkdir(workspace);
 
   const backendBinary = process.env.YILIAN_E2E_BACKEND_BINARY || join(repositoryRoot, "target", "debug", "yilian-server.exe");
-  capture(spawn(backendBinary, [], {
+  const startBackend = label => capture(spawn(backendBinary, [], {
     cwd: repositoryRoot,
     env: {
       ...childEnvironment,
@@ -147,7 +151,13 @@ try {
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
-  }), "backend");
+  }), label);
+  let backendServer = startBackend("backend");
+  const restartBackend = async () => {
+    await stop(backendServer);
+    backendServer = startBackend("backend-restarted");
+    await waitFor(`http://127.0.0.1:${backendPort}/api/health`);
+  };
 
   const viteEntry = join(frontendRoot, "node_modules", "vite", "bin", "vite.js");
   capture(spawn(process.execPath, [viteEntry, "--host", "127.0.0.1", "--port", String(frontendPort), "--strictPort"], {
@@ -156,6 +166,7 @@ try {
       ...childEnvironment,
       VITE_API_BASE: `http://127.0.0.1:${backendPort}`,
       VITE_CONTROL_SESSION_TOKEN: controlToken,
+      YILIAN_E2E_VITE_CACHE_DIR: join(isolatedRoot, "vite-cache"),
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -182,6 +193,7 @@ try {
   page = mcpU3 || mcpU3c || typedU31 || proofloopE2E
     ? await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage()
     : await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  if (richWorkspaceStage) page.setDefaultNavigationTimeout(90_000);
   page.on("response", (response) => {
     const url = new URL(response.url());
     if (url.pathname.startsWith("/api/task-world/") || (connectorStage && url.pathname.startsWith("/api/") && response.status()>=400)) networkLog.push({ path: url.pathname, method: response.request().method(), status: response.status() });
@@ -193,20 +205,24 @@ try {
     if (message.type() === "error") browserErrors.push(message.text());
   });
 
-  await page.addInitScript(() => {
-    window.sessionStorage.setItem("yilian.setup.deferred", "true");
-  });
+  await page.addInitScript(origin => {
+    if (window.location.origin === origin) window.sessionStorage.setItem("yilian.setup.deferred", "true");
+  }, `http://127.0.0.1:${frontendPort}`);
 
-  await page.goto(`http://127.0.0.1:${frontendPort}/tasks`, { waitUntil: "networkidle" });
+  // Revision 7 waits for the workspace UI while its event connections stay open.
+  const initialWait = workbenchRevision7Stage || upgradeStage || richWorkspaceStage ? "domcontentloaded" : "networkidle";
+  await page.goto(`http://127.0.0.1:${frontendPort}/tasks`, { waitUntil: initialWait });
   if (page.url().includes("/setup")) {
     const deferButton = page.locator("button.setup-defer");
     if (await deferButton.isVisible({ timeout: 2000 }).catch(() => false)) {
       await deferButton.click();
       await page.waitForURL(/\/chat/);
     }
-    await page.goto(`http://127.0.0.1:${frontendPort}/tasks`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${frontendPort}/tasks`, { waitUntil: initialWait });
   }
-  if (!connectorStage) await page.getByRole("heading", { name: "任务中心" }).waitFor();
+  if ((!connectorStage || workbenchRevision7Stage) && !richWorkspaceStage) {
+    await page.getByRole("tab", { name: "任务画布", selected: true }).waitFor();
+  }
   const finishSetup = page.getByRole("button", { name: "确认并保存" });
   if (await finishSetup.isVisible()) {
     await finishSetup.click();
@@ -217,7 +233,12 @@ try {
     await laterSetup.click();
     await laterSetup.waitFor({ state: "hidden" });
   }
-  if (proofloopE2E) {
+  if (upgradeStage) {
+    const result=await capabilityUpgrade({page,backendPort,frontendPort,controlToken,evidenceDir});
+    if(browserErrors.length)throw new Error(browserErrors.join(" | "));
+    await writeFile(join(evidenceDir,"result.json"),JSON.stringify(result,null,2));
+    process.stdout.write(JSON.stringify(result)+"\n");testExitCode=0;
+  } else if (proofloopE2E) {
     const result = await proofloop({ page, frontendPort, backendPort, controlToken, evidenceDir });
     const expected = browserErrors.filter((error) => error === 'Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)');
     if (expected.length !== result.expected_browser_422_errors) throw new Error(`Unexpected negative-control diagnostics: ${browserErrors.join(' | ')}`);
@@ -275,6 +296,11 @@ try {
     await writeFile(join(evidenceDir, "result.json"), JSON.stringify({status:"passed",browser:executablePath,real_backend:true, ...result}, null, 2));
     process.stdout.write(JSON.stringify(result) + "\n");
     testExitCode = 0;
+  } else if (richWorkspaceStage) {
+    const result = await runRichWorkspace({page,frontendPort,backendPort,controlToken,evidenceDir,restartBackend});
+    if (browserErrors.length) throw new Error(browserErrors.join(" | "));
+    await writeFile(join(evidenceDir,"result.json"),JSON.stringify(result,null,2));
+    process.stdout.write(JSON.stringify(result)+"\n");testExitCode=0;
   } else if (workbenchRevision7Stage) {
     const result=await runWorkbenchRevision7({page,frontendPort,backendPort,controlToken,evidenceDir,workspace});
     if(process.argv.includes("--v1-r3")) result.v1_r3=await v1R3({page,frontendPort,backendPort,controlToken,evidenceDir,workspace});
@@ -320,14 +346,14 @@ try {
   await page.getByRole("button", { name: "添加任务节点" }).click();
   await page.locator(".task-world-node").waitFor();
   await page.getByRole("button", { name: "自动布局" }).click();
-  await page.getByRole("button", { name: "任务中心" }).click();
-  await page.getByText("1 个图", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "工作流列表", exact: true }).click();
+  await page.getByRole("button", { name: "打开画布", exact: true }).first().waitFor();
 
   await page.getByRole("button", { name: "新建任务画布" }).click();
   await page.waitForURL(/\/task-world\/[^/]+$/);
   if (page.url() === firstGraphUrl) throw new Error("Second graph reused the first graph identity");
-  await page.getByRole("button", { name: "任务中心" }).click();
-  await page.getByText("2 个图", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "工作流列表", exact: true }).click();
+  await page.getByRole("button", { name: "打开画布", exact: true }).nth(1).waitFor();
 
   await page.goto(`http://127.0.0.1:${frontendPort}/capabilities`, { waitUntil: "networkidle" });
   await page.locator('.u2-managed-imports > summary').click();

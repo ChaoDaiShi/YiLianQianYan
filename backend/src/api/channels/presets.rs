@@ -115,7 +115,8 @@ pub(super) async fn preview(
     )
     .await
     .map_err(failure)?;
-    runtime.prompt = channel::presets::prompt(&server.db, Some(&preset)).map_err(failure)?;
+    (runtime.prompt, runtime.generation) =
+        channel::presets::prompt(&server.db, Some(&preset)).map_err(failure)?;
     runtime.tools = Arc::new(crate::tools::ToolRegistry::new());
     runtime.bindings = Default::default();
     let (tx, _rx) = tokio::sync::mpsc::channel(32);

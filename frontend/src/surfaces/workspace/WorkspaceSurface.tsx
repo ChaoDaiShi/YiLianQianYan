@@ -3,14 +3,19 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import GlobalVoiceHost, { resolveVoiceContextForRoute } from "../../features/voice/GlobalVoiceHost";
 import AppShell from "../../components/layout/AppShell";
 import ChatPage from "../../pages/ChatPage";
+import GoalReminderHost from "../../features/task-world/GoalReminderHost";
+import PersonalAssistantNoticeHost from "../../features/automation/PersonalAssistantNoticeHost";
 import SoftwareMonitorNotices from "../../features/software/SoftwareMonitorNotices";
+import { taskWorkflowDestination } from "../../features/workflows/taskGraphRoutes";
 
+const BrowserPage = lazy(() => import("../../features/browser/BrowserPage"));
 const SoftwarePage = lazy(() => import("../../features/software/SoftwarePage"));
-
 const ConnectorsPage = lazy(() => import("../../features/connectors/ConnectorsPage"));
+const TaskWorldPage = lazy(() => import("../../features/task-world/TaskWorldPage"));
 const MorePage = lazy(() => import("../../pages/MorePage"));
+const UserManualPage = lazy(() => import("../../features/help/UserManualPage"));
 const AutomationsPage = lazy(() => import("../../features/automation/AutomationsPage"));
-const ChannelsPage = lazy(() => import("../../features/channels/ChannelsPage"));
+const SoftwareChannelsPage = lazy(() => import("../../features/channels/ChannelsPanel"));
 const PluginFeaturePage = lazy(() => import("../../features/plugins/PluginFeaturePage"));
 const SystemPage = lazy(() => import("../../pages/SystemPage"));
 const LogsPage = lazy(() => import("../../pages/LogsPage"));
@@ -27,20 +32,27 @@ const AccountCenterPage = lazy(() => import("../../pages/AccountCenterPage"));
 const SetupWizardPage = lazy(() => import("../../pages/SetupWizardPage"));
 
 export default function WorkspaceSurface() {
-  const { pathname } = useLocation();
+  const { pathname, search, hash } = useLocation();
   return (
     <GlobalVoiceHost contextPatch={resolveVoiceContextForRoute(pathname, "standalone")}>
+    <GoalReminderHost />
+    <PersonalAssistantNoticeHost />
     <SoftwareMonitorNotices />
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/chat" replace />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="chat/:id" element={<ChatPage />} />
-        <Route path="connectors" element={<ConnectorsPage />} />
-        <Route path="more" element={<MorePage />} />
-        <Route path="automations" element={<AutomationsPage />} />
+        <Route path="browser" element={<BrowserPage />} />
         <Route path="software" element={<SoftwarePage />} />
-        <Route path="channels" element={<ChannelsPage />} />
+        <Route path="software/channels" element={<SoftwareChannelsPage />} />
+        <Route path="connectors" element={<ConnectorsPage />} />
+        <Route path="tasks" element={<Navigate to={taskWorkflowDestination(search)} replace />} />
+        <Route path="task-world/:graphId" element={<TaskWorldPage />} />
+        <Route path="more" element={<MorePage />} />
+        <Route path="more/manual" element={<UserManualPage />} />
+        <Route path="automations" element={<AutomationsPage />} />
+        <Route path="channels" element={<Navigate to={{ pathname: "/software/channels", search, hash }} replace />} />
         <Route path="more/plugins/:pluginId/:featureId" element={<PluginFeaturePage />} />
         <Route path="system" element={<SystemPage />} />
         <Route path="logs" element={<LogsPage />} />

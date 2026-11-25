@@ -73,7 +73,7 @@ export default function WorkflowApprovalCard({
 
   return (
     <div
-      className="rounded-[var(--radius-md)] border border-[var(--warning)]/40 bg-[var(--surface-solid)] p-4 space-y-3 shadow-card-token"
+      className="glass-card rounded-[var(--radius-md)] border border-[var(--warning)]/40 bg-[var(--surface-solid)] p-4 space-y-3 shadow-card-token"
       role="region"
       aria-label="工作流审批"
     >

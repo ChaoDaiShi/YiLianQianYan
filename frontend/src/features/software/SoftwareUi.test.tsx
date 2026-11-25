@@ -98,3 +98,4 @@ describe("software workbench truthful states", () => {
   expect(html).not.toContain("请填写本机现有 EXE");
  });
 });
+

@@ -27,6 +27,12 @@ use super::{
 
 const TASK_WORLD_EVENT_SOURCE: &str = "v1-task-world";
 
+#[path = "runtime_goal_activity.rs"]
+mod goal_activity;
+pub use goal_activity::TaskGoalChatLease;
+#[path = "runtime_shutdown.rs"]
+mod shutdown;
+
 pub type TaskCommandDispatch = CommandResult;
 
 /// Structured errors returned by the authoritative Task World registry.
@@ -72,6 +78,8 @@ pub enum TaskWorldRuntimeError {
     ExecutionCancelled(String),
     #[error("task execution control generation overflow")]
     ExecutionControlGenerationOverflow,
+    #[error("task runtime is shutting down")]
+    ShuttingDown,
 }
 
 struct CommittedGraphMutation {
@@ -88,9 +96,11 @@ struct ExecutionCancellation {
 /// Owns one actual provider future, independently of its projected attempt
 /// status. Dropping the future settles ownership and releases its signal.
 pub struct TaskDispatchLease {
+    graph_id: TaskGraphId,
     execution_id: NodeExecutionId,
     token: CancellationToken,
     registry: Arc<Mutex<HashMap<NodeExecutionId, ExecutionCancellation>>>,
+    runtime: TaskWorldRuntime,
 }
 
 impl TaskDispatchLease {
@@ -102,6 +112,12 @@ impl TaskDispatchLease {
 impl Drop for TaskDispatchLease {
     fn drop(&mut self) {
         self.token.cancel();
+        if let Err(error) =
+            self.runtime
+                .settle_paused_execution(&self.graph_id, &self.execution_id, now())
+        {
+            tracing::warn!(execution_id=%self.execution_id, %error, "provider outcome projection will retry after lease release");
+        }
         self.registry.lock().remove(&self.execution_id);
     }
 }
@@ -123,7 +139,11 @@ pub struct TaskWorldRuntime {
     /// reservations. A pause that acquires this guard first prevents a later
     /// dispatch from passing the running-state check.
     control_dispatch_lock: Arc<Mutex<()>>,
+    shutdown_requested: Arc<std::sync::atomic::AtomicBool>,
     execution_tokens: Arc<Mutex<HashMap<NodeExecutionId, ExecutionCancellation>>>,
+    pending_pause_settlements: Arc<Mutex<HashSet<NodeExecutionId>>>,
+    goal_chat_tokens: goal_activity::GoalChatTokens,
+    goal_approvals: Option<Arc<goal_activity::GoalApprovalContext>>,
     events: EventHub,
 }
 
@@ -164,6 +184,7 @@ impl TaskWorldRuntime {
         resume_approval: bool,
     ) -> Result<TaskDispatchLease, TaskWorldRuntimeError> {
         let _control_dispatch_guard = self.control_dispatch_lock.lock();
+        self.ensure_dispatch_open()?;
         if resume_approval {
             self.ensure_execution_allowed(graph_id)?;
         }
@@ -195,9 +216,11 @@ impl TaskWorldRuntime {
         }
         entry.in_flight = true;
         Ok(TaskDispatchLease {
+            graph_id: graph_id.clone(),
             execution_id: execution_id.clone(),
             token: entry.token.clone(),
             registry: Arc::clone(&self.execution_tokens),
+            runtime: self.clone(),
         })
     }
 
@@ -213,7 +236,41 @@ impl TaskWorldRuntime {
         {
             return Err(TaskHarnessError::ActiveExecution(id.clone()).into());
         }
-        Ok(())
+        self.reconcile_pending_pauses(Some(graph_id))
+    }
+
+    /// Retry only observed pause projections whose writes failed. The gateway
+    /// journal remains the durable source used again after a process restart.
+    pub(crate) fn reconcile_paused_outcomes(&self) -> Result<(), TaskWorldRuntimeError> {
+        self.reconcile_pending_pauses(None)
+    }
+
+    fn reconcile_pending_pauses(
+        &self,
+        only_graph: Option<&TaskGraphId>,
+    ) -> Result<(), TaskWorldRuntimeError> {
+        let pending: Vec<_> = self
+            .pending_pause_settlements
+            .lock()
+            .iter()
+            .cloned()
+            .collect();
+        let mut first_error = None;
+        for id in pending {
+            if let Some((graph, _)) = self.find_execution(&id) {
+                if only_graph.is_some_and(|requested| requested != &graph) {
+                    continue;
+                }
+                if let Err(error) = self.settle_paused_execution(&graph, &id, now()) {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            } else {
+                self.pending_pause_settlements.lock().remove(&id);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
     fn finish_execution_token(&self, execution_id: &NodeExecutionId, cancel: bool) {
@@ -226,11 +283,22 @@ impl TaskWorldRuntime {
                 registry.remove(execution_id);
             }
         }
+        drop(registry);
+        if cancel {
+            if let Err(error) = crate::modules::workflow::application::task_parent::cancel_children(
+                &self.database,
+                execution_id,
+                chrono::Utc::now().timestamp_millis(),
+            ) {
+                tracing::warn!(%execution_id,%error,"child workflow cancellation projection deferred");
+            }
+        }
     }
 
     /// Load all persisted v1 snapshots and explicitly install migration 1000.
     pub fn new(database: &Database, events: EventHub) -> Result<Self, TaskWorldRuntimeError> {
         database.initialize_task_world_schema()?;
+        database.attach_goal_event_hub(events.clone());
         let persisted_controls = database.load_all_task_execution_controls()?;
         database.recover_node_executions(now())?;
         let persisted_executions = database.load_all_node_executions()?;
@@ -286,16 +354,31 @@ impl TaskWorldRuntime {
             .into_iter()
             .map(|control| (control.graph_id.clone(), control))
             .collect();
-        Ok(Self {
+        let runtime = Self {
             database: database.clone(),
             supervisors: Arc::new(RwLock::new(supervisors)),
             harnesses: Arc::new(RwLock::new(harnesses)),
             execution_controls: Arc::new(RwLock::new(execution_controls)),
             canvas_write_lock: Arc::new(Mutex::new(())),
             control_dispatch_lock: Arc::new(Mutex::new(())),
+            shutdown_requested: Default::default(),
             execution_tokens: Arc::new(Mutex::new(HashMap::new())),
+            pending_pause_settlements: Arc::new(Mutex::new(HashSet::new())),
+            goal_chat_tokens: Arc::new(Mutex::new(HashMap::new())),
+            goal_approvals: None,
             events,
-        })
+        };
+        let cancelled = runtime
+            .execution_controls
+            .read()
+            .values()
+            .filter(|control| control.state == TaskExecutionControlState::Cancelled)
+            .map(|control| control.graph_id.clone())
+            .collect::<Vec<_>>();
+        for graph_id in cancelled {
+            runtime.cancel_task(&graph_id, now())?;
+        }
+        Ok(runtime)
     }
 
     /// Serialize deletion against graph mutations, dispatch and canvas saves.
@@ -331,6 +414,7 @@ impl TaskWorldRuntime {
         supervisors.remove(graph_id);
         self.harnesses.write().remove(graph_id);
         self.execution_controls.write().remove(graph_id);
+        self.cancel_goal_chats(graph_id);
         self.execution_tokens
             .lock()
             .retain(|_, entry| entry.graph_id != *graph_id);
@@ -405,6 +489,7 @@ impl TaskWorldRuntime {
         &self,
         graph_id: &TaskGraphId,
     ) -> Result<(), TaskWorldRuntimeError> {
+        self.ensure_dispatch_open()?;
         match self.execution_control(graph_id)?.state {
             TaskExecutionControlState::Running => Ok(()),
             TaskExecutionControlState::Paused => {
@@ -454,32 +539,43 @@ impl TaskWorldRuntime {
             return Ok(control);
         }
 
-        let mut paused_nodes = Vec::new();
-        {
-            let mut harnesses = self.harnesses.write();
-            if let Some(harness) = harnesses.get_mut(graph_id) {
-                let active_attempts = harness
-                    .all_attempts()
-                    .into_iter()
-                    .filter(|execution| {
-                        execution.status.is_active()
-                            && (execution.executor_ref.is_none()
-                                || (execution.executor_ref.as_ref().is_some_and(|reference| {
-                                    matches!(reference.scheme(), "workflow" | "capability")
-                                }) && self.execution_tokens.lock().contains_key(&execution.id)))
-                    })
-                    .collect::<Vec<_>>();
-                for execution in active_attempts {
-                    harness.cancel_execution_for_pause(&execution.id, updated_at)?;
-                    self.finish_execution_token(&execution.id, true);
-                    let updated = harness.execution(&execution.id).cloned().ok_or_else(|| {
-                        TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(
-                            execution.id.clone(),
-                        ))
-                    })?;
-                    self.database.update_node_execution(&updated)?;
-                    paused_nodes.push(updated.node_id);
+        let shutting_down = self.is_shutting_down();
+        let mut paused_nodes = if shutting_down {
+            self.running_supervisor_nodes(graph_id)
+        } else {
+            Vec::new()
+        };
+        let mut updated_attempts = Vec::new();
+        let mut harnesses = self.harnesses.write();
+        let mut candidate = harnesses.get(graph_id).cloned();
+        if let Some(harness) = candidate.as_mut() {
+            let active_attempts = harness
+                .all_attempts()
+                .into_iter()
+                .filter(|execution| {
+                    execution.status.is_active()
+                        && (shutting_down
+                            || execution.executor_ref.is_none()
+                            || (execution.executor_ref.as_ref().is_some_and(|reference| {
+                                matches!(reference.scheme(), "workflow" | "capability")
+                            }) && self.execution_tokens.lock().contains_key(&execution.id)))
+                })
+                .collect::<Vec<_>>();
+            for execution in active_attempts {
+                harness.cancel_execution_for_pause(&execution.id, updated_at)?;
+                if self
+                    .database
+                    .node_execution_has_started_effect(&execution.id)?
+                {
+                    harness.record_uncertain_pause(&execution.id, updated_at)?;
                 }
+                let updated = harness.execution(&execution.id).cloned().ok_or_else(|| {
+                    TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(
+                        execution.id.clone(),
+                    ))
+                })?;
+                paused_nodes.push(updated.node_id.clone());
+                updated_attempts.push(updated);
             }
         }
         paused_nodes.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
@@ -488,7 +584,18 @@ impl TaskWorldRuntime {
         control.generation = control.next_generation()?;
         control.paused_nodes = paused_nodes;
         control.updated_at = updated_at;
-        self.save_execution_control(&control)?;
+        self.database.save_task_pause(&control, &updated_attempts)?;
+        if let Some(candidate) = candidate {
+            harnesses.insert(graph_id.clone(), candidate);
+        }
+        self.execution_controls
+            .write()
+            .insert(graph_id.clone(), control.clone());
+        drop(harnesses);
+        for execution in &updated_attempts {
+            self.finish_execution_token(&execution.id, true);
+        }
+        self.cancel_goal_chats(graph_id);
         self.publish(
             "task.paused",
             json!({
@@ -497,6 +604,11 @@ impl TaskWorldRuntime {
                 "paused_nodes": control.paused_nodes.iter().map(TaskNodeId::as_str).collect::<Vec<_>>(),
             }),
         );
+        for execution in &updated_attempts {
+            if let Err(error) = self.settle_paused_execution(graph_id, &execution.id, updated_at) {
+                tracing::warn!(execution_id=%execution.id, %error, "paused outcome projection pending; dispatch remains blocked");
+            }
+        }
         Ok(control)
     }
 
@@ -517,6 +629,7 @@ impl TaskWorldRuntime {
         graph_id: &TaskGraphId,
         updated_at: i64,
     ) -> Result<TaskExecutionControl, TaskWorldRuntimeError> {
+        self.ensure_dispatch_open()?;
         self.ensure_graph(graph_id)?;
         let mut control = self.execution_control(graph_id)?;
         match control.state {
@@ -551,9 +664,7 @@ impl TaskWorldRuntime {
         Ok(control)
     }
 
-    /// Cancel the graph-level control.  Safe local work is treated like a
-    /// pause before the terminal control is persisted; provider-backed work is
-    /// left for its owning adapter to reconcile.
+    /// Stop graph scheduling and settle attempts waiting for approval.
     pub fn cancel_task(
         &self,
         graph_id: &TaskGraphId,
@@ -570,23 +681,43 @@ impl TaskWorldRuntime {
     ) -> Result<TaskExecutionControl, TaskWorldRuntimeError> {
         self.ensure_graph(graph_id)?;
         let mut control = self.execution_control(graph_id)?;
-        if control.state == TaskExecutionControlState::Cancelled {
-            return Ok(control);
+        if control.state != TaskExecutionControlState::Cancelled {
+            if control.state == TaskExecutionControlState::Running {
+                control = self.pause_task_locked(graph_id, updated_at)?;
+            }
+            control.state = TaskExecutionControlState::Cancelled;
+            control.generation = control.next_generation()?;
+            control.updated_at = updated_at;
+            self.save_execution_control(&control)?;
+            self.cancel_goal_chats(graph_id);
+            self.publish(
+                "task.cancelled",
+                json!({
+                    "graph_id": graph_id.as_str(),
+                    "generation": control.generation,
+                }),
+            );
         }
-        if control.state == TaskExecutionControlState::Running {
-            control = self.pause_task_locked(graph_id, updated_at)?;
+        self.cancel_goal_waiters_locked(graph_id)
+            .map_err(TaskHarnessError::Graph)?;
+
+        let waiting_executions = self
+            .harnesses
+            .read()
+            .get(graph_id)
+            .map(TaskHarness::all_attempts)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|execution| execution.status == NodeExecutionStatus::WaitingApproval);
+        for execution in waiting_executions {
+            self.update_execution(
+                graph_id,
+                &execution.id,
+                NodeExecutionStatus::Cancelled,
+                None,
+                updated_at,
+            )?;
         }
-        control.state = TaskExecutionControlState::Cancelled;
-        control.generation = control.next_generation()?;
-        control.updated_at = updated_at;
-        self.save_execution_control(&control)?;
-        self.publish(
-            "task.cancelled",
-            json!({
-                "graph_id": graph_id.as_str(),
-                "generation": control.generation,
-            }),
-        );
         Ok(control)
     }
 
@@ -691,12 +822,14 @@ impl TaskWorldRuntime {
             .get(graph_id)
             .map(TaskHarness::execution_histories)
             .unwrap_or_default();
-        Ok(TaskGraphDetail::from_supervisor_with_executions(
+        let mut detail = TaskGraphDetail::from_supervisor_with_executions(
             &supervisor,
             revisions,
             checkpoints,
             &executions,
-        ))
+        );
+        detail.control_state = self.execution_control(graph_id)?.state;
+        Ok(detail)
     }
 
     /// Load and reconcile presentation state for the current graph. A missing
@@ -788,6 +921,7 @@ impl TaskWorldRuntime {
         node_id: &TaskNodeId,
     ) -> Result<Vec<NodeExecution>, TaskWorldRuntimeError> {
         self.ensure_graph(graph_id)?;
+        self.reconcile_pending_pauses(Some(graph_id))?;
         Ok(self.database.load_node_executions(graph_id, node_id)?)
     }
 
@@ -975,6 +1109,165 @@ impl TaskWorldRuntime {
         Ok(execution)
     }
 
+    /// Settle a previously unknown workflow result using its saved child run.
+    /// Commit the candidate before publishing it; no new attempt or tool runs.
+    pub(crate) fn reconcile_completed_workflow(
+        &self,
+        graph_id: &TaskGraphId,
+        execution_id: &NodeExecutionId,
+        workflow_id: &str,
+        output: Value,
+        now: i64,
+    ) -> Result<Option<NodeExecution>, TaskWorldRuntimeError> {
+        let _control = self.control_dispatch_lock.lock();
+        if self.execution_control(graph_id)?.state == TaskExecutionControlState::Cancelled {
+            return Ok(None);
+        }
+        let mut harnesses = self.harnesses.write();
+        let harness = harnesses
+            .get_mut(graph_id)
+            .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        let mut candidate = harness.clone();
+        let Some(execution) =
+            candidate.reconcile_completed_workflow(execution_id, workflow_id, output, now)?
+        else {
+            return Ok(None);
+        };
+        self.database.update_node_execution(&execution)?;
+        *harness = candidate;
+        drop(harnesses);
+        self.publish(
+            if execution.status == NodeExecutionStatus::Succeeded {
+                "task.execution.succeeded"
+            } else {
+                "task.execution.failed"
+            },
+            json!({
+                "graph_id": graph_id.as_str(), "node_id": execution.node_id.as_str(),
+                "execution_id": execution.id.as_str(), "attempt": execution.attempt,
+                "status": execution.status, "source": "committed_workflow_result",
+            }),
+        );
+        Ok(Some(execution))
+    }
+
+    /// A provider may cross its effect boundary concurrently with cancellation. Check
+    /// the durable journal again when its cancelled future relinquishes ownership.
+    pub(crate) fn settle_paused_execution(
+        &self,
+        graph_id: &TaskGraphId,
+        execution_id: &NodeExecutionId,
+        now: i64,
+    ) -> Result<NodeExecution, TaskWorldRuntimeError> {
+        let mut harnesses = self.harnesses.write();
+        let harness = harnesses
+            .get_mut(graph_id)
+            .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        let current = harness
+            .execution(execution_id)
+            .cloned()
+            .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
+        let pending = self.pending_pause_settlements.lock().contains(execution_id);
+        let cancelled_without_effect_receipt = current.status == NodeExecutionStatus::Cancelled
+            && matches!(current.failure_code(), None | Some("paused"));
+        if !cancelled_without_effect_receipt && !pending {
+            return Ok(current);
+        }
+        if cancelled_without_effect_receipt {
+            match self
+                .database
+                .node_execution_has_started_effect(execution_id)
+            {
+                Ok(false) => {
+                    self.pending_pause_settlements.lock().remove(execution_id);
+                    return Ok(current);
+                }
+                Err(error) => {
+                    self.pending_pause_settlements
+                        .lock()
+                        .insert(execution_id.clone());
+                    return Err(error.into());
+                }
+                Ok(true) => {}
+            }
+        }
+        let mut candidate = harness.clone();
+        candidate.record_uncertain_pause(execution_id, now)?;
+        let updated = candidate
+            .execution(execution_id)
+            .cloned()
+            .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
+        if let Err(error) = self.database.update_node_execution(&updated) {
+            // The effect fact is already durable in the gateway journal. Keep
+            // its blocking projection while retrying this derived row write.
+            *harness = candidate;
+            self.pending_pause_settlements
+                .lock()
+                .insert(execution_id.clone());
+            return Err(error.into());
+        }
+        *harness = candidate;
+        self.pending_pause_settlements.lock().remove(execution_id);
+        drop(harnesses);
+        self.publish(
+            "task.execution.updated",
+            json!({
+                "graph_id": graph_id.as_str(), "node_id": updated.node_id.as_str(),
+                "execution_id": execution_id.as_str(), "status": updated.status,
+                "failure_code": updated.failure_code,
+            }),
+        );
+        Ok(updated)
+    }
+
+    /// Record an explicit user's external-state check without executing or
+    /// accepting a result. A later manual start still uses current permissions.
+    pub(crate) fn record_no_effect_review(
+        &self,
+        graph_id: &TaskGraphId,
+        execution_id: &NodeExecutionId,
+        expected_revision: u64,
+        note: &str,
+        now: i64,
+    ) -> Result<NodeExecution, TaskWorldRuntimeError> {
+        let _control = self.control_dispatch_lock.lock();
+        let graph = self.ensure_graph(graph_id)?;
+        if graph.revision.value() != expected_revision {
+            return Err(TaskWorldRuntimeError::StaleRevision {
+                expected: expected_revision,
+                actual: graph.revision.value(),
+            });
+        }
+        self.ensure_no_unsettled_provider(graph_id)?;
+        let mut harnesses = self.harnesses.write();
+        let harness = harnesses
+            .get_mut(graph_id)
+            .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        let mut candidate = harness.clone();
+        let original = harness
+            .execution(execution_id)
+            .cloned()
+            .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
+        let execution = candidate.record_no_effect_review(execution_id, note, now)?;
+        if !self
+            .database
+            .record_external_effect_review(&original, &execution)?
+        {
+            return Err(TaskHarnessError::ExternalResultConflict(execution_id.clone()).into());
+        }
+        *harness = candidate;
+        drop(harnesses);
+        self.publish(
+            "task.execution.updated",
+            json!({
+                "graph_id": graph_id.as_str(), "node_id": execution.node_id.as_str(),
+                "execution_id": execution_id.as_str(), "status": execution.status,
+                "source": "user_external_result_review",
+            }),
+        );
+        Ok(execution)
+    }
+
     pub fn fail_execution(
         &self,
         graph_id: &TaskGraphId,
@@ -1036,10 +1329,11 @@ impl TaskWorldRuntime {
         let harness = harnesses
             .get_mut(graph_id)
             .ok_or_else(|| TaskWorldRuntimeError::GraphNotFound(graph_id.to_string()))?;
+        let mut candidate = harness.clone();
         match status {
-            NodeExecutionStatus::Running => harness.mark_running(execution_id, now)?,
+            NodeExecutionStatus::Running => candidate.mark_running(execution_id, now)?,
             NodeExecutionStatus::WaitingApproval => {
-                harness.mark_waiting_approval(execution_id, "approval-required", now)?
+                candidate.mark_waiting_approval(execution_id, "approval-required", now)?
             }
             NodeExecutionStatus::Validating => {
                 return Err(TaskWorldRuntimeError::Harness(
@@ -1047,19 +1341,22 @@ impl TaskWorldRuntime {
                 ))
             }
             NodeExecutionStatus::Cancelled => {
-                harness.cancel_execution(execution_id, now)?;
-                self.finish_execution_token(execution_id, true);
+                candidate.cancel_execution(execution_id, now)?;
             }
             _ => {}
         }
         if let Some(output) = output {
-            harness.record_output(execution_id, output)?;
+            candidate.record_output(execution_id, output)?;
         }
-        let execution = harness.execution(execution_id).cloned().ok_or_else(|| {
+        let execution = candidate.execution(execution_id).cloned().ok_or_else(|| {
             TaskWorldRuntimeError::Harness(TaskHarnessError::UnknownExecution(execution_id.clone()))
         })?;
         self.database.update_node_execution(&execution)?;
+        *harness = candidate;
         drop(harnesses);
+        if status == NodeExecutionStatus::Cancelled {
+            self.finish_execution_token(execution_id, true);
+        }
         self.publish(
             "task.execution.updated",
             json!({
@@ -1069,7 +1366,11 @@ impl TaskWorldRuntime {
                 "status": execution.status,
             }),
         );
-        Ok(execution)
+        if status == NodeExecutionStatus::Cancelled {
+            self.settle_paused_execution(graph_id, execution_id, now)
+        } else {
+            Ok(execution)
+        }
     }
 
     pub fn cancel_execution(
@@ -2329,6 +2630,15 @@ impl TaskWorldRuntime {
     }
 
     fn publish(&self, event_type: &str, payload: Value) {
+        if event_type.starts_with("task.execution.")
+            || matches!(event_type, "task.resumed" | "task.graph.updated")
+        {
+            if let Some(graph) = payload.get("graph_id").and_then(Value::as_str) {
+                if let Err(error) = self.database.queue_goal_evaluation(graph) {
+                    tracing::error!(%graph,%error,"basic acceptance queue unavailable; startup will rescan");
+                }
+            }
+        }
         // A product event is best-effort at the broadcast boundary: no
         // subscribers is normal, and state has already been durably committed
         // before this point.  The event payload remains a stable fact rather
@@ -2814,6 +3124,366 @@ mod tests {
         assert_eq!(
             runtime.list_node_executions(&id, &node_id).unwrap().len(),
             1
+        );
+    }
+
+    #[test]
+    fn pause_checkpoint_failure_keeps_control_and_attempts_atomic() {
+        let database = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+        let graph = TaskGraphId::new("pause-checkpoint").unwrap();
+        let node = TaskNodeId::new("work").unwrap();
+        runtime
+            .create_graph(
+                graph.clone(),
+                vec![
+                    TaskNode::new(node.clone(), TaskNodeKind::Work, "Local work", json!({}))
+                        .unwrap(),
+                ],
+                vec![],
+                1,
+            )
+            .unwrap();
+        let execution = runtime.start_execution(&graph, &node, 1, 2).unwrap();
+        let original = runtime.execution_control(&graph).unwrap();
+        database.conn().execute_batch(
+            "CREATE TRIGGER reject_pause_checkpoint BEFORE UPDATE ON task_world_execution_controls
+             WHEN NEW.state='paused' BEGIN SELECT RAISE(ABORT,'controlled pause failure'); END;",
+        ).unwrap();
+        assert!(runtime.pause_task(&graph, 3).is_err());
+        assert_eq!(
+            database
+                .load_node_execution(&execution.id)
+                .unwrap()
+                .unwrap(),
+            execution
+        );
+        assert_eq!(runtime.find_execution(&execution.id).unwrap().1, execution);
+        assert_eq!(runtime.execution_control(&graph).unwrap(), original);
+        database
+            .conn()
+            .execute_batch("DROP TRIGGER reject_pause_checkpoint")
+            .unwrap();
+        runtime.pause_task(&graph, 4).unwrap();
+        let reloaded = TaskWorldRuntime::new(&database, EventHub::new(16)).unwrap();
+        assert_eq!(
+            reloaded.execution_control(&graph).unwrap().state,
+            TaskExecutionControlState::Paused
+        );
+        assert_eq!(
+            reloaded
+                .find_execution(&execution.id)
+                .unwrap()
+                .1
+                .failure_code(),
+            Some("paused")
+        );
+    }
+
+    fn record_legacy_effect(database: &Database, execution: &NodeExecution) {
+        crate::safety::AuditRecorder::new(database.clone())
+            .record(crate::safety::AuditEventInput {
+                event_type: crate::safety::AuditEventType::ExecutionStarted,
+                correlation_id: execution.id.to_string(),
+                request_id: execution.id.to_string(),
+                subject_id: "local-user".into(),
+                role_key: "owner".into(),
+                tool_call_id: Some(execution.id.to_string()),
+                tool_name: Some("mcp_fixture".into()),
+                capabilities: vec!["mcp.invoke".into()],
+                actions: vec!["mcp.invoke".into()],
+                ..Default::default()
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn historical_unknown_review_keeps_newer_attempt_and_original_output() {
+        let db = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&db, EventHub::new(16)).unwrap();
+        let graph = TaskGraphId::new("legacy-pause-review").unwrap();
+        let node = TaskNodeId::new("work").unwrap();
+        runtime
+            .create_graph(
+                graph.clone(),
+                vec![TaskNode::new(node.clone(), TaskNodeKind::Work, "Work", json!({})).unwrap()],
+                vec![],
+                1,
+            )
+            .unwrap();
+        let mut old = runtime.start_execution(&graph, &node, 1, 2).unwrap();
+        old.set_output(json!({"partial_receipt":"kept"})).unwrap();
+        old.transition(NodeExecutionStatus::Cancelled, 3).unwrap();
+        old.set_failure("paused", "legacy pause marker");
+        db.update_node_execution(&old).unwrap();
+        record_legacy_effect(&db, &old);
+        let mut newer = NodeExecution::new(
+            NodeExecutionId::generate(),
+            graph.clone(),
+            node.clone(),
+            2,
+            None,
+            old.context.clone(),
+            4,
+        )
+        .unwrap();
+        newer.transition(NodeExecutionStatus::Ready, 4).unwrap();
+        newer
+            .transition(NodeExecutionStatus::Dispatching, 4)
+            .unwrap();
+        newer.transition(NodeExecutionStatus::Running, 5).unwrap();
+        newer.set_output(json!({"status":"complete"})).unwrap();
+        newer
+            .transition(NodeExecutionStatus::Validating, 6)
+            .unwrap();
+        newer.set_validation(super::super::ValidationResult::accepted());
+        newer.transition(NodeExecutionStatus::Succeeded, 6).unwrap();
+        db.save_node_execution(&newer).unwrap();
+        let loaded = TaskWorldRuntime::new(&db, EventHub::new(16)).unwrap();
+        assert!(loaded
+            .prepare_rerun_from_node(&graph, &node, 1, now())
+            .is_err());
+        let reviewed = loaded
+            .record_no_effect_review(&graph, &old.id, 1, "已核对原调用，无外部效果", now())
+            .unwrap();
+        assert_eq!(reviewed.status, NodeExecutionStatus::Cancelled);
+        assert_eq!(reviewed.output, old.output);
+        assert_eq!(
+            reviewed.external_review.as_ref().unwrap().source,
+            "user_statement"
+        );
+        assert_eq!(db.load_node_execution(&newer.id).unwrap().unwrap(), newer);
+        let restored = TaskWorldRuntime::new(&db, EventHub::new(16)).unwrap();
+        assert_eq!(
+            restored.find_execution(&old.id).unwrap().1.external_review,
+            reviewed.external_review
+        );
+        restored
+            .prepare_rerun_from_node(&graph, &node, 1, now())
+            .unwrap();
+    }
+
+    #[test]
+    fn late_pause_effect_write_failure_keeps_cancellation_and_blocks_replay() {
+        let db = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&db, EventHub::new(16)).unwrap();
+        let graph = TaskGraphId::new("late-pause-effect").unwrap();
+        let a = TaskNodeId::new("a").unwrap();
+        let b = TaskNodeId::new("b").unwrap();
+        runtime
+            .create_graph(
+                graph.clone(),
+                [&a, &b]
+                    .into_iter()
+                    .map(|id| {
+                        TaskNode::new(
+                            id.clone(),
+                            TaskNodeKind::Work,
+                            "Work",
+                            json!({"executor_ref":"workflow://fixture"}),
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
+                vec![],
+                1,
+            )
+            .unwrap();
+        let first = runtime
+            .start_execution_with_resolver(
+                &graph,
+                &a,
+                1,
+                ExecutorResolver::new().with_workflow("fixture"),
+                2,
+            )
+            .unwrap();
+        let second = runtime
+            .start_execution_with_resolver(
+                &graph,
+                &b,
+                1,
+                ExecutorResolver::new().with_workflow("fixture"),
+                2,
+            )
+            .unwrap();
+        let lease_a = runtime.claim_execution_dispatch(&graph, &first.id).unwrap();
+        let lease_b = runtime
+            .claim_execution_dispatch(&graph, &second.id)
+            .unwrap();
+        runtime.pause_task(&graph, 3).unwrap();
+        assert!(lease_a.cancellation_token().is_cancelled());
+        assert!(lease_b.cancellation_token().is_cancelled());
+        record_legacy_effect(&db, &first);
+        db.conn().execute_batch("CREATE TRIGGER reject_late_pause BEFORE UPDATE ON task_node_executions WHEN NEW.failure_code='external_mutation_uncertain' BEGIN SELECT RAISE(ABORT,'controlled projection failure'); END;").unwrap();
+        // All provider exits, including workflow approvals and budget returns,
+        // use the same lease drop boundary for a late gateway journal entry.
+        drop(lease_a);
+        drop(lease_b);
+        assert_eq!(
+            runtime.find_execution(&first.id).unwrap().1.failure_code(),
+            Some("external_mutation_uncertain")
+        );
+        assert_eq!(
+            db.load_node_execution(&first.id)
+                .unwrap()
+                .unwrap()
+                .failure_code(),
+            Some("paused")
+        );
+        let other_graph = TaskGraphId::new("unrelated-during-pause-projection-failure").unwrap();
+        let other_node = TaskNodeId::new("other").unwrap();
+        runtime
+            .create_graph(
+                other_graph.clone(),
+                vec![
+                    TaskNode::new(other_node.clone(), TaskNodeKind::Work, "Other", json!({}))
+                        .unwrap(),
+                ],
+                vec![],
+                1,
+            )
+            .unwrap();
+        runtime
+            .start_execution(&other_graph, &other_node, 1, 5)
+            .unwrap();
+        assert_eq!(
+            runtime
+                .list_node_executions(&other_graph, &other_node)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            runtime.pause_task(&graph, 5).unwrap().state,
+            TaskExecutionControlState::Paused
+        );
+        let _ = runtime.resume_task(&graph, 6);
+        assert!(runtime
+            .start_execution_with_resolver(
+                &graph,
+                &a,
+                1,
+                ExecutorResolver::new().with_workflow("fixture"),
+                7
+            )
+            .is_err());
+        db.conn()
+            .execute_batch("DROP TRIGGER reject_late_pause")
+            .unwrap();
+        runtime.reconcile_paused_outcomes().unwrap();
+        assert_eq!(
+            db.load_node_execution(&first.id)
+                .unwrap()
+                .unwrap()
+                .failure_code(),
+            Some("external_mutation_uncertain")
+        );
+        assert!(runtime.prepare_rerun_from_node(&graph, &a, 1, 8).is_err());
+    }
+
+    #[test]
+    fn explicit_attempt_cancel_keeps_external_effect_unknown_before_late_and_restart() {
+        for timing in ["before", "late", "restart", "read_only"] {
+            let db = Database::new(Path::new(":memory:")).unwrap();
+            let runtime = TaskWorldRuntime::new(&db, EventHub::new(16)).unwrap();
+            let graph = TaskGraphId::new(format!("cancel-effect-{timing}")).unwrap();
+            let node = TaskNodeId::new("work").unwrap();
+            runtime
+                .create_graph(
+                    graph.clone(),
+                    vec![TaskNode::new(
+                        node.clone(),
+                        TaskNodeKind::Work,
+                        "Work",
+                        json!({"executor_ref":"workflow://fixture"}),
+                    )
+                    .unwrap()],
+                    vec![],
+                    1,
+                )
+                .unwrap();
+            let execution = runtime
+                .start_execution_with_resolver(
+                    &graph,
+                    &node,
+                    1,
+                    ExecutorResolver::new().with_workflow("fixture"),
+                    2,
+                )
+                .unwrap();
+            let lease = runtime
+                .claim_execution_dispatch(&graph, &execution.id)
+                .unwrap();
+            if timing == "before" {
+                record_legacy_effect(&db, &execution);
+            }
+            runtime
+                .cancel_execution(&graph, &execution.id, 1, 3)
+                .unwrap();
+            assert!(lease.cancellation_token().is_cancelled());
+            if timing == "late" {
+                record_legacy_effect(&db, &execution);
+            }
+            drop(lease);
+            if timing == "restart" {
+                record_legacy_effect(&db, &execution);
+            }
+            let reloaded = TaskWorldRuntime::new(&db, EventHub::new(16)).unwrap();
+            let saved = reloaded.find_execution(&execution.id).unwrap().1;
+            assert_eq!(saved.status, NodeExecutionStatus::Cancelled);
+            if timing == "read_only" {
+                assert_eq!(saved.failure_code(), None);
+                reloaded
+                    .prepare_rerun_from_node(&graph, &node, 1, 5)
+                    .unwrap();
+            } else {
+                assert_eq!(
+                    saved.failure_code(),
+                    Some("cancelled_external_mutation_uncertain"),
+                    "{timing}"
+                );
+                assert!(
+                    reloaded
+                        .prepare_rerun_from_node(&graph, &node, 1, 5)
+                        .is_err(),
+                    "{timing}"
+                );
+                assert_eq!(
+                    reloaded.list_node_executions(&graph, &node).unwrap().len(),
+                    1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn attempt_cancel_write_failure_does_not_publish_or_cancel_provider() {
+        let db = Database::new(Path::new(":memory:")).unwrap();
+        let runtime = TaskWorldRuntime::new(&db, EventHub::new(16)).unwrap();
+        let graph = TaskGraphId::new("cancel-commit-failure").unwrap();
+        let node = TaskNodeId::new("work").unwrap();
+        runtime
+            .create_graph(
+                graph.clone(),
+                vec![TaskNode::new(node.clone(), TaskNodeKind::Work, "Work", json!({})).unwrap()],
+                vec![],
+                1,
+            )
+            .unwrap();
+        let execution = runtime.start_execution(&graph, &node, 1, 2).unwrap();
+        let lease = runtime
+            .claim_execution_dispatch(&graph, &execution.id)
+            .unwrap();
+        db.conn().execute_batch("CREATE TRIGGER reject_cancel BEFORE UPDATE ON task_node_executions WHEN NEW.status='cancelled' BEGIN SELECT RAISE(ABORT,'controlled cancel failure'); END;").unwrap();
+        assert!(runtime
+            .cancel_execution(&graph, &execution.id, 1, 3)
+            .is_err());
+        assert!(!lease.cancellation_token().is_cancelled());
+        assert_eq!(runtime.find_execution(&execution.id).unwrap().1, execution);
+        assert_eq!(
+            db.load_node_execution(&execution.id).unwrap().unwrap(),
+            execution
         );
     }
 

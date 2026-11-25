@@ -113,6 +113,29 @@ mod tests {
             gateway.evaluate(&request, RiskLevel::Low).unwrap(),
             PolicyDecision::Deny(_)
         ));
+        let capture = SecurityExecutionRequest {
+            conversation_id: "local-test".into(),
+            tool_call_id: "capture".into(),
+            tool_name: "screenshot".into(),
+            arguments: serde_json::json!({"monitor":0}),
+            subject: SecuritySubject::local_user(),
+        };
+        assert!(matches!(
+            gateway.evaluate(&capture, RiskLevel::Low).unwrap(),
+            PolicyDecision::Deny(_)
+        ));
+        server
+            .db
+            .conn()
+            .execute(
+                "UPDATE local_onboarding SET profile=?1",
+                [r#"{"permissions":{"screen":true}}"#],
+            )
+            .unwrap();
+        assert!(matches!(
+            gateway.evaluate(&capture, RiskLevel::Low).unwrap(),
+            PolicyDecision::RequireApproval(_)
+        ));
         drop(gateway);
         drop(server);
         std::fs::remove_dir_all(root).unwrap();

@@ -1,0 +1,21 @@
+{
+  "idle": 5000,
+  "happy": 2633,
+  "curious": 3000,
+  "doze": 5000,
+  "greet": 2167,
+  "shy": 2533,
+  "wink": 1500,
+  "startled": 1733,
+  "lifted": 2000,
+  "yawn": 2800,
+  "wake": 2033,
+  "wave": 2800,
+  "stretch": 3000,
+  "nod": 1500,
+  "think": 4000,
+  "speak": 2500,
+  "cheer": 2500,
+  "pout": 2500,
+  "puzzled": 3500
+}

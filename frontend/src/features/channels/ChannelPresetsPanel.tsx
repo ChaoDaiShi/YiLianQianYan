@@ -55,6 +55,8 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [sampleMessage, setSampleMessage] = useState(restored?.sampleMessage ?? "");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const [preview, setPreview] = useState<{ reply: string; conversation_id: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [dirtyNewPreset, setDirtyNewPreset] = useState(restored?.dirtyNewPreset ?? false);
@@ -106,6 +108,7 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
   function applyNavigation(action: PresetNavigation) {
     setPendingNavigation(null);
     setPreview(null);
+    setPreviewError("");
     setError("");
     if (action.kind === "select") {
       setSelectedId(action.preset.id);
@@ -146,6 +149,7 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
     setDraft(next);
     setHasUnsavedChanges(true);
     setPreview(null);
+    setPreviewError("");
   }
 
   async function save() {
@@ -182,13 +186,13 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
   async function runPreview() {
     if (!current.id || hasUnsavedChanges || !sampleMessage.trim()) return;
     setBusy(true);
-    setError("");
+    setPreviewError("");
     setPreview(null);
     try {
       const result = await previewChannelPreset(current.id, sampleMessage);
       if (alive.current) setPreview(result);
     } catch (reason) {
-      if (alive.current) setError(problem(reason));
+      if (alive.current) setPreviewError(problem(reason));
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -272,21 +276,8 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
             <textarea aria-label="回复风格与提示" rows={6} value={current.instructions} readOnly={readOnly} onChange={event => updateDraft({ instructions: event.target.value })} placeholder="描述语气、篇幅和回答习惯。提示不会授予工具或本机资料访问权限。" />
           </label>
 
-          <section className="channel-preset-trial" aria-labelledby="channel-preset-trial-heading">
-            <div className="channel-preset-trial-heading"><Sparkles size={17} /><div><h4 id="channel-preset-trial-heading">本地试用</h4><p>调用当前配置的聊天模型，只生成本地预览，不会向外部渠道发送。</p></div></div>
-            <label>试用消息
-              <textarea aria-label="试用消息" rows={3} value={sampleMessage} onChange={event => { setSampleMessage(event.target.value); setPreview(null); }} placeholder="输入一条想试用的消息" />
-            </label>
-            <div className="channel-preset-preview-meta">
-              <span>角色：{selectedAgent?.name ?? (current.agent_id ? `引用 ${current.agent_id}` : "默认聊天角色")}</span>
-              <span>模型：{selectedModel?.label ?? (current.model_profile_id ? `引用 ${current.model_profile_id}` : "默认聊天模型")}</span>
-            </div>
-            {preview && <div className="channel-preset-preview" aria-live="polite"><strong>本地生成结果</strong><p>{preview.reply}</p><small>本地对话：{preview.conversation_id}</small></div>}
-            <Button variant="secondary" size="sm" disabled={busy || !current.id || hasUnsavedChanges || !sampleMessage.trim()} loading={busy} loadingLabel="正在请求模型…" onClick={() => void runPreview()}><Sparkles size={14} />运行本地试用</Button>
-            {(!current.id || hasUnsavedChanges) && <p className="channels-muted">{current.id ? "保存修改后，再用当前版本试用。" : "先保存预设，再运行本地试用。"}</p>}
-          </section>
-
           <footer className="channel-preset-actions">
+            <Button variant="ghost" onClick={() => setPreviewOpen(true)}><Sparkles size={15} />本地试用</Button>
             {current.id && <Button variant="secondary" disabled={busy} onClick={duplicate}><Copy size={15} />复制为自定义</Button>}
             {!current.builtin && <>
               {current.id && <Button variant="danger" disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={15} />删除预设</Button>}
@@ -296,6 +287,23 @@ export default function ChannelPresetsPanel({ presets, onPresetsChange, onUnsave
         </div>
       </div>
 
+      <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="本地试用" size="md" footer={(
+        <Button disabled={busy || !current.id || hasUnsavedChanges || !sampleMessage.trim()} loading={busy} loadingLabel="正在请求模型…" onClick={() => void runPreview()}><Sparkles size={14} />运行本地试用</Button>
+      )}>
+        <div className="channel-preset-trial">
+          <p className="channels-muted">调用当前配置的聊天模型生成本地预览，不会向外部渠道发送。</p>
+          <label>试用消息
+            <textarea aria-label="试用消息" rows={3} value={sampleMessage} onChange={event => { setSampleMessage(event.target.value); setPreview(null); setPreviewError(""); }} placeholder="输入一条想试用的消息" />
+          </label>
+          <div className="channel-preset-preview-meta">
+            <span>角色：{selectedAgent?.name ?? (current.agent_id ? `引用 ${current.agent_id}` : "默认聊天角色")}</span>
+            <span>模型：{selectedModel?.label ?? (current.model_profile_id ? `引用 ${current.model_profile_id}` : "默认聊天模型")}</span>
+          </div>
+          {previewError && <p className="channels-error" role="alert">{previewError}</p>}
+          {preview && <div className="channel-preset-preview" aria-live="polite"><strong>本地生成结果</strong><p>{preview.reply}</p><small>本地对话：{preview.conversation_id}</small></div>}
+          {(!current.id || hasUnsavedChanges) && <p className="channels-muted">{current.id ? "保存修改后，再用当前版本试用。" : "先保存预设，再运行本地试用。"}</p>}
+        </div>
+      </Modal>
       <Modal open={confirmDelete} onClose={() => { if (!busy) setConfirmDelete(false); }} title="删除回复预设" size="sm" footer={(
         <>
           <Button variant="secondary" disabled={busy} onClick={() => setConfirmDelete(false)}>取消</Button>

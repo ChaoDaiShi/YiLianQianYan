@@ -1,4 +1,5 @@
 use crate::integrations::llm::types::ChatMessage;
+use crate::tools::browser::VERIFIED_BROWSER_TEXT_INPUT_MARKER;
 use crate::tools::input::VERIFIED_DESKTOP_TEXT_INPUT_MARKER;
 use std::collections::HashSet;
 
@@ -91,7 +92,7 @@ pub(crate) fn evaluate_turn_completion(
         if message.role == "assistant" {
             for tool_call in message.tool_calls.as_deref().unwrap_or_default() {
                 let name = tool_call.function.name.as_str();
-                if matches!(name, "software_wechat_draft") {
+                if matches!(name, "visible_browser_fill" | "software_wechat_draft") {
                     pending_text_calls.insert((tool_call.id.as_str(), name));
                     continue;
                 }
@@ -129,6 +130,9 @@ pub(crate) fn evaluate_turn_completion(
                             == Some(crate::tools::software::VERIFIED_SOFTWARE_TEXT_INPUT_MARKER)
                     }
                     "keyboard" => content.contains(VERIFIED_DESKTOP_TEXT_INPUT_MARKER),
+                    "visible_browser_fill" => {
+                        content.lines().next() == Some(VERIFIED_BROWSER_TEXT_INPUT_MARKER)
+                    }
                     _ => false,
                 };
                 if confirmed {
@@ -146,6 +150,31 @@ mod tests {
     use super::*;
     use crate::integrations::llm::types::{ToolCall, ToolCallFunction};
 
+    #[test]
+    fn mounted_editor_completion_uses_verified_value_receipt() {
+        let mut turn = vec![
+            message("user", "在窗口输入框填入 cs2"),
+            tool_call(
+                "edit",
+                "software_control",
+                serde_json::json!({"action":"set_value"}),
+            ),
+        ];
+        assert_eq!(
+            evaluate_completion(&turn),
+            CompletionCheck::MissingDesktopTextInputEvidence
+        );
+        turn.push(tool_result(
+            "edit",
+            "software_control",
+            crate::tools::software::VERIFIED_SOFTWARE_TEXT_INPUT_MARKER,
+        ));
+        assert_eq!(evaluate_completion(&turn), CompletionCheck::Ready);
+        assert_eq!(
+            evaluate_completion(&[message("user", "看看窗口输入框里有什么")]),
+            CompletionCheck::Ready
+        );
+    }
     fn message(role: &str, content: &str) -> ChatMessage {
         ChatMessage {
             reasoning_content: None,
@@ -192,6 +221,43 @@ mod tests {
             "keyboard",
             &format!("文本已输入目标应用 Notepad；{VERIFIED_DESKTOP_TEXT_INPUT_MARKER}"),
         )
+    }
+
+    #[test]
+    fn format_supplement_keeps_original_verification_until_the_turn_changes() {
+        let mut messages = vec![
+            message("user", "打开记事本并输入你好世界"),
+            message("user", "回复用中文"),
+        ];
+        assert_eq!(
+            evaluate_turn_completion(&messages, Some(0)),
+            CompletionCheck::MissingDesktopTextInputEvidence
+        );
+        assert_eq!(
+            evaluate_turn_completion(&messages, Some(1)),
+            CompletionCheck::Ready
+        );
+        messages.insert(1, tool_call(
+            "completed-before-supplement", "keyboard",
+            serde_json::json!({"action":"type","text":"你好世界","target_application":"Notepad"}),
+        ));
+        messages.insert(2, verified_keyboard_result("completed-before-supplement"));
+        assert_eq!(
+            evaluate_turn_completion(&messages, Some(0)),
+            CompletionCheck::Ready
+        );
+    }
+
+    #[test]
+    fn explicit_read_only_supplement_supersedes_unfinished_text_input() {
+        let messages = vec![
+            message("user", "打开记事本并输入你好世界"),
+            message("user", "先不要写入，只说明方案"),
+        ];
+        assert_eq!(
+            evaluate_turn_completion(&messages, Some(0)),
+            CompletionCheck::Ready
+        );
     }
 
     #[test]
@@ -294,6 +360,39 @@ mod tests {
     fn ordinary_file_writes_do_not_require_keyboard_evidence() {
         let messages = vec![message("user", "将你好世界写入 notes.txt 文件")];
 
+        assert_eq!(evaluate_completion(&messages), CompletionCheck::Ready);
+    }
+
+    #[test]
+    fn browser_fill_readback_completes_the_current_text_input_task() {
+        let mut messages = vec![
+            message("user", "在浏览器页面的文本框里填写你好世界"),
+            tool_call(
+                "fill",
+                "visible_browser_fill",
+                serde_json::json!({
+                    "target": {"session_id":"s","tab_id":"t","navigation_id":7},
+                    "observation_id":"current",
+                    "element_id":"input",
+                    "text":"你好世界"
+                }),
+            ),
+        ];
+        messages.push(tool_result(
+            "fill",
+            "visible_browser_fill",
+            "页面未确认填入",
+        ));
+        assert_eq!(
+            evaluate_completion(&messages),
+            CompletionCheck::MissingDesktopTextInputEvidence
+        );
+        messages.pop();
+        messages.push(tool_result(
+            "fill",
+            "visible_browser_fill",
+            "浏览器文本填写验证：通过\n页面操作结果",
+        ));
         assert_eq!(evaluate_completion(&messages), CompletionCheck::Ready);
     }
 }

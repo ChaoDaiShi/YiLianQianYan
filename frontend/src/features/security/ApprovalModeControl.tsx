@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { requestResult } from "../../core/api/http";
 import { approvalModes, type ApprovalMode } from "../../components/chat/chatRequestOptions";
-import { ShieldCheck } from "lucide-react";
+import { ShieldAlert, ShieldCheck, ShieldOff } from "lucide-react";
 import { ComposerPopover } from "../../components/chat/ComposerPopover";
+import { ComposerOption } from "../../components/chat/ComposerOption";
+
+const icons = { full_approval: ShieldCheck, partial_approval: ShieldAlert, full_access: ShieldOff };
 
 export function ApprovalModeControl({ disabled = false }: { disabled?: boolean }) {
   const [mode, setMode] = useState<ApprovalMode | "">("");
@@ -24,7 +27,8 @@ export function ApprovalModeControl({ disabled = false }: { disabled?: boolean }
   };
   return <ComposerPopover label={`审批模式：${approvalModes.find(item => item.value === mode)?.label || "读取中"}`} disabled={busy || disabled} trigger={<ShieldCheck size={16}/>}>
     {() => <div className="composer-menu-options" aria-label="审批模式">
-      {approvalModes.map(item => <button key={item.value} type="button" disabled={!mode || busy} aria-pressed={mode === item.value} onClick={() => void save(item.value)}><span><strong>{item.label}</strong><small>{item.description}</small></span>{mode === item.value && <span aria-hidden="true">✓</span>}</button>)}
+      {approvalModes.map(item => <ComposerOption key={item.value} icon={icons[item.value]} label={item.label} description={item.description}
+        selected={mode === item.value} important={item.value === "full_access"} disabled={!mode || busy || disabled} onClick={() => void save(item.value)} />)}
       {busy && <p role="status" className="composer-menu-hint">正在保存…</p>}
       {error && <p role="alert" className="text-[var(--danger)]">{error}</p>}
     </div>}

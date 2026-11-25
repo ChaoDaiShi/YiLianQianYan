@@ -170,7 +170,21 @@ impl ResourceService {
             .storage_root
             .canonicalize()
             .map_err(|_| ResourceError::Storage("managed storage is unavailable".into()))?;
-        let target = std::path::Path::new(&resource.storage_path)
+        // The digest name follows the asset store when its parent directory moves.
+        // Earlier UUID-named uploads still resolve through the stored path.
+        let recorded = std::path::Path::new(&resource.storage_path);
+        let digest_name = format!("sha256-{}", resource.hash);
+        let candidate = if resource.hash.len() == 64
+            && resource.hash.bytes().all(|c| c.is_ascii_hexdigit())
+            && recorded
+                .file_name()
+                .is_some_and(|n| n == digest_name.as_str())
+        {
+            root.join(digest_name)
+        } else {
+            recorded.to_owned()
+        };
+        let target = candidate
             .canonicalize()
             .map_err(|_| ResourceError::Storage("resource file is unavailable".into()))?;
         if target == root
@@ -363,6 +377,24 @@ mod tests {
         std::fs::write(&resource.storage_path, b"edit").unwrap();
         assert!(service.read_bytes(&resource.id).is_err());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn moving_content_addressed_storage_preserves_reference_ids() {
+        let (root, db_path) = temp_paths("move");
+        let db = Database::new(&db_path).unwrap();
+        let original = root.join("files");
+        let destination = root.join("moved");
+        let service = ResourceService::new(db.clone(), original.clone(), EventHub::new(2));
+        let res = service
+            .ingest("note.txt", "text/plain", b"relocated", json!({}))
+            .unwrap();
+        std::fs::rename(original, &destination).unwrap();
+        let moved = ResourceService::new(db, destination, EventHub::new(2));
+        assert_eq!(moved.read_bytes(&res.id).unwrap(), b"relocated");
+        drop(moved);
+        drop(service);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

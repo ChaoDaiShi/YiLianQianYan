@@ -15,33 +15,70 @@ export interface Resource {
   [key: string]: unknown;
 }
 
-export async function ingestResourceBytes(
-  name: string,
-  mimeType: string,
-  bytes: Uint8Array,
-  signal?: AbortSignal,
-): Promise<Resource | null> {
+function resourceIngestUrl(name: string) {
   const query = new URLSearchParams({ name });
-  const response = await fetch(`${API_BASE}/api/resources/ingest?${query}`, {
+  return `${API_BASE}/api/resources/ingest?${query}`;
+}
+
+async function postResource(name: string, mimeType: string, body: BodyInit, signal?: AbortSignal): Promise<Resource | null> {
+  const response = await fetch(resourceIngestUrl(name), {
     method: "POST",
     headers: {
       "Content-Type": mimeType || "application/octet-stream",
       ...controlSessionHeaders(),
     },
-    body: bytes.slice().buffer as ArrayBuffer,
+    body,
     signal,
   });
   if (!response.ok) return null;
   return (await response.json()) as Resource;
 }
 
+export function ingestResourceBytes(name: string, mimeType: string, bytes: Uint8Array, signal?: AbortSignal): Promise<Resource | null> {
+  return postResource(name, mimeType, bytes.slice().buffer as ArrayBuffer, signal);
+}
+
 export async function ingestResource(file: File, signal?: AbortSignal): Promise<Resource | null> {
-  return ingestResourceBytes(
-    file.name,
-    file.type || "application/octet-stream",
-    new Uint8Array(await file.arrayBuffer()),
-    signal,
-  );
+  return postResource(file.name, file.type, file, signal);
+}
+
+export class ResourceUploadError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+  }
+}
+
+/** Uploads the original file and reports bytes actually transferred. */
+export function uploadResource(file: File, signal: AbortSignal, onProgress: (loaded: number) => void): Promise<Resource> {
+  const aborted = () => new DOMException("上传已取消", "AbortError");
+  if (signal.aborted) return Promise.reject(aborted());
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    request.open("POST", resourceIngestUrl(file.name));
+    request.responseType = "json";
+    request.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    for (const [name, value] of Object.entries(controlSessionHeaders())) request.setRequestHeader(name, value);
+    request.upload.onprogress = event => onProgress(event.loaded);
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300 && typeof request.response?.id === "string") {
+        resolve(request.response as Resource);
+        return;
+      }
+      const status = request.status;
+      const inputError = request.response?.error === "resource_input_error";
+      const message = inputError && typeof request.response.message === "string" ? request.response.message
+        : status === 413 ? "附件超过 25 MiB 上传上限"
+          : status === 401 || status === 403 ? "附件上传未获授权，请重新打开应用后重试"
+            : "附件上传失败，请重试";
+      reject(new ResourceUploadError(message, status < 400 || status === 408 || status === 429 || status >= 500));
+    };
+    request.onerror = () => reject(new ResourceUploadError("连接中断，附件未上传完成", true));
+    request.onabort = () => reject(aborted());
+    request.onloadend = () => signal.removeEventListener("abort", abort);
+    signal.addEventListener("abort", abort, { once: true });
+    request.send(file);
+  });
 }
 
 export interface ResourcePreview {
@@ -93,7 +130,7 @@ export async function unbindResource(bindingId: string): Promise<void> {
 
 export async function getResourcePreview(id: string, signal?: AbortSignal): Promise<ResourcePreview> {
   const response = await fetch(`${API_BASE}/api/resources/${encodeURIComponent(id)}/preview`, { headers: controlSessionHeaders(), signal });
-  if (!response.ok) throw new Error("资源解析结果暂不可用，请重试");
+  if (!response.ok) throw new ResourceUploadError("资源解析结果暂不可用，请重试", response.status === 408 || response.status === 429 || response.status >= 500);
   return response.json() as Promise<ResourcePreview>;
 }
 

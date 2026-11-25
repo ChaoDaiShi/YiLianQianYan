@@ -1,10 +1,40 @@
 import { describe, expect, it, vi } from "vitest";
 import { AttachmentQueue } from "./attachmentQueue";
+import { ResourceUploadError } from "../../api/resources";
 
 const file = (name = "notes.txt", size = 5, type = "text/plain") => ({ name, size, type } as File);
 const options = () => ({ upload: vi.fn(async () => ({ id: "res-real" })), preview: vi.fn(async () => ({ status: "ready" })) });
 
 describe("bounded attachment queue", () => {
+  it("reports bytes, retries an interrupted upload and retains the draft identity", async () => {
+    const queue = new AttachmentQueue({
+      upload: vi.fn<ConstructorParameters<typeof AttachmentQueue>[0]["upload"]>()
+        .mockResolvedValueOnce({ id: "first-ready" })
+        .mockImplementationOnce(async (_file, _signal, progress) => { progress(3); throw new ResourceUploadError("连接断开", true); })
+        .mockResolvedValueOnce({ id: "retry-ready" }),
+      preview: options().preview,
+    });
+    queue.add([file("first.txt"), file("retry.txt")]);
+    await queue.process();
+    const failed = queue.snapshot()[1];
+    expect(failed).toMatchObject({ state: "failed", retryable: true, loaded: 3 });
+    await queue.retry(failed.id);
+    expect(queue.snapshot()[1]).toMatchObject({ id: failed.id, state: "ready", resourceId: "retry-ready" });
+  });
+
+  it("retries preview fetch against the same saved bytes without a second upload", async () => {
+    const deps = options();
+    deps.preview.mockRejectedValueOnce(new ResourceUploadError("解析繁忙", true));
+    const queue = new AttachmentQueue(deps);
+    queue.add([file()]);
+    await queue.process();
+    expect(queue.snapshot()[0]).toMatchObject({ state: "failed", retryable: true });
+    await queue.retry(queue.snapshot()[0].id);
+    expect(queue.readyIds()).toEqual(["res-real"]);
+    expect(deps.upload).toHaveBeenCalledTimes(1);
+    expect(deps.preview).toHaveBeenCalledTimes(2);
+  });
+
   it("restores existing resource identities without uploading and allows editing the draft attachments", async () => {
     const deps = options();
     const queue = new AttachmentQueue(deps);

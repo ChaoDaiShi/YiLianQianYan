@@ -16,6 +16,23 @@ const SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
     CREATE INDEX memory_activity_recent ON memory_activity(recorded_at DESC, id DESC);",
 );
 const BACKFILL_KEY: &str = "memory_activity_backfilled";
+pub(super) const AUTOMATION_INPUTS: &str = "automation_inputs AS (
+    SELECT json_extract(payload,'$.assistant_turn_id') AS message_id,
+           json_extract(payload,'$.conversation_id') AS conversation_id
+    FROM automation_occurrences WHERE json_extract(payload,'$.assistant_turn_id') IS NOT NULL
+    UNION SELECT message_id,conversation_id FROM memory_activity WHERE kind='automation_message'
+)";
+
+pub(super) fn is_automation_input_on(
+    conn: &Connection,
+    id: &str,
+    conversation: &str,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        &format!("WITH {AUTOMATION_INPUTS} SELECT EXISTS(SELECT 1 FROM automation_inputs WHERE message_id=?1 AND conversation_id=?2)"),
+        params![id, conversation], |row| row.get(0),
+    )
+}
 const REMOVED_SOURCES: ProductMigrationSpec = ProductMigrationSpec::new(
     1086,
     "1086_removed_memory_sources",
@@ -73,15 +90,21 @@ fn insert_chat_activity(
     conversation_id: &str,
     text: &str,
     recorded_at: i64,
+    automated: bool,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO memory_activity VALUES(?1,'chat_message',?2,?3,?4,?5)",
+        "INSERT OR IGNORE INTO memory_activity VALUES(?1,?6,?2,?3,?4,?5)",
         params![
             format!("message:{message_id}"),
             recorded_at,
             chat_excerpt(text),
             conversation_id,
-            message_id
+            message_id,
+            if automated {
+                "automation_message"
+            } else {
+                "chat_message"
+            },
         ],
     )?;
     Ok(())
@@ -98,6 +121,7 @@ pub(super) fn record_chat_activity(
             &message.conversation_id,
             &message.content,
             message.created_at,
+            crate::modules::automation::personal::dispatching_automatic_input(),
         )?;
     }
     Ok(())
@@ -134,7 +158,7 @@ impl Database {
                 while let Some(row) = rows.next()? {
                     let (id, conversation, content): (String, String, String) =
                         (row.get(0)?, row.get(1)?, row.get(2)?);
-                    insert_chat_activity(&tx, &id, &conversation, &content, row.get(3)?)?;
+                    insert_chat_activity(&tx, &id, &conversation, &content, row.get(3)?, false)?;
                 }
             }
             tx.execute(
@@ -165,18 +189,22 @@ impl Database {
         let conn = self.conn();
         let recent_since = (chrono::Utc::now() - chrono::Duration::days(30)).timestamp_millis();
         let mut stmt = conn.prepare(
-            "SELECT 'message:'||msg.id,'chat_message',msg.created_at,msg.content,c.id,0,NULL,0,'user_message',NULL
+            &format!("WITH {AUTOMATION_INPUTS}
+             SELECT 'message:'||msg.id,CASE WHEN recent_auto.message_id IS NOT NULL THEN 'automation_message' ELSE 'chat_message' END,msg.created_at,msg.content,c.id,0,NULL,0,
+                    CASE WHEN recent_auto.message_id IS NOT NULL THEN 'automation_message' ELSE 'user_message' END,NULL
              FROM messages msg JOIN conversations c ON c.id=msg.conversation_id
+             LEFT JOIN automation_inputs recent_auto ON recent_auto.message_id=msg.id AND recent_auto.conversation_id=c.id
              WHERE ?1 AND msg.role='user' AND msg.created_at>=c.created_at AND msg.created_at>=?5
              AND (?4 IS NULL OR instr(lower(msg.content),lower(?4))>0)
              UNION ALL
-             SELECT a.id,a.kind,a.recorded_at,a.content,
+             SELECT a.id,CASE WHEN journal_auto.message_id IS NOT NULL THEN 'automation_message' ELSE a.kind END,a.recorded_at,a.content,
                     CASE WHEN msg.id IS NOT NULL THEN c.id END,
-                    a.kind='chat_message' AND (msg.id IS NULL OR c.id IS NULL),NULL,1,
-                    CASE WHEN a.kind='chat_message' THEN 'user_message' END,NULL
+                    a.kind IN ('chat_message','automation_message') AND (msg.id IS NULL OR c.id IS NULL),NULL,1,
+                    CASE WHEN journal_auto.message_id IS NOT NULL THEN 'automation_message' WHEN a.kind='chat_message' THEN 'user_message' END,NULL
              FROM memory_activity a
              LEFT JOIN messages msg ON msg.id=a.message_id AND msg.conversation_id=a.conversation_id
              LEFT JOIN conversations c ON c.id=a.conversation_id
+             LEFT JOIN automation_inputs journal_auto ON journal_auto.message_id=a.message_id AND journal_auto.conversation_id=a.conversation_id
              WHERE NOT ?1
              AND (?4 IS NULL OR instr(lower(coalesce(a.content,'')),lower(?4))>0)
              UNION ALL
@@ -201,7 +229,7 @@ impl Database {
                   OR (v.reason<>'' AND v.reason IS NOT previous.reason) OR v.source_ref IS NOT previous.source_ref
                   OR v.valid_from IS NOT previous.valid_from OR v.valid_until IS NOT previous.valid_until)
              AND (?4 IS NULL OR instr(lower(v.content),lower(?4))>0)
-             ORDER BY 3 DESC,1 DESC LIMIT ?2 OFFSET ?3",
+             ORDER BY 3 DESC,1 DESC LIMIT ?2 OFFSET ?3"),
         )?;
         let rows = stmt.query_map(
             params![recent, limit as i64, offset as i64, query, recent_since],

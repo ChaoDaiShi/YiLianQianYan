@@ -33,146 +33,6 @@
   margin: 0 auto;
 }
 
-/* Appearance Preview Cards */
-.ui-opt-settings .ui-opt-appearance-card {
-  min-height: 160px;
-  border-radius: var(--radius-lg, 14px);
-  padding: 14px;
-  transition: transform 150ms ease-out, border-color 150ms ease-out, background-color 150ms ease-out;
-  text-align: left;
-}
-
-.ui-opt-settings .ui-opt-appearance-card:hover {
-  transform: translateY(-2px);
-}
-
-.ui-opt-theme-thumbnail {
-  width: 100%;
-  height: 76px;
-  border-radius: 8px;
-  border: 1px solid var(--border-soft);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  pointer-events: none;
-  user-select: none;
-}
-
-.ui-opt-thumb-header {
-  height: 14px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 6px;
-  border-bottom: 1px solid var(--border-soft);
-  background: color-mix(in srgb, var(--surface-muted) 80%, transparent);
-}
-
-.ui-opt-thumb-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--text-faint, #94a3b8);
-  opacity: 0.6;
-}
-
-.ui-opt-thumb-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-.ui-opt-thumb-nav {
-  width: 22px;
-  border-right: 1px solid var(--border-soft);
-  padding: 4px 3px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  background: color-mix(in srgb, var(--surface-muted) 50%, transparent);
-}
-
-.ui-opt-thumb-nav-pill {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--text-faint, #cbd5e1);
-  opacity: 0.5;
-}
-
-.ui-opt-thumb-nav-pill.active {
-  background: var(--accent-primary, #8b5cf6);
-  opacity: 1;
-}
-
-.ui-opt-thumb-main {
-  flex: 1;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.ui-opt-thumb-card {
-  border-radius: 4px;
-  border: 1px solid var(--border-soft);
-  background: var(--surface-solid);
-  padding: 4px 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.ui-opt-thumb-bar {
-  height: 3px;
-  border-radius: 1.5px;
-  background: var(--text-faint, #cbd5e1);
-  opacity: 0.7;
-}
-
-.ui-opt-thumb-btn {
-  align-self: flex-end;
-  width: 24px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--accent-primary, #8b5cf6);
-  opacity: 0.85;
-}
-
-/* Specific Thumbnail Themes */
-.ui-opt-theme-thumbnail[data-preview-mode="light"] {
-  background: #F8F6FD;
-}
-.ui-opt-theme-thumbnail[data-preview-mode="light"] .ui-opt-thumb-card {
-  background: #FFFFFF;
-  border-color: #EFE8F6;
-}
-.ui-opt-theme-thumbnail[data-preview-mode="light"] .ui-opt-thumb-bar {
-  background: #D4CCE2;
-}
-
-.ui-opt-theme-thumbnail[data-preview-mode="dark"] {
-  background: #17151F;
-}
-.ui-opt-theme-thumbnail[data-preview-mode="dark"] .ui-opt-thumb-header {
-  background: #201D2B;
-  border-bottom-color: #2E2A3C;
-}
-.ui-opt-theme-thumbnail[data-preview-mode="dark"] .ui-opt-thumb-nav {
-  background: #29263A;
-  border-right-color: #2E2A3C;
-}
-.ui-opt-theme-thumbnail[data-preview-mode="dark"] .ui-opt-thumb-card {
-  background: #242031;
-  border-color: #363148;
-}
-.ui-opt-theme-thumbnail[data-preview-mode="dark"] .ui-opt-thumb-bar {
-  background: #4D4760;
-}
-
-.ui-opt-theme-thumbnail[data-preview-mode="system"] {
-  background: linear-gradient(135deg, #F8F6FD 50%, #17151F 50%);
-}
-
 /* Unsaved Changes Bar */
 .ui-opt-settings .ui-opt-settings-savebar {
   position: sticky;
@@ -422,14 +282,141 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ui-opt-settings .ui-opt-appearance-card,
   .ui-opt-settings .ui-opt-settings-savebar,
   .ui-opt-logs .ui-opt-scroll-bottom-btn {
     transition: none !important;
     animation: none !important;
   }
-  .ui-opt-settings .ui-opt-appearance-card:hover,
   .ui-opt-logs .ui-opt-scroll-bottom-btn:hover {
     transform: none !important;
   }
+}
+
+.settings-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
+  gap: 16px;
+}
+
+.settings-overview-group {
+  min-width: 0;
+}
+
+.settings-overview-group > :is(h2, h3) {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: .875rem;
+  font-weight: 650;
+}
+
+.settings-overview-list,
+.settings-overview-more > summary {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+
+.settings-overview-entry {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 16px;
+  color: var(--text-primary);
+  font-size: .875rem;
+  font-weight: 550;
+  text-align: left;
+  text-decoration: none;
+}
+
+.settings-overview-entry + .settings-overview-entry {
+  border-top: 1px solid var(--border-soft);
+}
+
+.settings-overview-entry:first-child { border-radius: var(--radius-md) var(--radius-md) 0 0; }
+.settings-overview-entry:last-child { border-radius: 0 0 var(--radius-md) var(--radius-md); }
+
+.settings-overview-entry:hover,
+.settings-overview-more > summary:hover {
+  background: var(--surface-hover);
+}
+
+.settings-overview-entry:focus-visible,
+.settings-overview-more > summary:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.settings-overview-more {
+  margin-top: 20px;
+}
+
+.settings-overview-more > summary {
+  padding: 12px 16px;
+  color: var(--text-primary);
+  font-size: .875rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.settings-overview-more > .settings-overview-grid {
+  margin-top: 16px;
+}
+
+@media (max-width: 680px) {
+  .settings-overview-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.settings-node-editor-compact .settings-form {
+  margin-bottom: 0;
+}
+
+.settings-node-editor-compact .ui-label {
+  color: var(--text-secondary);
+  font-size: .75rem;
+  line-height: 1rem;
+}
+
+.settings-node-editor-compact .ui-select {
+  min-height: 40px;
+}
+
+.settings-node-editor-compact .settings-save-error {
+  margin: 0;
+  color: var(--danger-fg);
+}
+
+.settings-dialog-footer {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+}
+
+.settings-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-dialog-footer .settings-dialog-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-inline-start: 2px solid var(--danger-fg);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+  overflow-wrap: anywhere;
+}
+
+.settings-dialog-notice {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-node-editor-compact .u2-disclosure {
+  padding-block: 8px;
+}
+
+.settings-node-editor-compact .u2-disclosure > summary {
+  min-height: 24px;
 }

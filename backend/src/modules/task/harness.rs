@@ -43,6 +43,8 @@ pub enum TaskHarnessError {
     RetryNotAllowed(NodeExecutionId),
     #[error("external result is unknown for node execution: {0}")]
     ExternalResultUnknown(NodeExecutionId),
+    #[error("执行记录已有完成回执或已更新，请重新核对后再记录人工陈述：{0}")]
+    ExternalResultConflict(NodeExecutionId),
     #[error("repair source is no longer the latest failed attempt: {0}")]
     RepairSourceStale(NodeExecutionId),
     #[error("node execution retry policy is invalid: {0}")]
@@ -372,6 +374,48 @@ impl TaskHarness {
         Ok(())
     }
 
+    pub(crate) fn record_uncertain_pause(
+        &mut self,
+        execution_id: &NodeExecutionId,
+        now: i64,
+    ) -> Result<(), TaskHarnessError> {
+        self.require_execution_mut(execution_id)?
+            .record_uncertain_pause(now);
+        Ok(())
+    }
+
+    pub(crate) fn record_no_effect_review(
+        &mut self,
+        execution_id: &NodeExecutionId,
+        note: &str,
+        now: i64,
+    ) -> Result<NodeExecution, TaskHarnessError> {
+        let original = self
+            .execution(execution_id)
+            .cloned()
+            .ok_or_else(|| TaskHarnessError::UnknownExecution(execution_id.clone()))?;
+        if !original.status.is_terminal() || !external_result_is_uncertain(original.failure_code())
+        {
+            return Err(TaskHarnessError::InvalidValidationStatus(original.status));
+        }
+        let execution = self.require_execution_mut(execution_id)?;
+        execution.external_review = Some(super::execution::ExternalEffectReview {
+            outcome: "no_effect".into(),
+            source: "user_statement".into(),
+            reviewed_by: "local-user".into(),
+            note: note.into(),
+            reviewed_at: now,
+            previous_failure_code: execution.failure_code.clone(),
+            previous_error: execution.error.clone(),
+        });
+        execution.set_failure(
+            "operator_reported_no_effect",
+            "用户报告未产生外部效果，可手动重新准备此步骤。",
+        );
+        execution.updated_at = now;
+        Ok(execution.clone())
+    }
+
     /// Independently validate one adapter output and reconcile its terminal
     /// state. Validation rejection is recorded as a failed attempt and never
     /// becomes a successful node merely because dispatch returned normally.
@@ -428,6 +472,70 @@ impl TaskHarness {
             execution.transition(NodeExecutionStatus::Failed, now)?;
         }
         Ok(result)
+    }
+
+    /// Reconcile a completed child receipt into its original interrupted
+    /// attempt. This records an observation; it never reserves or dispatches work.
+    pub(crate) fn reconcile_completed_workflow(
+        &mut self,
+        execution_id: &NodeExecutionId,
+        workflow_id: &str,
+        output: Value,
+        now: i64,
+    ) -> Result<Option<NodeExecution>, TaskHarnessError> {
+        let Some(original) = self.execution(execution_id).cloned() else {
+            return Err(TaskHarnessError::UnknownExecution(execution_id.clone()));
+        };
+        let explicitly_cancelled = original.failure_code()
+            == Some("cancelled_external_mutation_uncertain")
+            || original.external_review.as_ref().is_some_and(|review| {
+                review.previous_failure_code.as_deref()
+                    == Some("cancelled_external_mutation_uncertain")
+            });
+        if explicitly_cancelled {
+            return Ok(None);
+        }
+        let reference = format!("workflow://{workflow_id}");
+        if !matches!(
+            original.status,
+            NodeExecutionStatus::Failed
+                | NodeExecutionStatus::Cancelled
+                | NodeExecutionStatus::Stale
+        ) || !(external_result_is_uncertain(original.failure_code())
+            || matches!(
+                original.failure_code(),
+                Some("paused" | "operator_reported_no_effect")
+            ))
+            || original.executor_ref.as_ref().map(|value| value.as_str())
+                != Some(reference.as_str())
+        {
+            return Ok(None);
+        }
+        let current_reference = self
+            .graph
+            .node(&original.node_id)
+            .and_then(|node| node.input.get("executor_ref"))
+            .and_then(Value::as_str);
+        let remains_historical = original.status == NodeExecutionStatus::Stale
+            || (self
+                .latest_execution(&original.node_id)
+                .map(|latest| &latest.id)
+                == Some(execution_id)
+                && current_reference != Some(reference.as_str()));
+        let execution = self.require_execution_mut(execution_id)?;
+        // Only the canonical workflow owner supplies the durable completed
+        // receipt. The ordinary terminal transition rules remain unchanged.
+        execution.status = NodeExecutionStatus::Running;
+        execution.finished_at = None;
+        execution.failure_code = None;
+        execution.error = None;
+        self.record_output(execution_id, output)?;
+        self.validate_execution(execution_id, ValidationPolicy::WorkflowResult, now)?;
+        if remains_historical {
+            self.require_execution_mut(execution_id)?
+                .mark_stale(now, "已找到原工作流完成回执；结果保留为历史记录");
+        }
+        Ok(self.execution(execution_id).cloned())
     }
 
     pub fn retry_node(

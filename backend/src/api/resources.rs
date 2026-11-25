@@ -56,8 +56,17 @@ pub async fn ingest_handler(
     .await;
     match result {
         Ok(Ok(resource)) => (StatusCode::CREATED, Json(resource)).into_response(),
-        Ok(Err(error)) => input_error(StatusCode::BAD_REQUEST, error),
-        Err(_) => input_error(StatusCode::UNPROCESSABLE_ENTITY, "资源解析失败".into()),
+        Ok(Err(crate::modules::resource::ResourceIngestError::InvalidInput(error))) => {
+            input_error(StatusCode::BAD_REQUEST, error)
+        }
+        Ok(Err(crate::modules::resource::ResourceIngestError::Storage)) => input_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "资源存储失败，请重试".into(),
+        ),
+        Err(_) => input_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "资源上传处理失败，请重试".into(),
+        ),
     }
 }
 

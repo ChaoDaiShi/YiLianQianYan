@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 mod scope;
-pub(crate) use scope::explicit_read_only;
 use scope::requests_wechat_draft;
+pub(crate) use scope::{allows_read_tool, explicit_read_only};
 
 use crate::{db::conversation_modes::WorkspaceMode, integrations::llm::types::ChatMessage};
 
@@ -397,7 +397,7 @@ pub(crate) fn understand_with_software(
     if continuation {
         add(&mut actions, Action::Continue);
     }
-    match super::router::text_task_command(&text).as_deref() {
+    match super::text_task_command(&text).as_deref() {
         Some("task.status" | "task.current") => add(&mut actions, Action::Status),
         Some("task.pause") => add(&mut actions, Action::Pause),
         Some("task.cancel") => add(&mut actions, Action::Cancel),
@@ -469,7 +469,10 @@ pub(crate) fn understand_with_software(
         _ => Exchange::Uncertain,
     };
     let mut reasons = Vec::new();
-    let scope = if draft {
+    let scope = if mode == WorkspaceMode::Chat {
+        reasons.push("manual_chat");
+        Scope::Conversation
+    } else if draft {
         reasons.push("wechat_draft");
         Scope::WechatDraft
     } else if let Some(scope) = software_scope {
@@ -524,7 +527,7 @@ pub struct SemanticLabels {
 
 impl Understanding {
     pub fn role(&self, mode: WorkspaceMode) -> Role {
-        if self.memory_change {
+        if self.memory_change || mode == WorkspaceMode::Chat {
             Role::Daily
         } else if matches!(
             self.scope,

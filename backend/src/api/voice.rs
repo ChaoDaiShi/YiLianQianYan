@@ -152,6 +152,13 @@ struct StartRequest {
 }
 
 pub async fn start_handler(State(server): State<Arc<AppServer>>, body: Bytes) -> Response {
+    if !crate::modules::onboarding::allowed(&server.db, "microphone") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"code": "microphone_denied"})),
+        )
+            .into_response();
+    }
     let request = match parse_optional_json::<StartRequest>(&body) {
         Ok(request) => request,
         Err(error) => return bad_request("invalid_voice_request", error),
@@ -243,6 +250,13 @@ pub async fn lease_handler(
     State(server): State<Arc<AppServer>>,
     Json(request): Json<LeaseRequest>,
 ) -> Response {
+    if !crate::modules::onboarding::allowed(&server.db, "microphone") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"code": "microphone_denied", "message": "个人权限设置已关闭麦克风"})),
+        )
+            .into_response();
+    }
     runtime_json(server.voice_runtime.acquire_lease(
         &request.session_id,
         request.generation,

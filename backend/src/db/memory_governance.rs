@@ -7,6 +7,7 @@ use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod embedding;
 mod graph_versions;
 
 const SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(
@@ -117,6 +118,13 @@ pub struct WithdrawMemoryRequest {
     pub reason: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreMemoryVersion {
+    pub expected_revision: i64,
+    pub version_id: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct MemoryEmbeddingTicket {
     pub memory_id: String,
@@ -191,16 +199,6 @@ fn require_chat_memory_scope(
 }
 
 impl Database {
-    pub fn memory_embedding_generation(&self, model: &str) -> Result<Option<i64>, String> {
-        self.conn()
-            .query_row(
-                "SELECT generation FROM memory_embedding_config WHERE id=1 AND model=?1",
-                [model],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())
-    }
     pub fn memory_is_available(
         &self,
         id: &str,
@@ -337,6 +335,66 @@ impl Database {
         req: &CorrectMemoryRequest,
         conversation_id: Option<&str>,
     ) -> Result<(), String> {
+        Self::apply_memory_correction_on(tx, id, req, conversation_id, false)
+    }
+
+    pub fn restore_memory_version(
+        &self,
+        id: &str,
+        req: &RestoreMemoryVersion,
+    ) -> Result<Memory, String> {
+        let mut conn = self.conn();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+        let version = Self::memory_histories_on(&tx, &[id.to_owned()])?
+            .remove(id)
+            .and_then(|history| {
+                history.into_iter().find(|v| {
+                    v.version_id == req.version_id
+                        && v.status == "active"
+                        && v.revision < req.expected_revision
+                })
+            })
+            .ok_or("memory_version_unavailable")?;
+        let (category, metadata): (String, Option<String>) = tx
+            .query_row(
+                "SELECT category,metadata FROM memories WHERE id=?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|error| error.to_string())?;
+        if category != version.category
+            || version.relationship.is_some()
+            || super::memory_candidates::relationship::read_metadata(metadata.as_deref()).is_some()
+        {
+            return Err("memory_version_requires_reviewed_correction".into());
+        }
+        Self::apply_memory_correction_on(
+            &tx,
+            id,
+            &CorrectMemoryRequest {
+                content: version.content,
+                expected_revision: req.expected_revision,
+                reason: format!("恢复历史版本 v{}", version.revision),
+                scope: None,
+                source_ref: version.source_ref,
+            },
+            None,
+            true,
+        )?;
+        tx.commit().map_err(|error| error.to_string())?;
+        drop(conn);
+        self.get_memory(id)
+    }
+
+    fn apply_memory_correction_on(
+        tx: &Transaction<'_>,
+        id: &str,
+        req: &CorrectMemoryRequest,
+        conversation_id: Option<&str>,
+        restore: bool,
+    ) -> Result<(), String> {
         let content = req.content.trim();
         if content.is_empty() || content.chars().count() > 2000 || req.reason.trim().is_empty() {
             return Err("invalid_memory_correction".into());
@@ -359,14 +417,15 @@ impl Database {
             .query_row(
                 "SELECT m.content,g.scope,g.source_ref FROM memory_governance g
                  JOIN memories m ON m.id=g.memory_id
-                 WHERE g.memory_id=?1 AND g.revision=?2 AND g.status='active'",
-                params![id, req.expected_revision],
+                 WHERE g.memory_id=?1 AND g.revision=?2 AND (g.status='active' OR (?3 AND g.status='withdrawn'))",
+                params![id, req.expected_revision, restore],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(|err| err.to_string())?
             .ok_or("memory_revision_conflict")?;
-        if old_content.trim() == content
+        if !restore
+            && old_content.trim() == content
             && req
                 .scope
                 .as_ref()
@@ -390,7 +449,7 @@ impl Database {
                 }
             }
         }
-        let changed=tx.execute("UPDATE memory_governance SET reason=?1,scope=COALESCE(?2,scope),source_ref=COALESCE(?3,source_ref) WHERE memory_id=?4 AND revision=?5 AND status='active'",params![req.reason,req.scope,req.source_ref,id,req.expected_revision]).map_err(|e|e.to_string())?;
+        let changed=tx.execute("UPDATE memory_governance SET reason=?1,scope=COALESCE(?2,scope),source_ref=CASE WHEN ?6 THEN ?3 ELSE COALESCE(?3,source_ref) END,valid_until=CASE WHEN status='withdrawn' THEN NULL ELSE valid_until END,status='active' WHERE memory_id=?4 AND revision=?5 AND (status='active' OR (?6 AND status='withdrawn'))",params![req.reason,req.scope,req.source_ref,id,req.expected_revision,restore]).map_err(|e|e.to_string())?;
         if changed != 1 {
             return Err("memory_revision_conflict".into());
         }
@@ -469,76 +528,5 @@ impl Database {
         tx.commit().map_err(|e| e.to_string())?;
         drop(conn);
         self.memory_governance(id)
-    }
-
-    pub fn begin_memory_embedding(
-        &self,
-        memory: &Memory,
-        model: &str,
-    ) -> Result<MemoryEmbeddingTicket, String> {
-        if model.trim().is_empty() {
-            return Err("embedding_model_required".into());
-        }
-        let mut conn = self.conn();
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-        let row:Option<(i64,String)>=tx.query_row("SELECT g.revision,m.content FROM memory_governance g JOIN memories m ON m.id=g.memory_id WHERE m.id=?1 AND g.status='active'",[&memory.id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;
-        let (revision, content) = row.ok_or("memory_revision_conflict")?;
-        if content != memory.content {
-            return Err("memory_revision_conflict".into());
-        }
-        tx.execute("UPDATE memory_embedding_config SET model=?1,generation=generation+1 WHERE id=1 AND model!=?1",[model]).map_err(|e|e.to_string())?;
-        let generation = tx
-            .query_row(
-                "SELECT generation FROM memory_embedding_config WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
-        Ok(MemoryEmbeddingTicket {
-            memory_id: memory.id.clone(),
-            revision,
-            content_hash: content_hash(&content),
-            model: model.into(),
-            generation,
-        })
-    }
-
-    pub fn complete_memory_embedding(
-        &self,
-        ticket: &MemoryEmbeddingTicket,
-        embedding: &[f32],
-    ) -> Result<(), String> {
-        let json = super::memories::serialize_embedding(embedding)?;
-        if embedding.iter().all(|&value| value == 0.0) {
-            return Err("zero_memory_embedding".into());
-        }
-        let mut conn = self.conn();
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-        let content: Option<String> = tx
-            .query_row(
-                "SELECT content FROM memories WHERE id=?1",
-                [&ticket.memory_id],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        if content.as_deref().map(content_hash).as_deref() != Some(ticket.content_hash.as_str()) {
-            return Err("stale_embedding_result".into());
-        }
-        let changed=tx.execute("UPDATE memory_governance SET embedding_revision=?1,embedding_hash=?2,embedding_model=?3,embedding_dimension=?4,embedding_generation=?5 WHERE memory_id=?6 AND revision=?1 AND status='active' AND EXISTS(SELECT 1 FROM memory_embedding_config WHERE id=1 AND model=?3 AND generation=?5)",params![ticket.revision,ticket.content_hash,ticket.model,embedding.len() as i64,ticket.generation,ticket.memory_id]).map_err(|e|e.to_string())?;
-        if changed != 1 {
-            return Err("stale_embedding_result".into());
-        }
-        let changed = tx
-            .execute(
-                "UPDATE memories SET embedding=?1 WHERE id=?2",
-                params![json, ticket.memory_id],
-            )
-            .map_err(|e| e.to_string())?;
-        if changed != 1 {
-            return Err("stale_embedding_result".into());
-        }
-        tx.commit().map_err(|e| e.to_string())
     }
 }

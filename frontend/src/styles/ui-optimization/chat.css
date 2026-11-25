@@ -8,11 +8,11 @@
   min-height: 0;
 }
 
-/* Central reading and input alignment: max 860px */
+/* Keep the message and composer columns aligned. */
 .ui-opt-chat .conversation-message-list-inner,
 .ui-opt-chat .conversation-composer-column,
 .ui-opt-chat .conversation-composer-inner {
-  width: min(100%, 860px);
+  width: min(100%, clamp(860px, 72vw, 1180px));
   margin-inline: auto;
   min-width: 0;
 }

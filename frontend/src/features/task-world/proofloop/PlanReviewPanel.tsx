@@ -182,6 +182,7 @@ export default function PlanReviewPanel({
           <span>目标契约约定（版本 v{draft.contract.version}）</span>
         </div>
         <p className="mt-1 text-[var(--text-secondary)]">“{draft.contract.user_goal}”</p>
+        {draft.source && <p className="mt-1 text-xs text-[var(--text-secondary)] [overflow-wrap:anywhere]">来源观察 {draft.source.observation_id}</p>}
 
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div className="rounded border border-[var(--border-soft)] p-2">

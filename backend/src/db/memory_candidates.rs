@@ -3,6 +3,7 @@ use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
 use super::{
+    memory_activity::AUTOMATION_INPUTS,
     memory_governance::CorrectMemoryRequest,
     memory_governance::{content_hash, normalize_memory},
     memory_graph::{resolve_correction, CorrectionSource},
@@ -134,7 +135,8 @@ const SELECT: &str = "SELECT q.id,q.category,q.content,q.created_at,q.conversati
     LEFT JOIN conversations c ON c.id=m.conversation_id
     LEFT JOIN task_executions e ON e.id=q.task_execution_id AND e.task_id=q.task_id
     LEFT JOIN tasks t ON t.id=e.task_id
-    WHERE q.decision IS NULL";
+    WHERE q.decision IS NULL
+        AND NOT EXISTS(SELECT 1 FROM automation_inputs a WHERE a.message_id=q.message_id AND a.conversation_id=q.conversation_id)";
 
 fn read_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<CandidateReview> {
     let message_id: Option<String> = row.get(5)?;
@@ -200,6 +202,39 @@ fn resolve_candidate_graph(
 }
 
 impl Database {
+    pub(crate) fn stage_companion_feedback(
+        &self,
+        activity_id: &str,
+    ) -> Result<Vec<String>, String> {
+        let conn = self.conn();
+        let source: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT m.id,m.conversation_id,m.content FROM memory_activity a
+             JOIN messages m ON m.id=a.message_id AND m.conversation_id=a.conversation_id
+             WHERE a.id=?1 AND a.kind='chat_message' AND m.role='user'",
+                [activity_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        let (message_id, conversation_id, content) = source.ok_or("feedback_source_unavailable")?;
+        if super::memory_activity::is_automation_input_on(&conn, &message_id, &conversation_id)
+            .map_err(|error| error.to_string())?
+        {
+            return Err("feedback_source_unavailable".into());
+        }
+        drop(conn);
+        self.stage_memory_candidates(vec![CandidateDraft {
+            category: "preference".into(),
+            content,
+            source: CandidateSource::Message {
+                conversation_id,
+                message_id,
+            },
+            relationship: None,
+        }])
+    }
+
     pub(super) fn initialize_memory_candidates(&self) -> rusqlite::Result<()> {
         self.apply_product_migrations(&[
             SCHEMA,
@@ -257,6 +292,15 @@ impl Database {
                         conversation_id,
                         message_id,
                     } => {
+                        if super::memory_activity::is_automation_input_on(
+                            &tx,
+                            message_id,
+                            conversation_id,
+                        )
+                        .map_err(|error| error.to_string())?
+                        {
+                            continue;
+                        }
                         let source: Option<(String, Option<String>)> = tx.query_row(
                         "SELECT m.content,(SELECT value FROM settings WHERE key='conversation_workspace:'||m.conversation_id)
                          FROM messages m JOIN conversations c ON c.id=m.conversation_id
@@ -346,7 +390,7 @@ impl Database {
         let conn = self.conn();
         let mut query = conn
             .prepare(&format!(
-                "{SELECT} ORDER BY q.created_at DESC,q.id DESC LIMIT ?1 OFFSET ?2"
+                "WITH {AUTOMATION_INPUTS} {SELECT} ORDER BY q.created_at DESC,q.id DESC LIMIT ?1 OFFSET ?2"
             ))
             .map_err(|error| error.to_string())?;
         let rows = query
@@ -386,7 +430,11 @@ impl Database {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
         let mut candidate = tx
-            .query_row(&format!("{SELECT} AND q.id=?1"), [id], read_candidate)
+            .query_row(
+                &format!("WITH {AUTOMATION_INPUTS} {SELECT} AND q.id=?1"),
+                [id],
+                read_candidate,
+            )
             .optional()
             .map_err(|error| error.to_string())?
             .ok_or("memory_candidate_not_pending")?;

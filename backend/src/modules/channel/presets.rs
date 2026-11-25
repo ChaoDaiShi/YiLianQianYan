@@ -47,8 +47,18 @@ pub fn validate_references(
     Ok(())
 }
 
-pub fn prompt(db: &Database, preset: Option<&ChannelPreset>) -> Result<String, String> {
+pub fn prompt(
+    db: &Database,
+    preset: Option<&ChannelPreset>,
+) -> Result<
+    (
+        String,
+        crate::integrations::llm::generation::GenerationOverrides,
+    ),
+    String,
+> {
     let mut parts = vec![CHANNEL_PROMPT.to_string()];
+    let mut generation = crate::integrations::llm::generation::GenerationOverrides::default();
     if let Some(preset) = preset {
         validate_references(
             db,
@@ -57,6 +67,7 @@ pub fn prompt(db: &Database, preset: Option<&ChannelPreset>) -> Result<String, S
         )?;
         if let Some(agent) = preset.agent_id.as_deref() {
             let profile = crate::api::agents::persona::profile_for_agent(db, agent)?;
+            generation = profile.generation();
             let persona = crate::api::agents::persona::compose_user_persona(&profile);
             if !persona.is_empty() {
                 parts.push(persona);
@@ -70,5 +81,5 @@ pub fn prompt(db: &Database, preset: Option<&ChannelPreset>) -> Result<String, S
             ));
         }
     }
-    Ok(parts.join("\n\n"))
+    Ok((parts.join("\n\n"), generation))
 }

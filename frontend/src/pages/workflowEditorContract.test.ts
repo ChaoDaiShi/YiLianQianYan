@@ -1,11 +1,26 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { StaticRouter } from "react-router-dom/server";
+import WorkflowsPage from "./WorkflowsPage";
 import workflowsPageSource from "./WorkflowsPage.tsx?raw";
 import workflowEditorSource from "../components/workflow/WorkflowGraphEditor.tsx?raw";
 import workflowRunDialogSource from "../features/workflows/WorkflowRunDialog.tsx?raw";
 
 describe("workflow editor page contract", () => {
+  it.each([
+    ["", "runtime"],
+    ["?workflow_tab=runtime", "runtime"],
+    ["?workflow_tab=templates", "templates"],
+    ["?workflow_tab=taskgraphs", "taskgraphs"],
+  ])("opens the URL-selected workflow view for %s", (search, tab) => {
+    const html = renderToStaticMarkup(createElement(StaticRouter, { location: `/capabilities${search}` },
+      createElement(WorkflowsPage)));
+    expect(html).toContain(`id="tab-${tab}" aria-selected="true"`);
+    expect(html).toContain(`id="panel-${tab}" role="tabpanel"`);
+  });
+
   it("keeps the existing graph APIs and run inspector wiring", () => {
-    expect(workflowsPageSource).toContain('useState<Tab>("runtime")');
     expect(workflowsPageSource).toContain("RuntimeWorkflowList");
     expect(workflowsPageSource).toContain("WorkflowGraphEditor");
     expect(workflowsPageSource).toMatch(/<RuntimeWorkflowList\b[\s\S]*?onRun=\{handleRun\}/);

@@ -78,13 +78,42 @@ const WORKFLOW_AGENT_SYSTEM_PROMPT: &str =
 /// Uses the shared `LlmClient` / `ModelConfig` (provider, base_url, api key
 /// resolver, timeout). Node config can never supply secrets.
 pub struct LlmWorkflowAgentExecutor {
-    llm: LlmClient,
+    model: WorkflowTextModel,
+}
+
+enum WorkflowTextModel {
+    Fixed(LlmClient),
+    Workspace {
+        db: crate::db::Database,
+        config: Arc<parking_lot::RwLock<crate::config::types::AppConfig>>,
+        resolver: Arc<SecretResolver>,
+        workspace: crate::workspace::WorkspaceId,
+        correlation: String,
+    },
 }
 
 impl LlmWorkflowAgentExecutor {
     pub fn new(config: &ModelConfig, resolver: Arc<SecretResolver>) -> Self {
         Self {
-            llm: LlmClient::new(config, resolver),
+            model: WorkflowTextModel::Fixed(LlmClient::new(config, resolver)),
+        }
+    }
+
+    pub(crate) fn in_workspace(
+        db: crate::db::Database,
+        config: Arc<parking_lot::RwLock<crate::config::types::AppConfig>>,
+        resolver: Arc<SecretResolver>,
+        workspace: crate::workspace::WorkspaceId,
+        correlation: String,
+    ) -> Self {
+        Self {
+            model: WorkflowTextModel::Workspace {
+                db,
+                config,
+                resolver,
+                workspace,
+                correlation,
+            },
         }
     }
 }
@@ -92,6 +121,37 @@ impl LlmWorkflowAgentExecutor {
 #[async_trait]
 impl WorkflowAgentExecutor for LlmWorkflowAgentExecutor {
     async fn generate(&self, prompt: &str) -> Result<String, WorkflowExecutionError> {
+        let scoped_client;
+        let llm = match &self.model {
+            WorkflowTextModel::Fixed(client) => client,
+            WorkflowTextModel::Workspace {
+                db,
+                config,
+                resolver,
+                workspace,
+                correlation,
+            } => {
+                let default = config.read().model.clone();
+                scoped_client = crate::api::chat::runtime::resolve_scoped_model_source(
+                    db,
+                    &default,
+                    None,
+                    Some(workspace.as_str()),
+                )
+                .and_then(|source| {
+                    source.into_client(
+                        db,
+                        &default,
+                        resolver.clone(),
+                        correlation,
+                        "workflow",
+                        None,
+                    )
+                })
+                .map_err(WorkflowExecutionError::Execution)?;
+                &scoped_client
+            }
+        };
         let messages = vec![
             ChatMessage {
                 reasoning_content: None,
@@ -110,8 +170,7 @@ impl WorkflowAgentExecutor for LlmWorkflowAgentExecutor {
                 name: None,
             },
         ];
-        let response = self
-            .llm
+        let response = llm
             .invoke(&messages, &[])
             .await
             .map_err(|error| WorkflowExecutionError::Execution(error.to_string()))?;
@@ -181,17 +240,35 @@ impl SecurityGatewayNodeExecutor {
             subject: SecuritySubject::from_subject_id(context.subject_id.clone()),
         };
 
-        let outcome = match context.agent_id.as_ref() {
-            Some(agent) => {
-                self.gateway
-                    .execute_for_agent(agent.as_str(), &request, RiskLevel::Low)
-                    .await
+        let invocation = async {
+            match context.agent_id.as_ref() {
+                Some(agent) => {
+                    self.gateway
+                        .execute_for_agent(agent.as_str(), &request, RiskLevel::Low)
+                        .await
+                }
+                None => self.gateway.execute(&request, RiskLevel::Low).await,
             }
-            None => self.gateway.execute(&request, RiskLevel::Low).await,
         };
+        let owner =
+            context
+                .owner
+                .clone()
+                .unwrap_or_else(|| crate::execution::ExecutionOwner::Workflow {
+                    workflow_graph_id: String::new(),
+                    run_id: run_id.to_string(),
+                });
+        let outcome = crate::execution::owner::CURRENT_EXECUTION_OWNER
+            .scope(owner, invocation)
+            .await;
         match outcome {
-            Ok(SecurityExecutionOutcome::Executed { tool_result, .. }) => {
-                if tool_result.ok {
+            Ok(SecurityExecutionOutcome::Executed {
+                tool_result,
+                verification,
+            }) => {
+                let interpreted =
+                    crate::execution::interpret_tool_result(&tool_result, &verification);
+                if interpreted.is_verified() {
                     // Persist a bounded, safe textual summary — never the raw
                     // payload (base64 images are replaced with a label).
                     Ok(NodeExecutionOutcome::Completed {
@@ -202,10 +279,7 @@ impl SecurityGatewayNodeExecutor {
                 } else {
                     Ok(NodeExecutionOutcome::Failed {
                         error: Some(
-                            NodeRunResult::new(
-                                tool_result.error.as_deref().unwrap_or("tool failed"),
-                            )
-                            .summary,
+                            NodeRunResult::new(verified_failure_reason(&interpreted)).summary,
                         ),
                     })
                 }
@@ -298,5 +372,22 @@ impl WorkflowNodeExecutor for SecurityGatewayNodeExecutor {
                 })
             }
         }
+    }
+}
+
+/// Preserve the non-replayable marker through persisted workflow summaries.
+pub(crate) fn verified_failure_reason(
+    result: &crate::execution::VerifiedExecutionResult,
+) -> String {
+    let reason = result
+        .failure_reason()
+        .unwrap_or("tool result was not verified");
+    if matches!(
+        result,
+        crate::execution::VerifiedExecutionResult::ResultUnknown { .. }
+    ) {
+        format!("external_mutation_uncertain: {reason}")
+    } else {
+        reason.to_owned()
     }
 }

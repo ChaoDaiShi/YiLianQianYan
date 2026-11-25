@@ -114,6 +114,40 @@ async fn build_returns_empty_context_when_no_memories() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[tokio::test]
+async fn restricted_categories_do_not_consume_the_recall_quota() {
+    let db = Database::new(std::path::Path::new(":memory:")).unwrap();
+    for (category, content) in [
+        ("knowledge", "CSV 编码规范的详细资料"),
+        ("preference", "导出 CSV 的编码应为 UTF-8"),
+    ] {
+        db.create_memory(&CreateMemoryRequest {
+            content: content.into(),
+            category: category.into(),
+            source: "manual".into(),
+            source_conversation_id: None,
+            metadata: None,
+        })
+        .unwrap();
+    }
+    let builder = MemoryContextBuilder::new(db, &ModelConfig::default(), test_resolver());
+    let context = builder
+        .build_with_policy(
+            "CSV 编码规范",
+            MemoryContextScope::Profile,
+            MemoryContextPolicy {
+                top_k: 1,
+                restrict_knowledge: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(context.memories.len(), 1);
+    assert_eq!(context.memories[0].memory.category, "preference");
+    assert!(context.injected_text.contains("UTF-8"));
+}
+
 // ============================================================
 // Phase 2 — learning loop tests.
 // ============================================================

@@ -240,7 +240,7 @@ export default function CommandPalette() {
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-[var(--backdrop)] backdrop-blur-md animate-fade-in"
+        className="ui-dialog-scrim absolute inset-0 animate-fade-in"
         aria-hidden="true"
       />
 
@@ -249,7 +249,7 @@ export default function CommandPalette() {
         role="dialog"
         aria-modal="true"
         aria-label="全局命令中心"
-        className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text-primary)] shadow-[var(--shadow-float)] backdrop-blur-xl animate-scale-in"
+        className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-solid)] text-[var(--text-primary)] shadow-[var(--shadow-float)] animate-scale-in"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={handleKeyDown}
       >

@@ -1,5 +1,20 @@
 use super::{has, Scope};
 
+pub(crate) fn allows_read_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "ask_user"
+            | "read_file"
+            | "grep"
+            | "glob"
+            | "ai_search"
+            | "vision_analysis"
+            | "write_todos"
+            | "visible_browser_tabs"
+            | "visible_browser_observe"
+    )
+}
+
 /// A prohibition on delivery can accompany an explicit request to edit the local composer.
 pub(super) fn requests_wechat_draft(text: &str, previous: Option<&str>) -> bool {
     let wechat = |s: &str| s.contains("微信") || s.to_ascii_lowercase().contains("wechat");

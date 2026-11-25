@@ -94,6 +94,13 @@ impl ToolRegistry {
         registry
     }
 
+    pub fn register_visible_browser(&mut self, runtime: Arc<crate::browser::BrowserRuntime>) {
+        for tool in super::browser::visible_browser_tools(runtime) {
+            self.register(tool);
+        }
+    }
+
+    /// Register a tool
     pub fn register_software(&mut self, runtime: Arc<crate::software::SoftwareRuntime>) {
         for tool in super::software::software_tools(runtime) {
             self.register(tool);
@@ -103,14 +110,6 @@ impl ToolRegistry {
     /// Register a tool
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
-    }
-
-    pub fn filtered(&self, keep: impl Fn(&str) -> bool) -> Self {
-        let mut filtered = Self::new_with_process_registry(self.process_registry());
-        for tool in self.all().into_iter().filter(|tool| keep(tool.name())) {
-            filtered.register(tool.clone());
-        }
-        filtered
     }
 
     /// Get a tool by name
@@ -127,9 +126,31 @@ impl ToolRegistry {
         self.tools.values().collect()
     }
 
+    pub(crate) fn filtered(&self, allows: impl Fn(&str) -> bool) -> Self {
+        let mut registry = Self::new_with_process_registry(self.process_registry());
+        for tool in self.tools.values().filter(|tool| allows(tool.name())) {
+            registry.register(tool.clone());
+        }
+        registry
+    }
+
     /// Convert all tools to OpenAI-compatible function definitions
     pub fn to_openai_tools(&self) -> Vec<serde_json::Value> {
-        self.tools.values().map(|t| t.to_openai_tool()).collect()
+        let mut names = self.tools.keys().map(String::as_str).collect::<Vec<_>>();
+        names.sort_unstable_by_key(|&name| {
+            let priority = match name {
+                "http_request" | "process" => 1,
+                "screenshot" => 2,
+                "bash" => 3,
+                "keyboard" | "mouse" => 4,
+                _ => 0,
+            };
+            (priority, name)
+        });
+        names
+            .iter()
+            .map(|&name| self.tools[name].to_openai_tool())
+            .collect()
     }
 
     /// List all tools as ToolInfo for frontend display
@@ -216,5 +237,38 @@ mod tests {
 
         assert!(registry.get("open_url").is_some());
         assert!(registry.get("open_application").is_some());
+    }
+
+    #[test]
+    fn model_tool_list_prefers_specialized_tools_and_has_stable_order() {
+        let registry = ToolRegistry::with_defaults(".");
+        let definitions = registry.to_openai_tools();
+        let names = definitions
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            [
+                "ask_user",
+                "edit_file",
+                "glob",
+                "grep",
+                "load_skill",
+                "open_application",
+                "open_url",
+                "read_file",
+                "upscale_image",
+                "write_file",
+                "write_todos",
+                "http_request",
+                "process",
+                "screenshot",
+                "bash",
+                "keyboard",
+                "mouse",
+            ]
+        );
     }
 }

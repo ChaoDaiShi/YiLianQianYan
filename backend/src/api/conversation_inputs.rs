@@ -92,7 +92,7 @@ pub async fn answer_handler(
     }
     let options = db.load_chat_options(&conversation).map_err(error)?;
     let (tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
-    let mut runtime = crate::api::chat::runtime::prepare_with_model(
+    let mut runtime = crate::api::chat::runtime::prepare_resume_with_model(
         &server,
         Some(&conversation),
         None,

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui";
-import { accessPermissions, getAccessRules, putAccessRules, type AccessRule, type AccessMode, type PermissionId } from "../../api/accessRules";
+import { accessPermissions, getAccessRules, putAccessRules, type AccessRule, type AccessMode, type PermissionId, type DelegatedAccessSubject } from "../../api/accessRules";
 import { AccessScopeDialog } from "./AccessScopeDialog";
 const modeLabels={full:"完全权限",approve:"需批准",deny:"禁止"};
 export function AccessMatrix({agentId,agentLabel}:{agentId?:string;agentLabel?:string}={}){
  const [rules,setRules]=useState<AccessRule[]>([]);const [loaded,setLoaded]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState("");const [dialog,setDialog]=useState<{rule:AccessRule|null}|null>(null);
- useEffect(()=>{let active=true;void getAccessRules().then(r=>{if(active){if(r.ok){setRules(r.data.rules);setLoaded(true)}else setError(r.error)}});return()=>{active=false}},[]);
+ const [subagents, setSubagents] = useState<DelegatedAccessSubject[]>([]);
+ useEffect(()=>{let active=true;void getAccessRules().then(r=>{if(active){if(r.ok){setRules(r.data.rules);setSubagents(r.data.subagents ?? []);setLoaded(true)}else setError(r.error)}});return()=>{active=false}},[]);
  const label=agentLabel??agentId;
  const isTableRule=(rule:AccessRule,permission:PermissionId)=>rule.permission_id===permission&&(agentId?rule.scope==="agent"&&rule.subject_id===agentId:rule.scope==="default");
  const canEdit=(rule:AccessRule)=>!agentId||((rule.scope==="agent"||rule.scope==="resource")&&rule.subject_id===agentId);
@@ -19,7 +20,24 @@ export function AccessMatrix({agentId,agentLabel}:{agentId?:string;agentLabel?:s
  {!loaded&&!error&&<p role="status">正在读取权限规则…</p>}
  <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="p-2 text-left">操作</th><th className="p-2 text-left">{agentId?"该智能体权限":"默认权限"}</th></tr></thead><tbody>{accessPermissions.map(p=><tr key={p.id} className="border-t border-[var(--border-soft)]"><td className="p-2">{p.label}</td><td className="p-2"><select aria-label={agentId?`${label} ${p.label}权限`:`${p.label}默认权限`} className="settings-select" disabled={!loaded||busy} value={rules.find(rule=>isTableRule(rule,p.id))?.mode??""} onChange={e=>void setPermission(p.id,e.target.value as AccessMode|"").catch(()=>{})}><option value="">{agentId?"继承现有策略":"使用现有策略"}</option><option value="full">完全权限</option><option value="approve">需批准</option><option value="deny">禁止</option></select></td></tr>)}</tbody></table></div>
  <div className="flex items-center justify-between gap-3"><h4>{agentId?"该智能体规则与全局约束":"指定范围"}</h4><Button disabled={!loaded||busy} onClick={()=>setDialog({rule:null})}>新增范围规则</Button></div>
- {visibleRules.length===0?<p className="settings-help">还没有指定范围规则。</p>:<div className="grid gap-2">{visibleRules.map(rule=><div key={rule.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] p-3"><div><strong>{accessPermissions.find(p=>p.id===rule.permission_id)?.label}</strong><p className="settings-help">{agentId&&!canEdit(rule)?"全局规则":rule.scope==="default"?"默认":rule.scope==="agent"?"智能体":rule.scope==="capability"?"工具":"资源"} · {rule.subject_id===agentId&&agentId?label:rule.subject_id??String(rule.resource?.root??rule.resource?.host??rule.resource?.server_id??"所有操作对象")} · {modeLabels[rule.mode]}</p></div>{canEdit(rule)?<div className="flex gap-2"><Button disabled={busy} onClick={()=>setDialog({rule})}>编辑</Button><Button disabled={busy} onClick={()=>void persist(rules.filter(r=>r.id!==rule.id)).catch(()=>{})}>移除</Button></div>:<span className="text-xs text-[var(--text-muted)]">在全局权限设置中修改</span>}</div>)}</div>}
- {dialog&&<AccessScopeDialog rule={dialog.rule} initialAgentId={agentId} initialAgentLabel={label} onClose={()=>setDialog(null)} onSave={async rule=>{await persist([...rules.filter(r=>r.id!==rule.id),rule]);setDialog(null)}}/>}
+ {visibleRules.length === 0 ? <p className="settings-help">还没有指定范围规则。</p> : <div className="grid gap-2">
+  {visibleRules.map(rule => {
+   const scope = agentId && !canEdit(rule) ? "全局规则" : {default:"默认", agent:"智能体", capability:"工具", resource:"资源"}[rule.scope];
+   const delegated = subagents.find(subject => subject.subject_id === rule.subject_id);
+   const subject = rule.subject_id === agentId ? label : delegated?.label ?? rule.subject_id;
+   const resource = rule.resource?.root ?? rule.resource?.host ?? rule.resource?.server_id;
+   const target = [subject, resource].filter(Boolean).join(" · ") || "所有操作对象";
+   return <div key={rule.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] p-3">
+    <div className="min-w-0"><strong>{accessPermissions.find(p => p.id === rule.permission_id)?.label}</strong>
+     <p className="settings-help break-words">{scope} · {target} · {modeLabels[rule.mode]}</p>
+    </div>
+    {canEdit(rule) ? <div className="flex shrink-0 gap-2">
+     <Button disabled={busy} onClick={() => setDialog({rule})}>编辑</Button>
+     <Button disabled={busy} onClick={() => void persist(rules.filter(r => r.id !== rule.id)).catch(() => {})}>移除</Button>
+    </div> : <span className="text-xs text-[var(--text-muted)]">在全局权限设置中修改</span>}
+   </div>;
+  })}
+ </div>}
+ {dialog&&<AccessScopeDialog rule={dialog.rule} initialAgentId={agentId} initialAgentLabel={label} subagents={subagents} onClose={()=>setDialog(null)} onSave={async rule=>{await persist([...rules.filter(r=>r.id!==rule.id),rule]);setDialog(null)}}/>}
  </div>
 }

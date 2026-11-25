@@ -118,6 +118,7 @@ const runPath = (channelId: string, runId: string) => `${robotPath(channelId)}/r
 export const getRobotPolicy = (channelId: string) => call<{ policy: RobotPolicy }>("GET", `${robotPath(channelId)}/policy`);
 export const updateRobotPolicy = (channelId: string, policy: RobotPolicyInput) => call<{ policy: RobotPolicy }>("PUT", `${robotPath(channelId)}/policy`, policy);
 export const listRobotDirectory = (channelId: string, kind: RobotDirectoryKind) => call<{ items: RobotDirectoryItem[] }>("GET", `${robotPath(channelId)}/directory?kind=${kind}`);
+export const listRobotGroupMembers = (channelId: string, groupId: string) => call<{ items: RobotDirectoryItem[] }>("GET", `${robotPath(channelId)}/directory?kind=members&group_id=${encodeURIComponent(groupId)}`);
 export const readRobotHistory = (channelId: string, input: RobotHistoryInput) => call<RobotHistoryResult>("POST", `${robotPath(channelId)}/history`, input);
 export const sendRobotMessage = (channelId: string, input: RobotSendInput) => call<{ action: RobotAction }>("POST", `${robotPath(channelId)}/send`, input);
 export const listRobotMissions = (channelId: string) => call<{ missions: RobotMission[] }>("GET", `${robotPath(channelId)}/missions`);

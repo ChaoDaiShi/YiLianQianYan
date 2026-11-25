@@ -1,0 +1,75 @@
+.goal-tracking-summary { min-width: 0; padding: 12px 14px; font-size: 12px; line-height: 1.5; background: var(--surface-muted); border: 1px solid var(--border-soft); border-radius: var(--radius-md); color: var(--text-secondary); }
+.goal-tracking-summary header { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.goal-tracking-summary header strong { min-width: 0; flex: 1; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--text); font-size: 13px; line-height: 1.5; }
+.goal-tracking-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; margin: 7px 0; }
+.goal-tracking-summary dl>div { display: grid; grid-template-columns: 5em minmax(0, 1fr); gap: 8px; min-width: 0; align-items: baseline; }
+.goal-tracking-summary dt { color: var(--text-secondary); white-space: nowrap; }
+.goal-tracking-summary dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.goal-tracking-count { display: inline-block; margin-top: 2px; color: var(--text-secondary); white-space: nowrap; }
+.goal-tracking-summary nav, .studio-goal-actions { display: flex; gap: 4px 8px; flex-wrap: wrap; align-items: center; padding-top: 4px; }
+.goal-tracking-summary :is(a, button), .studio-goal-actions :is(a, button) { color: var(--accent-soft-fg); }
+:is(.goal-tracking-summary nav, .studio-goal-actions) > :is(a, button) { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); white-space: normal; overflow-wrap: anywhere; background: var(--surface); }
+:is(.goal-tracking-summary, .studio-goal-actions) :is(a, button):hover { text-decoration: underline; }
+:is(.goal-tracking-summary, .studio-goal-actions) :is(a, button, summary):focus-visible, .conversation-goal-state:focus-visible { outline: 2px solid var(--focus-outline, var(--accent)); outline-offset: 2px; }
+:is(.goal-tracking-summary, .studio-goal-actions) button:disabled { opacity: .55; cursor: wait; }
+.goal-tracking-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.goal-tracking-more { margin-top: 3px; }
+.goal-tracking-more summary { cursor: pointer; width: fit-content; color: var(--text-secondary); text-decoration: underline; text-underline-offset: 3px; }
+.goal-tracking-more ul { display: grid; gap: 6px; margin: 6px 0 0; padding-left: 15px; }
+.goal-tracking-panel { min-height: 0; min-width: 0; }
+.studio-goal-summary { flex: none; min-height: 0; overflow: visible; }
+.studio-goal-actions { flex: none; padding: 6px 12px; border-bottom: 1px solid var(--border-soft); font-size: var(--font-size-meta); }
+.studio-goal-summary>.goal-tracking-summary,
+.conversation-goal-state .goal-tracking-summary { display: flex; flex-direction: column; max-height: min(36dvh, 330px); min-height: 0; }
+.studio-goal-summary>.goal-tracking-summary>header,
+.studio-goal-summary>.goal-tracking-summary>nav,
+.conversation-goal-state .goal-tracking-summary>header,
+.conversation-goal-state .goal-tracking-summary>nav { flex: none; }
+.studio-goal-summary>.goal-tracking-summary>dl,
+.conversation-goal-state .goal-tracking-summary>dl { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; align-content: start; padding: 2px 3px 2px 0; }
+.goal-tracking-panel:not([data-compact=true]) { height: 100%; display: flex; flex-direction: column; }
+.goal-tracking-panel:not([data-compact=true])>.goal-overview-scroll { flex: 1; min-height: 0; }
+.goal-tracking-modal { min-width: 0; min-height: 0; }
+.goal-tracking-modal .goal-overview-scroll { height: auto; overflow: visible; padding: 0 0 8px; }
+.goal-tracking-modal .goal-overview-content { width: 100%; gap: 12px; }
+.goal-tracking-modal .goal-view-card { box-shadow: none; }
+.goal-tracking-modal .goal-view-section-heading>div { min-width: 0; }
+.goal-tracking-modal .goal-view-section-heading { flex-wrap: wrap; }
+.goal-tracking-modal .goal-view-phase { max-width: 100%; overflow-wrap: anywhere; }
+.goal-tracking-modal .goal-view-actions button, .goal-tracking-modal .goal-view-artifact-actions button, .goal-tracking-modal .goal-view-execution-list button { max-width: 100%; overflow-wrap: anywhere; text-align: left; color: var(--accent-soft-fg); }
+.goal-tracking-modal :is(p, h1, h2, h3, strong) { overflow-wrap: anywhere; }
+.goal-view-full-title summary { cursor: pointer; list-style-position: inside; }
+.goal-view-full-title summary h1 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.goal-view-full-title summary>span { display: inline-block; margin-top: 5px; color: var(--accent-soft-fg); text-decoration: underline; font-size: 12px; }
+.goal-view-full-title[open] summary h1 { -webkit-line-clamp: 2; }
+.goal-view-full-title>p { margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.goal-view-full-title summary:focus-visible { outline: 2px solid var(--focus-outline, var(--accent)); outline-offset: 3px; }
+.conversation-goal-state { min-height: 0; padding: 2px; }
+.conversation-goal-state .goal-tracking-notice { max-height: 14dvh; overflow-y: auto; overscroll-behavior: contain; }
+.conversation-goal-state:not(:has(.goal-tracking-summary)) .goal-tracking-notice { max-height: 30dvh; }
+.canvas-studio>.goal-tracking-notice { flex: none; max-height: 14dvh; overflow-y: auto; overscroll-behavior: contain; }
+.conversation-goal-control { overflow-wrap: anywhere; }
+.workspace-goal-status { padding: 2px; overscroll-behavior: contain; }
+.workspace-goal-tasks>div:first-child>div { flex-basis: 220px; }
+.workspace-goal-tasks .goal-tracking-panel { height: auto; }
+.goal-tracking-notice { padding: 8px 14px; font-size: 12px; overflow-wrap: anywhere; }
+.goal-tracking-actions { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 14px; font-size: 12px; border-bottom: 1px solid var(--border-soft); }
+.goal-tracking-actions button, .goal-tracking-actions a { color: var(--accent-primary); }
+.goal-action-hint { flex-basis: 100%; color: var(--text-secondary); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.goal-next-action { font-weight: 600; }
+.goal-policy-content { display: grid; gap: 14px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.goal-policy-content a { color: var(--accent-soft-fg); text-decoration: underline; }
+.goal-policy-content label { display: flex; align-items: center; gap: 10px; }
+@media (max-width: 720px) {
+  .goal-tracking-summary { padding: 10px; }
+  .goal-tracking-summary dl { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .goal-tracking-summary header { gap: 6px; }
+  .goal-tracking-summary header .goal-view-phase { padding: 4px 7px; font-size: 11px; }
+  .goal-tracking-summary nav, .studio-goal-actions { gap: 5px; }
+  :is(.goal-tracking-summary nav, .studio-goal-actions) > :is(a, button) { min-height: 34px; padding-inline: 7px; }
+  .goal-tracking-modal .goal-view-card { padding: 10px; }
+  .goal-tracking-modal .goal-view-section-heading h1 { font-size: 18px; }
+  .goal-tracking-modal .goal-view-progress-summary { gap: 8px; flex-wrap: wrap; }
+  .goal-tracking-modal .goal-view-step-list li { flex-wrap: wrap; }
+  .goal-tracking-modal .goal-view-step-stage { margin-left: 34px; text-align: left; }
+}

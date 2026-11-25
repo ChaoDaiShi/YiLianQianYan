@@ -252,6 +252,10 @@ impl LlmTaskPlanner {
         }
     }
 
+    pub(crate) fn with_client(llm: LlmClient) -> Self {
+        Self { llm }
+    }
+
     /// Propose a product graph through the configured LLM, then validate it in
     /// memory. This path neither persists nor dispatches anything.
     pub async fn plan_graph(

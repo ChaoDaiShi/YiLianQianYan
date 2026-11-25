@@ -316,7 +316,7 @@ impl ArtifactService {
     ) -> Result<std::path::PathBuf, ArtifactError> {
         let workspace = self
             .db
-            .get_workspace(workspace_id)
+            .get_workspace_for_history(workspace_id)
             .map_err(ArtifactError::Db)?
             .ok_or_else(|| ArtifactError::Db("产物工作空间不存在".into()))?;
         let allowed = Path::new(allowed_root)
@@ -335,6 +335,8 @@ impl ArtifactService {
         &self,
         source: &ArtifactSource,
     ) -> Result<(WorkspaceId, TaskId, TaskExecutionId, String), ArtifactError> {
+        let resolved = crate::execution::origin::resolve_artifact_origin(&self.db, source)
+            .map_err(ArtifactError::Db)?;
         match source {
             ArtifactSource::Task {
                 task_id,
@@ -383,7 +385,7 @@ impl ArtifactService {
                 graph_id,
                 node_id,
                 execution_id,
-                workspace_id,
+                workspace_id: _,
             } => {
                 let id = crate::modules::task::NodeExecutionId::new(execution_id)
                     .map_err(|_| ArtifactError::Db("执行标识无效".into()))?;
@@ -421,8 +423,15 @@ impl ArtifactService {
                     execution.context.resources.join("\n\n")
                 );
                 Ok((
-                    WorkspaceId::new(workspace_id)
-                        .map_err(|_| ArtifactError::Db("请选择真实工作空间".into()))?,
+                    WorkspaceId::new(
+                        resolved
+                            .destination_workspace_id
+                            .as_deref()
+                            .ok_or_else(|| {
+                                ArtifactError::Db("请选择明确的导出目标工作空间".into())
+                            })?,
+                    )
+                    .map_err(|_| ArtifactError::Db("请选择真实工作空间".into()))?,
                     TaskId::new(graph_id)
                         .map_err(|_| ArtifactError::Db("任务图标识无效".into()))?,
                     TaskExecutionId::new(execution_id)

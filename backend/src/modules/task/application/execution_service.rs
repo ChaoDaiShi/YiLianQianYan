@@ -137,6 +137,21 @@ impl WorkflowExecutionProvider for ExistingWorkflowProvider {
         .await
         .map_err(AdapterError::Execution)
     }
+
+    async fn dispatch(
+        &self,
+        workflow_id: &str,
+        execution: &NodeExecution,
+    ) -> Result<ExecutorDispatch, AdapterError> {
+        crate::modules::workflow::application::run_service::dispatch_for_task_harness(
+            Arc::clone(&self.server),
+            workflow_id,
+            self.cancel.clone(),
+            execution,
+        )
+        .await
+        .map_err(AdapterError::Execution)
+    }
 }
 
 /// Dispatch a claimed execution through the adapter registry and fold the
@@ -232,7 +247,9 @@ pub async fn dispatch_execution(
     // Preserve the authoritative cancelled row and discard its late output.
     if let Some((_, current)) = server.task_world.find_execution(&execution_id) {
         if current.status == NodeExecutionStatus::Cancelled {
-            return Ok(current);
+            return server
+                .task_world
+                .settle_paused_execution(&graph_id, &execution_id, now());
         }
     }
     match result {
@@ -251,9 +268,21 @@ pub async fn dispatch_execution(
             "executor completed without a result",
             now(),
         ),
-        Ok(ExecutorDispatch::WaitingApproval { approval_ref }) => server
-            .task_world
-            .mark_execution_waiting_approval(&graph_id, &execution_id, &approval_ref, now()),
+        Ok(ExecutorDispatch::WaitingApproval { approval_ref }) => {
+            if let Some((_, current)) = server.task_world.find_execution(&execution_id) {
+                if current.status == NodeExecutionStatus::WaitingApproval
+                    && current.approval_ref.as_deref() == Some(approval_ref.as_str())
+                {
+                    return Ok(current);
+                }
+            }
+            server.task_world.mark_execution_waiting_approval(
+                &graph_id,
+                &execution_id,
+                &approval_ref,
+                now(),
+            )
+        }
         Ok(ExecutorDispatch::Failed { code, error }) => {
             server
                 .task_world

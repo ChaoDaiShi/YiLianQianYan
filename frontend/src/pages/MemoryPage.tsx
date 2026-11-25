@@ -6,6 +6,8 @@ import type { MemoryRecord } from "../api/client";
 import { getMemory, listWithdrawnMemories } from "../api/memory";
 import MemoryDetail from "../features/memory/MemoryDetail";
 import MemoryNetwork from "../features/memory/MemoryNetwork";
+import { MemoryIndexControls } from "../features/memory/MemoryIndexControls";
+import { MemorySearchDialog } from "../features/memory/MemorySearchDialog";
 import { useMemoryStore } from "../stores/memoryStore";
 import PageShell from "../components/layout/PageShell";
 import { Badge, Button, ConfirmDialog, EmptyState, ErrorState, Modal, Select, Skeleton, Tabs, Textarea } from "../components/ui";
@@ -49,6 +51,7 @@ export default function MemoryPage() {
   const [linked, setLinked] = useState<MemoryRecord | null>(null);
   const [linkedError, setLinkedError] = useState("");
   const [linkedRevision, setLinkedRevision] = useState(0);
+  const [semanticSearchOpen, setSemanticSearchOpen] = useState(false);
   useEffect(() => {
     let active = true;
     setLinked(null);
@@ -68,9 +71,6 @@ export default function MemoryPage() {
     addMemory,
     editMemory,
     removeMemory,
-    isReindexing,
-    reindexResult,
-    reindexMemoriesAction,
   } = useMemoryStore();
 
   const [layer, setLayer] = useState<MemoryLayer>("long");
@@ -276,7 +276,7 @@ export default function MemoryPage() {
         <div className="memory-layer-navigation">
           <Tabs tabs={[...MEMORY_LAYERS]} activeId={layer} onChange={id => { setLayer(id as MemoryLayer); setDetailOpen(false); }} variant="segment" size="sm" aria-label="记忆层级" />
         </div>
-        {layer === "recent" || layer === "journal" ? <MemoryActivityView key={layer} recent={layer === "recent"} onPromoted={() => { setLayer("long"); setView("active"); }} onPurged={id => {
+        {layer === "recent" || layer === "journal" ? <MemoryActivityView key={layer} recent={layer === "recent"} onReview={() => setLayer("candidates")} onPromoted={() => { setLayer("long"); setView("active"); }} onPurged={id => {
           setWithdrawn(records => records.filter(record => record.id !== id));
           if (linkedId === id) closeLinked();
         }} />
@@ -320,14 +320,15 @@ export default function MemoryPage() {
             <div className="memory-page-more-panel">
               <label htmlFor="memory-page-source">来源</label>
               <Select size="sm" id="memory-page-source" aria-label="记忆来源筛选" value={filterSource} onChange={event => setFilterSource(event.target.value)} options={[...SOURCE_OPTIONS]} />
-              <div className="memory-page-index-maintenance">
-                <Button variant="secondary" size="sm" onClick={reindexMemoriesAction} loading={isReindexing} loadingLabel="正在重建…">重建索引</Button>
-                <p>为缺少索引的记忆补充检索数据。</p>
-              </div>
+              <Button variant="secondary" size="sm" onClick={() => setSemanticSearchOpen(true)}>语义检索</Button>
+              <MemoryIndexControls />
             </div>
           </details>
         </div>
-        {reindexResult && <p className={`break-words text-xs ${reindexResult.ok ? "text-[var(--text-secondary)]" : "text-[var(--danger)]"}`} role="status">{reindexResult.ok ? `本次处理 ${reindexResult.processed ?? 0} 条，成功 ${reindexResult.succeeded ?? 0} 条，失败 ${reindexResult.failed ?? 0} 条。` : `重建失败：${reindexResult.error ?? "请求失败"}`}</p>}
+        {semanticSearchOpen && <MemorySearchDialog onClose={() => setSemanticSearchOpen(false)} onSelect={id => {
+          setSemanticSearchOpen(false);
+          setParams(current => { const next = new URLSearchParams(current); next.set("record", id); return next; });
+        }} />}
         {deleteError && !detailOpen && <p role="alert" className="text-sm text-[var(--danger)]">{deleteError}</p>}
         {presentation !== "list" ? (
           <MemoryNetwork key={view} query={{ q: search.trim() || undefined, category: filterCategory || undefined, source: filterSource || undefined, withdrawn: view === "withdrawn" }}

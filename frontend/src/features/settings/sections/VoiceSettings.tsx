@@ -1,17 +1,35 @@
 import type { ProviderConnectionKind } from "../../../api/providerConnection";
-import { Button, Input } from "../../../components/ui";
+import { Button, Input, Select } from "../../../components/ui";
 import type { AppConfig, ProviderReadinessProjection } from "../../../types";
 import { secretSourceLabel } from "../model/mapping";
 import ProviderReadinessCard from "./ProviderReadinessCard";
 
+type VoiceSide = "stt" | "tts";
+
+const voiceProviders = {
+  stt: [
+    { value: "openai-compatible", label: "OpenAI-compatible", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini-transcribe" },
+    { value: "minimax", label: "MiniMax", baseUrl: "https://api.minimax.io/v1", model: "asr-1.0" },
+    { value: "fish", label: "Fish Audio", baseUrl: "https://api.fish.audio/v1", model: "transcribe-1-pro" },
+    { value: "aliyun", label: "阿里云百炼 / Qwen ASR", baseUrl: "", model: "qwen3-asr-flash" },
+  ],
+  tts: [
+    { value: "openai-compatible", label: "OpenAI-compatible", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini-tts" },
+    { value: "minimax", label: "MiniMax", baseUrl: "https://api.minimax.io", model: "speech-2.8-turbo" },
+    { value: "fish", label: "Fish Audio", baseUrl: "https://api.fish.audio/v1", model: "s2.1-pro" },
+    { value: "aliyun", label: "阿里云百炼 / CosyVoice", baseUrl: "", model: "cosyvoice-v3-flash" },
+    { value: "volcengine", label: "火山引擎 / 豆包语音合成", baseUrl: "https://openspeech.bytedance.com/api/v3", model: "seed-tts-2.0" },
+  ],
+};
+
 interface VoiceSettingsProps {
-  side?:"stt"|"tts";
+  side: VoiceSide;
   dirty: boolean;
   config: AppConfig;
-  updateVoiceField: (side: "stt" | "tts", key: string, value: string | number) => void;
+  updateVoiceField: (side: VoiceSide, key: string, value: string | number) => void;
   replaceVoiceKey: { stt: boolean; tts: boolean };
-  onReplaceVoiceKey: (side: "stt" | "tts") => void;
-  onClearVoiceSecret: (side: "stt" | "tts") => Promise<void>;
+  onReplaceVoiceKey: (side: VoiceSide) => void;
+  onClearVoiceSecret: (side: VoiceSide) => Promise<void>;
   readiness: ProviderReadinessProjection | null;
   testing: ProviderConnectionKind | null;
   results: Partial<Record<ProviderConnectionKind, string>>;
@@ -19,11 +37,6 @@ interface VoiceSettingsProps {
   onPreviewTts: () => void;
 }
 
-/**
- * STT and TTS are configured independently and each keeps its own credential.
- * A key is only accepted through the write-only password field; a configured
- * key is never echoed back, only its source label.
- */
 export default function VoiceSettings({
   side,
   dirty,
@@ -38,60 +51,54 @@ export default function VoiceSettings({
   onVerify,
   onPreviewTts,
 }: VoiceSettingsProps) {
+  const voice = config.voice[side];
+  const providers = voiceProviders[side];
+  const synthesis = side === "tts";
+
+  function selectProvider(id: string) {
+    const preset = providers.find((item) => item.value === id);
+    if (!preset) return;
+    updateVoiceField(side, "provider", preset.value);
+    updateVoiceField(side, "base_url", preset.baseUrl);
+    updateVoiceField(side, "model", preset.model);
+    if (synthesis) updateVoiceField(side, "voice", "");
+  }
+
   return (
-    <div className="settings-section-stack">
-      <ProviderReadinessCard dirty={dirty} readiness={readiness} kinds={side?[side]:["stt", "tts"]} testing={testing} results={results} onVerify={onVerify} onPreviewTts={onPreviewTts} />
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Select label={synthesis ? "语音合成厂商" : "语音识别厂商"} value={voice.provider} options={providers} onChange={(e) => selectProvider(e.target.value)} />
+        <Input label="模型" value={voice.model} onChange={(e) => updateVoiceField(side, "model", e.target.value)} />
+        {synthesis && <Input label="默认音色" value={config.voice.tts.voice} onChange={(e) => updateVoiceField(side, "voice", e.target.value)} placeholder="voice_id" />}
+        <Input label="语言" value={voice.language} onChange={(e) => updateVoiceField(side, "language", e.target.value)} placeholder="zh" />
+      </div>
 
-      {(!side||side==="stt")&&(<section className="settings-subcard">
-        <header className="settings-card-header"><div><h3>语音识别（STT）</h3><p>将真实麦克风音频转换为最终文本。</p></div></header>
-        <div className="settings-card-body">
-        <label className="block text-sm">语音识别厂商<select className="mt-1 w-full rounded-xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2" value={config.voice.stt.provider} onChange={e=>{const p=e.target.value;updateVoiceField("stt","provider",p);updateVoiceField("stt","base_url",p==="fish"?"https://api.fish.audio/v1":p==="aliyun"?"":p==="minimax"?"https://api.minimax.io/v1":"https://api.openai.com/v1");updateVoiceField("stt","model",p==="fish"?"transcribe-1-pro":p==="aliyun"?"qwen3-asr-flash":p==="minimax"?"asr-1.0":"gpt-4o-mini-transcribe")}}><option value="openai-compatible">OpenAI-compatible</option><option value="minimax">MiniMax</option><option value="fish">Fish Audio</option><option value="aliyun">阿里云百炼 / Qwen ASR</option></select></label>
-        <Input label="模型" value={config.voice.stt.model} onChange={(e) => updateVoiceField("stt", "model", e.target.value)} placeholder="gpt-4o-mini-transcribe" />
-        <Input label="语言" value={config.voice.stt.language} onChange={(e) => updateVoiceField("stt", "language", e.target.value)} placeholder="zh" />
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
-          <div>
-            <p className="text-sm font-medium text-[var(--text)]">{config.voice.stt.api_key_configured ? "STT 凭据已配置" : "STT 凭据未配置"}</p>
-            <p className="mt-0.5 text-meta text-[var(--text-muted)]">{secretSourceLabel(config.voice.stt.api_key_source)}</p>
-          </div>
-          <div className="flex gap-2">{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => onReplaceVoiceKey("stt")}>替换密钥</Button> : null}{config.voice.stt.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void onClearVoiceSecret("stt")}>清除密钥</Button> : null}</div>
+      {voice.api_key_configured && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span>已配置 API 密钥</span>
+          {!replaceVoiceKey[side] && <Button variant="secondary" size="sm" onClick={() => onReplaceVoiceKey(side)}>替换密钥</Button>}
         </div>
-        {(!config.voice.stt.api_key_configured || replaceVoiceKey.stt) && <Input label="STT API 密钥" type="password" value={config.voice.stt.api_key} onChange={(e) => updateVoiceField("stt", "api_key", e.target.value)} placeholder="输入后安全保存" />}
-        <div><div className="space-y-4 pt-4">
-        <Input label="API 地址" value={config.voice.stt.base_url} onChange={(e) => updateVoiceField("stt", "base_url", e.target.value)} placeholder="https://api.openai.com/v1" />
-        <Input label="密钥环境变量名" value={config.voice.stt.api_key_env} onChange={(e) => updateVoiceField("stt", "api_key_env", e.target.value)} placeholder="OPENAI_API_KEY" />
-        <Input label="请求超时（毫秒）" type="number" value={String(config.voice.stt.timeout_ms)} onChange={(e) => updateVoiceField("stt", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
-        </div></div>
-        </div>
-      </section>)}
+      )}
+      {(!voice.api_key_configured || replaceVoiceKey[side]) && (
+        <Input label={side.toUpperCase() + " API 密钥"} type="password" autoComplete="new-password" value={voice.api_key} onChange={(e) => updateVoiceField(side, "api_key", e.target.value)} />
+      )}
 
-      {(!side||side==="tts")&&(<section className="settings-subcard">
-        <header className="settings-card-header"><div><h3>语音合成（TTS）</h3><p>使用已配置的语音服务与默认音色朗读助手回复。</p></div></header>
-        <div className="settings-card-body">
-        <label className="block text-sm">语音合成厂商<select className="mt-1 w-full rounded-xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2" value={config.voice.tts.provider} onChange={e=>{const p=e.target.value;updateVoiceField("tts","provider",p);updateVoiceField("tts","voice","");updateVoiceField("tts","base_url",p==="fish"?"https://api.fish.audio/v1":p==="volcengine"?"https://openspeech.bytedance.com/api/v3":p==="aliyun"?"":p==="minimax"?"https://api.minimax.io":"https://api.openai.com/v1");updateVoiceField("tts","model",p==="fish"?"s2.1-pro":p==="volcengine"?"seed-tts-2.0":p==="aliyun"?"cosyvoice-v3-flash":p==="minimax"?"speech-2.8-turbo":"gpt-4o-mini-tts")}}><option value="openai-compatible">OpenAI-compatible</option><option value="minimax">MiniMax</option><option value="fish">Fish Audio</option><option value="aliyun">阿里云百炼 / CosyVoice</option><option value="volcengine">火山引擎 / 豆包语音合成</option></select></label>
-        <Input label="模型" value={config.voice.tts.model} onChange={(e) => updateVoiceField("tts", "model", e.target.value)} placeholder="speech-2.8-turbo" />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Input label="默认音色" value={config.voice.tts.voice} onChange={(e) => updateVoiceField("tts", "voice", e.target.value)} placeholder="voice_id" />
-          <Input label="语言" value={config.voice.tts.language} onChange={(e) => updateVoiceField("tts", "language", e.target.value)} placeholder="zh" />
-        </div>
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] px-3 py-2">
-          <div>
-            <p className="text-sm font-medium text-[var(--text)]">{config.voice.tts.api_key_configured ? "TTS 凭据已配置" : "TTS 凭据未配置"}</p>
-            <p className="mt-0.5 text-meta text-[var(--text-muted)]">{secretSourceLabel(config.voice.tts.api_key_source)}</p>
-          </div>
-          <div className="flex gap-2">{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => onReplaceVoiceKey("tts")}>替换密钥</Button> : null}{config.voice.tts.api_key_configured ? <Button variant="secondary" size="sm" onClick={() => void onClearVoiceSecret("tts")}>清除密钥</Button> : null}</div>
-        </div>
-        {(!config.voice.tts.api_key_configured || replaceVoiceKey.tts) && <Input label="TTS API 密钥" type="password" value={config.voice.tts.api_key} onChange={(e) => updateVoiceField("tts", "api_key", e.target.value)} placeholder="输入后安全保存" />}
-        <div><div className="space-y-4 pt-4">
-        <Input label="API 地址" value={config.voice.tts.base_url} onChange={(e) => updateVoiceField("tts", "base_url", e.target.value)} placeholder="https://api.minimax.io" />
-        <Input label="密钥环境变量名" value={config.voice.tts.api_key_env} onChange={(e) => updateVoiceField("tts", "api_key_env", e.target.value)} placeholder="留空时使用系统凭据库" />
-        <Input label="请求超时（毫秒）" type="number" value={String(config.voice.tts.timeout_ms)} onChange={(e) => updateVoiceField("tts", "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
-        </div></div>
-        </div>
-      </section>)}
+      <ProviderReadinessCard kind={side} dirty={dirty} readiness={readiness} testing={testing} results={results} onVerify={onVerify} onPreviewTts={onPreviewTts} />
 
-      <p className="settings-help">
-        识别与合成各自使用独立凭据；密钥只写入系统凭据库，不在页面回显。任一侧配置不完整时，该侧保持 fail closed。
-      </p>
+      <details className="u2-disclosure">
+        <summary>高级选项</summary>
+        <div className="space-y-3 pt-2">
+          <Input label="API 地址" value={voice.base_url} onChange={(e) => updateVoiceField(side, "base_url", e.target.value)} />
+          <Input label="密钥环境变量名" value={voice.api_key_env} onChange={(e) => updateVoiceField(side, "api_key_env", e.target.value)} />
+          <Input label="请求超时（毫秒）" type="number" min={1} value={String(voice.timeout_ms)} onChange={(e) => updateVoiceField(side, "timeout_ms", Math.max(1, parseInt(e.target.value) || 0))} />
+          {voice.api_key_configured && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="settings-help">{secretSourceLabel(voice.api_key_source)}</p>
+              <Button variant="secondary" size="sm" onClick={() => void onClearVoiceSecret(side)}>清除密钥</Button>
+            </div>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

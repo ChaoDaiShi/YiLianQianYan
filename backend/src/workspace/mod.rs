@@ -14,5 +14,5 @@ pub mod service;
 #[cfg(test)]
 mod tests;
 
-pub use model::{Workspace, WorkspaceFieldError, WorkspaceId, WorkspaceStatus};
+pub use model::{Workspace, WorkspaceFieldError, WorkspaceId, WorkspaceProject, WorkspaceStatus};
 pub use service::validate_workspace_fields;

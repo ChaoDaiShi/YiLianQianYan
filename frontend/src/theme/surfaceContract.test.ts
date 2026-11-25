@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { stylesheetText } from "../styles/stylesheet";
 import appShellSource from "../components/layout/AppShell.tsx?raw";
 import agentsSource from "../pages/AgentsPage.tsx?raw";
-import capabilitiesSource from "../pages/CapabilitiesPage.tsx?raw";
+import capabilitiesSource from "../features/capabilities/CapabilityRegistry.tsx?raw";
 import chatSource from "../pages/ChatPage.tsx?raw";
 import knowledgeSource from "../pages/KnowledgePage.tsx?raw";
 import logsSource from "../pages/LogsPage.tsx?raw";
@@ -11,7 +11,7 @@ import pluginsSource from "../pages/PluginsPage.tsx?raw";
 import settingsSource from "../features/settings/canvas/SettingsCanvasPage.tsx?raw";
 import skillsSource from "../pages/SkillsPage.tsx?raw";
 import systemSource from "../pages/SystemPage.tsx?raw";
-import tasksSource from "../pages/TaskCenterPage.tsx?raw";
+import tasksSource from "../features/task-world/TaskWorldPage.tsx?raw";
 import workflowsSource from "../pages/WorkflowsPage.tsx?raw";
 import workspaceDetailSource from "../pages/WorkspaceDetailPage.tsx?raw";
 import workspacesSource from "../pages/WorkspacesPage.tsx?raw";
@@ -25,9 +25,9 @@ function rule(selector: string): string {
 
 describe("Cyrene canvas and surface contract", () => {
   it("keeps AppShell as the single canvas owner", () => {
-    expect(appShellSource).toContain("shell-ambient");
-    expect(appShellSource).toContain("var(--bg-app)");
-    expect(appShellSource).toContain("var(--shell-overlay)");
+    expect(appShellSource).toContain('className="app-shell');
+    expect(appShellSource).toContain("data-background-mode");
+    expect(css).toContain("background: var(--bg-app) var(--bg-image)");
   });
 
   it.each([

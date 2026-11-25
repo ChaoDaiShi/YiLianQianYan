@@ -103,6 +103,7 @@ export default function LogsPage() {
   const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
   const [copiedDetail, setCopiedDetail] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const logActions = useRef<HTMLDetailsElement>(null);
   const [activeLogIndex, setActiveLogIndex] = useState<number>(-1);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -221,15 +222,10 @@ export default function LogsPage() {
     <PageShell
       variant="workspace"
       title="日志"
-      description={activeView === "tools" ? "排查工具执行错误、查看参数与返回结果" : `查看系统运行记录和异常信息 · 当前已加载 ${visibleEntries.length} 条（符合筛选 ${total} 条）`}
       className="ui-opt-logs system-center-page page-canvas flex h-full min-h-0 flex-col"
       contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
       actions={activeView === "system" ? (
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" disabled={!visibleEntries.length} onClick={() => {
-            const url = URL.createObjectURL(new Blob([JSON.stringify(visibleEntries, null, 2)], { type: "application/json;charset=utf-8" }));
-            const link = document.createElement("a"); link.href = url; link.download = "yilian-system-logs.json"; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-          }}><Download className="h-3.5 w-3.5" />导出当前记录</Button>
           <Button variant="secondary" size="sm" onClick={() => void fetchLogs(true)} aria-label="刷新日志">
             <RefreshCw className="h-3.5 w-3.5" />刷新
           </Button>
@@ -237,9 +233,20 @@ export default function LogsPage() {
             {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
             {paused ? "继续" : "暂停"}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setConfirmClearOpen(true)} aria-label="清空日志">
-            <Trash2 className="h-3.5 w-3.5" />清空
-          </Button>
+          <details ref={logActions} className="relative text-sm">
+            <summary className="focus-ring-token cursor-pointer rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-2 py-1.5">更多操作</summary>
+            <div className="glass-popup absolute right-0 top-full z-10 mt-1 grid w-max gap-1 rounded-lg border border-[var(--border-soft)] bg-[var(--surface-solid)] p-1.5 shadow-lg">
+              <Button variant="ghost" size="sm" disabled={!visibleEntries.length} onClick={() => {
+                const url = URL.createObjectURL(new Blob([JSON.stringify(visibleEntries, null, 2)], { type: "application/json;charset=utf-8" }));
+                const link = document.createElement("a"); link.href = url; link.download = "yilian-system-logs.json"; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+              }}><Download className="h-3.5 w-3.5" />导出当前记录</Button>
+              <Button variant="ghost" size="sm" onClick={() => {
+                logActions.current?.querySelector("summary")?.focus();
+                logActions.current?.removeAttribute("open");
+                setConfirmClearOpen(true);
+              }}><Trash2 className="h-3.5 w-3.5" />清空日志</Button>
+            </div>
+          </details>
         </div>
       ) : undefined}
     >
@@ -336,7 +343,7 @@ export default function LogsPage() {
         ) : null}
 
         <div className="system-logs-footer">
-          <span>{visibleEntries.length} 条显示</span>
+          <span>显示 {visibleEntries.length} 条 / 符合筛选 {total} 条</span>
           <span>{paused ? "已暂停" : "自动刷新中"}</span>
           <span>{autoScroll ? "自动滚动" : "滚动锁定"}</span>
         </div>
@@ -366,7 +373,7 @@ export default function LogsPage() {
       <ConfirmDialog
         open={confirmClearOpen}
         title="清空日志"
-        description="确定要清空服务端的系统日志吗？清空后旧日志将无法恢复。"
+        description="系统日志清空后无法恢复。工具执行记录仍保存在各自的会话里。"
         confirmLabel="清空"
         tone="danger"
         onConfirm={async () => {

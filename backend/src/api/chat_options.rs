@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 pub struct ChatRequestOptions {
     #[serde(default)]
     pub workspace_mode: Option<crate::db::conversation_modes::WorkspaceMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(default)]
     pub model_profile_id: Option<String>,
     #[serde(default)]
@@ -23,13 +25,23 @@ impl ChatRequestOptions {
         runtime: &mut super::runtime::ChatRuntime,
     ) -> Result<(), String> {
         if let Some(id) = &self.model_profile_id {
-            let row = server.db.get_llm_model(id)?.ok_or("所选模型档案已删除")?;
-            if row.api_format != "openai" {
-                return Err("所选模型不支持对话协议".into());
-            }
+            let row = super::runtime::explicit_chat_model_profile(&server.db, id)?;
             runtime.config.model = row.to_model_config();
             runtime.model_row = Some(row);
             runtime.model_pool_id = None;
+        }
+        // Model selection must not undo the personal runtime's output cap,
+        // including approval and answer continuation paths using this method.
+        if let Some(id) = runtime
+            .execution_scope
+            .as_ref()
+            .and_then(|scope| scope.owner.as_ref())
+            .and_then(crate::execution::ExecutionOwner::personal_delegation_id)
+        {
+            if server.db.get_automation(id)?.is_some_and(|automation| matches!(automation.target,
+                Some(crate::modules::automation::model::AutomationTarget::PersonalAssistant { .. }))) {
+                runtime.config.model.max_tokens = runtime.config.model.max_tokens.min(2048);
+            }
         }
         if let Some(pool_id) = &runtime.model_pool_id {
             let pool = server
@@ -50,6 +62,16 @@ impl ChatRequestOptions {
     }
 }
 impl Database {
+    pub(crate) fn last_user_message(
+        &self,
+        conversation: &str,
+    ) -> Result<Option<(String, String)>, String> {
+        self.conn().query_row(
+            "SELECT id,substr(content,1,600) FROM messages WHERE conversation_id=?1 AND role='user' ORDER BY created_at DESC,rowid DESC LIMIT 1",
+            [conversation], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|error| error.to_string())
+    }
+
     pub fn save_chat_options(
         &self,
         conversation: &str,
@@ -82,9 +104,32 @@ impl Database {
         }
     }
     pub fn load_chat_messages(&self, conversation: &str) -> Result<Vec<ChatMessage>, String> {
-        let rows = self.get_conversation(conversation)?.messages;
+        self.load_chat_history(conversation)
+            .map(|(messages, _)| messages)
+    }
+
+    pub(crate) fn load_chat_history(
+        &self,
+        conversation: &str,
+    ) -> Result<(Vec<ChatMessage>, Option<usize>), String> {
+        if self.conversation_run_status(conversation)?.is_none() {
+            return Err(format!("Conversation not found: {conversation}"));
+        }
         let conn = self.conn();
-        rows.into_iter()
+        let rows = self.get_messages_internal(&conn, conversation)?;
+        let user_id: Option<String> = conn
+            .query_row(
+                "SELECT user_message_id FROM conversation_turns WHERE conversation_id=?1
+             ORDER BY started_at DESC,rowid DESC LIMIT 1",
+                [conversation],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let turn_user_start =
+            user_id.and_then(|id| rows.iter().position(|message| message.id == id));
+        let messages = rows
+            .into_iter()
             .map(|m| {
                 let reasoning: Option<String> = conn
                     .query_row(
@@ -107,7 +152,8 @@ impl Database {
                     reasoning_content: reasoning,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok((messages, turn_user_start))
     }
     pub fn persist_chat_message(
         &self,
@@ -115,22 +161,7 @@ impl Database {
         message: &ChatMessage,
         now: i64,
     ) -> Result<(), String> {
-        let row = MessageRow {
-            id: uuid::Uuid::new_v4().to_string(),
-            conversation_id: conversation.into(),
-            role: message.role.clone(),
-            content: message.content.clone().unwrap_or_default(),
-            tool_calls: message
-                .tool_calls
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(|e| e.to_string())?,
-            tool_call_id: message.tool_call_id.clone(),
-            tool_name: message.name.clone(),
-            tool_result: None,
-            created_at: now,
-        };
+        let row = MessageRow::from_chat_message(conversation, message, now)?;
         self.add_chat_message_with_reasoning(&row, message.reasoning_content.as_deref())?;
         Ok(())
     }
@@ -147,6 +178,7 @@ mod tests {
         let conversation = db.create_conversation("thinking").unwrap();
         let options = ChatRequestOptions {
             workspace_mode: None,
+            agent_id: None,
             model_profile_id: Some("chosen-profile".into()),
             thinking_mode: ThinkingMode::Thinking,
         };

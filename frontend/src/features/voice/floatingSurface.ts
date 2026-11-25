@@ -9,20 +9,33 @@ async function emitNative(target:string,event:string,payload:unknown){return(awa
 async function listenNative<T>(event:string,handler:(event:{payload:T})=>void){return(await import("@tauri-apps/api/event")).listen<T>(event,handler);}
 async function nativeWindow(){return(await import("@tauri-apps/api/window")).getCurrentWindow();}
 export async function openFloatingSurface(kind:FloatingKind,expanded=true){if(desktopFloatingAvailable()){await invokeNative("open_floating_surface",{kind,expanded});await emitNative(`${kind}-overlay`,"floating:layout",{kind,expanded});}}
+export async function openDesktopPet(){await invokeNative("open_floating_surface",{kind:"pet",expanded:false});}
+export async function isDesktopPetOpen() {
+ const { Window } = await import("@tauri-apps/api/window");
+ return Boolean(await Window.getByLabel("desktop-pet"));
+}
+export function listenDesktopPetOpen(onChange: (open: boolean) => void) {
+ return listenNative<boolean>("desktop-pet:open-changed", event => onChange(event.payload));
+}
 export async function resizeFloatingSurface(kind:FloatingKind,expanded:boolean){if(desktopFloatingAvailable()){await invokeNative("resize_floating_surface",{kind,expanded});await emitNative(`${kind}-overlay`,"floating:layout",{kind,expanded});}}
-export async function closeFloatingSurface(kind:FloatingKind){if(desktopFloatingAvailable())await invokeNative("close_floating_surface",{kind});}
+export async function closeFloatingSurface(kind:FloatingKind | "pet"){if(desktopFloatingAvailable())await invokeNative("close_floating_surface",{kind});}
 export async function hideFloatingSurface(kind:FloatingKind){if(desktopFloatingAvailable())await invokeNative("hide_floating_surface",{kind});}
 export async function pinFloatingSurface(pinned:boolean){if(desktopFloatingAvailable())await(await nativeWindow()).setAlwaysOnTop(pinned);}
 export async function dragFloatingSurface(){if(desktopFloatingAvailable())await(await nativeWindow()).startDragging();}
 interface FloatingDragActions {
  startDrag: () => Promise<void>;
  activate?: () => void;
+ activation?: "click" | "double-click";
  onError: (cause: unknown) => void;
+ onTap?: () => void;
+ onDragStart?: () => void;
+ canDrag?: () => boolean;
 }
 /** A button remains clickable until movement reaches six CSS pixels. Native dragging owns the gesture after that. */
 export function createFloatingDragHandlers(actions: FloatingDragActions) {
  let origin: { x: number; y: number; pointerId: number } | null = null;
  let dragged = false;
+ let firstClick = false;
  return {
   onPointerDown(event: PointerEvent<HTMLElement>) {
    if(event.button!==0)return;
@@ -31,25 +44,44 @@ export function createFloatingDragHandlers(actions: FloatingDragActions) {
    event.currentTarget.setPointerCapture(event.pointerId);
   },
   onPointerMove(event: PointerEvent<HTMLElement>) {
-   if(!origin||event.pointerId!==origin.pointerId||Math.hypot(event.clientX-origin.x,event.clientY-origin.y)<6)return;
-   dragged=true;origin=null;
+   if(!origin||event.pointerId!==origin.pointerId||Math.hypot(event.clientX-origin.x,event.clientY-origin.y)<6||actions.canDrag?.()===false)return;
+   dragged=true;origin=null;firstClick=false;
    event.preventDefault();
    event.currentTarget.releasePointerCapture(event.pointerId);
+   actions.onDragStart?.();
    void actions.startDrag().catch(actions.onError);
   },
   onPointerUp(event: PointerEvent<HTMLElement>) {
    if(origin?.pointerId===event.pointerId){origin=null;event.currentTarget.releasePointerCapture(event.pointerId);}
   },
-  onPointerCancel() { origin=null; },
+  onPointerCancel() { origin=null;firstClick=false; },
   onClick(event: MouseEvent<HTMLElement>) {
    if(dragged&&event.detail!==0){event.preventDefault();event.stopPropagation();return;}
-   actions.activate?.();
+   if(actions.activation!=="double-click"||event.detail===0){firstClick=false;actions.activate?.();return;}
+   const activate=event.detail===2&&firstClick;
+   firstClick=event.detail===1;
+   if(firstClick)actions.onTap?.();
+   if(activate)actions.activate?.();
   },
  };
 }
-export function useFloatingDrag(activate: (() => void) | undefined, onError: (cause: unknown) => void) {
- const actions=useRef({activate,onError});actions.current={activate,onError};
- const[handlers]=useState(()=>createFloatingDragHandlers({startDrag:dragFloatingSurface,activate:()=>actions.current.activate?.(),onError:cause=>actions.current.onError(cause)}));
+export function useFloatingDrag(
+ activate: (() => void) | undefined,
+ onError: (cause: unknown) => void,
+ activation: "click" | "double-click" = "click",
+ reactions?: Pick<FloatingDragActions, "onTap" | "onDragStart" | "canDrag">,
+) {
+ const actions = useRef({ activate, onError, reactions });
+ actions.current = { activate, onError, reactions };
+ const [handlers] = useState(() => createFloatingDragHandlers({
+  startDrag: dragFloatingSurface,
+  activation,
+  activate: () => actions.current.activate?.(),
+  onError: cause => actions.current.onError(cause),
+  onTap: () => actions.current.reactions?.onTap?.(),
+  onDragStart: () => actions.current.reactions?.onDragStart?.(),
+  canDrag: () => actions.current.reactions?.canDrag?.() ?? true,
+ }));
  return handlers;
 }
 function themeSnapshot(){const result:Record<string,string>={};const computed=getComputedStyle(document.documentElement);for(const name of Array.from(computed)){if(name.startsWith("--"))result[name]=computed.getPropertyValue(name);}result["font-family"]=computed.fontFamily;result["color-scheme"]=computed.colorScheme;return result;}

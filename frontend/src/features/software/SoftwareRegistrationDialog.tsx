@@ -40,3 +40,4 @@ export default function SoftwareRegistrationDialog({registration, draft, workspa
   </div>
  </Modal>;
 }
+

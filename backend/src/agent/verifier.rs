@@ -196,6 +196,39 @@ impl DefaultVerifier {
         }
     }
 
+    fn verify_open_url(&self, tool_result: &ToolResult) -> VerificationResult {
+        let Some(proof) = tool_result
+            .structured
+            .as_ref()
+            .filter(|proof| proof["native_browser"] == true)
+        else {
+            return self.verify_gui_launch(tool_result);
+        };
+        let tab = &proof["browser"]["tab"];
+        let identity = ["session_id", "tab_id"]
+            .iter()
+            .all(|key| tab[*key].as_str().is_some_and(|id| !id.is_empty()));
+        let valid_url = tab["url"].as_str().is_some_and(|url| {
+            url::Url::parse(url).is_ok_and(|parsed| {
+                matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some()
+            })
+        });
+        if tool_result.ok
+            && proof["state"] == "verified"
+            && identity
+            && valid_url
+            && tab["navigation_id"].as_u64().is_some()
+            && matches!(tab["mode"].as_str(), Some("embedded" | "detached"))
+        {
+            VerificationResult::success("Native browser host confirmed the visible tab and navigation identity; website business completion is not implied", None)
+        } else {
+            VerificationResult::failure(
+                "Native browser did not confirm a current visible tab and navigation identity",
+                None,
+            )
+        }
+    }
+
     fn verify_gui_launch(&self, tool_result: &ToolResult) -> VerificationResult {
         if tool_result.ok {
             VerificationResult::success("结构化启动工具已确认目标窗口可见且位于桌面前台", None)
@@ -203,6 +236,7 @@ impl DefaultVerifier {
             VerificationResult::failure("目标窗口未能显示在桌面前台", None)
         }
     }
+
     fn verify_software(&self, tool_name: &str, result: &ToolResult) -> VerificationResult {
         let proof = result.structured.as_ref();
         let verified = result.ok
@@ -272,21 +306,21 @@ impl Verifier for DefaultVerifier {
             "write_file" => self.verify_write_file(args, tool_result),
             "edit_file" => self.verify_edit_file(args, tool_result),
             "process" => self.verify_process(args, tool_result),
-            "open_url" | "open_application" => self.verify_gui_launch(tool_result),
+            "open_url" => self.verify_open_url(tool_result),
+            "open_application" => self.verify_gui_launch(tool_result),
             "software_sessions"
             | "software_observe"
-            | "software_wechat_draft"
-            | "software_control" => self.verify_software(tool_name, tool_result),
+            | "software_control"
+            | "software_wechat_draft" => self.verify_software(tool_name, tool_result),
             _ => self.verify_default(tool_result),
         }
     }
 }
 
 /// Convenience: an observation-less failure message for a replan.
-pub fn replan_message(tool_name: &str, reason: &str) -> String {
+pub fn replan_message(tool_name: &str, reason: &str, output: &str) -> String {
     format!(
-        "工具执行完成，但结果验证失败。\n\n工具：{}\n验证结果：{}\n建议：重新规划并尝试其他方案",
-        tool_name, reason
+        "工具结果验证失败。\n\n工具：{tool_name}\n验证结果：{reason}\n工具反馈：{output}\n请根据具体原因重新规划；无法推进时说明阻碍。"
     )
 }
 
@@ -385,6 +419,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_open_url_requires_real_host_identity_and_preserves_unknown() {
+        let proof = serde_json::json!({"native_browser":true,"state":"verified","browser":{"tab":{
+            "session_id":"native-session","tab_id":"native-tab","navigation_id":1,"url":"http://localhost:3000/","mode":"embedded"
+        }}});
+        let verified = verifier()
+            .verify(
+                "open_url",
+                &serde_json::json!({"url":"http://localhost:3000/"}),
+                &ToolResult::success_with_structured("native tab observed", Some(proof.clone())),
+            )
+            .await;
+        assert!(verified.success);
+        assert!(!verified.reason.contains("foreground"));
+        for field in ["session_id", "tab_id", "navigation_id", "url", "mode"] {
+            let mut incomplete = proof.clone();
+            incomplete["browser"]["tab"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(
+                !verifier()
+                    .verify(
+                        "open_url",
+                        &serde_json::json!({}),
+                        &ToolResult::success_with_structured("missing evidence", Some(incomplete))
+                    )
+                    .await
+                    .success
+            );
+        }
+        let mut unknown = proof;
+        unknown["state"] = serde_json::json!("result_unknown");
+        assert!(
+            !verifier()
+                .verify(
+                    "open_url",
+                    &serde_json::json!({}),
+                    &ToolResult::success_with_structured("late callback", Some(unknown))
+                )
+                .await
+                .success
+        );
+    }
+
+    #[tokio::test]
     async fn verifier_degrades_gracefully_on_weird_input() {
         // Directory path: exists but no text preview — no panic, explicit failure.
         let dir = std::env::temp_dir();
@@ -418,8 +497,46 @@ mod tests {
 
     #[test]
     fn replan_message_is_actionable() {
-        let m = replan_message("write_file", "目标文件不存在");
+        let m = replan_message("write_file", "目标文件不存在", "父目录不存在");
         assert!(m.contains("验证失败"));
         assert!(m.contains("重新规划"));
+        assert!(m.contains("父目录不存在"));
+    }
+
+    #[tokio::test]
+    async fn software_verification_requires_native_evidence_and_preserves_unknown() {
+        let plain = verifier()
+            .verify(
+                "software_control",
+                &serde_json::json!({}),
+                &ToolResult::success("Invocation returned"),
+            )
+            .await;
+        assert!(!plain.success);
+        let unknown = ToolResult::success_with_structured(
+            "Dispatch returned",
+            Some(serde_json::json!({
+                "state":"result_unknown", "verification_scope":"software_window_interaction", "operation_id":"retained"
+            })),
+        );
+        assert!(
+            !verifier()
+                .verify("software_control", &serde_json::json!({}), &unknown)
+                .await
+                .success
+        );
+        let exact = ToolResult::success_with_structured(
+            "Focused exact control",
+            Some(serde_json::json!({
+                "state":"verified", "verification_scope":"software_window_interaction",
+                "software":{"session":{"id":"controlled", "window":{"identity":{"process_started_at":"134000000000000001"}}}}
+            })),
+        );
+        assert!(
+            verifier()
+                .verify("software_control", &serde_json::json!({}), &exact)
+                .await
+                .success
+        );
     }
 }

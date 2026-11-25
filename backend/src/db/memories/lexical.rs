@@ -22,6 +22,14 @@ impl LexicalQuery {
         self.text.is_empty()
     }
 
+    pub(in crate::db) fn fts_expression(&self) -> Option<String> {
+        let terms = words(&self.text)
+            .take(16)
+            .map(|word| format!("\"{word}\""))
+            .collect::<Vec<_>>();
+        (!terms.is_empty()).then(|| terms.join(" OR "))
+    }
+
     pub(in crate::db) fn score(&self, content: &str) -> f64 {
         if self.is_empty() {
             return 0.0;

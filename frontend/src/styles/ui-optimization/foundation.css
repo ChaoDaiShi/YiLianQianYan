@@ -2,6 +2,69 @@
    UI Optimization - Foundation & Shell (Work Package A)
    ============================================================ */
 
+:root {
+  --surface-step-1: color-mix(in srgb, var(--text-primary) 1%, var(--surface-solid));
+  --surface-step-2: color-mix(in srgb, var(--text-primary) 2%, var(--surface-solid));
+  --surface-step-3: color-mix(in srgb, var(--text-primary) 3%, var(--surface-solid));
+  --field-focus-inner: color-mix(in srgb, var(--focus-outline) 76%, var(--accent-primary));
+  --field-focus-outer: color-mix(in srgb, var(--field-focus-inner) 22%, transparent);
+  --field-focus-shadow: 0 0 0 1px var(--field-focus-inner), 0 0 0 4px var(--field-focus-outer);
+}
+
+:is(.ui-input, .ui-textarea, .ui-select, .settings-text-input, .settings-textarea, .settings-select),
+.message-branch-toolbar select {
+  background-color: var(--surface-step-2);
+  transition: background-color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+:where(.app-shell, [role="dialog"]) select:where(:not(.ui-select, [multiple], [size])) {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-step-2);
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+}
+
+:where(.app-shell, [role="dialog"]) select:focus-visible {
+  outline: none;
+  box-shadow: var(--field-focus-shadow);
+}
+
+:where(.app-shell, [role="dialog"]) select:disabled { cursor: not-allowed; color: var(--text-disabled); }
+:where(.app-shell, [role="dialog"]) select option { background-color: var(--surface-solid); color: var(--text-primary); }
+:where(.app-shell, [role="dialog"]) select option:disabled { color: var(--text-disabled); }
+
+.shared-dialog > div:nth-child(3) { overscroll-behavior: contain; }
+.shared-dialog-footer > .ui-button { min-width: 0; overflow-wrap: anywhere; }
+
+:is(.ui-input, .ui-textarea, .ui-select, .settings-text-input, .settings-textarea, .settings-select):focus,
+.message-branch-toolbar select:focus {
+  outline: none;
+  border-color: transparent;
+  background-color: var(--surface-step-1);
+  box-shadow: var(--field-focus-shadow);
+}
+
+:is(.ui-input, .ui-textarea, .ui-select)[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 1px var(--danger-fg), 0 0 0 4px var(--danger-soft);
+}
+
+.ui-button[data-variant="secondary"] { background-color: var(--surface-step-1); }
+.ui-button[data-variant="secondary"]:hover { background-color: var(--surface-step-3); }
+.ui-button { transition-timing-function: ease-out, ease-out, ease-out, ease-out, var(--ease-spring); }
+
+:where(h1, h2, h3, h4) { text-wrap: balance; }
+:where(p, li, dd, figcaption) { text-wrap: pretty; line-break: strict; }
+:where(p, li, dd, figcaption) > svg.lucide { display: inline-block; vertical-align: -.125em; }
+
+.app-shell .react-flow__node.draggable,
+.app-shell .react-flow__node.dragging > :is(.connector-node, .message-branch-node, .task-world-node) {
+  transition: none;
+  animation: none;
+}
+
 .ui-opt-interactive-card {
   transition: transform 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
@@ -20,10 +83,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .ui-button { transition: none; }
   .ui-opt-interactive-card {
     transition: none;
   }
   .ui-opt-interactive-card:hover {
     transform: none;
   }
+}
+
+@media (forced-colors: active) {
+  :is(.ui-input, .ui-textarea, .ui-select, .settings-text-input, .settings-textarea, .settings-select):focus,
+  :where(.app-shell, [role="dialog"]) select:focus-visible,
+  .message-branch-toolbar select:focus,
+  .compact-composer .composer-textarea:focus { outline: 2px solid Highlight; }
 }

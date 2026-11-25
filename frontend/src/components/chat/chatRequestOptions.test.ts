@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalModes, supportsThinking, buildChatRequestOptions } from "./chatRequestOptions";
+import { approvalModes, supportsThinking, availableThinkingModes, buildChatRequestOptions } from "./chatRequestOptions";
 describe("composer request options", () => {
   it("uses the three approval modes with persisted protocol values", () => {
     expect(approvalModes.map(mode => mode.label)).toEqual(["完全审批", "部分审批", "完全权限"]);
@@ -17,5 +17,12 @@ describe("composer request options", () => {
     expect(supportsThinking("openai", "gpt-5.4")).toBe(true);
     expect(supportsThinking("openai", "gpt-4o")).toBe(false);
     expect(supportsThinking("custom", "unknown")).toBe(false);
+  });
+  it("selects the real effort levels available for a turn", () => {
+    expect(availableThinkingModes("openai", "gpt-5.4")).toEqual(["standard", "light", "balanced", "thinking"]);
+    expect(availableThinkingModes("deepseek", "deepseek-v4-pro")).toEqual(["standard", "light", "thinking", "maximum"]);
+    expect(availableThinkingModes("deepseek", "deepseek-reasoner")).toEqual(["standard", "thinking"]);
+    expect(availableThinkingModes("openai", "gpt-4o")).toEqual(["standard"]);
+    expect(buildChatRequestOptions("model", "balanced")).toEqual({ model_profile_id: "model", thinking_mode: "balanced" });
   });
 });

@@ -9,6 +9,8 @@ import {
   type VoiceInputLease,
 } from "../../api/voice";
 import { voiceMeterPercent } from "./chatVoice";
+import { SpeechActivity } from "./speechActivity";
+import { createSpeechFilter, VOICE_MICROPHONE_CONSTRAINTS } from "./speechMonitor";
 
 export type CaptureStatus = "idle" | "acquiring" | "listening" | "transcribing" | "error";
 
@@ -200,6 +202,7 @@ export function useVoiceCapture({
   const finalInFlightRef = useRef(false);
   const captureTimerRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const filteredStreamRef = useRef<MediaStream | null>(null);
   const volumeFrameRef = useRef<number | null>(null);
   const captureLimitReachedRef = useRef(false);
   const cancelledRef = useRef(false);
@@ -214,49 +217,66 @@ export function useVoiceCapture({
     }
   }, []);
 
-  const releaseVolumeMeter = useCallback(() => {
+  const releaseRecordingAudio = useCallback(() => {
     if (volumeFrameRef.current !== null) {
       cancelAnimationFrame(volumeFrameRef.current);
       volumeFrameRef.current = null;
     }
     void audioContextRef.current?.close().catch(() => undefined);
     audioContextRef.current = null;
+    filteredStreamRef.current?.getTracks().forEach((track) => track.stop());
+    filteredStreamRef.current = null;
   }, []);
 
-  const observeCaptureVolume = useCallback((stream: MediaStream) => {
-    if (typeof AudioContext === "undefined") return;
+  const prepareRecordingAudio = useCallback(async (stream: MediaStream, onSpeechEnd?: () => void) => {
+    if (typeof AudioContext === "undefined") return stream;
+    let context: AudioContext | null = null;
     try {
-      const context = new AudioContext();
-      const source = context.createMediaStreamSource(stream);
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 512;
-      source.connect(analyser);
-      const samples = new Float32Array(analyser.fftSize);
+      context = new AudioContext();
       audioContextRef.current = context;
-      const tick = () => {
+      const source = context.createMediaStreamSource(stream);
+      const filter = createSpeechFilter(context);
+      const analyser = context.createAnalyser();
+      const destination = context.createMediaStreamDestination();
+      analyser.fftSize = 1024;
+      source.connect(filter);
+      filter.connect(analyser);
+      filter.connect(destination);
+      filteredStreamRef.current = destination.stream;
+      await context.resume();
+      if (audioContextRef.current !== context) return stream;
+      const samples = new Float32Array(analyser.fftSize);
+      const detector = onSpeechEnd ? new SpeechActivity() : null;
+      const tick = (time: number) => {
         if (audioContextRef.current !== context) return;
         analyser.getFloatTimeDomainData(samples);
         const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
         setState((current) => current.status === "listening"
           ? { ...current, volume: voiceMeterPercent(rms) }
           : current);
+        if (detector?.sample(rms, time, false, true) === "end") {
+          onSpeechEnd?.();
+          return;
+        }
         volumeFrameRef.current = requestAnimationFrame(tick);
       };
       volumeFrameRef.current = requestAnimationFrame(tick);
+      return destination.stream;
     } catch {
-      // A meter must not block capture if the browser declines Web Audio.
+      if (context && audioContextRef.current === context) releaseRecordingAudio();
+      return stream;
     }
-  }, []);
+  }, [releaseRecordingAudio]);
 
   const releaseStream = useCallback(() => {
     clearCaptureTimer();
-    releaseVolumeMeter();
+    releaseRecordingAudio();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     recorderRef.current = null;
     captureBufferRef.current = { chunks: [], bytes: 0 };
     captureLimitReachedRef.current = false;
-  }, [clearCaptureTimer, releaseVolumeMeter]);
+  }, [clearCaptureTimer, releaseRecordingAudio]);
 
   const isCurrentOperation = useCallback((operation: number, lease: VoiceInputLease): boolean => {
     return isCurrentCaptureOperation(
@@ -427,17 +447,20 @@ export function useVoiceCapture({
         }
         leaseRef.current = lease;
         setState({ status: "acquiring", error: null, lease, volume: 0 });
-        const stream = sourceStream ? sourceStream.clone() : await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
-        });
+        const stream = sourceStream ? sourceStream.clone()
+          : await navigator.mediaDevices.getUserMedia(VOICE_MICROPHONE_CONSTRAINTS);
         if (!isCurrentOperationId(operation) || controller.signal.aborted) {
           clearAcquireInFlight(operation);
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
         streamRef.current = stream;
-        observeCaptureVolume(stream);
-        const recorder = new MediaRecorder(stream, { mimeType });
+        const recorderStream = await prepareRecordingAudio(
+          stream,
+          reason === "hands-free" ? undefined : () => controlsRef.current.stop(),
+        );
+        if (!isCurrentOperationId(operation) || controller.signal.aborted) return;
+        const recorder = new MediaRecorder(recorderStream, { mimeType });
         recorderRef.current = recorder;
         captureBufferRef.current = { chunks: [], bytes: 0 };
         recorder.ondataavailable = (event) => {
@@ -485,7 +508,7 @@ export function useVoiceCapture({
       isCurrentOperationId,
       isCurrentOperation,
       onBargeIn,
-      observeCaptureVolume,
+      prepareRecordingAudio,
       session,
       state.status,
     ],

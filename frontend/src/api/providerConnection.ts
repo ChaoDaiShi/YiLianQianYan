@@ -1,6 +1,8 @@
 import { controlSessionHeaders } from "./controlSession";
 import { API_BASE, getSettings } from "./legacy";
 import type { ProviderReadinessProjection } from "../types";
+import type { ThinkingMode } from "../components/chat/chatRequestOptions";
+import { request } from "../core/api/http";
 
 export type ProviderConnectionKind = "model" | "stt" | "tts" | "embedding";
 
@@ -21,9 +23,20 @@ export async function getProviderReadiness(): Promise<ProviderReadinessProjectio
   const settings = await getSettings();
   return settings?.provider_readiness ?? null;
 }
-export async function getChatModelReadiness(conversationId:string|null):Promise<ProviderReadinessProjection["model"]|null>{
- const { request } = await import("../core/api/http");
- return request<ProviderReadinessProjection["model"]>("GET",`/api/chat/readiness${conversationId?`?conversation_id=${encodeURIComponent(conversationId)}`:""}`);
+type ChatModelReadiness = ProviderReadinessProjection["model"] & { thinking_modes?: ThinkingMode[] };
+
+export async function getChatModelReadiness(conversationId:string|null):Promise<ChatModelReadiness|null>{
+ return request<ChatModelReadiness>("GET",`/api/chat/readiness${conversationId?`?conversation_id=${encodeURIComponent(conversationId)}`:""}`);
+}
+
+export interface CliProvider {
+  id: string;
+  label: string;
+  ready: boolean;
+}
+
+export function listCliProviders() {
+  return request<CliProvider[]>("GET", "/api/chat/cli-providers");
 }
 
 /** Calls the protected leaf route and deliberately discards provider bodies. */

@@ -1,18 +1,22 @@
 // ============================================================
-// Plugin Manifest Foundation — declarative plugins only.
+// Plugin manifests and explicitly controlled external service lifecycle.
 //
 //   manifest.rs — plugin.json model + validation + limits + secret rejection
 //   path.rs     — contribution path containment (no ../ / absolute / symlink escape)
 //   registry.rs — scan/parse/validate + enable/disable (never executes)
 //
 // A plugin is a declarative package of data contributions (agents, skills,
-// workflows, MCP templates) and requested permissions. It never loads native
-// code and never grants RBAC.
+// workflows, MCP templates, services) and requested permissions. It never loads
+// native code into the host and never grants RBAC.
 // ============================================================
 
+pub(crate) mod cloud_auth;
 pub mod manifest;
 pub mod path;
 pub mod registry;
+pub mod service;
+mod service_process;
+pub mod service_runtime;
 pub mod settings;
 
 #[cfg(test)]

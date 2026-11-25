@@ -112,6 +112,12 @@ pub struct ModelPoolRuntime {
     serial: tokio::sync::Mutex<()>,
 }
 impl ModelPoolRuntime {
+    pub fn set_generation_overrides(&mut self, generation: super::generation::GenerationOverrides) {
+        for candidate in &mut self.candidates {
+            candidate.client.set_generation_overrides(generation);
+        }
+    }
+
     pub fn set_thinking_mode(&mut self, mode: super::thinking::ThinkingMode) {
         for candidate in &mut self.candidates {
             candidate.client.set_thinking_mode(mode);
@@ -254,15 +260,24 @@ impl ModelPoolRuntime {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
         max_tokens: u32,
-        on_token: F,
+        mut on_token: F,
     ) -> Result<StreamAccumulator, LlmError>
     where
         F: FnMut(&str) + Send,
     {
-        self.stream_with_reasoning(messages, tools, max_tokens, on_token, |_| {})
-            .await
+        self.stream_with_reasoning(
+            messages,
+            tools,
+            max_tokens,
+            |token| {
+                on_token(token);
+                std::future::ready(())
+            },
+            |_| {},
+        )
+        .await
     }
-    pub async fn stream_with_reasoning<F, R>(
+    pub async fn stream_with_reasoning<F, R, TokenFuture>(
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
@@ -271,8 +286,9 @@ impl ModelPoolRuntime {
         mut on_reasoning: R,
     ) -> Result<StreamAccumulator, LlmError>
     where
-        F: FnMut(&str) + Send,
+        F: FnMut(&str) -> TokenFuture + Send,
         R: FnMut(&str) + Send,
+        TokenFuture: std::future::Future<Output = ()> + Send,
     {
         let request = uuid::Uuid::new_v4().to_string();
         let deadline =
@@ -375,9 +391,7 @@ pub fn load_model_pool_runtime(
     let mut candidates = Vec::new();
     for (tier, layer) in pool.tiers.iter().enumerate() {
         for profile_id in &layer.profile_ids {
-            let row = db
-                .get_llm_model(profile_id)?
-                .ok_or("模型池候选档案已删除")?;
+            let row = db.chat_pool_candidate(profile_id)?;
             let recorder = Arc::new(super::usage::DatabaseUsageRecorder::new(
                 db.clone_connection(),
                 row.id.clone(),
@@ -389,7 +403,8 @@ pub fn load_model_pool_runtime(
                 &row.to_model_config(),
                 resolver.clone(),
                 Some(recorder),
-            );
+            )
+            .with_profile_permissions(db.clone_connection());
             candidates.push(PoolCandidate {
                 profile_id: profile_id.clone(),
                 tier: tier + 1,

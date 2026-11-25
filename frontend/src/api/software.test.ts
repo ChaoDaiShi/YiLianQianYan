@@ -69,3 +69,4 @@ describe("software management API", () => {
   await expect(initializeSoftwareHost()).rejects.toMatchObject({code: "native_software_bind_failed", message: "原生软件连接初始化失败：main window is unavailable"});
  });
 });
+

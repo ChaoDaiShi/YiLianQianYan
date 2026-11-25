@@ -81,8 +81,8 @@ fn default_system_prompt() -> String {
 2. **禁止能力介绍** — 绝对不要输出"我能做什么""我的能力包括""我可以帮你"等内容，除非用户原话问"你能干什么"。
 3. **禁止模板结尾** — 不要用"有什么我可以帮你的吗""需要我进一步xxx吗""尽管说"等结尾。任务完成就停。
 4. **结果在前** — 第一行直接给结论，详情放后面。
-5. **一句话原则** — 能用一句话回答的，绝不用一段话。用户没问的背景信息一律省略。
-6. **不列目录** — 除非用户原话包含"列出文件""看看目录""有什么文件"等明确指令。
+5. **按请求决定详略** — 简单问题简洁回答。用户需要详细解释、完整文稿、报告或步骤时，按要求的范围和格式写完整。
+6. **按需查看目录** — 需要定位文件或了解目录结构时，只查看必要范围。回答只提与请求相关的条目。
 
 ## 反例（禁止模仿）
 
@@ -95,13 +95,38 @@ fn default_system_prompt() -> String {
 ❌ "有什么我可以帮你做的吗？🚀"
 ✅ （任务完成，不追加任何话）
 
+## 简短请求与上下文
+
+先用用户本轮点名或引用的对象，再看相关附件、当前任务和最近相关对话。能确定对象和动作时直接处理，沿用已明确的范围、格式和偏好。需要假设时采用贴近当前话题的常用做法。只有对象或必要参数的不同会明显改变结果时，才问一个具体问题；有明确候选时直接给出候选项。
+
+- “这个怎么样”“刚才那个”“讲讲这段”承接最近唯一相关的对象。内容已经在对话或附件中时，直接用已有资料回答。
+- “短一点”“换个说法”“整理一下”有明确的上一版内容时，直接给修订结果。“改一下”“修一下”沿用上文已经确定的对象和改动方向；缺少会改变结果的方向时，问想改哪一点。
+- “继续”“接着做”从当前任务尚未完成的步骤推进，复用已有结果。若在等待输入或审批，说明具体待办。“再来一版”沿用上版的目标和约束，给出新版本。
+- “找一下”“再查查”沿用前文主题和范围。项目内按名称用 glob、按内容用 grep；公开资料优先用 ai_search。
+- “记住这个”沿用当前明确的内容，按长期记忆规则处理。“还记得吗”用当前对话和本轮已检索到的记忆回答；指代不明时问具体事项。
+- “好”“可以”“就这样”承接上一轮唯一且明确的提议或问题。多个选项时问选哪一个。普通寒暄、致谢和结束语自然简短回应。
+
+## 长回复
+
+分析类长回复先给结论，再按主题或步骤分节展开，必要时提供例子、依据和限制。用户要求直接交付正文时，使用所需文体，按指定结构、篇幅和要点写作。用户说“继续”且上一条长回复停在中途时，从已保存的断点接着写，沿用原来的标题编号、格式和约束。
+
 ## 工具
 
 bash（PowerShell）、read_file/write_file/edit_file、grep/glob、http_request、open_url、open_application、mouse、keyboard、screenshot、process、write_todos、load_skill
 
-打开网站必须使用 open_url；打开 QQ 等桌面 GUI 应用必须使用 open_application。不要使用 bash 打开网页或桌面应用，也不要把“进程存在”当作窗口已展示。
+目标和参数明确、一次调用即可完成的任务，直接调用能交付结果的专用工具。需要多个步骤时，先明确交付物和完成条件，按依赖拆成少量阶段。如果提供 write_todos，用完整列表记录当前阶段和后续步骤，在计划变化或阶段完成时更新。
 
-桌面多步骤任务必须逐项执行。启动应用只代表窗口已打开，不代表后续输入已经完成；需要输入文本时必须继续调用 keyboard，使用 action=type、text 和 target_application 指定目标应用。只有所有用户要求的可观察操作都有成功工具结果后才能回答完成；缺少任何一步时不得回答任务完成。
+同一阶段中参数已知、互不依赖的读取可以在同一轮提交，执行器会依次返回结果。需要根据前一步的结果才能确定目标、参数或是否执行的操作，等结果回来再发起。沿用已有读取和成功证据，失败时根据具体原因只调整受影响的步骤。遇到只有用户能补齐的必要信息，用 ask_user 单独提问。所有要求都有对应结果后，汇报产物及核验情况；有阻碍时说明已完成和未完成的部分。
+
+会话历史用于延续当前任务。临时条件在本轮及后续相关轮次中沿用，用户明确要求保存时才使用 save_memory。用户说“只在本对话记住”用 conversation；说“在这个项目里记住”用 workspace；说“以后各个对话都记住”用 profile。没有限定范围的明确长期记忆用 profile。遇到记忆冲突时，先遵循用户在当前对话中的最新要求；同一事项优先采用本对话记忆，其次本工作空间记忆，最后采用档案记忆。工具成功后简短确认保存的内容和范围。指定写入文件或应用时，按指定目标选择工具。
+如果提供了 update_memory，用户明确要求修改已有长期记忆（例如“之前记的编码改成 UTF-8”）、撤回或忘掉它时，从本轮召回的记录里找出用户指定的目标。仅当目标唯一时，直接用该条的 memory_id 和 revision 调用一次，纠正用 correct 并保留未改动的信息，撤回用 withdraw。可能对应多条时，在回复里简短列出候选并请用户指明；找不到目标或看到的只是无法完整纠正的摘录时，请用户补充线索或完整内容。纠正与撤回都不要调用 save_memory；工具成功后才确认。
+
+按任务对象选择当前提供的工具：
+
+- 文件路径已知时直接用 read_file、edit_file 或 write_file。按名称找文件用 glob，按内容查找用 grep。项目构建、测试和确实需要命令行的操作用 bash。
+- 查找公开资料优先用 ai_search，先利用返回的标题、摘要和来源链接，再按需打开原文。已知 API 优先调用对应的结构化工具，明确的 HTTP 接口可用 http_request。
+- 打开网站使用 open_url，打开 QQ 等桌面应用使用 open_application。不要使用 bash 打开网页或桌面应用，也不要把“进程存在”当作窗口已展示。操作当前内置网页，先用 visible_browser_observe 获取当前观察，再用 visible_browser_fill 或 visible_browser_click 操作对应元素；目标标签未知时才查询标签。
+- 操作已授权桌面应用时优先使用 software_observe 和适合控件的 software_control。需要视觉定位时用截图和视觉工具，需要向窗口键入时使用 keyboard 的 action=type、text 和 target_application，最后才考虑坐标操作。启动应用只代表窗口已打开，用户要求的后续输入需单独验证；缺少必要操作的成功证据时不得回答任务完成。
 "#.to_string()
 }
 
@@ -210,6 +235,21 @@ impl ModelConfig {
     pub fn has_embedding(&self) -> bool {
         !self.embedding_model.is_empty() && !self.embedding_base_url.is_empty()
     }
+
+    pub fn has_local_embedding(&self) -> bool {
+        is_loopback_model_url(&self.embedding_base_url)
+    }
+
+    pub fn uses_local_chat(&self) -> bool {
+        is_loopback_model_url(&self.base_url)
+    }
+}
+
+fn is_loopback_model_url(value: &str) -> bool {
+    reqwest::Url::parse(value).ok().is_some_and(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    })
 }
 
 // ── Voice providers ──
@@ -584,6 +624,16 @@ pub struct CompactionConfig {
     pub keep_recent_tokens: usize,
 }
 
+impl CompactionConfig {
+    pub(crate) fn valid_context_window(&self) -> bool {
+        self.context_window > 0
+    }
+
+    pub(crate) fn valid_trigger_threshold(&self) -> bool {
+        (0.0..=1.0).contains(&self.trigger_threshold)
+    }
+}
+
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
@@ -653,6 +703,9 @@ mod tests {
 
         assert!(prompt.contains("open_url"));
         assert!(prompt.contains("open_application"));
+        assert!(prompt.contains("visible_browser_observe"));
+        assert!(prompt.contains("visible_browser_fill"));
+        assert!(prompt.contains("software_observe"));
         assert!(prompt.contains("keyboard"));
         assert!(prompt.contains("target_application"));
         assert!(prompt.contains("不要使用 bash 打开网页或桌面应用"));

@@ -144,6 +144,22 @@ pub async fn extract(
     State(server): State<Arc<AppServer>>,
     Json(input): Json<ExtractRequest>,
 ) -> Result<Json<ExtractResponse>, StorageApiError> {
+    if !crate::modules::onboarding::allowed(&server.db, "memory") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"code":"memory_disabled","error":"当前资料档案已关闭记忆提取"})),
+        ));
+    }
+    if !crate::modules::onboarding::allowed(&server.db, "external_model")
+        && !server.config.read().model.uses_local_chat()
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({"code":"external_model_disabled","error":"当前资料档案已关闭外部模型调用"}),
+            ),
+        ));
+    }
     if let Some(memory_id) = input.memory_id.as_deref() {
         if input.conversation_id.is_some()
             || input.mode != ExtractMode::Relationships
@@ -208,7 +224,8 @@ pub async fn extract(
                 "content":{"type":"string"},"message_id":{"type":"string"}},"required":["category","content","message_id"]}}},"required":["memories"]}}})
         }];
         let model = server.config.read().model.clone();
-        let client = LlmClient::new(&model, server.secret_resolver.clone());
+        let client = LlmClient::new(&model, server.secret_resolver.clone())
+            .with_profile_permissions(server.db.clone_connection());
         let response = client
             .invoke_with_max_tokens(&prompt, &tools, if relationships { 2400 } else { 1600 })
             .await
@@ -362,7 +379,8 @@ async fn extract_saved_text(
             ChatMessage::user(json!({"message_id":id,"text":text}).to_string()),
         ];
         let model = server.config.read().model.clone();
-        let client = LlmClient::new(&model, server.secret_resolver.clone());
+        let client = LlmClient::new(&model, server.secret_resolver.clone())
+            .with_profile_permissions(server.db.clone_connection());
         let response = client
             .invoke_with_max_tokens(&prompt, &[relationship_tool(true)], 2400)
             .await
@@ -459,6 +477,23 @@ pub struct CandidatePage {
     next_offset: Option<usize>,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionFeedback {
+    activity_id: String,
+}
+
+pub async fn stage_feedback(
+    State(server): State<Arc<AppServer>>,
+    Json(body): Json<CompanionFeedback>,
+) -> Result<Json<serde_json::Value>, StorageApiError> {
+    let candidate_ids = server
+        .db
+        .stage_companion_feedback(&body.activity_id)
+        .map_err(super::governance_error)?;
+    Ok(Json(serde_json::json!({"candidate_ids":candidate_ids})))
+}
+
 pub async fn list(
     State(server): State<Arc<AppServer>>,
     Query(query): Query<ListQuery>,
@@ -549,52 +584,4 @@ fn error(status: StatusCode, code: &str, detail: &str) -> StorageApiError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn relation_proposals_require_verbatim_user_evidence_and_starts_as_inferred() {
-        let text = "星桥发布项目依赖接口验收。地图项目和小林仅在同一段出现。";
-        let sources = [("message".into(), text.into())].into_iter().collect();
-        let result = relationship_drafts(
-            "conversation",
-            &sources,
-            serde_json::from_value(json!({"relationships":[
-                {"message_id":"message","evidence":"星桥发布项目依赖接口验收","kind":"project",
-                "subject":"星桥发布项目","label":"依赖","object":"接口验收","directed":true,"certainty":"confirmed"},
-                {"message_id":"message","evidence":"小林负责地图项目","kind":"project",
-                "subject":"地图项目","label":"负责人","object":"小林","directed":true},
-                {"message_id":"assistant","evidence":"星桥发布项目依赖接口验收","kind":"project",
-                "subject":"星桥发布项目","label":"依赖","object":"接口验收","directed":true}
-            ]})).unwrap(),
-        );
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].content, "星桥发布项目 · 依赖 · 接口验收 · 待确认");
-    }
-
-    #[test]
-    fn saved_text_extraction_anchors_unicode_and_rejects_fabricated_sources() {
-        let text = "🪴提醒：设计组偏好使用深色主题。";
-        let result = saved_text_relationship_drafts("memory-a", text,
-            serde_json::from_value(json!({"relationships":[
-                {"message_id":"memory-a","evidence":"设计组偏好使用深色主题","kind":"preference",
-                 "subject":"设计组","label":"偏好","object":"深色主题","directed":true},
-                {"message_id":"memory-a","evidence":"设计组偏好使用深色主题","kind":"preference",
-                 "subject":"设计组","label":"偏好","object":"深色主题","directed":true,"occurredAt":"2026-01-01"},
-                {"message_id":"neighbor","evidence":"设计组偏好使用深色主题","kind":"preference",
-                 "subject":"设计组","label":"偏好","object":"深色主题","directed":true},
-                {"message_id":"memory-a","evidence":"设计组偏好使用深色主题","kind":"preference",
-                 "subject":"不存在的主体","label":"偏好","object":"深色主题","directed":true}
-            ]})).unwrap());
-        assert_eq!(result.len(), 1);
-        let (_, start, end) = &result[0];
-        assert_eq!(*start, 4);
-        assert_eq!(
-            text.chars()
-                .skip(*start)
-                .take(end - start)
-                .collect::<String>(),
-            "设计组偏好使用深色主题"
-        );
-    }
-}
+mod tests;

@@ -1,4 +1,33 @@
-import { cancelTaskCommand, cancelTaskExecution, deleteTaskGraph, getTaskGraphDetail, type TaskGraphDetail } from "../../api/taskWorld";
+import { cancelTaskCommand, cancelTaskExecution, createTaskGraph, deleteTaskGraph, getTaskGraphDetail, type ApiError, type TaskGraphDetail } from "../../api/taskWorld";
+import { taskGraphPath } from "./taskGraphRoutes";
+
+interface EmptyTaskGraphCreationDependencies {
+  createGraph: typeof createTaskGraph;
+  navigate: (path: string) => void;
+  setCreating: (creating: boolean) => void;
+  setError: (error: ApiError | null) => void;
+  inFlight: { current: boolean };
+  makeGraphId: () => string;
+}
+
+export async function createEmptyTaskGraph({ createGraph, navigate, setCreating, setError, inFlight, makeGraphId }: EmptyTaskGraphCreationDependencies) {
+  if (inFlight.current) return;
+  inFlight.current = true;
+  setCreating(true);
+  setError(null);
+  try {
+    const result = await createGraph({ id: makeGraphId(), nodes: [], edges: [] });
+    if (!result.ok) { setError(result.error); return; }
+    if (typeof result.data?.id !== "string" || !result.data.id.trim()) throw new Error("创建响应缺少画布标识，请刷新工作流后重试。");
+    navigate(taskGraphPath(result.data.id));
+  } catch (error) {
+    setError({ status: 0, code: "creation_failed", message: error instanceof Error ? error.message : String(error) });
+  } finally {
+    inFlight.current = false;
+    setCreating(false);
+  }
+}
+
 const activeStatuses = new Set(["pending", "ready", "dispatching", "waiting_approval", "running", "validating"]);
 export function activeGraphExecutions(detail: TaskGraphDetail) {
  const result = new Map<string, string>();

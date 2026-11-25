@@ -1,0 +1,6 @@
+{
+  "identifier": "desktop-widget",
+  "description": "Allow the experimental widget to close itself",
+  "webviews": ["desktop-widget"],
+  "permissions": ["core:window:allow-close"]
+}

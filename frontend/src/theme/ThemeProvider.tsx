@@ -23,7 +23,7 @@ interface ThemeContextValue {
   setPreset: (id: PresetId) => void;
   updateTheme: (patch: Partial<ThemeConfig>) => void;
   setBackgroundImage: (dataUrl: string | null) => Promise<void>;
-  resetTheme: () => void;
+  resetTheme: () => Promise<void>;
   exportTheme: () => string;
   importTheme: (json: string) => boolean;
 }
@@ -119,11 +119,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme.mode]);
 
   useEffect(() => {
-    loadBgImage().then((url) => {
-      setBgImageUrl(url);
-      applyThemeToDom(theme, resolvedScheme, url);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void loadBgImage().then(setBgImageUrl);
   }, []);
 
   useEffect(() => {
@@ -165,9 +161,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const resetTheme = useCallback(() => {
+  const resetTheme = useCallback(async () => {
+    await clearBgImage();
+    setBgImageUrl(null);
     setTheme(normalizeStoredTheme(DEFAULT_THEME));
-    clearBgImage().then(() => setBgImageUrl(null));
   }, []);
 
   const exportTheme = useCallback(() => JSON.stringify(theme, null, 2), [theme]);

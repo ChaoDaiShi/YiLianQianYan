@@ -65,6 +65,9 @@ fn catalog(server: &AppServer) -> Result<Vec<ConnectorResource>, String> {
         }
     }
     for profile in server.db.list_basic_service_profiles()? {
+        if !matches!(profile.service_kind.as_str(), "vision" | "image") {
+            continue;
+        }
         let mut node = ConnectorResource::new("model", &profile.id, &profile.label);
         node.service_kind = Some(profile.service_kind);
         nodes.push(node);

@@ -6,7 +6,7 @@ export default function UserInputCard({ question, pending, onAnswer, onCancel }:
   const [option, setOption] = useState("");
   const [text, setText] = useState("");
   const valid = question.kind === "text" ? Boolean(text.trim()) : Boolean(option || (question.allow_text && text.trim()));
-  return <section className="mx-4 my-3 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 shadow-sm" aria-label="需要补充信息">
+  return <section className="glass-card mx-4 my-3 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 shadow-sm" aria-label="需要补充信息">
     <p className="text-xs text-[var(--text-secondary)]">需要补充信息 · 回答后继续当前轮次</p>
     <h3 className="mt-1 text-sm font-medium">{question.title}</h3>
     {question.kind === "single_choice" && <fieldset className="mt-3 space-y-2" disabled={pending}>

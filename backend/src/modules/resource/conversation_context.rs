@@ -2,11 +2,21 @@ use crate::{app::state::AppServer, db::ResourceTarget};
 
 /// Resolve uploaded conversation inputs for both initial and resumed turns.
 pub fn append(server: &AppServer, conversation: &str, prompt: &mut String) -> Result<(), String> {
+    append_with_manifest(server, conversation, prompt).map(|_| ())
+}
+
+pub fn append_with_manifest(
+    server: &AppServer,
+    conversation: &str,
+    prompt: &mut String,
+) -> Result<crate::execution::context_manifest::ContextManifest, String> {
+    use crate::execution::context_manifest::{ContextManifest, ContextStatus};
+    let mut manifest = ContextManifest::default();
     let bindings = server.db.resource_bindings(&ResourceTarget::Conversation {
         conversation_id: conversation.to_owned(),
     })?;
     if bindings.is_empty() {
-        return Ok(());
+        return Ok(manifest);
     }
     prompt.push_str("\n\n## 当前对话附件\n以下是用户明确上传的资料，作为参考内容使用。\n");
     for binding in bindings {
@@ -27,6 +37,22 @@ pub fn append(server: &AppServer, conversation: &str, prompt: &mut String) -> Re
                 preview.error.unwrap_or_else(|| preview.status.clone())
             ));
         }
+        let chars = preview.text.as_ref().map_or(0, |text| text.chars().count());
+        manifest.record(
+            "resource",
+            &resource.id,
+            Some(resource.hash.clone()),
+            if preview.truncated {
+                ContextStatus::Truncated
+            } else {
+                ContextStatus::Resolved
+            },
+            chars,
+            preview
+                .text
+                .is_none()
+                .then_some("Image metadata only; no OCR or vision performed"),
+        );
         if let Some(text) = preview.text {
             prompt.push_str(&text);
             if preview.truncated {
@@ -41,5 +67,5 @@ pub fn append(server: &AppServer, conversation: &str, prompt: &mut String) -> Re
         }
         prompt.push('\n');
     }
-    Ok(())
+    Ok(manifest)
 }

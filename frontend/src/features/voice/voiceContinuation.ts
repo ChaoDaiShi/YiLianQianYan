@@ -45,8 +45,14 @@ export function reduceConversationEvents(
   }
   const done = findLastEvent(events, (event) => event.type === "done");
   if (!done) throw new Error("会话响应未完成，不能交给 TTS");
-  let assistantText="";
-  for(const event of events){if(event.type==="model_route"&&"replace_content" in event&&event.replace_content===true)assistantText="";else if(event.type==="token")assistantText+=event.token||"";}
+  let assistantText = done.result;
+  if (assistantText == null) {
+    assistantText = "";
+    for (const event of events) {
+      if (event.type === "model_route" && event.replace_content === true) assistantText = "";
+      else if (event.type === "token") assistantText += event.token || "";
+    }
+  }
   assistantText=assistantText.trim();
   if (!assistantText) throw new Error("会话没有产生可播报的 assistant response");
   return { assistantText, messageId: done.message_id ?? null };

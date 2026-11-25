@@ -823,7 +823,9 @@ impl Database {
                     CASE WHEN ?6 IS NULL OR (g.embedding_revision=g.revision
                         AND g.embedding_model=?6 AND g.embedding_generation IS cfg.generation)
                         THEN m.embedding END,
-                    m.metadata,m.created_at,m.updated_at,g.embedding_hash,g.revision,g.scope
+                    m.metadata,m.created_at,m.updated_at,g.embedding_hash,g.revision,g.scope,
+                    CASE WHEN ?8 IS NULL THEN 0
+                    ELSE m.rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?8) END
                  FROM memories m JOIN memory_governance g ON g.memory_id=m.id
                  LEFT JOIN memory_embedding_config cfg ON cfg.id=1 AND cfg.model=?6
                  WHERE g.status='active' AND (g.scope='profile' OR g.scope=?2 OR g.scope=?3)
@@ -843,6 +845,7 @@ impl Database {
                         scope.exclude_knowledge,
                         embedding_model,
                         chrono::Utc::now().timestamp_millis(),
+                        lexical_query.fts_expression(),
                     ],
                     |row| {
                         let mut memory = read_memory(row)?;
@@ -858,7 +861,12 @@ impl Database {
                             }
                         }
                         let scope = MemoryScope::from_storage(&row.get::<_, String>(11)?);
-                        Ok((memory, row.get::<_, i64>(10)?, scope))
+                        Ok((
+                            memory,
+                            row.get::<_, i64>(10)?,
+                            scope,
+                            row.get::<_, bool>(12)?,
+                        ))
                     },
                 )
                 .map_err(|error| error.to_string())?;
@@ -871,8 +879,11 @@ impl Database {
 
         let mut scored: Vec<ScoredMemory> = permitted
             .into_iter()
-            .filter_map(|(mem, revision, memory_scope)| {
-                let text_score = lexical_query.score(&mem.content);
+            .filter_map(|(mem, revision, memory_scope, fts_match)| {
+                let text_score =
+                    lexical_query
+                        .score(&mem.content)
+                        .max(if fts_match { 0.25 } else { 0.0 });
 
                 // Vector score
                 let vector_score = if use_hybrid {

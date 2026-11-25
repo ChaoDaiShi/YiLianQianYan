@@ -1,8 +1,12 @@
 use crate::shared::contracts::SHARED_SCHEMA_VERSION;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::broadcast;
 use uuid::Uuid;
+#[cfg(test)]
+mod replay_tests;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct YiEvent {
@@ -14,6 +18,8 @@ pub struct YiEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
     pub timestamp: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
     pub schema_version: u32,
     pub payload: Value,
 }
@@ -31,6 +37,7 @@ impl YiEvent {
             event_type: event_type.to_string(),
             source: source.into(),
             scope: None,
+            sequence: None,
             timestamp: chrono::Utc::now().timestamp_millis(),
             schema_version: SHARED_SCHEMA_VERSION,
             payload,
@@ -75,17 +82,50 @@ fn valid_segment(segment: &str) -> bool {
 #[derive(Clone)]
 pub struct EventHub {
     sender: broadcast::Sender<YiEvent>,
+    history: Arc<Mutex<VecDeque<YiEvent>>>,
+    capacity: usize,
 }
 
 impl EventHub {
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity.max(1));
-        Self { sender }
+        Self {
+            sender,
+            history: Arc::new(Mutex::new(VecDeque::new())),
+            capacity: capacity.max(1),
+        }
     }
 
-    pub fn publish(&self, event: YiEvent) -> Result<usize, String> {
+    pub fn publish(&self, mut event: YiEvent) -> Result<usize, String> {
         event.validate()?;
-        self.sender.send(event).map_err(|error| error.to_string())
+        let mut history = self.history.lock();
+        if history.iter().any(|known| known.id == event.id) {
+            return Ok(0);
+        }
+        event.sequence = Some(history.back().and_then(|e| e.sequence).unwrap_or(0) + 1);
+        if history.len() == self.capacity {
+            history.pop_front();
+        }
+        history.push_back(event.clone());
+        Ok(self.sender.send(event).unwrap_or(0))
+    }
+
+    /// Subscribe under the publisher lock so replay and live delivery have no gap.
+    pub fn resume(&self, after: Option<&str>) -> (Vec<YiEvent>, broadcast::Receiver<YiEvent>) {
+        let history = self.history.lock();
+        let receiver = self.sender.subscribe();
+        let replay = match after {
+            None => vec![],
+            Some(cursor) => match history.iter().position(|e| e.id == cursor) {
+                Some(pos) => history.iter().skip(pos + 1).cloned().collect(),
+                None => vec![YiEvent::new(
+                    "core.events.lagged",
+                    "event-hub",
+                    serde_json::json!({"reason":"cursor_expired","refresh":true}),
+                )],
+            },
+        };
+        (replay, receiver)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<YiEvent> {
@@ -120,7 +160,9 @@ mod tests {
 
         hub.publish(event.clone()).unwrap();
 
-        assert_eq!(subscriber.recv().await.unwrap(), event);
+        let received = subscriber.recv().await.unwrap();
+        assert_eq!(received.id, event.id);
+        assert_eq!(received.sequence, Some(1));
     }
 
     #[test]

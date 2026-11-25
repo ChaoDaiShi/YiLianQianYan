@@ -20,7 +20,7 @@ mod notifications;
 #[cfg(windows)]
 pub use mount::NativeSoftwareHost;
 
-#[cfg(all(windows, debug_assertions, feature = "native-software-fixture"))]
+#[cfg(all(windows, debug_assertions, feature = "native-browser-fixture"))]
 pub fn fixture_candidate(
     hwnd: usize,
 ) -> Result<yilian_backend::software::WindowCandidate, yilian_backend::software::SoftwareError> {

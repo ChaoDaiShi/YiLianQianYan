@@ -307,3 +307,4 @@ export default function SoftwarePage() {
   {registration && <SoftwareDialogs dialog={dialog} registration={dialog === "launch" && approvedLaunch ? approvedLaunch : dialog === "delete" && removingRegistration ? removingRegistration : registration} session={session} candidates={candidates} candidate={candidate} onCandidate={setCandidate} history={softwareHistory(data.history, registration.id)} evidence={data.capability_evidence?.find(record => record.registration_id === registration.id && record.session_id === (session?.id ?? null) && record.generation === (session?.generation ?? null))} busy={busy} error={error} reviewed={reviewed} onReviewed={setReviewed} launchOperationId={launchOperationId} mutationBlocked={launchBlocked} onReviewLaunch={id => {setLaunchOperationId(id); setReviewed(false); setDialog("review-launch");}} onClose={() => setDialog(null)} onConfirm={() => void confirm()} />}
  </SoftwareMountShell>;
 }
+

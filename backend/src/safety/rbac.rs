@@ -20,6 +20,8 @@ impl RolePolicy {
 
         match (role, permission) {
             (_, FilesystemRead | ProcessInspect | SkillLoad | AgentPlan) => Allow,
+            (Owner | Standard, AgentMemoryWrite) => Allow,
+            (Restricted, AgentMemoryWrite) => Deny,
             (Owner | Standard, MessagingRead | MessagingSend) => Allow,
             (Restricted, MessagingRead | MessagingSend) => Deny,
             (Owner | Standard, FilesystemWrite | NetworkRequest) => Allow,

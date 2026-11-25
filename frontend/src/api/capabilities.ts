@@ -53,7 +53,17 @@ export interface CapabilityMetadata {
   extra: Record<string, unknown>;
 }
 
+export interface CapabilityAvailability {
+  discoverable: boolean;
+  bindable: boolean;
+  executable: boolean;
+  requires_approval: boolean;
+  authorization: "runtime_check_required";
+  reasons: string[];
+}
 export interface CapabilityDescriptor {
+  availability?: { chat: CapabilityAvailability; task_node: CapabilityAvailability; personal: CapabilityAvailability };
+
   id: string;
   kind: CapabilityKind;
   provider: CapabilityProviderKind;

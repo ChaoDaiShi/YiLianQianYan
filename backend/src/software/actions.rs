@@ -163,6 +163,16 @@ impl SoftwareRuntime {
         self.verify_ai_allowed(target, "wechat_conversation")?;
         Ok(conversation)
     }
+    pub(super) fn check_window_pixels(&self) -> Result<(), SoftwareError> {
+        if !crate::modules::onboarding::existing_window_capture_enabled(&self.db) {
+            return Err(SoftwareError::new(
+                "screen_capture_disabled",
+                "个人权限设置已关闭屏幕采集",
+            ));
+        }
+        Ok(())
+    }
+
     /// One frame for the user-initiated, trusted workbench selection dialog.
     pub fn wechat_frame(&self, target: SessionTarget) -> Result<Vec<u8>, SoftwareError> {
         let (session, registration) = self.session(&target)?;
@@ -179,7 +189,9 @@ impl SoftwareRuntime {
                 "请先显示微信并打开目标群聊",
             ));
         }
+        self.check_window_pixels()?;
         let frame = self.host()?.wechat_frame_png(&session.window.identity)?;
+        self.check_window_pixels()?;
         self.verify_ai_allowed(&target, "observe")?;
         Ok(frame)
     }
@@ -235,7 +247,9 @@ impl SoftwareRuntime {
                 "请先显示要识别的窗口",
             ));
         }
+        self.check_window_pixels()?;
         let text = self.host()?.recognize_window(&window.identity)?;
+        self.check_window_pixels()?;
         self.verify_ai_allowed(target, "window_ocr")?;
         let mut chars = text.trim().chars();
         let excerpt: String = chars.by_ref().take(4096).collect();

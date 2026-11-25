@@ -6,6 +6,7 @@ import { API_BASE } from "../core/api/http";
 import { request, requestResult } from "../core/api/http";
 import { controlSessionHeaders } from "./controlSession";
 import type { ChatRequestOptions } from "../components/chat/chatRequestOptions";
+import type { ServiceConfigurationSource } from "../features/execution/model";
 import type { WorkspaceMode } from "../types";
 
 // ============================================================
@@ -16,6 +17,8 @@ export interface AgentEvent {
   type: string;
   conversation_id: string;
   user_message_id?: string;
+  turn_id?: string;
+  accepts_steering?: boolean;
   error_code?: string;
   affected_user_message_id?: string | null;
   token?: string;
@@ -23,6 +26,7 @@ export interface AgentEvent {
   tool_name?: string;
   args?: Record<string, unknown>;
   result?: string;
+  configuration_source?: ServiceConfigurationSource;
   status?: string;
   error?: string;
   message_id?: string;
@@ -47,9 +51,23 @@ export interface AgentEvent {
   request_rejected?: boolean;
   mode?: WorkspaceMode;
   automatic?: boolean;
+  exchange?: "chat" | "work" | "mixed" | "uncertain";
+  scope?: "conversation" | "read" | "work" | "wechat_draft" | "software_read" | "software_control";
+  agent_id?: string | null;
 }
 
 export type EventHandler = (event: AgentEvent) => void;
+
+export async function sendChatTaskCommand(conversationId: string, message: string): Promise<string | null> {
+  const result = await requestResult<{ message: string | null }>("POST", "/api/chat/task-command", { conversation_id: conversationId, message });
+  if (!result.ok) throw new Error(result.error);
+  return result.data.message;
+}
+
+export async function steerChat(conversationId: string, turnId: string, message: string): Promise<void> {
+  const result = await requestResult<{ turn_id: string; message_id: string }>("POST", "/api/chat/steer", { conversation_id: conversationId, turn_id: turnId, message });
+  if (!result.ok) throw new Error(result.error);
+}
 
 export interface ConversationInput {
   question_id: string; run_id: string; conversation_id: string; tool_call_id: string;
@@ -161,6 +179,8 @@ export function streamChatRequest(path:string,body:unknown,onEvent:EventHandler,
                   type: "connected",
                   conversation_id: parsed.conversation_id || "",
                   user_message_id: parsed.user_message_id,
+                  turn_id: parsed.turn_id,
+                  accepts_steering: parsed.accepts_steering,
                 });
               } else if (parsed.type) {
                 onEvent(parsed as AgentEvent);

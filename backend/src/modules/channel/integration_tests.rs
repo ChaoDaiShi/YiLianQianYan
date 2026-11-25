@@ -15,6 +15,9 @@ use tower::ServiceExt;
 
 const TOKEN: &str = "channel-test-control-session-0000000000000000";
 
+#[path = "integration_group_members.rs"]
+mod group_members;
+
 fn server() -> Arc<AppServer> {
     Arc::new(
         AppServer::new_with_control_session_and_store(

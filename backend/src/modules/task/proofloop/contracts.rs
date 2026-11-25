@@ -313,6 +313,8 @@ impl Default for PlanningUsage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProofDraft {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AttentionGoalSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planning_review: Option<super::enhancement_contracts::PlanningReview>,
     pub draft_id: String,
     pub revision: u32,
@@ -329,6 +331,21 @@ pub struct ProofDraft {
     pub confirmed_graph_revision: Option<u64>,
     #[serde(default)]
     pub planning_usage: PlanningUsage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttentionGoalSource {
+    pub automation_id: String,
+    pub observation_id: String,
+}
+
+impl AttentionGoalSource {
+    pub(crate) fn draft_id(&self) -> Result<String, ProofError> {
+        let observation = uuid::Uuid::parse_str(&self.observation_id)
+            .map_err(|_| ProofError::new("invalid_attention_source", "关注观察标识无效"))?;
+        Ok(format!("draft-attention-{observation}"))
+    }
 }
 
 // Evidence and Acceptance models
@@ -486,6 +503,8 @@ pub struct RepairProposal {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateProofDraftRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AttentionGoalSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirements: Option<super::enhancement_contracts::GoalRequirements>,
     #[serde(default)]

@@ -15,6 +15,7 @@ pub enum SideEffectKind {
     DesktopMutation,
     ExternalService,
     AgentDelegation,
+    MemoryMutation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -170,32 +171,6 @@ fn builtin_descriptor_profile(
     );
 
     let value = match tool_name {
-        "software_sessions" | "software_observe" | "software_control" | "software_wechat_draft" => {
-            let observe = matches!(tool_name, "software_sessions" | "software_observe");
-            match descriptor.resources.as_slice() {
-                [ResourceDescriptor::Desktop {
-                    action,
-                    target: Some(target),
-                }] if action == tool_name && target.starts_with("software:") => profile(
-                    vec![permission(
-                        if observe {
-                            PermissionId::DesktopObserve
-                        } else {
-                            PermissionId::DesktopInteract
-                        },
-                        ResourceScope::DesktopTarget,
-                    )],
-                    RiskLevel::High,
-                    if observe {
-                        vec![]
-                    } else {
-                        vec![SideEffectKind::DesktopMutation]
-                    },
-                ),
-                _ => return Err(invalid_resources()),
-            }
-        }
-
         "read_file" if single_file => profile(
             vec![permission(
                 PermissionId::FilesystemRead,
@@ -305,6 +280,102 @@ fn builtin_descriptor_profile(
                 RiskLevel::Medium,
                 vec![SideEffectKind::NetworkEgress],
             )
+        }
+        "software_sessions" | "software_observe" | "software_control" | "software_wechat_draft" => {
+            let observe = matches!(tool_name, "software_sessions" | "software_observe");
+            match descriptor.resources.as_slice() {
+                [ResourceDescriptor::Desktop {
+                    action,
+                    target: Some(target),
+                }] if action == tool_name && target.starts_with("software:") => profile(
+                    vec![permission(
+                        if observe {
+                            PermissionId::DesktopObserve
+                        } else {
+                            PermissionId::DesktopInteract
+                        },
+                        ResourceScope::DesktopTarget,
+                    )],
+                    RiskLevel::High,
+                    if observe {
+                        vec![]
+                    } else {
+                        vec![SideEffectKind::DesktopMutation]
+                    },
+                ),
+                _ => return Err(invalid_resources()),
+            }
+        }
+        "visible_browser_tabs" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Desktop {
+                action,
+                target: None,
+            }] if action == "visible_browser_tabs" => profile(
+                vec![permission(
+                    PermissionId::DesktopObserve,
+                    ResourceScope::DesktopTarget,
+                )],
+                RiskLevel::High,
+                vec![],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "visible_browser_open"
+        | "visible_browser_navigate"
+        | "visible_browser_observe"
+        | "visible_browser_click"
+        | "visible_browser_fill"
+        | "visible_browser_fill_credential"
+        | "visible_browser_scroll"
+        | "visible_browser_capture" => {
+            let observe = matches!(
+                tool_name,
+                "visible_browser_observe" | "visible_browser_capture"
+            );
+            let method = if matches!(
+                tool_name,
+                "visible_browser_click"
+                    | "visible_browser_fill"
+                    | "visible_browser_fill_credential"
+            ) {
+                "POST"
+            } else {
+                "GET"
+            };
+            match descriptor.resources.as_slice() {
+                [ResourceDescriptor::Network {
+                    url,
+                    method: actual_method,
+                }, ResourceDescriptor::Desktop {
+                    action,
+                    target: Some(target),
+                }] if action == tool_name
+                    && target.starts_with("browser:")
+                    && actual_method == method
+                    && crate::browser::validate_browser_url(url).is_ok() =>
+                {
+                    let mut effects = vec![SideEffectKind::NetworkEgress];
+                    if !observe {
+                        effects.push(SideEffectKind::DesktopMutation);
+                    }
+                    profile(
+                        vec![
+                            permission(PermissionId::NetworkRequest, ResourceScope::NetworkTarget),
+                            permission(
+                                if observe {
+                                    PermissionId::DesktopObserve
+                                } else {
+                                    PermissionId::DesktopInteract
+                                },
+                                ResourceScope::DesktopTarget,
+                            ),
+                        ],
+                        RiskLevel::High,
+                        effects,
+                    )
+                }
+                _ => return Err(invalid_resources()),
+            }
         }
         "open_url" => match descriptor.resources.as_slice() {
             [ResourceDescriptor::Network { url, method }, ResourceDescriptor::Desktop {
@@ -465,6 +536,17 @@ fn builtin_descriptor_profile(
                 )],
                 RiskLevel::Low,
                 vec![],
+            ),
+            _ => return Err(invalid_resources()),
+        },
+        "save_memory" | "update_memory" => match descriptor.resources.as_slice() {
+            [ResourceDescriptor::Agent { action }] if action == &descriptor.tool_name => profile(
+                vec![permission(
+                    PermissionId::AgentMemoryWrite,
+                    ResourceScope::AgentInternal,
+                )],
+                RiskLevel::Medium,
+                vec![SideEffectKind::MemoryMutation],
             ),
             _ => return Err(invalid_resources()),
         },
@@ -925,6 +1007,18 @@ pub fn describe_builtin_tool(
             }],
             default_risk: RiskLevel::Low,
             side_effects: vec![],
+        },
+        "save_memory" | "update_memory" => ToolSecurityDescriptor {
+            tool_name: tool_name.to_string(),
+            requested_permissions: vec![permission(
+                PermissionId::AgentMemoryWrite,
+                ResourceScope::AgentInternal,
+            )],
+            resources: vec![ResourceDescriptor::Agent {
+                action: tool_name.to_string(),
+            }],
+            default_risk: RiskLevel::Medium,
+            side_effects: vec![SideEffectKind::MemoryMutation],
         },
         "upscale_image" => {
             let path = required_string(tool_name, args, "path")?;

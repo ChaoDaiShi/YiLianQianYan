@@ -15,28 +15,7 @@ use crate::db::{
 };
 use crate::integrations::llm::client::LlmClient;
 
-pub(crate) fn library_router() -> axum::Router<Arc<AppServer>> {
-    use axum::routing::{delete, get, post};
-
-    axum::Router::new()
-        .route("/api/memories/library", get(library_handler))
-        .merge(graph::router())
-        .route("/api/memories/activity", get(activity_handler))
-        .route(
-            "/api/memories/activity/:id",
-            delete(remove_activity_handler),
-        )
-        .route("/api/memories/extract", post(candidates::extract))
-        .route("/api/memories/candidates", get(candidates::list))
-        .route(
-            "/api/memories/candidates/:id/accept",
-            post(candidates::accept),
-        )
-        .route(
-            "/api/memories/candidates/:id/dismiss",
-            post(candidates::dismiss),
-        )
-}
+pub(crate) mod indexing;
 
 pub type StorageApiError = (StatusCode, Json<serde_json::Value>);
 
@@ -44,7 +23,9 @@ fn governance_error(error: String) -> StorageApiError {
     let status = match error.as_str() {
         "memory_revision_conflict"
         | "stale_embedding_result"
+        | "memory_version_requires_reviewed_correction"
         | "knowledge_document_owned_chunk" => StatusCode::CONFLICT,
+        "feedback_source_unavailable" | "memory_version_unavailable" => StatusCode::NOT_FOUND,
         "invalid_memory_correction"
         | "invalid_memory_scope"
         | "invalid_memory_reason"
@@ -97,6 +78,7 @@ pub async fn correct_handler(
         .db
         .correct_memory(&id, &req)
         .map_err(governance_error)?;
+    embed_saved_memory(&server, &memory).await;
     Ok(Json(single_with_source_status(&server.db, memory)?))
 }
 
@@ -110,6 +92,19 @@ pub async fn withdraw_handler(
         .withdraw_memory(&id, &req)
         .map(Json)
         .map_err(governance_error)
+}
+
+pub async fn restore_handler(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::db::memory_governance::RestoreMemoryVersion>,
+) -> Result<Json<MemoryWithSource>, StorageApiError> {
+    let memory = server
+        .db
+        .restore_memory_version(&id, &req)
+        .map_err(governance_error)?;
+    embed_saved_memory(&server, &memory).await;
+    Ok(Json(single_with_source_status(&server.db, memory)?))
 }
 
 pub async fn withdrawn_handler(
@@ -290,8 +285,16 @@ pub async fn create_handler(
 
 async fn embed_saved_memory(server: &AppServer, mem: &Memory) {
     let model_cfg = server.config.read().model.clone();
+    if model_cfg.has_local_embedding() {
+        let _ = server.memory_indexer.start(server);
+        return;
+    }
+    if !crate::modules::onboarding::allowed(&server.db, "external_model") {
+        return;
+    }
     if model_cfg.has_embedding() {
-        let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
+        let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver))
+            .with_profile_permissions(server.db.clone_connection());
         let ticket = match server.db.begin_memory_embedding(
             mem,
             &crate::db::memory_governance::embedding_identity(&model_cfg),
@@ -343,6 +346,7 @@ pub async fn update_handler(
                 .db
                 .update_memory_at_revision(&id, &req.change, req.expected_revision)
                 .map_err(governance_error)?;
+            embed_saved_memory(&server, &memory).await;
             Ok(Json(single_with_source_status(&server.db, memory)?))
         }
         Ok(None) => Err(not_found_error("记忆")),
@@ -404,9 +408,13 @@ pub async fn retrieve_handler(
     let mut mode = "lexical";
     let mut query_embedding: Option<Vec<f32>> = None;
 
-    if model_cfg.has_embedding() {
-        let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver));
-        match llm.embed(&q).await {
+    if model_cfg.has_embedding()
+        && (model_cfg.has_local_embedding()
+            || crate::modules::onboarding::allowed(&server.db, "external_model"))
+    {
+        let llm = LlmClient::new(&model_cfg, Arc::clone(&server.secret_resolver))
+            .with_profile_permissions(server.db.clone_connection());
+        match llm.embed_query(&q).await {
             Ok(vec) => {
                 query_embedding = Some(vec);
                 mode = "hybrid";
@@ -532,6 +540,16 @@ pub async fn reindex_handler(
             })),
         ));
     }
+    if !config.model.has_local_embedding()
+        && !crate::modules::onboarding::allowed(&server.db, "external_model")
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                serde_json::json!({"code":"external_model_disabled","error":"当前资料档案已关闭外部模型调用"}),
+            ),
+        ));
+    }
 
     // Load memories missing embedding
     let missing = match server.db.memories_needing_embedding(
@@ -549,7 +567,8 @@ pub async fn reindex_handler(
     let mut succeeded = 0usize;
     let mut failed = 0usize;
 
-    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver));
+    let llm_client = LlmClient::new(&config.model, Arc::clone(&server.secret_resolver))
+        .with_profile_permissions(server.db.clone_connection());
 
     for memory in &missing {
         let ticket = match server.db.begin_memory_embedding(
@@ -612,6 +631,9 @@ pub async fn reindex_handler(
         "remaining": remaining,
     })))
 }
+
+#[cfg(test)]
+mod companion_tests;
 
 #[cfg(test)]
 mod tests {

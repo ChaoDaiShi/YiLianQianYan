@@ -57,6 +57,10 @@ export interface ExecutorAvailability {
 }
 
 const SUPPORTED_TASK_EVENTS = new Set([
+  "task.goal.changed",
+  "task.paused",
+  "task.resumed",
+  "task.cancelled",
   "task.created",
   "task.graph.updated",
   "task.node.ready",

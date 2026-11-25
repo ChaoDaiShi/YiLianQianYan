@@ -31,6 +31,7 @@ pub(crate) fn run_view(graph_id: &str, run: &WorkflowRun) -> serde_json::Value {
         "created_at": run.created_at,
         "updated_at": run.updated_at,
         "execution_id": run.execution_context.execution_id.as_str(),
+        "parent_execution_id": run.execution_context.parent_execution_id.as_ref().map(|id| id.as_str()),
         "subject_id": run.execution_context.subject_id,
         "nodes": run.node_states.iter().map(|s| serde_json::json!({
             "node_id": s.node_id.as_str(),
@@ -41,6 +42,25 @@ pub(crate) fn run_view(graph_id: &str, run: &WorkflowRun) -> serde_json::Value {
             "result": s.result.as_ref().map(|r| serde_json::json!({ "summary": r.summary })),
         })).collect::<Vec<_>>(),
     })
+}
+
+pub(crate) fn run_detail_view(graph_id: &str, run: &WorkflowRun) -> serde_json::Value {
+    let mut view = run_view(graph_id, run);
+    let input_by_node: std::collections::HashMap<_, _> = run
+        .definition
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), &node.config))
+        .collect();
+    if let Some(nodes) = view["nodes"].as_array_mut() {
+        for (node, state) in nodes.iter_mut().zip(&run.node_states) {
+            if let Some(config) = input_by_node.get(state.node_id.as_str()) {
+                let input = serde_json::json!(config);
+                node["input"] = crate::safety::redaction::redact_and_digest(&input).value;
+            }
+        }
+    }
+    view
 }
 
 pub(crate) fn graph_view(record: &WorkflowGraphRecord) -> serde_json::Value {

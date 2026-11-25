@@ -92,7 +92,7 @@ export async function workbenchRevision5({page,frontendPort,backendPort,controlT
   await page.getByRole("combobox",{name:"定位画布对话",exact:true}).selectOption(id);await shot("conversation-groups-branch");facts.checks.push("separate_branch_group_connected_to_actual_answer","branch_keeps_ancestry_excludes_sibling_and_source_unchanged");
   await page.reload();await eventually(()=>page.locator(".conversation-canvas-group").count(),v=>v===2,"groups survive refresh");
   facts.checks.push("conversation_group_state_and_relationships_persist");
-  await navigate("/settings");
+  await navigate("/settings?view=canvas");
   await eventually(()=>page.locator('.settings-canvas-stage .react-flow__node [role="button"]').count(),v=>v===7,"six grouped settings and center");
   await shot("settings-groups");
   await page.getByRole("button",{name:"编辑模型与服务",exact:true}).click();

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Badge, Button, Textarea } from "../../components/ui";
-import { correctMemory, getMemoryGovernance, getMemoryHistory, withdrawMemory, type MemoryGovernance, type MemoryRecord, type MemoryVersion } from "../../api/memory";
+import { correctMemory, getMemoryGovernance, getMemoryHistory, restoreMemoryVersion, withdrawMemory, type MemoryGovernance, type MemoryRecord, type MemoryVersion } from "../../api/memory";
 import { listWorkspaces, type Workspace } from "../../api/workspaces";
 import { useMemoryStore } from "../../stores/memoryStore";
+import { readMemoryRelationship } from "./relationship";
 
 export function MemoryGovernancePanel({ memory, onChanged, readOnly = false, graphHistory }: { memory: MemoryRecord; onChanged: () => void; readOnly?: boolean; graphHistory?: MemoryVersion[] }) {
   const [governance, setGovernance] = useState<MemoryGovernance | null>(null);
@@ -51,10 +52,26 @@ export function MemoryGovernancePanel({ memory, onChanged, readOnly = false, gra
     finally { setPending(false); }
   };
 
+  const restore = async (versionId: string) => {
+    if (!governance || pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      await restoreMemoryVersion(memory.id, {version_id: versionId, expected_revision: governance.revision});
+      setRefresh(value => value + 1);
+      onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPending(false);
+    }
+  };
+
   const workspaceId = governance?.scope.startsWith("workspace:") ? governance.scope.slice("workspace:".length) : null;
   const workspace = workspaceId ? workspaces.find(item => item.id === workspaceId) : null;
   const scopeLabel = workspaceId ? `工作空间${workspace ? ` · ${workspace.name}` : ""}`
     : governance?.scope.startsWith("conversation:") ? "来源对话" : "当前档案";
+  const hasRelationship = Boolean(readMemoryRelationship(memory));
 
   return <section className="space-y-3 border-t border-[var(--border-soft)] pt-4" aria-label="记忆版本与来源">
     <div className="flex items-center justify-between gap-2">
@@ -98,6 +115,9 @@ export function MemoryGovernancePanel({ memory, onChanged, readOnly = false, gra
           <p className="font-medium">{version.layer === 0 ? version.baseline ? "已知基线" : "原始层" : `第 ${version.layer} 层`} · {version.status === "active" ? "记录时有效" : "已撤回"} · {new Date(version.recorded_at).toLocaleString("zh-CN")}</p>
           <p className="mt-2 whitespace-pre-wrap">{version.content}</p>
           <p className="mt-2 text-[var(--text-secondary)]">原因：{version.baseline ? "更早记录未知" : version.reason === "created" ? "创建记忆" : version.reason} · 范围：{version.scope} · 来源：{version.source_removed ? "来源已移除" : version.source_ref || version.source}</p>
+          {!readOnly && governance && version.status === "active" && version.revision < governance.revision && version.category === memory.category && !hasRelationship && !version.relationship && (
+            <Button variant="secondary" size="sm" className="mt-2" disabled={pending} onClick={() => void restore(version.version_id)}>恢复为新版本</Button>
+          )}
         </li>)}
       </ol>
     </details>}

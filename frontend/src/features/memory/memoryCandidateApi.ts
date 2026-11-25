@@ -38,6 +38,12 @@ export interface ReviewedMemory { content: string; category: string; scope: Cand
 
 const path = "/api/memories/candidates";
 
+export async function stageCompanionFeedback(activityId: string) {
+  const result = await requestResult<{ candidate_ids: string[] }>("POST", `${path}/feedback`, { activity_id: activityId });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
 export async function listMemoryCandidates(offset = 0) {
   const result = await requestResult<{ entries: MemoryCandidate[]; next_offset: number | null }>("GET", `${path}?offset=${offset}`);
   if (!result.ok) throw new Error(result.error);

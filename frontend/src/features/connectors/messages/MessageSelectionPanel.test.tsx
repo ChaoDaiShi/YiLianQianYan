@@ -17,6 +17,11 @@ describe("selected message inspector", () => {
     expect(html).toContain("从这条回答新建分支");
     expect(html).toContain('aria-label="关闭消息详情"');
   });
+  it("keeps the last words of the assistant answer and reasoning together", () => {
+    const html = render({ ...message, content: "请核对运行结果。", reasoning: "先分析输入条件。" });
+    expect(html).toContain('<span class="markdown-line-tail">结果。</span>');
+    expect(html).toContain('<span class="markdown-line-tail">条件。</span>');
+  });
   it("does not attribute turn-level model reasoning to a user message", () => {
     const html = render({ ...message, id: "question-1", role: "user", content: "The actual question" });
     expect(html).toContain("The actual question");

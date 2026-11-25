@@ -24,11 +24,12 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::app::state::DiscoveredSubagent;
+use crate::safety::subject::ToolInvocation;
 use crate::safety::{
     DescriptorError, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
     ToolSecurityDescriptor,
 };
-use crate::tools::trait_def::{RiskLevel, Tool, ToolResult};
+use crate::tools::trait_def::{RiskLevel, Tool, ToolExecutionContext, ToolResult};
 
 /// Maximum length of the final exposed tool name.
 const MAX_EXPOSED_SUBAGENT_NAME_LEN: usize = 64;
@@ -47,6 +48,7 @@ pub(crate) trait SubagentExecutor: Send + Sync {
         spec: &SubagentExecutionSpec,
         task: &str,
         handoff: Option<&crate::agent::delegation::DelegationRequest>,
+        invocation: Option<&ToolInvocation>,
     ) -> ToolResult;
 }
 
@@ -384,6 +386,24 @@ impl Tool for SubagentToolAdapter {
     /// execution spec is always built from the adapter's trusted binding, never
     /// from extra LLM arguments.
     async fn execute(&self, args: serde_json::Value) -> ToolResult {
+        self.execute_task(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        context: &ToolExecutionContext,
+    ) -> ToolResult {
+        self.execute_task(args, context.invocation()).await
+    }
+}
+
+impl SubagentToolAdapter {
+    async fn execute_task(
+        &self,
+        args: serde_json::Value,
+        invocation: Option<&ToolInvocation>,
+    ) -> ToolResult {
         let task = match args.get("task").and_then(|v| v.as_str()) {
             Some(task) => task.trim(),
             None => return ToolResult::error("Subagent task is missing or empty"),
@@ -424,7 +444,7 @@ impl Tool for SubagentToolAdapter {
         };
 
         executor
-            .execute_subagent(&spec, task, handoff.as_ref())
+            .execute_subagent(&spec, task, handoff.as_ref(), invocation)
             .await
     }
 }
@@ -681,6 +701,7 @@ mod tests {
             spec: &SubagentExecutionSpec,
             task: &str,
             handoff: Option<&crate::agent::delegation::DelegationRequest>,
+            _invocation: Option<&ToolInvocation>,
         ) -> ToolResult {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             *self.seen_name.lock().unwrap() = Some(spec.name.clone());

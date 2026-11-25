@@ -37,7 +37,7 @@ pub struct NativeSoftwareHost {
     active_changes: AtomicUsize,
     dock_sync_pending: AtomicBool,
     embedding_paused: AtomicBool,
-    #[cfg(all(debug_assertions, feature = "native-software-fixture"))]
+    #[cfg(all(debug_assertions, feature = "native-browser-fixture"))]
     dispatch_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
 }
 struct NativeChange<'a>(&'a AtomicUsize);
@@ -72,7 +72,7 @@ impl NativeSoftwareHost {
             active_changes: AtomicUsize::new(0),
             dock_sync_pending: AtomicBool::new(false),
             embedding_paused: AtomicBool::new(false),
-            #[cfg(all(debug_assertions, feature = "native-software-fixture"))]
+            #[cfg(all(debug_assertions, feature = "native-browser-fixture"))]
             dispatch_pause: Mutex::new(None),
         }
     }
@@ -154,7 +154,7 @@ impl NativeSoftwareHost {
         self.embedding_paused.store(true, Ordering::SeqCst);
         self.restore_embedded()
     }
-    #[cfg(all(debug_assertions, feature = "native-software-fixture"))]
+    #[cfg(all(debug_assertions, feature = "native-browser-fixture"))]
     pub fn fixture_pause_next_control(
         &self,
         reached: std::sync::mpsc::Sender<()>,
@@ -163,7 +163,7 @@ impl NativeSoftwareHost {
         *self.dispatch_pause.lock().expect("fixture dispatch lock") = Some((reached, resume));
     }
     fn before_dispatch(&self) -> Result<(), SoftwareError> {
-        #[cfg(all(debug_assertions, feature = "native-software-fixture"))]
+        #[cfg(all(debug_assertions, feature = "native-browser-fixture"))]
         if let Some((reached, resume)) = self
             .dispatch_pause
             .lock()

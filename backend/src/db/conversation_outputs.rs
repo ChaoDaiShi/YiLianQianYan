@@ -13,6 +13,7 @@ const SCHEMA: ProductMigrationSpec = ProductMigrationSpec::new(1051, "1051_conve
 pub struct ConversationOutput {
     pub id: String,
     pub conversation_id: String,
+    pub tool_call_id: String,
     pub kind: String,
     pub title: String,
     pub source_tool: String,
@@ -156,9 +157,10 @@ fn row_output(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConversationOutput> {
         block_index: row.get(13)?,
         version: row.get(14)?,
         previous_output_id: row.get(15)?,
+        tool_call_id: row.get(16)?,
     })
 }
-const SELECT: &str = "SELECT id,conversation_id,kind,title,source_tool,profile_id,source_url,status,resource_id,error,created_at,updated_at,source_message_id,block_index,version,previous_output_id FROM conversation_outputs";
+const SELECT: &str = "SELECT id,conversation_id,kind,title,source_tool,profile_id,source_url,status,resource_id,error,created_at,updated_at,source_message_id,block_index,version,previous_output_id,tool_call_id FROM conversation_outputs";
 
 impl Database {
     pub fn initialize_conversation_outputs(&self) -> Result<(), rusqlite::Error> {

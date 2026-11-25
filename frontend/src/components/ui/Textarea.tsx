@@ -37,11 +37,8 @@ export default function Textarea({
         aria-invalid={error ? "true" : undefined}
         aria-describedby={describedBy}
         className={cn(
-          "ui-textarea min-h-[80px] w-full resize-y rounded-[var(--radius-md)] border bg-[var(--surface-solid)] px-3 py-2 text-[var(--text)] transition-colors duration-[var(--motion-fast)]",
-          error
-            ? "border-[var(--danger)] focus:border-[var(--danger)] focus:ring-[var(--danger-soft)]"
-            : "border-[var(--border-soft)] focus-ring-token focus:border-[var(--accent-primary)]",
-          "placeholder:text-[var(--text-secondary)] focus:outline-none",
+          "ui-textarea min-h-[80px] w-full resize-y rounded-[var(--radius-md)] border px-3 py-2 text-[var(--text)] placeholder:text-[var(--text-secondary)]",
+          error ? "border-[var(--danger)]" : "border-[var(--border-soft)]",
           className
         )}
         {...props}

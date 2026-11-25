@@ -79,7 +79,9 @@ export default function MemoryCandidateReview({ onViewRelationship }: { onViewRe
   function select(candidate: MemoryCandidate) {
     setActionError("");
     setSelected(candidate);
-    setDraft({ content: candidate.content, category: candidate.category, scope: candidate.workspace_id ? "workspace" : candidate.source_conversation_id ? "conversation" : "profile", ...(candidate.relationship ? { relationship: candidate.relationship } : {}) });
+    const scope = candidate.source_kind === "user_message" && candidate.category === "preference" && candidate.source_conversation_id
+      ? "conversation" : candidate.workspace_id ? "workspace" : candidate.source_conversation_id ? "conversation" : "profile";
+    setDraft({ content: candidate.content, category: candidate.category, scope, ...(candidate.relationship ? { relationship: candidate.relationship } : {}) });
   }
 
   async function decide(accept: boolean) {

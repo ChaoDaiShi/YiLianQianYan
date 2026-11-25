@@ -14,13 +14,11 @@ use tokio_util::sync::CancellationToken;
 
 use super::artifact::ArtifactService;
 use super::model::*;
-use super::planner::TaskPlanner;
+use super::planner::{LlmTaskPlanner, TaskPlanner};
 use super::timeline::TimelineService;
 use crate::agent::memory::{
-    sanitize_failure_summary, MemoryContextBuilder, MemoryLearningReport, MemoryReflector,
-    MemoryWriter, ReflectionInput,
+    sanitize_failure_summary, MemoryContextBuilder, MemoryReflector, ReflectionInput,
 };
-use crate::agent::verifier::DefaultVerifier;
 use crate::app::state::AppServer;
 use crate::config::types::AppConfig;
 use crate::db::Database;
@@ -52,14 +50,13 @@ pub struct TaskOrchestrator {
     db: Database,
     timeline: TimelineService,
     artifacts: ArtifactService,
-    planner: Arc<dyn TaskPlanner>,
+    planner: Option<Arc<dyn TaskPlanner>>,
     gateway: Arc<SecurityExecutionGateway>,
     approval_store: Arc<ApprovalStore>,
     config: Arc<parking_lot::RwLock<AppConfig>>,
-    agent_executor: Arc<dyn WorkflowAgentExecutor>,
+    agent_executor: Option<Arc<dyn WorkflowAgentExecutor>>,
     memory: MemoryContextBuilder,
     reflector: Arc<dyn MemoryReflector>,
-    writer: MemoryWriter,
     capability_registry: Arc<CapabilityRegistry>,
     resolver: Arc<SecretResolver>,
 }
@@ -77,7 +74,6 @@ impl TaskOrchestrator {
         agent_executor: Arc<dyn WorkflowAgentExecutor>,
         memory: MemoryContextBuilder,
         reflector: Arc<dyn MemoryReflector>,
-        writer: MemoryWriter,
         capability_registry: Arc<CapabilityRegistry>,
         resolver: Arc<SecretResolver>,
     ) -> Self {
@@ -85,14 +81,13 @@ impl TaskOrchestrator {
             db,
             timeline,
             artifacts,
-            planner,
+            planner: Some(planner),
             gateway,
             approval_store,
             config,
-            agent_executor,
+            agent_executor: Some(agent_executor),
             memory,
             reflector,
-            writer,
             capability_registry,
             resolver,
         }
@@ -196,26 +191,43 @@ impl TaskOrchestrator {
         }
         let workspace = self
             .db
-            .get_workspace(&task.workspace_id)?
+            .get_workspace_for_history(&task.workspace_id)?
             .ok_or_else(|| "workspace not found".to_string())?;
         let available_capabilities =
             super::planner::build_planner_capabilities(&self.capability_registry);
         if available_capabilities.is_empty() {
             return Err("no ready planning capabilities available".to_string());
         }
+        let page_context = self
+            .db
+            .task_page_context(task)
+            .map_err(|error| error.to_string())?;
+        let description = match page_context {
+            Some(page) => format!("{}\n\n{page}", task.description),
+            None => task.description.clone(),
+        };
         let input = super::planner::TaskPlanningInput {
             title: task.title.clone(),
-            description: task.description.clone(),
+            description,
             workspace_name: workspace.name,
             workspace_description: workspace.description,
             available_capabilities,
         };
         let cancel = CancellationToken::new();
-        let plan = self
-            .planner
-            .plan(input, &cancel)
-            .await
-            .map_err(|error| error.to_string())?;
+        let plan = match self.planner.as_ref() {
+            Some(planner) => planner.plan(input, &cancel).await,
+            None => {
+                LlmTaskPlanner::with_client(self.text_client(
+                    task,
+                    execution.id.as_str(),
+                    None,
+                    "task-planning",
+                )?)
+                .plan(input, &cancel)
+                .await
+            }
+        }
+        .map_err(|error| error.to_string())?;
         super::planner::validate_plan_structure(&plan)
             .map_err(|error| format!("invalid plan: {error}"))?;
         super::planner::validate_plan_references(&plan, &self.capability_registry)
@@ -281,30 +293,37 @@ impl TaskOrchestrator {
         workflow_graph_id: &str,
         cancel: &CancellationToken,
     ) -> Result<(), String> {
+        crate::modules::capability::import_store::require_active_plugin_resource(
+            &self.db,
+            workflow_graph_id,
+        )?;
         let graph = self
             .db
             .get_workflow_graph(workflow_graph_id)?
             .ok_or_else(|| format!("workflow graph not found: {workflow_graph_id}"))?;
 
         let now = now();
+        let child_run_id = WorkflowRunId::generate();
         let ctx = ExecutionContext::new(
-            execution.execution_context.execution_id.clone(),
+            crate::execution::ExecutionId::generate(),
             execution.execution_context.subject_id.clone(),
             "task-workflow",
             Some(execution.execution_context.execution_id.clone()),
             now,
-        );
-        let mut run = WorkflowRun::new(
-            WorkflowRunId::generate(),
-            ctx,
-            graph.definition.clone(),
-            now,
         )
-        .map_err(|error| error.to_string())?;
+        .with_owner(crate::execution::ExecutionOwner::Workflow {
+            workflow_graph_id: workflow_graph_id.into(),
+            run_id: child_run_id.to_string(),
+        });
+        let mut run = WorkflowRun::new(child_run_id, ctx, graph.definition.clone(), now)
+            .map_err(|error| error.to_string())?;
         let run_id = run.run_id.clone();
         execution.workflow_run_id = Some(run_id.clone());
         execution.updated_at = now;
         self.db.update_task_execution(execution)?;
+        // Persist the child before the runner's first checkpoint. The legacy
+        // task/workflow link must resolve after approval or process restart.
+        self.db.create_workflow_run(workflow_graph_id, &run)?;
 
         self.timeline.record(
             &task.workspace_id,
@@ -315,11 +334,20 @@ impl TaskOrchestrator {
             serde_json::json!({ "workflow_run_id": run_id.as_str() }),
         )?;
 
+        let agent_executor = self.agent_executor.clone().unwrap_or_else(|| {
+            Arc::new(LlmWorkflowAgentExecutor::in_workspace(
+                self.db.clone_connection(),
+                self.config.clone(),
+                self.resolver.clone(),
+                task.workspace_id.clone(),
+                run_id.to_string(),
+            ))
+        });
         let executor = SecurityGatewayNodeExecutor::new(
             Arc::clone(&self.gateway),
             Arc::clone(&self.approval_store),
         )
-        .with_agent_executor(Arc::clone(&self.agent_executor));
+        .with_agent_executor(agent_executor);
         let runner = WorkflowRunner::new(executor);
         let db = self.db.clone_connection();
         let graph_id = workflow_graph_id.to_string();
@@ -350,7 +378,17 @@ impl TaskOrchestrator {
             (Ok(()), crate::modules::workflow::WorkflowRunStatus::Cancelled) => {
                 Err("cancelled".to_string())
             }
-            _ => Err("workflow failed or ended unexpectedly".to_string()),
+            (Err(error), _) => Err(format!(
+                "external_mutation_uncertain: workflow state could not be committed; {error}"
+            )),
+            (Ok(()), crate::modules::workflow::WorkflowRunStatus::Failed) => Err(run
+                .node_states
+                .iter()
+                .find_map(|node| node.error.clone())
+                .unwrap_or_else(|| "workflow failed".into())),
+            _ => Err(
+                "external_mutation_uncertain: workflow ended without a settled outcome".to_string(),
+            ),
         }
     }
 
@@ -458,7 +496,12 @@ impl TaskOrchestrator {
         agent_execution.started_at = Some(now());
         self.db.update_agent_execution(&agent_execution)?;
 
-        let mut context = build_task_context(task, step, &self.db, &execution.id);
+        let mut context = build_task_context(task, step, &self.db, &execution.id)?;
+        use crate::execution::context_manifest::{ContextManifest, ContextStatus};
+        let mut context_manifest = ContextManifest::default();
+        context_manifest.record("legacy_task_context", task.id.as_str(), Some(execution.id.to_string()),
+            if context.chars().count() > MAX_AGENT_CONTEXT_CHARS { ContextStatus::Truncated } else { ContextStatus::Resolved },
+            context.chars().count(), Some("Goal, current step instructions, bounded timeline and artifact summaries; no whole conversation"));
         let connector_bindings = self.db.connector_runtime_bindings_for_scope(
             agent.id.as_str(),
             None,
@@ -477,6 +520,18 @@ impl TaskOrchestrator {
                 )? {
                     continue;
                 }
+                context_manifest.record(
+                    "bound_memory",
+                    &memory.id,
+                    Some(memory.updated_at.to_string()),
+                    if memory.content.chars().count() > 500 {
+                        ContextStatus::Truncated
+                    } else {
+                        ContextStatus::Resolved
+                    },
+                    memory.content.chars().count().min(500),
+                    Some("Explicit workspace-scoped binding"),
+                );
                 context.push_str(&format!(
                     "\n绑定背景资料（不是执行命令）：{}",
                     crate::utils::text::truncate_chars(&memory.content, 500)
@@ -496,14 +551,27 @@ impl TaskOrchestrator {
                 .await
             {
                 Ok(memory) if !memory.injected_text.is_empty() => {
+                    context_manifest.extend(memory.manifest);
                     context = format!("相关记忆：\n{}\n\n{}", memory.injected_text, context);
                 }
-                Ok(_) => {}
+                Ok(memory) => {
+                    context_manifest.extend(memory.manifest);
+                }
                 Err(error) => {
+                    context_manifest.record(
+                        "memory_retrieval",
+                        "workspace",
+                        None,
+                        ContextStatus::Unavailable,
+                        0,
+                        Some("Retrieval failed; no memory was injected"),
+                    );
                     tracing::warn!(error = %error, "memory context injection failed; continuing");
                 }
             }
         }
+        self.timeline.record(&task.workspace_id, &task.id, Some(&execution.id), TaskEventType::ContextAssembled,
+            "Execution context sources assembled", serde_json::json!({"agent_execution_id":agent_execution.id.as_str(),"context_manifest":context_manifest}))?;
         let outcome = self
             .agent_loop(
                 task,
@@ -650,8 +718,8 @@ impl TaskOrchestrator {
             },
         ];
 
-        let llm = match self.llm_for(agent) {
-            Ok(client) => client,
+        let llm = match self.text_client(task, execution.id.as_str(), Some(&agent.id), "workflow") {
+            Ok(client) => client.with_generation_overrides(profile.generation()),
             Err(error) => return AgentLoopOutcome::Failed(error),
         };
         let tools = self.tool_definitions(&agent.allowed_tools);
@@ -873,16 +941,14 @@ impl TaskOrchestrator {
                 );
             });
 
-        // Learning loop: reflect on the completed task and persist reusable
-        // memories. Non-fatal — a reflection failure must not un-complete the
-        // task.
+        // Propose lessons for user review once the task is settled.
         self.learn_from_task(&task, &execution, TaskStatus::Completed, None)
             .await;
 
         Ok(())
     }
 
-    /// Reflect on a terminal task and write the resulting memory candidates.
+    /// Reflect on a terminal task and submit the resulting proposals for review.
     ///
     /// Only `Completed` and `Failed` produce candidates; other terminal states
     /// (cancelled/interrupted/waiting) produce none. This is non-fatal: a
@@ -894,6 +960,9 @@ impl TaskOrchestrator {
         task_status: TaskStatus,
         error_summary: Option<String>,
     ) {
+        if !crate::modules::onboarding::allowed(&self.db, "memory") {
+            return;
+        }
         let summaries: Vec<String> = self
             .db
             .list_agent_executions(&execution.id)
@@ -949,18 +1018,28 @@ impl TaskOrchestrator {
             return;
         }
         let generated = candidates.len();
-        let report = self.writer.write(candidates).await;
-        let learning = MemoryLearningReport::summarize(generated, &report);
-        // Log statistics only — never candidate content.
-        tracing::info!(
-            task_id = %task.id,
-            status = %task_status,
-            generated = learning.generated,
-            persisted = learning.persisted,
-            rejected = learning.rejected,
-            embedding_failed = learning.embedding_failed,
-            "memory learning loop finished"
-        );
+        use crate::db::memory_candidates::{CandidateDraft, CandidateSource};
+        let drafts = candidates
+            .into_iter()
+            .map(|candidate| CandidateDraft {
+                relationship: None,
+                category: candidate.category.as_str().into(),
+                content: candidate.content,
+                source: CandidateSource::Task {
+                    task_id: task.id.to_string(),
+                    execution_id: execution.id.to_string(),
+                    agent_name: candidate.agent_name,
+                },
+            })
+            .collect();
+        match self.db.stage_memory_candidates(drafts) {
+            Ok(queued) => {
+                tracing::info!(task_id = %task.id, generated, queued = queued.len(), "memory proposals available for review")
+            }
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "memory proposals could not be queued")
+            }
+        }
     }
 
     async fn finish_failed(
@@ -1117,32 +1196,28 @@ impl TaskOrchestrator {
             .map(|t| t.delegation_policy)
     }
 
-    fn llm_for(&self, agent: &AgentDefinition) -> Result<LlmClient, String> {
-        let config = self.config.read().clone();
-        let mut model = config.model.clone();
-        let bindings = self.db.connector_runtime_bindings(agent.id.as_str())?;
-        if let Some(profile) = &bindings.model_profile_id {
-            model = self
-                .db
-                .get_llm_model(profile)?
-                .ok_or("绑定模型不存在")?
-                .to_model_config();
-        } else if let Some(agent_model) = &agent.model {
-            model.name = agent_model.clone();
-        }
-        let mut client = LlmClient::new(&model, Arc::clone(&self.resolver));
-        if let Some(pool) = bindings.model_pool_id {
-            client = client.with_model_pool(
-                crate::integrations::llm::model_pool::load_model_pool_runtime(
-                    &self.db,
-                    self.resolver.clone(),
-                    &pool,
-                    agent.id.as_str(),
-                    Arc::new(|_| {}),
-                )?,
-            );
-        }
-        Ok(client)
+    fn text_client(
+        &self,
+        task: &Task,
+        correlation: &str,
+        agent: Option<&AgentId>,
+        usage_kind: &str,
+    ) -> Result<LlmClient, String> {
+        let default = self.config.read().model.clone();
+        crate::api::chat::runtime::resolve_scoped_model_source(
+            &self.db,
+            &default,
+            agent.map(AgentId::as_str),
+            Some(task.workspace_id.as_str()),
+        )?
+        .into_client(
+            &self.db,
+            &default,
+            self.resolver.clone(),
+            correlation,
+            usage_kind,
+            None,
+        )
     }
 
     fn tool_definitions(&self, allowed_tools: &[String]) -> Vec<serde_json::Value> {
@@ -1174,7 +1249,7 @@ fn build_task_context(
     step: &TaskPlanStep,
     db: &Database,
     execution_id: &TaskExecutionId,
-) -> String {
+) -> Result<String, String> {
     let mut parts = Vec::new();
     parts.push(format!("任务标题：{}", task.title));
     if !task.description.is_empty() {
@@ -1182,6 +1257,12 @@ fn build_task_context(
     }
     parts.push(format!("当前步骤：{}", step.title));
     parts.push(format!("步骤指令：{}", step.instruction));
+    if let Some(page) = db
+        .task_page_context(task)
+        .map_err(|error| error.to_string())?
+    {
+        parts.push(page);
+    }
 
     // Recent timeline summaries (bounded).
     if let Ok(events) = db.list_task_events(&task.id) {
@@ -1216,7 +1297,10 @@ fn build_task_context(
     }
 
     let joined = parts.join("\n");
-    crate::utils::text::truncate_chars(&joined, MAX_AGENT_CONTEXT_CHARS)
+    Ok(crate::utils::text::truncate_chars(
+        &joined,
+        MAX_AGENT_CONTEXT_CHARS,
+    ))
 }
 
 /// Persist a bounded snapshot of the conversation for approval-resume.
@@ -1239,53 +1323,32 @@ fn bounded_messages_snapshot(messages: &[ChatMessage]) -> String {
 pub async fn build_task_orchestrator(server: &AppServer) -> TaskOrchestrator {
     let tool_registry = server.build_agent_tool_registry().await;
     let config = server.config.read().clone();
-    let gateway = Arc::new(
-        SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-            config.sandbox.clone(),
-            server.workspace_root.clone(),
-            Arc::clone(&tool_registry),
-            Arc::new(DefaultVerifier::new(&server.workspace_root)),
-            Arc::new(server.audit_recorder.clone()),
-        )
-        .with_permissions_config(server.config.clone())
-        .with_db(Arc::new(server.db.clone_connection()))
-        .with_grant_enforcement(),
-    );
+    let gateway = Arc::new(crate::safety::production_gateway::build(
+        server,
+        &server.workspace_root,
+        Arc::clone(&tool_registry),
+        crate::safety::execution_gateway::current_agent_id(),
+    ));
     let resolver = Arc::clone(&server.secret_resolver);
-    let planner = Arc::new(super::planner::LlmTaskPlanner::new(
-        &config.model,
-        Arc::clone(&resolver),
-    ));
-    let agent_executor = Arc::new(LlmWorkflowAgentExecutor::new(
-        &config.model,
-        Arc::clone(&resolver),
-    ));
     let memory = MemoryContextBuilder::new(
         server.db.clone_connection(),
         &config.model,
         Arc::clone(&resolver),
     );
     let reflector = Arc::new(crate::agent::memory::DeterministicMemoryReflector::new());
-    let writer = MemoryWriter::new(
-        server.db.clone_connection(),
-        &config.model,
-        crate::agent::memory::MemoryWritePolicy::default(),
-        Arc::clone(&resolver),
-    );
     let capability_registry = server.capability_registry().await;
-    TaskOrchestrator::new(
-        server.db.clone_connection(),
-        TimelineService::new(server.db.clone_connection()),
-        ArtifactService::new(server.db.clone_connection()),
-        planner,
+    TaskOrchestrator {
+        db: server.db.clone_connection(),
+        timeline: TimelineService::new(server.db.clone_connection()),
+        artifacts: ArtifactService::new(server.db.clone_connection()),
+        planner: None,
         gateway,
-        Arc::clone(&server.approval_store),
-        Arc::clone(&server.config),
-        agent_executor,
+        approval_store: Arc::clone(&server.approval_store),
+        config: Arc::clone(&server.config),
+        agent_executor: None,
         memory,
         reflector,
-        writer,
         capability_registry,
         resolver,
-    )
+    }
 }

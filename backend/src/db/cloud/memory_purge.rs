@@ -1,4 +1,3 @@
-use crate::modules::cloud::contracts::{RemoteRecord, SyncError};
 use crate::modules::cloud::domain::SyncOperation;
 use rusqlite::{params, OptionalExtension, Transaction};
 
@@ -125,40 +124,4 @@ pub(super) fn handle_remote(
         }
     }
     Ok(true)
-}
-
-pub(super) fn record_accepted_memory_deletion(
-    tx: &rusqlite::Transaction<'_>,
-    remote: &RemoteRecord,
-    now: i64,
-) -> Result<(), SyncError> {
-    if remote.entity_type == "memory" && remote.operation == SyncOperation::Delete {
-        apply_authoritative_deletion(tx, &remote.entity_id, remote.revision, now)?;
-        super::super::memory_purge_journal::record_remote_memory_purge(
-            tx,
-            &remote.entity_id,
-            remote.revision,
-        )?;
-    }
-    Ok(())
-}
-
-pub(super) fn project_remote_entity(
-    tx: &rusqlite::Transaction<'_>,
-    remote: &RemoteRecord,
-    now: i64,
-) -> rusqlite::Result<()> {
-    // Memory deletion is finalized with the authoritative revision and replay
-    // intent once the ordinary sync bookkeeping has succeeded.
-    if remote.entity_type == "memory" && remote.operation == SyncOperation::Delete {
-        return Ok(());
-    }
-    super::projection::apply_remote_entity(
-        tx,
-        &remote.entity_type,
-        &remote.entity_id,
-        remote.operation,
-        remote.payload.as_ref(),
-        now,
-    )
 }

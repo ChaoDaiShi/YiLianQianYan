@@ -44,7 +44,7 @@ export default function ConversationBranchesDialog({family,entries,activeId,onSe
     <Button variant="secondary" disabled={busy||loading||running||!source} onClick={()=>void createBranch()}><Plus size={14}/>{busy?"正在创建…":"新建分支"}</Button>
     <Button disabled={busy} onClick={()=>{onSelect(selected);onClose();}}>打开路径继续</Button>
   </>}>
-    <div className="branch-dialog-intro"><span className="branch-dialog-mark"><GitBranch size={21}/></span><div><h4>{family.title}</h4><p>{paths.length} 条路径 · 每条路径从自己的最新消息继续，历史回答可新建分支</p></div></div>
+    <div className="branch-dialog-intro"><span className="branch-dialog-mark"><GitBranch size={21}/></span><div><h4>{family.title}</h4><p>{paths.length} 条路径</p></div></div>
     {error&&<p className="branch-dialog-error" role="alert">{error}</p>}
     <div className="branch-dialog-layout">
       <nav className="branch-path-list" aria-label="分支路径列表">{paths.map((path,index)=><button type="button" key={path.id} disabled={busy} aria-pressed={selected===path.id} onClick={()=>setSelected(path.id)}><span className="branch-path-heading"><GitBranch size={14}/><strong>{path.id===family.id?"主线":`分支 ${index}`}</strong>{path.id===activeId&&<span className="branch-current"><Check size={12}/>当前</span>}</span><span className="branch-path-title">{path.title}</span><small>{originLabel(path.origin)} · {path.nodes.length} 条新增消息</small></button>)}</nav>

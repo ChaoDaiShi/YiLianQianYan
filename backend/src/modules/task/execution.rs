@@ -243,6 +243,9 @@ pub struct NodeContext {
     pub constraints: Vec<String>,
     #[serde(default)]
     pub acceptance_criteria: Vec<String>,
+    /// Metadata about this attempt's explicit inputs; never grants authority.
+    #[serde(default)]
+    pub manifest: crate::execution::context_manifest::ContextManifest,
 }
 
 impl NodeContext {
@@ -257,7 +260,7 @@ impl NodeContext {
         constraints: Vec<String>,
         acceptance_criteria: Vec<String>,
     ) -> Result<Self, NodeExecutionError> {
-        let context = Self {
+        let mut context = Self {
             goal: goal.into(),
             instructions: instructions.into(),
             resources,
@@ -266,12 +269,17 @@ impl NodeContext {
             capabilities,
             constraints,
             acceptance_criteria,
+            manifest: Default::default(),
         };
         context.validate()?;
+        context.manifest = crate::execution::context_manifest::node_manifest(&context);
         Ok(context)
     }
 
     pub fn validate(&self) -> Result<(), NodeExecutionError> {
+        if !self.manifest.is_bounded() {
+            return Err(NodeExecutionError::ContextTooLarge);
+        }
         if self.goal.chars().count() > MAX_NODE_CONTEXT_GOAL_CHARS
             || self.instructions.chars().count() > MAX_NODE_CONTEXT_INSTRUCTION_CHARS
             || self.dependency_outputs.len() > MAX_NODE_CONTEXT_DEPENDENCY_OUTPUTS
@@ -315,6 +323,18 @@ impl NodeContext {
 
 /// One append-only execution attempt and its independent evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExternalEffectReview {
+    pub outcome: String,
+    pub source: String,
+    pub reviewed_by: String,
+    pub note: String,
+    pub reviewed_at: i64,
+    pub previous_failure_code: Option<String>,
+    pub previous_error: Option<String>,
+}
+
+/// One append-only execution attempt and its independent evidence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NodeExecution {
     pub id: NodeExecutionId,
     pub graph_id: TaskGraphId,
@@ -326,6 +346,8 @@ pub struct NodeExecution {
     pub context: NodeContext,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_review: Option<ExternalEffectReview>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation: Option<ValidationResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -369,6 +391,7 @@ impl NodeExecution {
             executor_ref,
             context,
             output: None,
+            external_review: None,
             validation: None,
             audit_ref: None,
             approval_ref: None,
@@ -445,6 +468,22 @@ impl NodeExecution {
         self.failure_code.as_deref()
     }
 
+    pub(crate) fn record_uncertain_pause(&mut self, now: i64) -> bool {
+        if self.status != NodeExecutionStatus::Cancelled
+            || !matches!(self.failure_code(), None | Some("paused"))
+        {
+            return false;
+        }
+        let code = if self.failure_code() == Some("paused") {
+            "external_mutation_uncertain"
+        } else {
+            "cancelled_external_mutation_uncertain"
+        };
+        self.set_failure(code, "操作已开始，是否已产生外部效果仍需核实；未重新执行。");
+        self.updated_at = now;
+        true
+    }
+
     /// Normalize active attempts on startup. A restarted process has no proof
     /// that the provider kept running, so the outcome remains unknown and is
     /// preserved for review instead of pretending work continued.
@@ -482,6 +521,7 @@ pub fn external_result_is_uncertain(code: Option<&str>) -> bool {
         Some("execution_interrupted")
             | Some("proofloop_budget_exhausted_result_unknown")
             | Some("external_mutation_uncertain")
+            | Some("cancelled_external_mutation_uncertain")
     )
 }
 
@@ -555,6 +595,10 @@ fn transition_allowed(from: NodeExecutionStatus, to: NodeExecutionStatus) -> boo
                 NodeExecutionStatus::Cancelled
             )
             | (NodeExecutionStatus::Running, NodeExecutionStatus::Running)
+            | (
+                NodeExecutionStatus::Running,
+                NodeExecutionStatus::WaitingApproval
+            )
             | (
                 NodeExecutionStatus::Running,
                 NodeExecutionStatus::Validating
@@ -742,5 +786,48 @@ mod tests {
             ValidationStatus::Rejected
         );
         assert_ne!(execution.status, NodeExecutionStatus::Succeeded);
+    }
+
+    #[test]
+    fn integration_workflow_execution_can_suspend_again_but_terminal_attempts_cannot() {
+        let mut attempt = NodeExecution::new(
+            NodeExecutionId::new("repeated-approval").unwrap(),
+            TaskGraphId::new("graph").unwrap(),
+            TaskNodeId::new("node").unwrap(),
+            1,
+            None,
+            context(),
+            1,
+        )
+        .unwrap();
+        for (index, status) in [
+            NodeExecutionStatus::Ready,
+            NodeExecutionStatus::Dispatching,
+            NodeExecutionStatus::WaitingApproval,
+            NodeExecutionStatus::Running,
+            NodeExecutionStatus::WaitingApproval,
+            NodeExecutionStatus::Running,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            attempt.transition(status, index as i64 + 2).unwrap();
+        }
+        for terminal in [NodeExecutionStatus::Cancelled, NodeExecutionStatus::Failed] {
+            let mut closed = attempt.clone();
+            closed.transition(terminal, 10).unwrap();
+            assert!(closed
+                .transition(NodeExecutionStatus::WaitingApproval, 11)
+                .is_err());
+        }
+        attempt
+            .transition(NodeExecutionStatus::Validating, 10)
+            .unwrap();
+        attempt
+            .transition(NodeExecutionStatus::Succeeded, 11)
+            .unwrap();
+        assert!(attempt
+            .transition(NodeExecutionStatus::WaitingApproval, 12)
+            .is_err());
     }
 }

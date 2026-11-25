@@ -1,7 +1,7 @@
 use crate::db::Database;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
-const KEY: &str = "v1.system_preferences.v1";
+pub(crate) const KEY: &str = "v1.system_preferences.v1";
 const NAV: &[&str] = &[
     "connectors",
     "chat",
@@ -146,7 +146,7 @@ impl Preferences {
     }
 }
 
-fn read(conn: &rusqlite::Connection) -> Result<Preferences, String> {
+pub(crate) fn read(conn: &rusqlite::Connection) -> Result<Preferences, String> {
     let raw: Option<String> = conn
         .query_row("SELECT value FROM settings WHERE key=?1", [KEY], |row| {
             row.get(0)

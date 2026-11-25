@@ -1,11 +1,13 @@
 pub mod ai_search;
 pub mod bash;
+pub mod browser;
 pub mod fs;
 pub mod gui_launch;
 pub mod gui_window;
 pub mod http_client;
 pub mod input;
 pub mod mcp;
+pub(crate) mod memory;
 pub mod process;
 pub mod registry;
 pub mod screenshot;

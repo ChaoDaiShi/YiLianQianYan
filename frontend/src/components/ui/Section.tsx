@@ -28,7 +28,7 @@ export default function Section({
   return (
     <section
       className={cn(
-        "rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] transition-[border-color,background-color] duration-[var(--motion-fast)]",
+        "glass-card rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] transition-[border-color,background-color] duration-[var(--motion-fast)]",
         className,
       )}
     >

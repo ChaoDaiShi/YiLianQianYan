@@ -1,4 +1,5 @@
 .knowledge-import-dialog { display: grid; gap: 12px; min-width: 0; }
+.knowledge-import-picker-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .knowledge-import-progress, .knowledge-import-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: .8125rem; }
 .knowledge-import-dialog progress { width: 100%; height: 8px; accent-color: var(--accent-primary); }
 .knowledge-import-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: .75rem; }

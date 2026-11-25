@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{governance_error, MemoryWithSource, StorageApiError};
+use super::{governance_error, storage_error, MemoryWithSource, StorageApiError};
 use crate::{
     app::state::AppServer,
     db::{

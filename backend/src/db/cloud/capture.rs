@@ -325,7 +325,7 @@ pub fn collect_sync_sources(
     let mut sources = Vec::new();
     if policy.sync_conversations {
         let mut statement =
-            transaction.prepare("SELECT id, title, created_at, updated_at FROM conversations")?;
+            transaction.prepare("SELECT id, title, created_at, updated_at FROM conversations WHERE NOT EXISTS(SELECT 1 FROM conversation_lanes WHERE conversation_id=conversations.id)")?;
         let rows = statement.query_map([], |row| {
             Ok(SyncSource {
                 entity_type: "conversation",
@@ -346,7 +346,8 @@ pub fn collect_sync_sources(
     if policy.sync_messages {
         let mut statement = transaction.prepare(
             "SELECT id, conversation_id, role, content, created_at FROM messages
-             WHERE role IN ('user', 'assistant')",
+             WHERE role IN ('user', 'assistant')
+             AND NOT EXISTS(SELECT 1 FROM conversation_lanes WHERE conversation_id=messages.conversation_id)",
         )?;
         let rows = statement.query_map([], |row| {
             Ok(SyncSource {

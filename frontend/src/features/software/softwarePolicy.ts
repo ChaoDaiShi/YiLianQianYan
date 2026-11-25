@@ -27,3 +27,4 @@ export function softwareVisibleViewport(rect: Pick<DOMRect, "x" | "y" | "width" 
  const right = Math.min(rect.x + rect.width, clip.x + clip.width), bottom = Math.min(rect.y + rect.height, clip.y + clip.height);
  return clampSoftwareViewport({x: left, y: top, width: right - left, height: bottom - top});
 }
+

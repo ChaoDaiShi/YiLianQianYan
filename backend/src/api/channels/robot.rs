@@ -68,6 +68,7 @@ async fn save_policy(
 #[derive(Deserialize)]
 struct DirectoryQuery {
     kind: String,
+    group_id: Option<i64>,
 }
 fn string_id(value: &Value) -> Option<String> {
     value
@@ -93,9 +94,19 @@ pub(crate) fn contacts(data: &Value, kind: &str) -> Result<Vec<RobotContact>, St
                 .or_else(|| row.get("peerUin").and_then(string_id))
                 .or_else(|| row.get("peer_uin").and_then(string_id))
                 .ok_or("联系人记录缺少实际 QQ ID")?;
-            let name = ["remark", "group_name", "nickname", "nick", "peerName"]
+            let name_fields: &[&str] = if kind == "members" {
+                &["card", "nickname"]
+            } else {
+                &["remark", "group_name", "nickname", "nick", "peerName"]
+            };
+            let name = name_fields
                 .iter()
-                .find_map(|k| row.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()))
+                .find_map(|k| {
+                    row.get(k)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                })
                 .unwrap_or(&id)
                 .to_string();
             Ok(RobotContact {
@@ -121,21 +132,29 @@ async fn directory(
     {
         return Err(bad("账号已变更，请重新保存读取范围".into()));
     }
-    let action = match query.kind.as_str() {
-        "friends" if policy.read_friends => "get_friend_list",
-        "groups" if policy.read_groups => "get_group_list",
-        "recent" if policy.read_friends && policy.read_groups => "get_recent_contact",
+    let (action, params) = match query.kind.as_str() {
+        "friends" if policy.read_friends => ("get_friend_list", json!({})),
+        "groups" if policy.read_groups => ("get_group_list", json!({})),
+        "recent" if policy.read_friends && policy.read_groups => ("get_recent_contact", json!({})),
+        "members" if policy.read_groups => {
+            let group = query
+                .group_id
+                .filter(|id| *id > 0)
+                .ok_or_else(|| bad("QQ 群号无效".into()))?;
+            if !robot::tools::validate_membership(&server, &channel, "group", &group.to_string())
+                .await
+                .map_err(bad)?
+            {
+                return Err(bad("该目标不在当前账号的群列表中".into()));
+            }
+            ("get_group_member_list", json!({"group_id": group}))
+        }
         _ => return Err(bad("该联系人类型未授权读取".into())),
     };
-    let data = robot::tools::call_action(
-        &server,
-        &channel,
-        action,
-        json!({}),
-        &AtomicBool::new(false),
-    )
-    .await
-    .map_err(|e| error(StatusCode::BAD_GATEWAY, e))?;
+    let data =
+        robot::tools::call_action(&server, &channel, action, params, &AtomicBool::new(false))
+            .await
+            .map_err(|e| error(StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(
         json!({"items":contacts(&data,&query.kind).map_err(|e|error(StatusCode::BAD_GATEWAY,e))?}),
     ))

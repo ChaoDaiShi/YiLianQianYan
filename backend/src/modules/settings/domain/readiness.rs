@@ -92,7 +92,9 @@ pub(crate) async fn build_provider_readiness(
         model: runtime_model.clone(),
         ..config.clone()
     };
-    let (_, model_configured) = chat_source(resolver, &runtime_config).await;
+    let (_, model_credential_configured) = chat_source(resolver, &runtime_config).await;
+    let model_configured = model_credential_configured
+        || matches!(provider.as_str(), "ollama" | "lmstudio" | "llamacpp");
     let (_, stt_configured) = voice_stt_source(resolver, config).await;
     let (_, tts_configured) = voice_tts_source(resolver, config).await;
 
@@ -100,6 +102,8 @@ pub(crate) async fn build_provider_readiness(
         model: ProviderReadinessItem {
             configured: model_configured,
             available: model_configured
+                && (runtime_model.uses_local_chat()
+                    || crate::modules::onboarding::allowed(db, "external_model"))
                 && !provider.trim().is_empty()
                 && !model.trim().is_empty()
                 && valid_provider_url(&runtime_model.base_url)

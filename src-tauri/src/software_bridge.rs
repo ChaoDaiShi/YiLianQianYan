@@ -3,26 +3,6 @@ use crate::software::NativeSoftwareHost;
 use std::sync::Arc;
 use tauri::{Manager, WindowEvent};
 
-fn trusted_app_origin(view: &tauri::Webview) -> Result<(), String> {
-    let url = view.url().map_err(|e| e.to_string())?;
-    let app_origin = url.scheme() == "tauri" && url.host_str() == Some("localhost")
-        || url.scheme() == "http"
-            && url.host_str() == Some("tauri.localhost")
-            && url.port().is_none();
-    let dev_origin = cfg!(debug_assertions)
-        && view
-            .app_handle()
-            .config()
-            .build
-            .dev_url
-            .as_ref()
-            .is_some_and(|dev| dev.origin() == url.origin());
-    if !app_origin && !dev_origin {
-        return Err("Untrusted application origin".into());
-    }
-    Ok(())
-}
-
 pub fn bind(app: &tauri::AppHandle, host: &NativeSoftwareHost) -> Result<(), String> {
     #[cfg(windows)]
     if let Some(window) = app.get_window("main") {
@@ -41,7 +21,7 @@ pub async fn native_software_bind(
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<NativeSoftwareHost>>,
 ) -> Result<(), String> {
-    trusted_app_origin(&view)?;
+    crate::browser::trusted_caller(&view)?;
     if view.label() != "main" {
         return Err("Software mounting belongs to the trusted main workspace".into());
     }
@@ -120,7 +100,7 @@ pub async fn native_software_recognize_crop(
     view: tauri::Webview,
     png: String,
 ) -> Result<String, String> {
-    trusted_app_origin(&view)?;
+    crate::browser::trusted_caller(&view)?;
     if view.label() != "main" {
         return Err("请在主工作台识别选区".into());
     }

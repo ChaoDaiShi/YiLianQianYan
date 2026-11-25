@@ -21,6 +21,8 @@ export type TaskStatus =
 
 export type TaskPriority = "low" | "normal" | "high";
 
+export interface TaskPageSource { page_id: string; revision: number }
+
 export interface Task {
   id: string;
   workspace_id: string;
@@ -33,6 +35,7 @@ export interface Task {
   created_at: number;
   updated_at: number;
   completed_at?: number | null;
+  page_source?: TaskPageSource | null;
 }
 
 export type TaskExecutionStatus =
@@ -165,6 +168,7 @@ export async function createTask(data: {
   priority?: TaskPriority;
   workflow_graph_id?: string;
   agent_team_id?: string;
+  page_source?: TaskPageSource;
 }) {
   return requestResult<Task>("POST", "/api/tasks", data);
 }

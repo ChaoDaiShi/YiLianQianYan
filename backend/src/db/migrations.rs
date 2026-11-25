@@ -80,6 +80,17 @@ impl MigrationSpec {
         }
     }
 
+    fn matches_alternate_line_endings(&self, stored: &str) -> bool {
+        // include_str! keeps checkout line endings. Databases created by both
+        // Windows and LF builds already exist. Preserve their original digest.
+        let alternate = if self.sql.contains("\r\n") {
+            self.sql.replace("\r\n", "\n")
+        } else {
+            self.sql.replace('\n', "\r\n")
+        };
+        format!("{:x}", Sha256::digest(alternate.as_bytes())) == stored
+    }
+
     pub(crate) fn digest(&self) -> String {
         let bytes = Sha256::digest(self.sql.as_bytes());
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -256,7 +267,10 @@ fn apply_migrations(conn: &mut Connection, specs: &[MigrationSpec]) -> rusqlite:
             }
             let requested_digest = spec.digest();
             match existing_digest {
-                Some(existing_digest) if existing_digest != requested_digest => {
+                Some(existing_digest)
+                    if existing_digest != requested_digest
+                        && !spec.matches_alternate_line_endings(&existing_digest) =>
+                {
                     return Err(migration_error(format!(
                         "migration version {} digest mismatch: registered SQL differs from the applied migration",
                         spec.version
@@ -362,6 +376,29 @@ pub(super) fn run_versioned_migrations(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_database_from_a_windows_checkout_accepts_only_the_same_sql() {
+        use super::*;
+        let lf = MigrationSpec::new(
+            1129,
+            "test_eol",
+            MigrationOwner::V1TaskWorld,
+            "CREATE TABLE eol(id INTEGER PRIMARY KEY);\nCREATE INDEX eol_idx ON eol(id);\n",
+        );
+        let crlf = MigrationSpec {
+            sql:
+                "CREATE TABLE eol(id INTEGER PRIMARY KEY);\r\nCREATE INDEX eol_idx ON eol(id);\r\n",
+            ..lf
+        };
+        let mut db = Connection::open_in_memory().unwrap();
+        apply_product_migration(&mut db, &crlf).unwrap();
+        apply_product_migration(&mut db, &lf).unwrap();
+        let changed = MigrationSpec {
+            sql: "CREATE TABLE eol(id TEXT PRIMARY KEY);\n",
+            ..lf
+        };
+        assert!(apply_product_migration(&mut db, &changed).is_err());
+    }
     use super::*;
     use rusqlite::Connection;
 

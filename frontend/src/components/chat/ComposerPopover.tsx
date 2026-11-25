@@ -1,28 +1,80 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { placeFloatingPanel } from "../ui/floatingPanelPosition";
 
 export function ComposerPopover({ label, trigger, disabled, children, className = "" }: {
   label: string; trigger: ReactNode; disabled?: boolean; className?: string; children: (close: () => void) => ReactNode;
 }) {
   const anchor = useRef<HTMLButtonElement>(null);
-  const [position, setPosition] = useState<{ right: number; bottom: number } | null>(null);
-  const close = () => { setPosition(null); anchor.current?.focus(); };
-  useEffect(() => {
-    if (!position) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
-    const onMove = () => setPosition(null);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("resize", onMove);
-    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("resize", onMove); };
-  }, [position]);
+  const panel = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => {
+    setOpen(false);
+    anchor.current?.focus({ preventScroll: true });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open || !anchor.current || !panel.current) return;
+    const button = anchor.current;
+    const dialog = panel.current;
+    const place = () => {
+      const { left, top, side } = placeFloatingPanel(button.getBoundingClientRect(), {
+        width: dialog.offsetWidth, height: dialog.offsetHeight,
+      }, { width: window.innerWidth, height: window.innerHeight });
+      dialog.style.left = `${left}px`;
+      dialog.style.top = `${top}px`;
+      dialog.dataset.side = side;
+    };
+    place();
+    dialog.focus({ preventScroll: true });
+    const resize = new ResizeObserver(place);
+    resize.observe(dialog);
+    resize.observe(button);
+    window.addEventListener("resize", place);
+    const onScroll = (event: Event) => {
+      if (!(event.target instanceof Node && dialog.contains(event.target))) place();
+    };
+    const onOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!button.contains(target) && !dialog.contains(target)) setOpen(false);
+    };
+    window.addEventListener("scroll", onScroll, true);
+    document.addEventListener("pointerdown", onOutsidePointer);
+    return () => {
+      resize.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", onScroll, true);
+      document.removeEventListener("pointerdown", onOutsidePointer);
+    };
+  }, [open, close]);
+
+  const handleKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href], [tabindex]")).filter(
+      element => element.tabIndex >= 0 && !element.matches(":disabled") && element.getClientRects().length > 0,
+    );
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (!first || (event.shiftKey && [first, event.currentTarget].includes(document.activeElement as HTMLElement)) ||
+        (!event.shiftKey && document.activeElement === last)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first)?.focus();
+    }
+  };
+
   return <>
-    <button ref={anchor} type="button" aria-label={label} title={label} aria-haspopup="dialog" aria-expanded={!!position}
-      disabled={disabled} className={`composer-control ${className}`} onClick={() => {
-        if (position) { close(); return; }
-        const rect = anchor.current!.getBoundingClientRect();
-        const width = Math.min(296, window.innerWidth - 24);
-        setPosition({ right: Math.min(Math.max(12, window.innerWidth - rect.right), window.innerWidth - width - 12), bottom: window.innerHeight - rect.top + 8 });
-      }}>{trigger}</button>
-    {position && createPortal(<><button className="composer-popover-backdrop" aria-label="关闭选项" onClick={close} /><div className="composer-popover" role="dialog" aria-label={label} style={position}>{children(close)}</div></>, document.body)}
+    <button ref={anchor} type="button" aria-label={label} title={label} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined}
+      disabled={disabled} className={`composer-control ${className}`} onClick={() => open ? close() : setOpen(true)}>{trigger}</button>
+    {open && createPortal(
+      <div id={id} ref={panel} className="composer-popover" role="dialog" aria-label={label} tabIndex={-1} onKeyDown={handleKey}>{children(close)}</div>,
+      document.body,
+    )}
   </>;
 }

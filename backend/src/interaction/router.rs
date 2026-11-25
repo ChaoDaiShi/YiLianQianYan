@@ -74,6 +74,8 @@ impl InteractionRouter {
 
         if is_conversation_continuation(&utterance)
             || is_conversation_switch(&utterance)
+            || utterance.contains("对话")
+            || utterance.contains("conversation")
             || input.conversational_anchor.is_some()
             || context.conversational_anchor.is_some()
         {
@@ -112,7 +114,7 @@ impl InteractionRouter {
         context: &InteractionContext,
         utterance: &str,
     ) -> TargetResolution {
-        if let Some(explicit_id) = explicit_target_id(utterance, "conversation://") {
+        if let Some(explicit_id) = explicit_target_id(&input.utterance, "conversation://") {
             let exists = context
                 .conversations
                 .iter()
@@ -142,7 +144,9 @@ impl InteractionRouter {
             .conversational_anchor
             .as_ref()
             .or(context.conversational_anchor.as_ref());
-        if is_conversation_continuation(utterance) {
+        if !is_conversation_switch(utterance)
+            && (anchor.is_some() || is_conversation_continuation(utterance))
+        {
             return anchor.map_or_else(
                 || TargetResolution::Missing {
                     reason: "conversation anchor is missing".to_string(),
@@ -334,6 +338,7 @@ fn task_command(utterance: &str) -> Option<String> {
             | "暂停这个任务"
             | "暂停当前任务"
             | "暂停那个任务"
+            | "先暂停一下"
             | "pause"
             | "pausetask"
     ) {
@@ -356,6 +361,7 @@ fn task_command(utterance: &str) -> Option<String> {
             | "取消这个任务"
             | "取消当前任务"
             | "取消那个任务"
+            | "停止当前任务"
             | "cancel"
             | "canceltask"
     ) {
@@ -387,7 +393,15 @@ fn task_command(utterance: &str) -> Option<String> {
         "task.rerun"
     } else if matches!(
         utterance,
-        "现在做到哪了" | "现在做到哪一步了" | "任务状态" | "当前状态" | "status" | "taskstatus"
+        "现在做到哪了"
+            | "现在做到哪一步了"
+            | "任务状态"
+            | "当前状态"
+            | "现在进度怎么样"
+            | "进度如何"
+            | "任务进度"
+            | "status"
+            | "taskstatus"
     ) {
         "task.status"
     } else if matches!(
@@ -503,10 +517,21 @@ fn is_conversation_continuation(utterance: &str) -> bool {
 }
 
 fn is_conversation_switch(utterance: &str) -> bool {
-    utterance.contains("对话")
-        || utterance.contains("conversation")
-        || utterance.starts_with("切到")
-        || utterance.starts_with("切换到")
+    let request = utterance
+        .strip_prefix("请")
+        .or_else(|| utterance.strip_prefix("帮我"))
+        .unwrap_or(utterance);
+    [
+        "切到",
+        "切换到",
+        "切换对话",
+        "切换会话",
+        "switchto",
+        "switchconversation",
+    ]
+    .iter()
+    .any(|prefix| request.starts_with(prefix))
+        || (request.starts_with("打开") && (request.ends_with("对话") || request.ends_with("会话")))
 }
 
 fn is_graph_proposal(utterance: &str) -> bool {

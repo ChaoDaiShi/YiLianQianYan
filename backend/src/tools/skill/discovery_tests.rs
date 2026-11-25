@@ -280,3 +280,79 @@ async fn unsupported_host_skill_is_browseable_but_not_advertised_or_loaded_for_e
         "external_host"
     );
 }
+
+#[test]
+fn local_browser_fixture_discovery_never_includes_global_sources() {
+    let fixture = Fixture::new();
+    fixture.skill("bundle/code-reviewer", "# Bundled fixture reviewer");
+    fixture.skill("workspace/skills/local-only", "# Fixture workspace skill");
+    fixture.skill("home/.codex/skills/private-user", "# Private user skill");
+    let discovery = SkillDiscovery::discover_local_fixture(
+        fixture.0.join("workspace").to_str().unwrap(),
+        &fixture.0.join("bundle"),
+    );
+    assert!(discovery.get("code-reviewer").is_some());
+    assert!(discovery.get("local-only").is_some());
+    assert!(discovery.get("private-user").is_none());
+    assert!(discovery.sources().iter().all(|source| source
+        .path
+        .starts_with(fixture.0.join("workspace"))
+        || source.path == fixture.0.join("bundle")));
+    assert!(!discovery
+        .sources()
+        .iter()
+        .any(|source| source.kind == "user" || source.kind == "plugin"));
+}
+
+#[tokio::test]
+async fn native_fixture_initial_refresh_and_agent_registry_keep_explicit_skill_scope() {
+    let fixture = Fixture::new();
+    fixture.skill(
+        "bundle/code-reviewer",
+        "# Owned fixture only reviewer\nA bounded local fixture procedure.",
+    );
+    fixture.skill(
+        "home/skills/should-stay-excluded",
+        "# External configured decoy",
+    );
+    let runtime = std::sync::Arc::new(crate::browser::BrowserRuntime::for_local_fixture(
+        fixture.0.join("bundle"),
+    ));
+    let workspace = fixture.0.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let server = crate::AppServer::new_with_control_session_store_and_browser(
+        &fixture.0.join("state.db"),
+        workspace.to_str().unwrap(),
+        crate::safety::ControlSession::new("local-fixture-skill-discovery-test-0000000000000")
+            .unwrap(),
+        std::sync::Arc::new(crate::integrations::secret::InMemorySecretStore::new()),
+        runtime,
+    )
+    .unwrap();
+    assert_eq!(server.skill_discovery.read().all().len(), 1);
+    let initial = server
+        .tool_registry
+        .get("load_skill")
+        .unwrap()
+        .execute(serde_json::json!({"name":"code-reviewer"}))
+        .await;
+    assert!(initial.ok);
+    assert!(initial.content.contains("Owned fixture only reviewer"));
+    server.config.write().skills.directories =
+        vec![fixture.0.join("home/skills").to_string_lossy().into_owned()];
+    server.refresh_skill_discovery();
+    assert!(server
+        .skill_discovery
+        .read()
+        .get("should-stay-excluded")
+        .is_none());
+    assert_eq!(server.skill_discovery.read().all().len(), 1);
+    let registry = server.build_agent_tool_registry().await;
+    let rebuilt = registry
+        .get("load_skill")
+        .unwrap()
+        .execute(serde_json::json!({"name":"code-reviewer"}))
+        .await;
+    assert!(rebuilt.ok);
+    assert!(rebuilt.content.contains("Owned fixture only reviewer"));
+}

@@ -12,6 +12,7 @@ pub struct GoalRef {
 
 #[derive(Clone)]
 pub struct ExecutionScope {
+    pub owner: Option<crate::execution::ExecutionOwner>,
     pub cancel: CancellationToken,
     pub budget: Option<Arc<SharedExecutionBudget>>,
     pub handoff_id: Option<String>,
@@ -19,6 +20,18 @@ pub struct ExecutionScope {
     pub goal_version: Option<u32>,
     pub evidence_ids: Vec<String>,
     pub deadline: Option<tokio::time::Instant>,
+}
+impl ExecutionScope {
+    /// Explicit execution provenance replaces overloading a ProofLoop goal id
+    /// with an automation id. Legacy goal/handoff callers retain their limits.
+    pub fn is_bounded(&self) -> bool {
+        self.goal_id.is_some()
+            || self.handoff_id.is_some()
+            || self
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.requires_bounded_accounting())
+    }
 }
 tokio::task_local! { pub static EXECUTION_SCOPE: ExecutionScope; }
 pub fn current_scope() -> Option<ExecutionScope> {
@@ -137,4 +150,39 @@ pub struct DelegationResult {
     pub model_calls: u32,
     pub total_tokens: Option<u64>,
     pub elapsed_ms: u64,
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    #[test]
+    fn integration_personal_owner_keeps_strict_budget_without_a_proofloop_goal() {
+        let mut scope = ExecutionScope {
+            owner: Some(crate::execution::ExecutionOwner::PersonalDelegation {
+                automation_id: "delegation".into(),
+                occurrence_id: "round".into(),
+                conversation_id: "chat".into(),
+            }),
+            cancel: CancellationToken::new(),
+            budget: None,
+            handoff_id: None,
+            goal_id: None,
+            goal_version: None,
+            evidence_ids: Vec::new(),
+            deadline: None,
+        };
+        assert!(scope.is_bounded());
+        assert!(scope.goal_id.is_none());
+        scope.owner = Some(crate::execution::ExecutionOwner::Conversation {
+            conversation_id: "chat".into(),
+        });
+        assert!(!scope.is_bounded());
+        scope.handoff_id = Some("child".into());
+        assert!(scope.is_bounded());
+        scope.handoff_id = None;
+        scope.goal_id = Some("existing-proofloop".into());
+        scope.goal_version = Some(1);
+        assert!(scope.is_bounded());
+    }
 }

@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
+  cacheDir: process.env.YILIAN_E2E_VITE_CACHE_DIR,
   server: {
     port: 1420,
     strictPort: true,

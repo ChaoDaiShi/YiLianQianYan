@@ -43,13 +43,11 @@ export default function Select({
             aria-describedby={describedBy}
             aria-invalid={invalid}
             className={cn(
-              "ui-select w-full appearance-none rounded-[var(--radius-md)] border bg-[var(--surface-solid)] text-[var(--text)] transition-[border-color,box-shadow] duration-[var(--motion-fast)]",
+              "ui-select w-full appearance-none rounded-[var(--radius-md)] border text-[var(--text)]",
+              "min-w-0 text-ellipsis",
               size === "sm" ? "h-8 px-2.5 pr-8 text-xs" : "h-10 px-3 pr-9 text-sm",
-              invalid
-                ? "border-[var(--danger)] focus:border-[var(--danger)] focus:ring-2 focus:ring-[var(--danger-soft)]"
-                : "border-[var(--border-soft)] focus:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--focus-ring-soft)]",
-              disabled && "cursor-not-allowed opacity-50 bg-[var(--surface-muted)]",
-              "focus:outline-none",
+              invalid ? "border-[var(--danger)]" : "border-[var(--border-soft)]",
+              disabled && "cursor-not-allowed opacity-50",
               className
             )}
             {...props}

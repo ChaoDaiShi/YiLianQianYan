@@ -5,18 +5,20 @@ import { createMemory, deleteMemoryActivity, listMemoryActivity, type MemoryActi
 import { Badge, Button, ConfirmDialog, EmptyState, ErrorState, Input, Modal, Select, Textarea } from "../../components/ui";
 import { useMemoryStore } from "../../stores/memoryStore";
 import { MEMORY_CATEGORY_OPTIONS } from "./memoryCenterModel";
+import { stageCompanionFeedback } from "./memoryCandidateApi";
 const activityTime = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" });
 
 const actionLabel: Record<MemoryActivity["kind"], string> = {
   chat_message: "发送消息",
+  automation_message: "自动委托输入",
   memory_created: "添加记忆",
   memory_edited: "更新记忆",
   memory_withdrawn: "撤回记忆",
   memory_deleted: "永久清除记忆",
 };
-const originLabel = { user_message: "用户原话", manual: "用户确认", auto: "AI 提取 · 待核对", document: "资料导入" };
+const originLabel = { user_message: "用户原话", automation_message: "委托运行", manual: "用户确认", auto: "AI 提取 · 待核对", document: "资料导入" };
 
-export default function MemoryActivityView({ recent, onPromoted, onPurged }: { recent: boolean; onPromoted: () => void; onPurged: (id: string) => void }) {
+export default function MemoryActivityView({ recent, onPromoted, onPurged, onReview }: { recent: boolean; onPromoted: () => void; onPurged: (id: string) => void; onReview: () => void }) {
   const [entries, setEntries] = useState<MemoryActivity[]>([]);
   const [next, setNext] = useState<number | null>(null);
   const [pending, setPending] = useState(true);
@@ -28,6 +30,8 @@ export default function MemoryActivityView({ recent, onPromoted, onPurged }: { r
   const [promoting, setPromoting] = useState(false);
   const [promotionError, setPromotionError] = useState("");
   const [query, setQuery] = useState("");
+  const [feedback, setFeedback] = useState<{ id: string; message: string; error: boolean } | null>(null);
+  const [stagingFeedback, setStagingFeedback] = useState(false);
   const request = useRef(0);
 
   const load = useCallback(async (offset = 0) => {
@@ -92,6 +96,19 @@ export default function MemoryActivityView({ recent, onPromoted, onPurged }: { r
     }
   }
 
+  async function stageFeedback(id: string) {
+    setStagingFeedback(true);
+    setFeedback(null);
+    try {
+      const {candidate_ids} = await stageCompanionFeedback(id);
+      setFeedback({id, message: candidate_ids.length ? "反馈候选已提交，审阅后才会用于对话。" : "没有新增候选。", error: false});
+    } catch (cause) {
+      setFeedback({id, message: cause instanceof Error ? cause.message : String(cause), error: true});
+    } finally {
+      setStagingFeedback(false);
+    }
+  }
+
   function close() {
     if (promoting) return;
     setPromotion(null);
@@ -124,7 +141,8 @@ export default function MemoryActivityView({ recent, onPromoted, onPurged }: { r
           <Button loading={promoting} disabled={!promotion.content.trim()} onClick={() => void promote()}>保存长期记忆</Button>
         </> : <>
           {!recent && open && (open.removable || open.memory_id) && <Button variant="secondary" onClick={() => { setRemoveError(""); setRemoving(open); }}><Trash2 size={15} />{open.memory_id ? "永久清除记忆" : "清除底层记录"}</Button>}
-          {recent && open?.conversation_id && <Button onClick={() => { setPromotionError(""); setPromotion({ content: open.content ?? "", category: "fact" }); }}>保存为长期记忆</Button>}
+          {recent && open?.kind === "chat_message" && open.conversation_id && <Button onClick={() => { setPromotionError(""); setPromotion({ content: open.content ?? "", category: "fact" }); }}>保存为长期记忆</Button>}
+          {open?.kind === "chat_message" && open.conversation_id && !open.source_removed && <Button variant="secondary" loading={stagingFeedback} onClick={() => void stageFeedback(open.id)}>提为反馈候选</Button>}
           <Button variant="secondary" onClick={close}>关闭</Button>
         </>}
       </>}>
@@ -140,6 +158,7 @@ export default function MemoryActivityView({ recent, onPromoted, onPurged }: { r
         </div>
         {open.source_removed && <Badge tone="default">来源对话或消息已移除</Badge>}
         {open.content && <p>{open.content}</p>}
+        {feedback?.id === open.id && <p role={feedback.error ? "alert" : "status"}>{feedback.message}{!feedback.error && <Button variant="ghost" size="sm" onClick={onReview}>查看待审阅候选</Button>}</p>}
         <div className="flex flex-wrap gap-3">
           {open.conversation_id && <Link to={`/chat/${encodeURIComponent(open.conversation_id)}`}>打开来源对话 <ArrowUpRight size={13} /></Link>}
           {open.memory_id && <Link to={`/memory?record=${encodeURIComponent(open.memory_id)}`} onClick={() => setOpen(null)}>查看记忆和历史版本 <ArrowUpRight size={13} /></Link>}

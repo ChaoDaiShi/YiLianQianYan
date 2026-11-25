@@ -54,6 +54,8 @@ pub enum PermissionId {
     SkillLoad,
     #[serde(rename = "agent.plan")]
     AgentPlan,
+    #[serde(rename = "agent.memory.write")]
+    AgentMemoryWrite,
     #[serde(rename = "mcp.invoke")]
     McpInvoke,
     #[serde(rename = "agent.delegate")]
@@ -65,7 +67,7 @@ pub enum PermissionId {
 }
 
 impl PermissionId {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::ShellExecute,
@@ -76,6 +78,7 @@ impl PermissionId {
         Self::DesktopInteract,
         Self::SkillLoad,
         Self::AgentPlan,
+        Self::AgentMemoryWrite,
         Self::McpInvoke,
         Self::AgentDelegate,
         Self::MessagingRead,
@@ -94,6 +97,7 @@ impl PermissionId {
             Self::DesktopInteract => "desktop.interact",
             Self::SkillLoad => "skill.load",
             Self::AgentPlan => "agent.plan",
+            Self::AgentMemoryWrite => "agent.memory.write",
             Self::McpInvoke => "mcp.invoke",
             Self::AgentDelegate => "agent.delegate",
             Self::MessagingRead => "messaging.read",
@@ -109,7 +113,7 @@ impl PermissionId {
             Self::NetworkRequest => Capability::Network,
             Self::DesktopObserve | Self::DesktopInteract => Capability::Desktop,
             Self::SkillLoad => Capability::Skill,
-            Self::AgentPlan | Self::AgentDelegate => Capability::Agent,
+            Self::AgentPlan | Self::AgentMemoryWrite | Self::AgentDelegate => Capability::Agent,
             Self::McpInvoke => Capability::Mcp,
             Self::MessagingRead | Self::MessagingSend => Capability::Messaging,
         }
@@ -127,6 +131,7 @@ impl PermissionId {
             Self::DesktopInteract => Action::Interact,
             Self::SkillLoad => Action::Load,
             Self::AgentPlan => Action::Plan,
+            Self::AgentMemoryWrite => Action::Write,
             Self::McpInvoke => Action::Invoke,
             Self::AgentDelegate => Action::Delegate,
             Self::MessagingRead => Action::Read,

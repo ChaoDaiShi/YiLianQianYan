@@ -149,7 +149,7 @@ export default function PlanComparisonPanel({ draft, onDraftChange, onSelectionI
               .map((mapping) => draft.contract.deliverables.find((item) => item.id === mapping.deliverable_id)?.title || mapping.deliverable_id);
 
             return (
-              <article key={option.candidate_id} className="flex min-w-0 flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface)] p-3" aria-label={title}>
+              <article key={option.candidate_id} className="glass-card flex min-w-0 flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface)] p-3" aria-label={title}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h4 className="truncate text-sm font-semibold text-[var(--text)]">{title}</h4>

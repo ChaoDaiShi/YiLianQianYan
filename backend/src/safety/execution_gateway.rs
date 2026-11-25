@@ -20,10 +20,13 @@ use crate::{
 use super::{
     describe_builtin_tool,
     grant::{AuthorizedResource, GrantDecision, GrantEvaluation, GrantEvaluator},
+    subject::{DelegatedSubject, ToolInvocation},
     AuditError, AuditEventInput, AuditEventType, AuditRecorder, BuiltInRole, DecisionContext,
     DescriptorError, PermissionId, PolicyDecision, PolicyEngine, ResourceDescriptor, ResourceScope,
-    SafetyPolicy, SecuritySubject, ToolSecurityDescriptor, POLICY_VERSION,
+    SafetyPolicy, SecuritySubject, SideEffectKind, ToolSecurityDescriptor, POLICY_VERSION,
 };
+
+mod delegated;
 
 tokio::task_local! {pub static CURRENT_AGENT_ID: String;}
 pub fn current_agent_id() -> Option<String> {
@@ -72,6 +75,8 @@ pub enum SecurityGatewayError {
     InvalidRoleBinding { subject_id: String, role: String },
     #[error("security rule storage unavailable: {0}")]
     AccessRules(String),
+    #[error("requested subject does not match the delegated execution")]
+    DelegatedSubjectMismatch,
 }
 
 pub struct SecurityExecutionGateway {
@@ -88,6 +93,7 @@ pub struct SecurityExecutionGateway {
     /// current grants). Off by default for legacy construction paths + tests.
     grants_enabled: bool,
     agent_context: Option<String>,
+    delegation: Option<DelegatedSubject>,
     managed_process_registry: SharedManagedProcessRegistry,
 }
 
@@ -184,6 +190,7 @@ impl SecurityExecutionGateway {
             db: None,
             grants_enabled: false,
             agent_context: None,
+            delegation: None,
             managed_process_registry,
         }
     }
@@ -205,6 +212,32 @@ impl SecurityExecutionGateway {
         self.agent_context = agent_id;
         self
     }
+
+    pub(crate) fn with_delegation(mut self, delegation: DelegatedSubject) -> Self {
+        self.delegation = Some(delegation);
+        self
+    }
+
+    pub(crate) fn react_subject(&self) -> SecuritySubject {
+        self.delegation
+            .as_ref()
+            .map(|delegation| delegation.subject.clone())
+            .unwrap_or_else(SecuritySubject::local_user)
+    }
+
+    fn invocation_agent_id(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<String>, SecurityGatewayError> {
+        let agent = self.agent_context.clone().or_else(current_agent_id);
+        match (&self.db, agent) {
+            (Some(db), None) => db
+                .connector_agent_for_conversation(conversation_id)
+                .map_err(SecurityGatewayError::AccessRules),
+            (_, agent) => Ok(agent),
+        }
+    }
+
     pub async fn execute_for_agent(
         &self,
         agent_id: &str,
@@ -231,6 +264,19 @@ impl SecurityExecutionGateway {
     /// unrecognised.  There is no fallback — callers must treat the error
     /// as a hard deny.
     pub fn resolve_subject_role(
+        &self,
+        subject: &SecuritySubject,
+    ) -> Result<BuiltInRole, SecurityGatewayError> {
+        if let Some(delegation) = &self.delegation {
+            if &delegation.subject != subject {
+                return Err(SecurityGatewayError::DelegatedSubjectMismatch);
+            }
+            return Ok(BuiltInRole::Restricted);
+        }
+        self.resolve_bound_role(subject)
+    }
+
+    fn resolve_bound_role(
         &self,
         subject: &SecuritySubject,
     ) -> Result<BuiltInRole, SecurityGatewayError> {
@@ -381,6 +427,9 @@ impl SecurityExecutionGateway {
             for resource in &mut context.authorized_resources {
                 if let AuthorizedResource::ChannelMessage {
                     one_shot_approval, ..
+                }
+                | AuthorizedResource::Mcp {
+                    one_shot_approval, ..
                 } = resource
                 {
                     *one_shot_approval = true;
@@ -422,7 +471,12 @@ impl SecurityExecutionGateway {
     where
         F: FnOnce(),
     {
-        self.record_execution_started(request, &context)?;
+        let agent_id = match &self.delegation {
+            Some(delegation) => Some(delegation.subject.subject_id.clone()),
+            None => self.invocation_agent_id(&request.conversation_id)?,
+        };
+        let descriptor = self.resolve_descriptor(request)?;
+        self.record_execution_started(request, &context, &descriptor)?;
         on_execution_start();
         let tool_context = ToolExecutionContext::new_with_resources(
             std::sync::Arc::clone(&self.managed_process_registry),
@@ -430,6 +484,16 @@ impl SecurityExecutionGateway {
             context.authorized_resources.clone(),
         )
         .with_conversation_id(request.conversation_id.clone())
+        .with_invocation(
+            ToolInvocation {
+                subject: request.subject.clone(),
+                agent_id,
+                conversation_id: request.conversation_id.clone(),
+                tool_call_id: request.tool_call_id.clone(),
+                tool_name: request.tool_name.clone(),
+            },
+            self.delegation.clone(),
+        )
         .with_authorization_epoch(authorization_epoch);
         let start_time = std::time::Instant::now();
         let tool_result = match self
@@ -581,6 +645,19 @@ impl SecurityExecutionGateway {
             PolicyDecision::RequireApproval(_) => "require_approval",
             PolicyDecision::Deny(_) => "deny",
         };
+        let mut details = serde_json::json!({
+            "phase": AuditEventType::PolicyDecided.as_str(),
+            "reason": crate::utils::text::truncate_chars(&context.reason, 200),
+        });
+        if let Some(delegation) = &self.delegation {
+            details["delegation"] = serde_json::json!({
+                "handoff_id": delegation.handoff_id,
+                "parent_subject_id": delegation.parent.subject.subject_id,
+                "parent_agent_id": delegation.parent.agent_id,
+                "parent_conversation_id": delegation.parent.conversation_id,
+                "parent_tool_call_id": delegation.parent.tool_call_id,
+            });
+        }
 
         recorder.record(AuditEventInput {
             event_type: AuditEventType::PolicyDecided,
@@ -607,10 +684,7 @@ impl SecurityExecutionGateway {
             decision_status: Some(decision_status.to_string()),
             request: None,
             result: Some(serde_json::json!({ "decision": decision_status })),
-            details: serde_json::json!({
-                "phase": AuditEventType::PolicyDecided.as_str(),
-                "reason": crate::utils::text::truncate_chars(&context.reason, 200),
-            }),
+            details,
             ..Default::default()
         })?;
 
@@ -665,6 +739,7 @@ impl SecurityExecutionGateway {
         &self,
         request: &SecurityExecutionRequest,
         context: &DecisionContext,
+        descriptor: &ToolSecurityDescriptor,
     ) -> Result<(), SecurityGatewayError> {
         self.record_execution_event(
             request,
@@ -672,6 +747,7 @@ impl SecurityExecutionGateway {
             AuditEventType::ExecutionStarted,
             None,
             "started",
+            Some(effect_may_change_state(descriptor)),
         )
     }
 
@@ -687,6 +763,7 @@ impl SecurityExecutionGateway {
             AuditEventType::ExecutionFinished,
             Some(ok),
             if ok { "succeeded" } else { "failed" },
+            None,
         )
     }
 
@@ -697,6 +774,7 @@ impl SecurityExecutionGateway {
         event_type: AuditEventType,
         result_ok: Option<bool>,
         status: &str,
+        effect_may_change_state: Option<bool>,
     ) -> Result<(), SecurityGatewayError> {
         let Some(recorder) = &self.audit_recorder else {
             return Ok(());
@@ -713,6 +791,10 @@ impl SecurityExecutionGateway {
             .map(|permission| permission.as_str().to_string())
             .collect();
 
+        let mut details = serde_json::json!({ "phase": event_type.as_str() });
+        if let Some(effect) = effect_may_change_state {
+            details["effect_may_change_state"] = serde_json::json!(effect);
+        }
         recorder.record(AuditEventInput {
             event_type,
             correlation_id: request.tool_call_id.clone(),
@@ -730,7 +812,7 @@ impl SecurityExecutionGateway {
             decision_status: Some(status.to_string()),
             request: None,
             result: result_ok.map(|ok| serde_json::json!({ "ok": ok })),
-            details: serde_json::json!({ "phase": event_type.as_str() }),
+            details,
             ..Default::default()
         })?;
 
@@ -1005,15 +1087,20 @@ impl SecurityExecutionGateway {
             ));
         }
 
+        let live_config = self
+            .delegation
+            .as_ref()
+            .and(self.permissions_config.as_ref())
+            .map(|config| config.read());
+        let sandbox = live_config
+            .as_ref()
+            .map(|config| &config.sandbox)
+            .unwrap_or(&self.sandbox_config);
         file_paths
             .into_iter()
             .map(|path| {
-                crate::safety::can_write(
-                    &self.sandbox_config,
-                    &self.workspace_root,
-                    Path::new(path),
-                )
-                .map_err(|error| DescriptorError::InvalidDescriptor(error.to_string()))
+                crate::safety::can_write(sandbox, &self.workspace_root, Path::new(path))
+                    .map_err(|error| DescriptorError::InvalidDescriptor(error.to_string()))
             })
             .try_fold(true, |allowed, write_allowed| {
                 write_allowed.map(|write_allowed| allowed && write_allowed)
@@ -1042,6 +1129,20 @@ impl SecurityExecutionGateway {
             resource_scopes,
             assessed_risk.max(final_risk),
         )?;
+        if let Some(db) = &self.db {
+            for permission in &context.requested_permissions {
+                let capability = match permission {
+                    PermissionId::FilesystemRead | PermissionId::FilesystemWrite => "files",
+                    PermissionId::DesktopObserve if request.tool_name == "screenshot" => "screen",
+                    PermissionId::AgentMemoryWrite => "memory",
+                    _ => continue,
+                };
+                if !crate::modules::onboarding::allowed(db, capability) {
+                    context.reason = format!("个人权限设置禁止 {capability}");
+                    return Ok(PolicyDecision::Deny(context));
+                }
+            }
+        }
         let robot_message_scope =
             match robot_message_scope(self.db.as_deref(), request, &descriptor) {
                 Ok(scope) => scope,
@@ -1060,18 +1161,21 @@ impl SecurityExecutionGateway {
             return Ok(PolicyDecision::Deny(context));
         }
 
+        if let Some(delegation) = &self.delegation {
+            return self.evaluate_delegated(request, &descriptor, context, delegation);
+        }
+
         let mut access_full = false;
         let mut access_complete = false;
         let mut access_approve = false;
         let mut access_evidence = Vec::new();
+        let mut scoped_mcp_access = None;
         if let Some(db) = &self.db {
             let rules = db
                 .list_access_rules()
                 .map_err(SecurityGatewayError::AccessRules)?;
             if request.subject.subject_id == "local-user" && !rules.is_empty() {
-                let agent = self.agent_context.clone().or_else(current_agent_id).or(db
-                    .connector_agent_for_conversation(&request.conversation_id)
-                    .map_err(SecurityGatewayError::AccessRules)?);
+                let agent = self.invocation_agent_id(&request.conversation_id)?;
                 let mut complete = !descriptor.requested_permissions.is_empty();
                 let mut all_explicit = complete;
                 for permission in &descriptor.requested_permissions {
@@ -1120,6 +1224,12 @@ impl SecurityExecutionGateway {
                                         },
                                         false,
                                     ) {
+                                        if matches!(
+                                            rule.resource,
+                                            Some(crate::safety::grant::GrantResource::Mcp { .. })
+                                        ) {
+                                            scoped_mcp_access = Some(evidence.clone());
+                                        }
                                         access_evidence.push(evidence);
                                     }
                                 }
@@ -1218,6 +1328,21 @@ impl SecurityExecutionGateway {
                     false,
                 )
             }));
+        }
+        if let Some(scoped) = scoped_mcp_access {
+            // The validated MCP profile contains a single resource. Preserve a
+            // concrete persisted grant, or attach the scoped access-rule proof
+            // where the gateway would otherwise carry only the request target.
+            match authorized_resources
+                .iter_mut()
+                .find(|value| matches!(value, AuthorizedResource::Mcp { .. }))
+            {
+                Some(existing @ AuthorizedResource::Mcp { grant_id: None, .. }) => {
+                    *existing = scoped
+                }
+                Some(_) => {}
+                None => authorized_resources.push(scoped),
+            }
         }
         context.authorized_resources = authorized_resources;
         if robot_message_scope.is_some() && matches!(rbac, PolicyDecision::Deny(_)) {
@@ -1326,7 +1451,16 @@ impl SecurityExecutionGateway {
         role: BuiltInRole,
         final_risk: RiskLevel,
     ) -> Result<PolicyDecision, SecurityGatewayError> {
-        let decision = self.evaluate_core(request, role, final_risk)?;
+        let decision = match self.evaluate_core(request, role, final_risk)? {
+            PolicyDecision::Allow(mut context) if request.tool_name == "screenshot" => {
+                let monitor = request.arguments["monitor"].as_u64().unwrap_or(0);
+                context.reason = format!(
+                    "请确认本次截取显示器 {monitor} 的指定区域，同意后图像会进入本轮对话。"
+                );
+                PolicyDecision::RequireApproval(context)
+            }
+            decision => decision,
+        };
         self.record_policy_decided(request, &decision)?;
         if let PolicyDecision::RequireApproval(context) = &decision {
             self.record_approval_requested(request, context)?;
@@ -1339,6 +1473,28 @@ impl SecurityExecutionGateway {
 struct RobotMessageScope {
     send: bool,
     automatic_send: bool,
+}
+
+fn effect_may_change_state(descriptor: &ToolSecurityDescriptor) -> bool {
+    let known_read_method = |method: &str| {
+        ["GET", "HEAD", "OPTIONS"]
+            .iter()
+            .any(|read| read.eq_ignore_ascii_case(method))
+    };
+    descriptor.side_effects.iter().any(|kind| match kind {
+        SideEffectKind::NetworkEgress => {
+            !descriptor
+                .resources
+                .iter()
+                .any(|resource| matches!(resource, ResourceDescriptor::Network { .. }))
+                || descriptor.resources.iter().any(|resource| match resource {
+                    ResourceDescriptor::Network { method, .. } => !known_read_method(method),
+                    ResourceDescriptor::NetworkFromResponse { .. } => true,
+                    _ => false,
+                })
+        }
+        _ => true,
+    })
 }
 
 fn robot_message_scope(
@@ -1516,7 +1672,7 @@ fn authorized_resource_from_evaluation(
             Some(AuthorizedResource::Mcp {
                 server_id: server_id.clone(),
                 tool_name: tool_name.clone(),
-                one_shot_approval: grant_id.is_none(),
+                one_shot_approval: false,
                 grant_id,
             })
         }
@@ -1618,6 +1774,35 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    #[test]
+    fn execution_effect_receipt_distinguishes_reads_from_possible_mutations() {
+        for (tool, args, expected) in [
+            ("read_file", serde_json::json!({"path":"note.txt"}), false),
+            (
+                "write_file",
+                serde_json::json!({"path":"note.txt","content":"sample"}),
+                true,
+            ),
+            (
+                "http_request",
+                serde_json::json!({"url":"https://example.invalid/entry","method":"HEAD"}),
+                false,
+            ),
+            (
+                "http_request",
+                serde_json::json!({"url":"https://example.invalid/entry","method":"POST"}),
+                true,
+            ),
+        ] {
+            let descriptor = crate::safety::describe_builtin_tool(tool, &args).unwrap();
+            assert_eq!(
+                super::effect_may_change_state(&descriptor),
+                expected,
+                "{tool} {args}"
+            );
+        }
+    }
 
     struct CountingTool {
         name: &'static str,

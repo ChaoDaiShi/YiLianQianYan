@@ -40,7 +40,7 @@ export default function Inspector({
     return (
       <div
         className={cn(
-          "flex h-full w-full flex-col items-center justify-center rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-6",
+          "glass-card flex h-full w-full flex-col items-center justify-center rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-6",
           className
         )}
       >
@@ -52,7 +52,7 @@ export default function Inspector({
   return (
     <div
       className={cn(
-        "flex h-full w-full flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] shadow-card-token transition-colors duration-[var(--motion-fast)]",
+        "glass-card flex h-full w-full flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] shadow-card-token transition-colors duration-[var(--motion-fast)]",
         className
       )}
     >

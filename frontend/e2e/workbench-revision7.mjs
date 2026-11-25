@@ -17,7 +17,7 @@ const SKILL_ARTIFACT = "R7_SKILL_PROCEDURE_EXECUTED";
 const HOST_SKILL = "revision7-native-figma-host-only";
 const KNOWLEDGE_TAIL = "R7_KNOWLEDGE_TAIL_MARKER";
 const KNOWLEDGE_QUESTION = `请查询 ${KNOWLEDGE_TAIL}`;
-const SKILL_QUESTION = "按发现的 Codex 技能执行并保存结果";
+const SKILL_QUESTION = "请执行 Codex 技能 revision7-codex-real，并按技能说明将结果保存到 skill-procedure-result.txt。";
 
 /** Actual app/API/Git/filesystem flow with a local model protocol fixture. */
 export async function runWorkbenchRevision7({ page, frontendPort, backendPort, controlToken, evidenceDir, workspace }) {
@@ -60,9 +60,11 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     facts.screenshots.push(path);
   }
   async function send(text) {
-    const input = page.getByRole("textbox", { name: "聊天输入", exact: true });
+    // A stored conversation initially renders the home composer until its history arrives.
+    const composer = new URL(page.url()).pathname.startsWith("/chat/") ? page.locator(".conversation-composer") : page;
+    const input = composer.getByRole("textbox", { name: "聊天输入", exact: true });
     await input.fill(text);
-    await page.getByRole("button", { name: "发送消息", exact: true }).click();
+    await composer.getByRole("button", { name: "发送消息", exact: true }).click();
     await page.waitForURL(/\/chat\/.+/);
     return new URL(page.url()).pathname.split("/").at(-1);
   }
@@ -86,7 +88,17 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
   let retryRejected=false;
   let skillTarget;
   let skillRoot;
+  const catalogRequests = [];
   const provider = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/v1/models") {
+      catalogRequests.push(request.headers.authorization === "Bearer controlled-test-credential");
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ data: [
+        { id: "r7-multimodal", input_modalities: ["text", "image"], output_modalities: ["text"] },
+        { id: "r7-image", input_modalities: ["text"], output_modalities: ["image"] },
+      ] }));
+      return;
+    }
     let raw = "";
     for await (const chunk of request) raw += chunk;
     const body = JSON.parse(raw);
@@ -131,7 +143,15 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     const rootAfterWork = await completed(rootId, WORK_QUESTION);
     await page.getByText(WORK_ANSWER, { exact: true }).waitFor();
     assert.equal(await readFile(join(workspacePath, "revision7-result.txt"), "utf8"), FILE_CONTENT);
-    assert.equal(rootAfterWork.workspace_mode, "work");
+    assert.equal(rootAfterWork.workspace_mode, "auto");
+    const workMessage = rootAfterWork.messages.find(message => message.role === "user" && message.content === WORK_QUESTION);
+    assert.ok(workMessage);
+    const { turns } = await api("GET", `/api/conversations/${rootId}/turns`);
+    const workTurn = turns.find(turn => turn.user_message_id === workMessage.id);
+    assert.equal(workTurn?.status, "completed");
+    const context = await api("GET", `/api/conversations/${rootId}/context-manifest`);
+    assert.equal(context.turn_id, workTurn.id);
+    assert.ok(context.manifest.entries.some(entry => entry.kind === "interaction_route" && entry.source_id === "work" && entry.status === "resolved"));
     const actualThoughts = [...Object.values(rootAfterWork.message_reasoning ?? {}), ...Object.values(rootAfterWork.turn_reasoning ?? {})].join("\n");
     assert.ok(actualThoughts.includes("R7_TOOL_REASONING"));
     const answer = page.locator(".conversation-message-assistant").filter({ hasText: WORK_ANSWER });
@@ -142,7 +162,7 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     assert.equal(await page.locator('.conversation-assistant-avatar, [class*="conversation-assistant-avatar"]').count(), 0);
     assert.equal(await answer.locator("img").count(), 0);
     await screenshot("actual-process-after-refresh");
-    facts.checks.push("real_tool_file_and_provider_reasoning_survive_refresh", "assistant_has_no_avatar");
+    facts.checks.push("auto_mode_persists_while_effective_turn_routes_to_work", "real_tool_file_and_provider_reasoning_survive_refresh", "assistant_has_no_avatar");
 
     const executionToggle = page.getByRole("button", { name: "执行与审批", exact: true });
     const gitToggle = page.getByRole("button", { name: "Git 文件变更", exact: true });
@@ -188,118 +208,316 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     const independentId = await send(INDEPENDENT_QUESTION);
     await completed(independentId, INDEPENDENT_QUESTION);
     assert.notEqual(independentId, rootId);
-    await navigate(`/connectors?conversation=${rootId}`);
-    let overview = await eventually(() => api("GET", "/api/message-canvas"), result => result.conversations.length === 2, "two actual independent conversations");
-    const familyFilter = page.getByRole("combobox", { name: "定位画布对话", exact: true });
-    await eventually(() => familyFilter.inputValue(), value => value === rootId, "deep link selects its conversation family");
-    await familyFilter.selectOption("");
-    await eventually(() => page.locator(".react-flow__node-conversationSpeech").count(), count => count === overview.conversations.reduce((total, conversation) => total + conversation.nodes.length, 0), "actual message forest nodes");
-    assert.equal(await page.locator('.conversation-canvas-group, .react-flow__node-conversationGroup').count(), 0);
-    assert.equal(await page.locator(".react-flow__node").count(), overview.conversations.flatMap(conversation => conversation.nodes).length);
-    assert.equal((await api("GET", "/api/connectors")).canvases.length, 0);
-    assert.equal(await page.getByRole("combobox", { name: "会话目标画布", exact: true }).count(), 0);
-    assert.equal(await page.locator('.message-branch-node[data-role="process"]').count(),0);
-    assert.ok(overview.conversations.every(conversation=>conversation.nodes.every(node=>node.role==="user"||node.role==="assistant")));
-    assert.ok(overview.conversations.every(conversation=>conversation.nodes.every(node=>!node.content.includes("正在调用实际文件工具。"))));
-    await page.getByRole("combobox", { name: "定位画布对话", exact: true }).selectOption(rootId);
-    await page.locator(`[data-id="${sourceAnswer.id}"]`).getByRole("button", { name: "从此回答创建分支对话", exact: true }).click();
-    await page.getByRole("textbox", { name: "分支对话提问", exact: true }).fill(BRANCH_QUESTION);
-    await page.getByRole("button", { name: "发送到新分支", exact: true }).click();
-    overview = await eventually(() => api("GET", "/api/message-canvas"), result => result.conversations.length === 3 && result.conversations.some(conversation => conversation.branch && conversation.status === "completed"), "actual alternative path completed");
-    const branch = overview.conversations.find(conversation => conversation.branch);
+    const openBranches = page.getByRole("button", { name: "管理对话分支", exact: true });
+    const branchDialog = page.getByRole("dialog", { name: "对话分支", exact: true });
+    await navigate("/chat/" + rootId);
+    await openBranches.click();
+    await branchDialog.getByRole("combobox", { name: "新分支起点", exact: true }).selectOption(sourceAnswer.id);
+    await branchDialog.getByRole("button", { name: "新建分支", exact: true }).click();
+    await page.waitForURL(url => url.pathname.startsWith("/chat/") && url.pathname !== "/chat/" + rootId);
+    const branchId = new URL(page.url()).pathname.split("/").at(-1);
+    assert.notEqual(branchId, independentId);
+    // Route change precedes the history read and the branch composer's draft reset.
+    await branchDialog.waitFor({ state: "hidden" });
+    await page.getByText("R7 原路径后续回答", { exact: true }).waitFor({ state: "hidden" });
+    await page.getByText(ROOT_ANSWER, { exact: true }).waitFor();
+    assert.equal(await send(BRANCH_QUESTION), branchId);
+    await completed(branchId, BRANCH_QUESTION);
+    let overview = await eventually(() => api("GET", "/api/message-canvas"),
+      result => result.conversations.some(conversation => conversation.id === branchId && conversation.branch && conversation.status === "completed"),
+      "created branch is persisted in the message canvas");
+    const branch = overview.conversations.find(conversation => conversation.id === branchId);
+    const independent = overview.conversations.find(conversation => conversation.id === independentId);
+    assert.equal(overview.conversations.length, 3);
     assert.equal(branch.branch.parent_node_id, sourceAnswer.id);
     assert.equal(branch.nodes[0].parent_id, sourceAnswer.id);
-    const branchRequest = facts.requests.find(request => request.question === BRANCH_QUESTION);
-    assert.deepEqual(branchRequest.userHistory, [ROOT_QUESTION, BRANCH_QUESTION]);
-    assert.deepEqual((await api("GET", `/api/conversations/${rootId}`)).messages, sourceBeforeBranch.messages);
-    await eventually(() => page.locator(`[data-id="message:${branch.nodes[0].id}"] .react-flow__edge-path`).getAttribute("d"), value => value?.includes("C"), "Bezier alternative-path connection");
-    const independent = overview.conversations.find(conversation => conversation.id === independentId);
     assert.equal(independent.nodes[0].parent_id, null);
-    assert.equal(await page.locator(`[data-id="message:${independent.nodes[0].id}"]`).count(), 0);
-    await page.getByRole("button", { name: "取消创建分支", exact: true }).click();
-    await page.getByRole("button", { name: "关闭消息详情", exact: true }).click();
-    await page.getByRole("button", { name: "适应画布", exact: true }).click();
-    await screenshot("message-forest-alternative-path");
-    facts.checks.push("message_forest_contains_only_input_output_without_tool_or_backdrop", "alternative_path_uses_actual_ancestor_and_excludes_later_siblings", "independent_conversation_tree_has_no_cross_family_edge");
+    assert.deepEqual(facts.requests.find(request => request.question === BRANCH_QUESTION).userHistory, [ROOT_QUESTION, BRANCH_QUESTION]);
+    assert.deepEqual((await api("GET", "/api/conversations/" + rootId)).messages, sourceBeforeBranch.messages);
+    facts.checks.push("branch_dialog_forks_from_selected_answer_without_modifying_main_history");
 
-    await page.getByRole("combobox", { name: "定位画布对话", exact: true }).selectOption(rootId);
-    const previous = await eventually(() => api("GET", "/api/message-canvas"), result => result.layout.nodes.some(node => node.id === sourceAnswer.id), "absolute message positions saved");
-    await page.waitForTimeout(300);
-    const previousPoint = previous.layout.nodes.find(node => node.id === sourceAnswer.id);
-    const header = await page.locator(`[data-id="${sourceAnswer.id}"] .message-branch-node > header`).boundingBox();
-    assert.ok(header);
-    await page.mouse.move(header.x + 30, header.y + 10);
+    await openBranches.click();
+    await branchDialog.getByRole("link", { name: "查看本组画布" }).click();
+    await page.waitForURL(url => url.pathname === "/connectors" && url.searchParams.get("conversation") === branchId);
+    const groupCanvas = page.getByRole("region", { name: "对话组消息画布", exact: true });
+    const familyFilter = groupCanvas.getByRole("combobox", { name: "当前对话组", exact: true });
+    const pathFilter = groupCanvas.getByRole("combobox", { name: "当前续聊路径", exact: true });
+    const messageNodes = groupCanvas.locator(".react-flow__node-conversationSpeech");
+    const messageNode = id => groupCanvas.locator('.react-flow__node-conversationSpeech[data-id="' + id + '"]');
+    async function expectGroup(ids, label) {
+      const expected = overview.conversations.filter(conversation => ids.includes(conversation.id))
+        .flatMap(conversation => conversation.nodes.map(node => node.id)).sort();
+      await eventually(() => messageNodes.evaluateAll(nodes => nodes.map(node => node.dataset.id).sort()),
+        actual => JSON.stringify(actual) === JSON.stringify(expected), label);
+    }
+    await eventually(() => familyFilter.inputValue(), value => value === rootId, "branch deep link selects its root group");
+    await eventually(() => pathFilter.inputValue(), value => value === branchId, "branch deep link selects the exact path");
+    await expectGroup([rootId, branchId], "canvas shows only the selected group");
+    await familyFilter.selectOption(independentId);
+    await expectGroup([independentId], "independent group shows only its own messages");
+    await familyFilter.selectOption(rootId);
+    await expectGroup([rootId, branchId], "returning to the root group restores both paths");
+    await pathFilter.selectOption(rootId);
+    assert.equal(await pathFilter.inputValue(), rootId);
+    await pathFilter.selectOption(branchId);
+    await groupCanvas.getByText("另一条路径", { exact: true }).waitFor({ state: "attached" });
+    await eventually(() => groupCanvas.locator('[data-id="message:' + branch.nodes[0].id + '"] .react-flow__edge-path').getAttribute("d"),
+      value => value?.includes("C"), "the selected answer is connected to its fork by a curved edge");
+    assert.equal(await groupCanvas.locator('.message-branch-node[data-role="process"]').count(), 0);
+    assert.ok(overview.conversations.every(conversation => conversation.nodes.every(node => ["user", "assistant"].includes(node.role))));
+    assert.ok(overview.conversations.every(conversation => conversation.nodes.every(node => !node.content.includes("正在调用实际文件工具。"))));
+    facts.checks.push("canvas_deep_link_selects_group_and_path_and_excludes_unrelated_groups", "message_canvas_keeps_user_and_assistant_nodes_and_real_branch_edges");
+
+    const canvasQuestion = "R7 从画布继续当前分支";
+    const composer = groupCanvas.locator('[aria-label="当前路径续聊"]');
+    await composer.getByRole("textbox", { name: "聊天输入", exact: true }).fill(canvasQuestion);
+    await composer.getByRole("button", { name: "发送消息", exact: true }).click();
+    await completed(branchId, canvasQuestion);
+    overview = await eventually(() => api("GET", "/api/message-canvas"),
+      result => result.conversations.find(conversation => conversation.id === branchId)?.nodes.some(node => node.content === canvasQuestion),
+      "canvas continuation is stored on the selected branch");
+    assert.deepEqual(facts.requests.find(request => request.question === canvasQuestion).userHistory, [ROOT_QUESTION, BRANCH_QUESTION, canvasQuestion]);
+    await expectGroup([rootId, branchId], "group includes the persisted continuation");
+    await screenshot("conversation-group-branch");
+    facts.checks.push("canvas_continuation_writes_to_selected_path_and_keeps_its_history");
+
+    const sourceNode = messageNode(sourceAnswer.id);
+    const sourceHeader = sourceNode.locator(".message-branch-node > header");
+    const isLayoutWrite = response => new URL(response.url()).pathname === "/api/message-canvas/layout" && response.request().method() === "PUT";
+    const fitted = page.waitForResponse(isLayoutWrite);
+    await groupCanvas.getByRole("button", { name: "适应画布", exact: true }).click();
+    assert.ok((await fitted).ok(), "fitted viewport was saved");
+    const header = await eventually(() => sourceHeader.boundingBox(),
+      box => box && box.width > 20 && box.height > 4 && box.x > 80 && box.y > 70 && box.x + box.width < page.viewportSize().width && box.y + box.height < page.viewportSize().height,
+      "source message header is inside the fitted canvas");
+    const positionOf = locator => locator.evaluate(element => {
+      const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+      return { x: matrix.m41, y: matrix.m42 };
+    });
+    const samePoint = (actual, expected) => actual && Math.abs(actual.x - expected.x) < 0.1 && Math.abs(actual.y - expected.y) < 0.1;
+    const previousPoint = await positionOf(sourceNode);
+    const dragX = header.x + header.width / 2;
+    const dragY = header.y + header.height / 2;
+    const dragSaved = page.waitForResponse(response => isLayoutWrite(response) &&
+      response.request().postDataJSON().nodes.some(point => point.id === sourceAnswer.id &&
+        (Math.abs(point.x - previousPoint.x) > 1 || Math.abs(point.y - previousPoint.y) > 1)));
+    await page.mouse.move(dragX, dragY);
     await page.mouse.down();
-    await page.mouse.move(header.x + 90, header.y + 45, { steps: 12 });
+    await page.mouse.move(dragX + 46, dragY + 28, { steps: 12 });
     await page.mouse.up();
-    const moved = await eventually(() => api("GET", "/api/message-canvas"), result => { const point = result.layout.nodes.find(node => node.id === sourceAnswer.id); return point && (Math.abs(point.x - previousPoint.x) > 1 || Math.abs(point.y - previousPoint.y) > 1); }, "actual message drag persisted");
-    const movedPoint = moved.layout.nodes.find(node => node.id === sourceAnswer.id);
+    const dragResponse = await dragSaved;
+    assert.ok(dragResponse.ok(), "dragged message coordinates were saved");
+    const renderedAfterDrag = await positionOf(sourceNode);
+    assert.ok(!samePoint(renderedAfterDrag, previousPoint), "dragging moves the source message in the canvas");
+    const movedPoint = await eventually(async () => (await api("GET", "/api/message-canvas")).layout.nodes.find(node => node.id === sourceAnswer.id),
+      point => samePoint(point, renderedAfterDrag), "SQLite layout matches the rendered position after dragging");
+    const moved = await api("GET", "/api/message-canvas");
     const allMessageIds = new Set(overview.conversations.flatMap(conversation => conversation.nodes.map(node => node.id)));
     assert.ok(moved.layout.nodes.every(node => allMessageIds.has(node.id)));
-    await page.reload();
-    await page.locator(`[data-id="${sourceAnswer.id}"]`).waitFor();
-    const transform = await page.locator(`[data-id="${sourceAnswer.id}"]`).evaluate(element => element.style.transform);
-    const position = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(transform);
-    assert.ok(position, transform);
-    assert.ok(Math.abs(Number(position[1]) - movedPoint.x) < 0.1);
-    assert.ok(Math.abs(Number(position[2]) - movedPoint.y) < 0.1);
-    assert.equal(await page.locator('.conversation-canvas-group, .react-flow__node-conversationGroup').count(), 0);
+    const reloadWrites = [];
+    const trackReloadWrite = request => {
+      if (request.method() === "PUT" && new URL(request.url()).pathname === "/api/message-canvas/layout") {
+        reloadWrites.push(request.postDataJSON().nodes.find(node => node.id === sourceAnswer.id) ?? null);
+      }
+    };
+    page.on("request", trackReloadWrite);
+    const afterReload = page.waitForResponse(response => new URL(response.url()).pathname === "/api/message-canvas" && response.request().method() === "GET");
+    try {
+      await page.reload();
+      const reloadedLayout = (await (await afterReload).json()).layout;
+      facts.drag = { previousPoint, renderedAfterDrag, movedPoint, reloadedPoint: reloadedLayout.nodes.find(node => node.id === sourceAnswer.id), reloadWrites };
+      assert.ok(samePoint(facts.drag.reloadedPoint, movedPoint), "reloaded page reads the dragged coordinates from the API");
+      await eventually(() => positionOf(sourceNode),
+        point => samePoint(point, movedPoint),
+        "dragged message coordinates survive reload");
+      for (const point of reloadWrites) assert.ok(samePoint(point, movedPoint), "initial viewport sync must preserve saved node coordinates");
+    } finally {
+      page.off("request", trackReloadWrite);
+    }
     facts.checks.push("absolute_message_drag_coordinates_survive_reload");
-    facts.conversations = { rootId, branchId: branch.id, independentId, sourceAnswerId: sourceAnswer.id };
+    facts.conversations = { rootId, branchId, independentId, sourceAnswerId: sourceAnswer.id };
 
-    await navigate(`/chat/${branch.id}`);
-    await page.getByRole("combobox", { name: "对话路径", exact: true }).waitFor();
-    assert.equal(await page.getByRole("combobox", { name: "对话路径", exact: true }).locator("option").count(), 2);
+    const canvasAgent = await api("POST", "/api/agents", {
+      name: "R7 画布验收助手", user_prompt: "使用中文回答。", allowed_tools: [], capabilities: [],
+    });
+    await navigate("/connectors?conversation=" + rootId);
+    await page.getByRole("button", { name: "新建画布", exact: true }).click();
+    const newCanvas = page.getByRole("dialog", { name: "新建画布", exact: true });
+    await newCanvas.getByLabel("画布名称", { exact: true }).fill("R7 待管理画布");
+    await newCanvas.getByRole("combobox", { name: "画布所属智能体", exact: true }).selectOption(canvasAgent.id);
+    await newCanvas.getByRole("button", { name: "创建画布", exact: true }).click();
+    await newCanvas.waitFor({ state: "hidden" });
+    const canvasCatalog = await api("GET", "/api/connectors");
+    const savedCanvas = canvasCatalog.canvases.find(canvas => canvas.name === "R7 待管理画布");
+    assert.ok(savedCanvas);
+    assert.equal(savedCanvas.agent_id, canvasAgent.id);
+    const canvasSelector = page.getByRole("combobox", { name: "当前画布", exact: true });
+    await eventually(() => canvasSelector.inputValue(), value => value === savedCanvas.id, "created canvas is selected");
+    await page.getByRole("button", { name: "管理全部画布", exact: true }).click();
+    const manager = page.getByRole("dialog", { name: "管理全部画布", exact: true });
+    await manager.getByRole("article").filter({ hasText: "R7 待管理画布" }).getByRole("button", { name: "重命名", exact: true }).click();
+    const rename = page.getByRole("dialog", { name: "重命名画布", exact: true });
+    const renamed = "R7 已重命名画布";
+    await rename.getByLabel("画布名称", { exact: true }).fill(renamed);
+    await rename.getByRole("button", { name: "保存", exact: true }).click();
+    const managedRow = manager.getByRole("article").filter({ hasText: renamed });
+    await managedRow.waitFor();
+    await eventually(() => api("GET", "/api/connectors"), catalog => catalog.canvases.some(canvas => canvas.id === savedCanvas.id && canvas.name === renamed), "canvas rename persists");
+    await screenshot("canvas-manager-renamed");
+    const deleteCanvas = managedRow.getByRole("button", { name: "删除此画布", exact: true });
+    const confirmDelete = page.getByRole("dialog", { name: "删除所选画布", exact: true });
+    await deleteCanvas.click();
+    await confirmDelete.getByRole("button", { name: "取消", exact: true }).click();
+    await managedRow.waitFor();
+    assert.ok((await api("GET", "/api/connectors")).canvases.some(canvas => canvas.id === savedCanvas.id));
+    await deleteCanvas.click();
+    await confirmDelete.getByRole("button", { name: "确认删除", exact: true }).click();
+    await manager.getByRole("status").filter({ hasText: "已删除 " + renamed }).waitFor();
+    assert.ok(!(await api("GET", "/api/connectors")).canvases.some(canvas => canvas.id === savedCanvas.id));
+    assert.equal((await api("GET", "/api/agents/" + canvasAgent.id)).id, canvasAgent.id);
+    assert.deepEqual((await api("GET", "/api/conversations/" + rootId)).messages, sourceBeforeBranch.messages);
+    await page.keyboard.press("Escape");
+    await manager.waitFor({ state: "hidden" });
+    assert.equal(await canvasSelector.inputValue(), "");
+    await groupCanvas.waitFor();
+    facts.checks.push("canvas_manager_creates_renames_and_deletes_with_confirmation_without_deleting_agent_or_chat");
+
+    await navigate("/chat/" + branch.id);
     await page.getByRole("button", { name: "打开任务列表", exact: true }).click();
     await eventually(() => page.locator(".conversation-row").count(), count => count === 2, "sidebar lists two families rather than three execution conversations");
     assert.ok(!(await page.locator(".conversation-message-user").allTextContents()).some(value => value.includes(LATER_QUESTION)));
-    await page.getByRole("combobox", { name: "对话路径", exact: true }).selectOption(rootId);
+    await openBranches.click();
+    const paths = branchDialog.getByRole("navigation", { name: "分支路径列表" });
+    assert.equal(await paths.getByRole("button").count(), 2);
+    await paths.getByRole("button", { name: /^主线/ }).click();
+    await branchDialog.getByRole("button", { name: "打开路径继续", exact: true }).click();
     await page.waitForURL(`**/chat/${rootId}`);
     await page.getByText("R7 原路径后续回答", { exact: true }).waitFor();
     await screenshot("family-path-selector");
     facts.checks.push("sidebar_groups_real_alternatives_into_one_family", "path_selector_opens_correct_full_history");
 
     await navigate("/settings");
+    const moreActions = page.getByText("更多操作", { exact: true });
+    const settingsOverview = page.locator(".settings-overview");
+    const modelDialog = page.getByRole("dialog", { name: "模型配置", exact: true });
+    await settingsOverview.getByRole("button", { name: "权限审批", exact: true }).waitFor();
+    assert.equal(await page.locator(".settings-canvas-stage").count(), 0);
+    const canvasEntry = settingsOverview.getByRole("link", { name: "查看设置画布", exact: true });
+    assert.equal(await settingsOverview.getByRole("button", { name: "高级模型池", exact: true }).count(), 0);
+    await screenshot("settings-overview");
+    await settingsOverview.getByRole("button", { name: "模型配置", exact: true }).click();
+    await modelDialog.getByText("当前默认用途", { exact: true }).waitFor();
+    assert.equal(await modelDialog.getByRole("textbox", { name: "手动模型 ID", exact: true }).count(), 0);
+    await modelDialog.getByRole("button", { name: "添加厂商账户", exact: true }).click();
+    const catalogDialog = page.getByRole("dialog", { name: "添加厂商账户", exact: true });
+    await catalogDialog.getByLabel("厂商", { exact: true }).selectOption("custom");
+    await catalogDialog.getByLabel("账户名称", { exact: true }).fill("R7 模型目录验收账户");
+    await catalogDialog.getByLabel("API 地址", { exact: true }).fill(`http://127.0.0.1:${provider.address().port}/v1`);
+    await catalogDialog.getByLabel("API Key", { exact: true }).fill("controlled-test-credential");
+    const multi = catalogDialog.getByRole("group", { name: "r7-multimodal 的用途" });
+    await multi.getByRole("checkbox", { name: "对话", exact: true }).check();
+    await multi.getByRole("checkbox", { name: "图像理解", exact: true }).check();
+    await catalogDialog.getByRole("group", { name: "r7-image 的用途" }).getByRole("checkbox", { name: "图像生成", exact: true }).check();
+    await catalogDialog.getByRole("button", { name: "保存配置", exact: true }).click();
+    await modelDialog.getByText("R7 模型目录验收账户", { exact: true }).waitFor();
+    const savedModel = modelDialog.locator(".model-config-saved-row").filter({ hasText: "r7-multimodal" });
+    assert.equal(await savedModel.count(), 1);
+    assert.ok((await savedModel.innerText()).includes("图像理解"));
+    assert.ok(catalogRequests.includes(true));
+    assert.equal((await api("GET", "/api/llm/models")).find(item => item.active)?.id, model.id);
+    assert.equal((await api("GET", "/api/service-defaults/vision")).id, null);
+    await screenshot("model-configuration");
+    facts.checks.push("supplier_catalog_saves_two_models_with_one_key_and_keeps_default_routes");
+    await modelDialog.getByRole("button", { name: "关闭模型配置", exact: true }).click();
+    await settingsOverview.getByText("更多设置", { exact: true }).click();
+    await screenshot("settings-overview-expanded");
+    await canvasEntry.click();
+    await page.waitForURL("**/settings?view=canvas");
+    facts.checks.push("global_settings_is_default_and_canvas_is_an_explicit_view");
     await eventually(() => page.locator(".settings-canvas-stage [data-settings-group]").count(), count => count === 6, "six collapsed category nodes");
     assert.equal(await page.locator('.settings-canvas-stage .react-flow__node[data-id^="setting:"]').count(), 0);
+    assert.equal(await page.getByText("点击展开设置项", { exact: true }).count(), 0);
     const category = page.getByRole("button", { name: "编辑模型与服务", exact: true });
     assert.equal(await category.getAttribute("aria-expanded"), "false");
     await category.click();
-    await eventually(() => api("GET", "/api/settings/canvas"), result => result.state.expanded_group_ids.includes("models"), "inline category expansion persisted");
-    await page.getByRole("button", { name: "编辑对话模型", exact: true }).waitFor();
+    await page.getByRole("button", { name: "编辑模型配置", exact: true }).waitFor();
     assert.equal(await page.locator('.settings-canvas-stage .react-flow__node[data-id^="setting:"]').count(), 5);
     assert.equal(await page.getByRole("dialog").count(), 0);
     await eventually(() => page.locator('[data-id="derived:setting-child:model"] .react-flow__edge-path').getAttribute("d"), value => value?.includes("C"), "inline settings child curve");
-    const focusedSelectors='.react-flow__node[data-id="setting-group:models"],.react-flow__node[data-id^="setting:"]';
-    const focusFacts=await eventually(()=>page.locator(".settings-canvas-stage").evaluate((stage,selector)=>{const boxes=[...stage.querySelectorAll(selector)].map(node=>node.getBoundingClientRect());const area=stage.getBoundingClientRect();return {count:boxes.length,x:(Math.min(...boxes.map(box=>box.left))+Math.max(...boxes.map(box=>box.right)))/2-(area.left+area.width/2),y:(Math.min(...boxes.map(box=>box.top))+Math.max(...boxes.map(box=>box.bottom)))/2-(area.top+area.height/2)};},focusedSelectors),value=>value.count===6&&Math.abs(value.x)<35&&Math.abs(value.y)<35,"expanded setting branch is recentered");
-    facts.settingsFocus=focusFacts;facts.checks.push("expanded_settings_camera_centers_selected_category_and_children");
+    const focusFacts=await eventually(()=>page.locator(".settings-canvas-stage").evaluate((stage)=>{
+      const boxes=[...stage.querySelectorAll(".react-flow__node")].map(node=>node.getBoundingClientRect());
+      const area=stage.getBoundingClientRect();
+      const left=Math.min(...boxes.map(box=>box.left)), right=Math.max(...boxes.map(box=>box.right));
+      const top=Math.min(...boxes.map(box=>box.top)), bottom=Math.max(...boxes.map(box=>box.bottom));
+      return {count:boxes.length,x:(left+right-area.left-area.right)/2,y:(top+bottom-area.top-area.bottom)/2,
+        inFrame:left>=area.left&&right<=area.right&&top>=area.top&&bottom<=area.bottom};
+    }),value=>value.count===12&&value.inFrame&&Math.abs(value.x)<35&&Math.abs(value.y)<35,"expanded settings retain the overview and branch in frame");
+    facts.settingsFocus=focusFacts;facts.checks.push("expanded_settings_camera_keeps_overview_and_selected_branch_in_frame");
     await screenshot("settings-inline-expanded");
-    await page.getByRole("button", { name: "编辑对话模型", exact: true }).click();
-    const modelDialog = page.getByRole("dialog", { name: "对话模型与模型池", exact: true });
+    await page.getByRole("button", { name: "编辑模型配置", exact: true }).click();
     await modelDialog.waitFor();
     assert.equal(await page.getByRole("dialog").count(), 1);
-    await modelDialog.getByRole("button", { name: "关闭对话模型与模型池", exact: true }).click();
+    await modelDialog.getByRole("button", { name: "关闭模型配置", exact: true }).click();
     assert.equal(await page.getByRole("dialog").count(), 0);
+    assert.equal(new URL(page.url()).search, "?view=canvas");
+    assert.equal(await category.getAttribute("aria-expanded"), "true");
+    await category.click();
+    await page.getByRole("button", { name: "编辑模型配置", exact: true }).waitFor({ state: "detached" });
+    await category.click();
+    await page.getByRole("button", { name: "编辑模型配置", exact: true }).waitFor();
     await page.reload();
-    await page.getByRole("button", { name: "编辑对话模型", exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "编辑模型与服务", exact: true }).getAttribute("aria-expanded"), "true");
-    await page.getByRole("button", { name: "编辑模型与服务", exact: true }).click();
-    await eventually(() => api("GET", "/api/settings/canvas"), result => !result.state.expanded_group_ids.includes("models"), "inline collapse persisted");
-    await page.reload();
-    await page.getByRole("button", { name: "编辑模型与服务", exact: true }).waitFor();
+    await category.waitFor();
+    assert.equal(await category.getAttribute("aria-expanded"), "false");
     assert.equal(await page.locator('.settings-canvas-stage .react-flow__node[data-id^="setting:"]').count(), 0);
-    await page.getByRole("button",{name:"整理布局",exact:true}).click();
-    await eventually(()=>page.locator('[data-id="setting-group:models"]').evaluate(node=>node.style.transform),value=>value.includes("660px")&&value.includes("126px"),"explicit layout reset uses balanced default coordinates");
-    await page.getByRole("button",{name:"居中",exact:true}).click();
-    facts.checks.push("explicit_relayout_and_center_controls_keep_default_geometry");
+    const arrange = page.getByRole("button", { name: "整理布局", exact: true });
+    assert.equal(await arrange.count(), 0);
+    await moreActions.press("Enter");
+    await arrange.press("Escape");
+    assert.equal(await arrange.count(), 0);
+    assert.equal(await moreActions.evaluate(element => element === document.activeElement), true);
+    await moreActions.press("Enter");
+    await arrange.click();
+    await eventually(()=>page.locator('[data-id="setting-group:models"]').evaluate(node=>node.style.transform),value=>value.includes("436px")&&value.includes("146px"),"explicit layout reset uses balanced default coordinates");
+    const returnToOverview = page.getByRole("button",{name:"返回收拢视图",exact:true});
+    assert.equal(await returnToOverview.count(),0);
+    await category.click();
+    await page.getByRole("combobox",{name:"查看已展开分支"}).selectOption("models");
+    await page.locator('.settings-canvas-stage .settings-outside-focus').first().waitFor();
+    await moreActions.click();
+    await screenshot("settings-more-actions");
+    await returnToOverview.click();
+    assert.equal(await category.getAttribute("aria-expanded"),"false");
+    assert.equal(await page.locator('.settings-canvas-stage .settings-outside-focus').count(),0);
+    facts.checks.push("explicit_relayout_and_overview_restore_default_geometry");
     await screenshot("settings-inline-collapsed");
-    facts.checks.push("settings_categories_expand_actual_leaf_nodes_without_parent_modal", "settings_leaf_opens_existing_form", "settings_expand_and_collapse_survive_reload");
+    facts.checks.push("settings_categories_expand_actual_leaf_nodes_without_parent_modal", "settings_leaf_opens_existing_form", "settings_returns_to_collapsed_overview_on_reload");
+
+    await moreActions.click();
+    await page.getByRole("button", { name: "高级模型池", exact: true }).click();
+    const poolDialog = page.getByRole("dialog", { name: "高级模型池", exact: true });
+    const tabs = poolDialog.getByRole("tablist", { name: "模型池服务类型" });
+    await tabs.waitFor();
+    assert.deepEqual(await tabs.getByRole("tab").allTextContents(), ["对话", "识图", "生图"]);
+    assert.equal(await poolDialog.getByRole("tabpanel").count(), 1);
+    const chatTab = tabs.getByRole("tab", { name: "对话" });
+    await chatTab.press("ArrowRight");
+    await poolDialog.getByRole("tabpanel", { name: "识图" }).waitFor();
+    await tabs.getByRole("tab", { name: "生图" }).click();
+    await poolDialog.getByRole("tabpanel", { name: "生图" }).waitFor();
+    assert.equal(await poolDialog.getByRole("button", { name: "新建模型池", exact: true }).count(), 1);
+    await navigate("/settings?section=model-pools");
+    await poolDialog.getByRole("tabpanel", { name: "对话" }).waitFor();
+    facts.checks.push("settings_model_pools_secondary_entry_deep_link_and_service_tabs");
 
     const knowledgeName = "R7-知识全文.md";
     const tail = KNOWLEDGE_TAIL;
     const documentText = `# R7 知识资料\n${"这是一段实际导入的知识正文，用于验证完整文档分块与检索。\n".repeat(700)}${tail}\n`;
     assert.ok(documentText.length > 12_000);
     await navigate("/knowledge");
+    await page.getByRole("button", { name: "导入资料", exact: true }).click();
+    const importChooser = page.getByRole("dialog", { name: "导入资料", exact: true });
+    await importChooser.getByRole("button", { name: "选择文件", exact: true }).waitFor();
+    await importChooser.getByRole("button", { name: "选择文件夹", exact: true }).waitFor();
     await page.getByLabel("选择知识文档", { exact: true }).setInputFiles({ name: knowledgeName, mimeType: "text/markdown", buffer: Buffer.from(documentText, "utf8") });
     const knowledge = await eventually(() => api("GET", "/api/knowledge/documents"), result => result.documents.some(document => document.name === knowledgeName), "actual knowledge import");
     const document = knowledge.documents.find(entry => entry.name === knowledgeName);
@@ -326,7 +544,7 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     await screenshot("knowledge-grounded-turn");
     await navigate("/knowledge");
     await page.getByRole("button", { name: `移出知识库 ${knowledgeName}`, exact: true }).click();
-    await page.getByRole("dialog", { name: "移出知识库", exact: true }).getByRole("button", { name: "移除", exact: true }).click();
+    await page.getByRole("dialog", { name: "移出资料库", exact: true }).getByRole("button", { name: "移出资料库", exact: true }).click();
     await eventually(() => api("GET", "/api/knowledge/documents"), result => !result.documents.some(entry => entry.id === document.id), "knowledge removal persisted");
     assert.equal((await api("GET", `/api/knowledge/search?q=${encodeURIComponent(tail)}`)).hits.length, 0);
     await page.reload();
@@ -350,11 +568,15 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     await page.getByRole("button", { name: "刷新发现", exact: true }).click();
     const skills = await eventually(() => api("GET", "/api/skills"), entries => skillFixtures.every(fixture => entries.some(skill => skill.source_id === fixture.sourceId && skill.display_name === fixture.name)), "actual Codex and Claude workspace skill discovery");
     const external=skills.find(skill=>skill.display_name===HOST_SKILL);assert.ok(external);assert.equal(external.compatibility.runtime_ready,false);assert.equal(external.compatibility.status,"external_host");
-    const hostToggle=page.getByRole("combobox",{name:"技能状态筛选",exact:true});assert.equal(await hostToggle.inputValue(),"ready");
-    await page.getByRole("textbox",{name:"搜索技能",exact:true}).fill(HOST_SKILL);assert.equal(await page.getByRole("option").filter({hasText:HOST_SKILL}).count(),0);
-    await hostToggle.selectOption("all");await page.getByRole("option").filter({hasText:HOST_SKILL}).click();await page.getByText("需要外部宿主能力",{exact:true}).waitFor();
-    await screenshot("host-skill-dependencies");await hostToggle.selectOption("ready");
-    facts.checks.push("host_only_skills_are_hidden_by_default_and_show_actual_missing_tools");
+    const sourceFilter = page.getByRole("combobox", { name: "技能来源筛选", exact: true });
+    assert.equal(await sourceFilter.inputValue(), "bundled");
+    await page.getByRole("textbox", { name: "搜索技能", exact: true }).fill(HOST_SKILL);
+    assert.equal(await page.getByRole("option").filter({ hasText: HOST_SKILL }).count(), 0);
+    await sourceFilter.selectOption("other");
+    await page.getByRole("option").filter({ hasText: HOST_SKILL }).click();
+    await page.getByText("需要外部宿主能力", { exact: true }).waitFor();
+    await screenshot("host-skill-dependencies");
+    facts.checks.push("external_skills_hidden_by_default_and_host_dependencies_visible");
     for (const fixture of skillFixtures) {
       const skill = skills.find(entry => entry.source_id === fixture.sourceId && entry.display_name === fixture.name);
       assert.equal(skill.editable, false);
@@ -364,9 +586,8 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
       if (fixture.sourceId === "workspace-codex") { skillTarget = skill.name; skillRoot = loaded.root_dir; }
       await page.getByRole("textbox", { name: "搜索技能", exact: true }).fill(fixture.name);
       await page.getByRole("option").filter({ hasText: fixture.name }).click();
-      const expand=page.getByRole("button", { name: "展开完整使用说明", exact: true });
-      if(await expand.count())await expand.click();
       const full = page.getByLabel("技能详情", { exact: true });
+      await full.getByRole("button", { name: "展开完整使用说明", exact: true }).click();
       await eventually(() => full.locator(".skill-reading-content").textContent(), value => value === fixture.content, "actual discovered skill full text");
       await screenshot(`skill-${fixture.directory.slice(1)}-full-text`);
       await full.getByRole("button", { name: "收起全文", exact: true }).click();
@@ -389,13 +610,14 @@ export async function runWorkbenchRevision7({ page, frontendPort, backendPort, c
     const toolDialog=page.getByLabel("运行时工具",{exact:true});await toolDialog.getByLabel("工具列表",{exact:true}).waitFor();
     assert.equal(await page.getByRole("dialog").count(),0);
     await toolDialog.getByRole("textbox",{name:"搜索工具",exact:true}).fill("write_file");
-    await toolDialog.locator(".tool-manager-row").filter({hasText:"写入文件"}).click();await toolDialog.getByLabel("工具详情",{exact:true}).waitFor();
+    await toolDialog.locator(".tool-manager-row").filter({hasText:"写入文件"}).click();
+    await toolDialog.getByLabel("工具详情",{exact:true}).getByRole("heading",{name:"写入文件",exact:true}).waitFor();
     await screenshot("compact-tool-detail");await toolDialog.getByRole("textbox",{name:"搜索工具",exact:true}).fill("");await screenshot("compact-tool-list");
     facts.checks.push("tools_use_persistent_list_and_detail_without_outer_modal");
     await navigate("/chat");
     const retryId=await send("R8_RETRY_PROTOCOL");
     await eventually(()=>api("GET",`/api/conversations/${retryId}`),conversation=>conversation.run_status==="failed","controlled first request failure");
-    await page.getByRole("button",{name:"重新尝试",exact:true}).click();
+    await page.getByRole("button",{name:"回退并重试",exact:true}).click();
     let retryConversation=await completed(retryId,"R8_RETRY_PROTOCOL");
     assert.equal(retryConversation.messages.filter(message=>message.role==="user").length,1);
     const retryUser=retryConversation.messages.find(message=>message.role==="user");

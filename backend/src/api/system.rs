@@ -160,6 +160,7 @@ fn collect_system_info() -> serde_json::Value {
         },
         "memory": {
             "total_gb": memory_gib(total_mem),
+            "available_gb": memory_gib(sys.available_memory()),
             "used_gb": memory_gib(used_mem),
             "usage_pct": format!("{:.1}", mem_usage_pct),
             "swap_total_gb": memory_gib(total_swap),
@@ -303,7 +304,7 @@ fn query_gpu_info() -> Vec<serde_json::Value> {
             .args([
                 "-NoProfile",
                 "-Command",
-                "Get-CimInstance -ClassName Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution | ConvertTo-Json",
+                "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); ConvertTo-Json -InputObject @(Get-CimInstance -ClassName Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution)",
             ])
             .output()
         {

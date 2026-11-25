@@ -8,13 +8,20 @@
 
 pub(crate) mod access_rules;
 pub(crate) mod agents;
+pub use agents::{read_companion_display, CompanionDisplay};
+mod desktop_perception;
+pub use desktop_perception::{read_screen_permission, ScreenPermission};
+pub(crate) mod activity_events;
 pub(crate) mod approvals;
 pub(crate) mod artifact_download;
 pub(crate) mod automations;
 pub(crate) mod basic_services;
+pub(crate) mod browser_sites;
 pub(crate) mod capabilities;
 pub(crate) mod channels;
 pub(crate) mod chat;
+pub(crate) mod chat_presets;
+mod chat_stop;
 pub(crate) mod cloud;
 mod cloud_errors;
 pub(crate) mod cloud_lifecycle;
@@ -27,18 +34,24 @@ pub(crate) mod conversation_outputs;
 pub(crate) mod conversations;
 pub(crate) mod creations;
 pub(crate) mod events;
+pub(crate) mod harnesses;
 pub(crate) mod knowledge;
 pub(crate) mod knowledge_build;
 pub(crate) mod learning;
+pub(crate) mod llm_catalog;
 pub(crate) mod llm_models;
 pub(crate) mod logs;
 pub(crate) mod mcp_runtime;
 pub(crate) mod memories;
 pub(crate) mod model_pools;
+pub(crate) mod plugin_model_proxy;
+pub(crate) mod plugin_services;
 pub(crate) mod plugin_settings;
 pub(crate) mod plugins;
 pub(crate) mod projections;
+pub(crate) mod provider_models;
 pub(crate) mod resources;
+pub(crate) mod rich_content;
 pub(crate) mod search;
 pub(crate) mod secrets;
 pub(crate) mod security;
@@ -59,6 +72,8 @@ pub(crate) mod workflows;
 pub(crate) mod workspace_code;
 pub(crate) mod workspace_files;
 pub(crate) mod workspace_git;
+pub(crate) mod workspace_pages;
+pub(crate) mod workspace_service_settings;
 pub(crate) mod workspaces;
 
 pub use chat::chat_handler;
@@ -74,3 +89,12 @@ mod llm_models_tests;
 mod tests;
 
 pub(crate) mod artifacts;
+
+pub(crate) mod work_index;
+
+pub(crate) mod outputs;
+
+pub(crate) mod context_manifest;
+
+#[cfg(test)]
+mod approvals_contract_tests;

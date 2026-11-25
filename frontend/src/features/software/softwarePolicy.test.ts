@@ -26,3 +26,4 @@ describe("software identity and presentation policy", () => {
   expect(softwareVisibleViewport({x: 240, y: -400, width: 700, height: 300}, {x: 240, y: 64, width: 700, height: 640})).toBeNull();
  });
 });
+

@@ -11,3 +11,9 @@ pub mod domain;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod update_policy_tests;
+#[cfg(test)]
+mod workspace_chat_tests;
+#[cfg(test)]
+mod workspace_task_model_tests;

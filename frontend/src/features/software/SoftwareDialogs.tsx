@@ -85,3 +85,4 @@ export default function SoftwareDialogs(props: Props) {
   </div>
  </Modal>;
 }
+

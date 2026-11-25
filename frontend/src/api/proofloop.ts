@@ -1,7 +1,7 @@
 import type { TaskGraphDefinition as TaskGraph } from "./taskWorld";
 import type { InputBinding } from "../features/task-world/input-binding/model";
-import { API_BASE } from "./transport";
-import { controlSessionHeaders } from "./controlSession";
+import { requestProofLoop } from "./proofloopTransport";
+export { requestProofLoop } from "./proofloopTransport";
 import type { ApiResult } from "./taskWorld";
 import type { PlanningOptions, PlanningReview, SelectCandidateRequest } from "./proofloopEnhancements";
 export type {
@@ -143,7 +143,13 @@ export interface CompileResult {
   pending_inputs: PendingInput[];
 }
 
+export interface AttentionGoalSource {
+  automation_id: string;
+  observation_id: string;
+}
+
 export interface ProofDraft {
+  source?: AttentionGoalSource;
   draft_id: string;
   revision: number;
   graph_id: string;
@@ -283,6 +289,7 @@ export interface RepairProposal {
 
 // Request & Response shapes
 export interface CreateProofDraftRequest {
+  source?: AttentionGoalSource;
   requirements?: Pick<GoalContract,"deliverables"|"criteria"|"constraints"> & { budget?: Budget };
   workspace_id: string;
   user_goal: string;
@@ -343,105 +350,6 @@ export interface ProofDraftSummary {
   status: ProofDraft["status"];
 }
 
-interface ErrorPayload {
-  error?: string;
-  code?: string;
-  message?: string;
-}
-
-function parseJson(text: string): unknown {
-  if (!text.trim()) return null;
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function errorMessage(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const value = payload as ErrorPayload;
-  return typeof value.message === "string"
-    ? value.message
-    : typeof value.error === "string"
-      ? value.error
-      : null;
-}
-
-function errorCode(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const value = payload as ErrorPayload;
-  const code = value.code || value.error;
-  return typeof code === "string" && /^[a-z0-9_\-]+$/.test(code) ? code : null;
-}
-
-export async function requestProofLoop<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  signal?: AbortSignal,
-): Promise<ApiResult<T>> {
-  try {
-    const options: RequestInit = {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        ...controlSessionHeaders(),
-      },
-      signal,
-    };
-    if (body !== undefined) options.body = JSON.stringify(body);
-
-    const response = await fetch(`${API_BASE}${path}`, options);
-    const text = response.status === 204 ? "" : await response.text();
-    const payload = parseJson(text);
-
-    if (!response.ok) {
-      const message = errorMessage(payload) || `HTTP ${response.status}`;
-      return {
-        ok: false,
-        error: {
-          status: response.status,
-          code: errorCode(payload) || `http_${response.status}`,
-          message,
-        },
-      };
-    }
-
-    if (!text) return { ok: true, data: {} as T };
-    if (payload === null) {
-      return {
-        ok: false,
-        error: {
-          status: 0,
-          code: "invalid_json",
-          message: "ProofLoop API 返回了无效 JSON。",
-        },
-      };
-    }
-    return { ok: true, data: payload as T };
-  } catch (error: unknown) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      return {
-        ok: false,
-        error: {
-          status: 0,
-          code: "aborted",
-          message: "请求已被用户取消",
-        },
-      };
-    }
-    return {
-      ok: false,
-      error: {
-        status: 0,
-        code: "network_error",
-        message: error instanceof Error ? error.message : String(error),
-      },
-    };
-  }
-}
-
 // API client functions
 export async function createProofDraft(
   request: CreateProofDraftRequest,
@@ -470,6 +378,15 @@ export async function getProofDraft(
   return requestProofLoop<ProofDraft>(
     "GET",
     `/api/task-world/proofloop/drafts/${encodeURIComponent(draftId)}`,
+    undefined,
+    signal,
+  );
+}
+
+export function getAttentionProofDraft(source: AttentionGoalSource, signal?: AbortSignal) {
+  return requestProofLoop<{ draft: ProofDraft | null }>(
+    "GET",
+    `/api/task-world/proofloop/drafts/attention/${encodeURIComponent(source.automation_id)}/${encodeURIComponent(source.observation_id)}`,
     undefined,
     signal,
   );
@@ -578,6 +495,14 @@ export async function applyRepair(
   );
 }
 
-export interface GraphGoalBinding { goal_id: string; goal_version: number; graph_id: string; contract: GoalContract; time_usage?: GoalTimeUsage | null; remaining_ms?: number | null; budget_error?: ProofError | null }
+export interface GoalConversation {
+  conversation_id: string;
+  title: string;
+  run_status: import("../types").ConversationRunStatus;
+  run_error: string | null;
+  run_started_at?: number | null;
+  run_finished_at?: number | null;
+}
+export interface GraphGoalBinding { goal_id: string; goal_version: number; graph_id: string; contract: GoalContract; conversation_ids?: string[]; conversations?: GoalConversation[]; time_usage?: GoalTimeUsage | null; remaining_ms?: number | null; budget_error?: ProofError | null }
 export const getGraphGoal = (graphId: string, signal?: AbortSignal) => requestProofLoop<GraphGoalBinding>("GET", `/api/task-world/proofloop/graphs/${encodeURIComponent(graphId)}/goal`, undefined, signal);
 export const getEvaluationDetail = (reportId: string, signal?: AbortSignal) => requestProofLoop<EvaluationDetail>("GET", `/api/task-world/proofloop/evaluations/${encodeURIComponent(reportId)}`, undefined, signal);

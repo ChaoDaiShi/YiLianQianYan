@@ -1,7 +1,7 @@
 //! Production Task capability dispatch. Only the Gateway may invoke the Tool.
 use super::super::{AdapterError, CapabilityExecutionProvider, ExecutorDispatch, NodeExecution};
-use crate::agent::verifier::DefaultVerifier;
 use crate::app::state::AppServer;
+use crate::modules::harness_profiles as harness;
 use crate::safety::execution_gateway::SecurityExecutionOutcome;
 use crate::safety::{SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject};
 use crate::tools::trait_def::RiskLevel;
@@ -19,7 +19,22 @@ pub async fn gateway(
     server: &AppServer,
     tool_name: &str,
 ) -> Result<SecurityExecutionGateway, AdapterError> {
-    let registry = server.build_agent_tool_registry().await;
+    let selection = harness::active(&server.db).map_err(AdapterError::Execution)?;
+    gateway_selected(server, tool_name, selection.as_ref()).await
+}
+
+pub(super) async fn gateway_selected(
+    server: &AppServer,
+    tool_name: &str,
+    selection: Option<&harness::Selection>,
+) -> Result<SecurityExecutionGateway, AdapterError> {
+    let scope = selection
+        .map(|selection| harness::tool_scope(server, selection, None))
+        .transpose()
+        .map_err(AdapterError::Execution)?;
+    let registry = server
+        .build_agent_tool_registry_scoped(scope.as_ref())
+        .await;
     let tool = registry
         .get(tool_name)
         .ok_or(AdapterError::ProviderUnavailable)?;
@@ -40,19 +55,22 @@ pub async fn gateway(
     {
         return Err(AdapterError::ProviderUnavailable);
     }
-    let config = server.config.read().clone();
-    Ok(
-        SecurityExecutionGateway::with_sandbox_registry_verifier_and_audit(
-            config.sandbox,
-            server.workspace_root.clone(),
-            registry,
-            Arc::new(DefaultVerifier::new(&server.workspace_root)),
-            Arc::new(server.audit_recorder.clone()),
-        )
-        .with_permissions_config(server.config.clone())
-        .with_db(Arc::new(server.db.clone_connection()))
-        .with_grant_enforcement(),
-    )
+    Ok(crate::safety::production_gateway::build(
+        server,
+        &server.workspace_root,
+        registry,
+        crate::safety::execution_gateway::current_agent_id(),
+    ))
+}
+
+pub(super) fn execution_owner(execution: &NodeExecution) -> crate::execution::ExecutionOwner {
+    crate::execution::ExecutionOwner::GoalNode {
+        graph_id: execution.graph_id.to_string(),
+        node_id: execution.node_id.to_string(),
+        execution_id: execution.id.to_string(),
+        goal_id: None,
+        goal_version: None,
+    }
 }
 
 pub fn completed_result(
@@ -64,11 +82,22 @@ pub fn completed_result(
             tool_result,
             verification,
         } => {
-            if !tool_result.ok || !verification.success {
+            let interpreted = crate::execution::interpret_tool_result(&tool_result, &verification);
+            if !interpreted.is_verified() {
                 return Ok(ExecutorDispatch::Failed {
-                    code: "capability_execution_failed".into(),
+                    code: if matches!(
+                        interpreted,
+                        crate::execution::VerifiedExecutionResult::ResultUnknown { .. }
+                    ) {
+                        "external_mutation_uncertain"
+                    } else {
+                        "capability_execution_failed"
+                    }
+                    .into(),
                     error: crate::utils::text::truncate_chars(
-                        tool_result.error.as_deref().unwrap_or(&verification.reason),
+                        interpreted
+                            .failure_reason()
+                            .unwrap_or("Execution was not verified"),
                         2000,
                     ),
                 });
@@ -138,7 +167,13 @@ impl CapabilityExecutionProvider for ExistingCapabilityProvider {
                 })
             }
         };
-        let gateway = gateway(&self.server, &binding.tool_registry_name).await?;
+        let selection = harness::active(&self.server.db).map_err(AdapterError::Execution)?;
+        let gateway = gateway_selected(
+            &self.server,
+            &binding.tool_registry_name,
+            selection.as_ref(),
+        )
+        .await?;
         let request = SecurityExecutionRequest {
             conversation_id: format!("task-node:{}", execution.id),
             tool_call_id: execution.id.to_string(),
@@ -146,9 +181,16 @@ impl CapabilityExecutionProvider for ExistingCapabilityProvider {
             arguments,
             subject: SecuritySubject::local_user(),
         };
+        let owner = execution_owner(execution);
+        let mut manifest = execution.context.manifest.clone();
+        harness::record(&mut manifest, selection.as_ref());
+        crate::execution::context_manifest::record_manifest(&self.server.db, &owner, &manifest)
+            .map_err(AdapterError::Execution)?;
+        let gateway_call = crate::execution::owner::CURRENT_EXECUTION_OWNER
+            .scope(owner, gateway.execute(&request, RiskLevel::High));
         let outcome = tokio::select! {biased;
             _=self.cancel.cancelled()=>return Err(AdapterError::Execution("cancelled".into())),
-            result=gateway.execute(&request,RiskLevel::High)=>result.map_err(|_|AdapterError::Execution("security_gateway_error".into()))?,
+            result=gateway_call=>result.map_err(|_|AdapterError::Execution("security_gateway_error".into()))?,
         };
         match outcome {
             SecurityExecutionOutcome::RequiresApproval { risk_level, reason } => {

@@ -1,4 +1,3 @@
-import { Monitor, Moon, Sun } from "lucide-react";
 import type { ProofLoopSettingsConfig } from "./types";
 
 /**
@@ -53,22 +52,7 @@ export const defaultConfig: ProofLoopSettingsConfig = {
 
 /** Only Cyrene system / light / dark are offered; there is no custom theme. */
 export const APPEARANCE_MODES = [
-  {
-    id: "system",
-    label: "跟随系统",
-    description: "自动使用系统的明暗外观",
-    icon: Monitor,
-  },
-  {
-    id: "light",
-    label: "白天",
-    description: "清透的月光白与淡粉紫界面",
-    icon: Sun,
-  },
-  {
-    id: "dark",
-    label: "夜间",
-    description: "低眩光的深紫色夜色界面",
-    icon: Moon,
-  },
+  { id: "system", label: "跟随系统" },
+  { id: "light", label: "白天" },
+  { id: "dark", label: "夜间" },
 ] as const;

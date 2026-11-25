@@ -14,6 +14,7 @@ export interface ChannelSettingsDrawerProps {
   channel: ExternalChannel;
   provider: ChannelProvider | undefined;
   open: boolean;
+  actionError: string;
   onClose: () => void;
   onPolicySaved: () => void;
   onEdit: () => void;
@@ -30,7 +31,7 @@ export interface ChannelSettingsDrawerProps {
 }
 
 export default function ChannelSettingsDrawer(props: ChannelSettingsDrawerProps) {
-  const { channel, provider, open, onClose, onPolicySaved, onEdit, onCheck, checkBusy, checks, onBeginLogin, loginBusy, onToggleChannel, channelBusy, replyBusy, onChangeReplyMode, onDelete } = props;
+  const { channel, provider, open, actionError, onClose, onPolicySaved, onEdit, onCheck, checkBusy, checks, onBeginLogin, loginBusy, onToggleChannel, channelBusy, replyBusy, onChangeReplyMode, onDelete } = props;
   const [policy, setPolicy] = useState<RobotPolicy | null>(null);
   const [owners, setOwners] = useState("");
   const [privateIds, setPrivateIds] = useState("");
@@ -98,7 +99,7 @@ export default function ChannelSettingsDrawer(props: ChannelSettingsDrawerProps)
           <div><dt>账号凭据</dt><dd>{channel.credentials_configured ? "本机凭据库已配置" : "尚未完整配置"}</dd></div>
           <div><dt>允许接收私聊</dt><dd>{channel.allowed_senders.length} 个用户</dd></div>
           <div><dt>允许接收群</dt><dd>{channel.allowed_groups.length} 个群</dd></div>
-          {channel.provider !== "wechat_onebot" && <div><dt>回复方式</dt><dd>{replyModeLabel(channel.reply_mode)}</dd></div>}
+          <div><dt>回复方式</dt><dd>{replyModeLabel(channel.reply_mode)}</dd></div>
         </dl>
         <div className="channel-settings-actions">
           <Button variant="secondary" size="sm" onClick={onEdit}><Settings2 size={14} />编辑接入配置</Button>
@@ -106,13 +107,19 @@ export default function ChannelSettingsDrawer(props: ChannelSettingsDrawerProps)
           {channel.provider === "wechat_ilink" && <Button variant="secondary" size="sm" disabled={loginBusy} loading={loginBusy} onClick={onBeginLogin}>开始扫码</Button>}
           <Button variant="secondary" size="sm" disabled={replyBusy} loading={replyBusy} onClick={onChangeReplyMode}>{channel.reply_mode === "automatic" ? "改为审阅发送" : "开启自动回复"}</Button>
           <Button variant="ghost" size="sm" disabled={channelBusy} loading={channelBusy} onClick={onToggleChannel}>{channel.enabled ? "停用渠道" : "启用渠道"}</Button>
-          <Button variant="ghost" size="sm" onClick={onDelete}><Trash2 size={14} />删除渠道</Button>
         </div>
-        {channel.provider !== "wechat_onebot" && <p className="channel-settings-note">{replyModeDescription(channel.reply_mode)}</p>}
-        {channel.provider === "wechat_onebot" && <p className="channel-settings-note">Akasha-WeChat 是单独的 reverse_websocket provider。当前应用没有微信扫码登录，也不会把 QQ 通讯录／历史工具显示为微信能力。</p>}
+        <p className="channel-settings-note">{replyModeDescription(channel.reply_mode)}</p>
+        {actionError && <p className="channels-error" role="alert">{actionError}</p>}
         {channel.last_error && <p className="channels-error" role="alert">最近错误：{channel.last_error}</p>}
-        {provider?.limitations.map((item, index) => <p className="channel-settings-note" key={index}>{item}</p>)}
-        {provider && <a className="channel-provider-doc-link" href={provider.docs_url} target="_blank" rel="noreferrer">平台资料 <ExternalLink size={13} /></a>}
+        {provider && <details className="channel-settings-help">
+          <summary>平台资料与限制</summary>
+          {provider.limitations.map((item, index) => <p className="channel-settings-note" key={index}>{item}</p>)}
+          <a className="channel-provider-doc-link" href={provider.docs_url} target="_blank" rel="noreferrer">平台资料 <ExternalLink size={13} /></a>
+        </details>}
+        <details className="channel-settings-help">
+          <summary>渠道管理</summary>
+          <Button variant="danger" size="sm" className="mt-2" onClick={onDelete}><Trash2 size={14} />删除渠道</Button>
+        </details>
       </section>
 
       {checks && <section className="channel-settings-checks" aria-label="连接检查结果"><h3><Activity size={14} />连接检查</h3>{checks.map((item, index) => <div key={item.label + index} data-ok={item.ok}><strong>{item.ok ? "通过" : "未通过"} · {item.label}</strong><p>{item.detail}</p></div>)}</section>}

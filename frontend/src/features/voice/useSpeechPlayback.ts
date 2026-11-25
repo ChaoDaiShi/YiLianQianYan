@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readPlaybackOverlap, type PlaybackOverlap } from "./echoEvidence";
+import { observeSpeechMouth } from "./speechMouth";
 import {
   markVoiceSpeechFinished,
   markVoiceSpeechStarted,
@@ -132,6 +133,7 @@ export function useSpeechPlayback({
   onError,
 }: UseSpeechPlaybackOptions = {}): UseSpeechPlaybackResult {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const mouthRef = useRef<(() => void) | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
   const spokenRef = useRef<{ text: string; sessionId: string; generation: number } | null>(null);
@@ -143,6 +145,8 @@ export function useSpeechPlayback({
   }, [generation, sessionId]);
 
   const releaseAudio = useCallback(() => {
+    mouthRef.current?.();
+    mouthRef.current = null;
     interruptAudioElement(audioRef.current);
     audioRef.current = null;
     spokenRef.current = null;
@@ -213,6 +217,7 @@ export function useSpeechPlayback({
       const objectUrl = URL.createObjectURL(new Blob([result.audio], { type: result.mediaType }));
       objectUrlRef.current = objectUrl;
       const audio = new Audio(objectUrl);
+      mouthRef.current = observeSpeechMouth(audio, result.audio);
       audio.muted = state.muted;
       let lifecycleStarted = false;
       const reportFinished = async () => {

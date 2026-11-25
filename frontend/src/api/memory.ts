@@ -53,6 +53,12 @@ export async function withdrawMemory(id: string, data: { expected_revision: numb
   return result.data;
 }
 
+export async function restoreMemoryVersion(id: string, data: { expected_revision: number; version_id: string }): Promise<MemoryRecord> {
+  const result = await requestResult<MemoryRecord>("POST", `/api/memories/${encodeURIComponent(id)}/restore`, data);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
 export async function listWithdrawnMemories(): Promise<MemoryRecord[]> {
   const result = await requestResult<MemoryRecord[]>("GET", "/api/memories/withdrawn");
   if (!result.ok) throw new Error(result.error);
@@ -135,14 +141,14 @@ export async function listMemories(query?: MemoryQuery, library = false): Promis
 
 export interface MemoryActivity {
   id: string;
-  kind: "chat_message" | "memory_created" | "memory_edited" | "memory_withdrawn" | "memory_deleted";
+  kind: "chat_message" | "automation_message" | "memory_created" | "memory_edited" | "memory_withdrawn" | "memory_deleted";
   recorded_at: number;
   content: string | null;
   conversation_id: string | null;
   source_removed: boolean;
   memory_id: string | null;
   removable: boolean;
-  origin: "user_message" | "manual" | "auto" | "document" | null;
+  origin: "user_message" | "automation_message" | "manual" | "auto" | "document" | null;
   memory_status: "active" | "withdrawn" | null;
 }
 
@@ -247,6 +253,18 @@ export async function mergeMemories(ids: string[]) {
 
 export async function reindexMemories(): Promise<MemoryReindexResult> {
   const result = await requestResult<MemoryReindexResult>("POST", "/api/memories/reindex", { limit: 50 });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
+export interface MemoryIndexJob {
+  phase: "idle" | "running" | "completed" | "cancelled" | "failed";
+  indexed: number;
+  error: string | null;
+}
+
+export async function memoryIndexJob(method: "GET" | "POST" | "DELETE" = "GET"): Promise<MemoryIndexJob> {
+  const result = await requestResult<MemoryIndexJob>(method, "/api/memories/index-job");
   if (!result.ok) throw new Error(result.error);
   return result.data;
 }

@@ -1,4 +1,4 @@
-import { useId, useEffect, useState, type ReactNode } from "react";
+import { useId, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "./cn";
@@ -17,6 +17,8 @@ export interface ModalProps {
   children: ReactNode;
   className?: string;
   footer?: ReactNode;
+  closeDisabled?: boolean;
+  returnFocusRef?: RefObject<HTMLElement>;
 }
 
 const modalSizes: Record<ModalSize, string> = {
@@ -35,14 +37,12 @@ export default function Modal({
   children,
   className,
   footer,
+  closeDisabled = false,
+  returnFocusRef,
 }: ModalProps) {
-  const panelRef = useDialogFocusLifecycle({ open, onClose });
+  const requestClose = () => { if (!closeDisabled) onClose(); };
+  const panelRef = useDialogFocusLifecycle({ open, onClose: requestClose, returnFocusRef });
   const titleId = useId();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   if (!open) return null;
 
@@ -52,9 +52,9 @@ export default function Modal({
       role="presentation"
     >
       <div
-        className="absolute inset-0 bg-[var(--backdrop)] backdrop-blur-md animate-fade-in"
+        className="ui-dialog-scrim absolute inset-0 animate-fade-in"
         aria-hidden="true"
-        onClick={onClose}
+        onClick={requestClose}
       />
       <div
         ref={panelRef}
@@ -79,14 +79,16 @@ export default function Modal({
           aria-hidden="true"
         />
 
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--border-soft)] px-5 py-4">
-          <h3 id={titleId} className="font-semibold text-[var(--text)] text-[length:var(--font-size-title-sm)]">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--border-soft)] px-5 py-4">
+          <h3 id={titleId} className="min-w-0 [overflow-wrap:anywhere] font-semibold text-[var(--text)] text-[length:var(--font-size-title-sm)]">
             {title}
           </h3>
           <Button
             variant="ghost"
             size="sm"
-            onClick={onClose}
+            className="shrink-0"
+            disabled={closeDisabled}
+            onClick={requestClose}
             aria-label={`关闭${title}`}
           >
             <X className="w-4 h-4" />
@@ -98,7 +100,7 @@ export default function Modal({
         </div>
 
         {footer && (
-          <div className="flex shrink-0 justify-end gap-2 border-t border-[var(--border-soft)] bg-[var(--surface-muted)] px-5 py-3.5">
+          <div className="shared-dialog-footer flex shrink-0 flex-wrap justify-end gap-2 border-t border-[var(--border-soft)] px-5 py-3.5">
             {footer}
           </div>
         )}
@@ -106,7 +108,7 @@ export default function Modal({
     </div>
   );
 
-  if (mounted && typeof document !== "undefined") {
+  if (typeof document !== "undefined") {
     return createPortal(modalContent, document.body);
   }
 

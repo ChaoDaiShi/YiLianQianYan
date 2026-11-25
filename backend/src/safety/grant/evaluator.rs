@@ -72,7 +72,7 @@ impl GrantEvaluator {
         now_ms: i64,
     ) -> GrantEvaluation {
         // Only a subset of permissions are resource-grant enforced; the rest
-        // (ProcessInspect, Desktop*, Skill, Agent) remain RBAC-only.
+        // (ProcessInspect, Desktop*, Skill and most Agent actions) remain RBAC-only.
         if !is_grant_enforced(permission) {
             return GrantEvaluation {
                 decision: GrantDecision::Allow,
@@ -177,6 +177,7 @@ fn is_grant_enforced(permission: PermissionId) -> bool {
             | PermissionId::ProcessControl
             | PermissionId::ShellExecute
             | PermissionId::McpInvoke
+            | PermissionId::AgentDelegate
     )
 }
 

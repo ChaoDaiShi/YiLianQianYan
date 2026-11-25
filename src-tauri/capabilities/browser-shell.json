@@ -1,0 +1,10 @@
+{
+  "identifier": "browser-shell",
+  "description": "Trusted browser chrome only; remote browser-content views receive no IPC permissions",
+  "webviews": [
+    "browser-shell-*"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

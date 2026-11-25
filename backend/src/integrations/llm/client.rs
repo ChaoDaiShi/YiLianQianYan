@@ -48,16 +48,50 @@ pub enum LlmError {
     InvalidEmbeddingResponse(String),
     #[error("embedding API key not configured")]
     EmbeddingNoApiKey,
+    #[error("当前资料档案已关闭外部模型调用")]
+    ExternalModelDisabled,
+    #[error("模型服务重定向超出已配置的来源或次数上限，请检查模型 API 地址")]
+    Redirect,
+}
+
+pub(crate) fn model_redirect_policy() -> reqwest::redirect::Policy {
+    let limit = reqwest::redirect::Policy::limited(10);
+    reqwest::redirect::Policy::custom(move |attempt| {
+        let next = attempt.url();
+        if next.username().is_empty()
+            && next.password().is_none()
+            && attempt
+                .previous()
+                .first()
+                .is_some_and(|original| original.origin() == next.origin())
+        {
+            limit.redirect(attempt)
+        } else {
+            attempt.error(LlmError::Redirect)
+        }
+    })
+}
+
+impl LlmError {
+    pub(crate) fn from_model_request(error: reqwest::Error) -> Self {
+        if error.is_redirect() {
+            Self::Redirect
+        } else {
+            Self::Http(error)
+        }
+    }
 }
 
 /// LLM client for OpenAI-compatible chat completion APIs
 pub struct LlmClient {
     json_object_output: bool,
     thinking_mode: super::thinking::ThinkingMode,
+    generation: super::generation::GenerationOverrides,
     pool: Option<super::model_pool::ModelPoolRuntime>,
     http: HttpClient,
     config: ModelConfig,
     resolver: Arc<SecretResolver>,
+    profile_permissions: Option<crate::db::Database>,
     /// Concurrency limiter (max 3 concurrent LLM calls)
     limiter: Arc<Mutex<()>>,
     usage_recorder: Option<Arc<dyn UsageRecorder>>,
@@ -74,21 +108,43 @@ impl LlmClient {
         resolver: Arc<SecretResolver>,
         usage_recorder: Option<Arc<dyn UsageRecorder>>,
     ) -> Self {
-        let http = HttpClient::builder()
+        let mut http = HttpClient::builder()
             .timeout(Duration::from_millis(config.invoke_timeout_ms))
-            .build()
-            .expect("Failed to create HTTP client");
+            .redirect(model_redirect_policy());
+        if config.uses_local_chat() {
+            http = http.no_proxy();
+        }
+        let http = http.build().expect("Failed to create HTTP client");
 
         Self {
             json_object_output: false,
             thinking_mode: super::thinking::ThinkingMode::Standard,
+            generation: super::generation::GenerationOverrides::default(),
             pool: None,
             http,
             config: config.clone(),
             resolver,
+            profile_permissions: None,
             limiter: Arc::new(Mutex::new(())),
             usage_recorder,
         }
+    }
+
+    pub(crate) fn with_profile_permissions(mut self, db: crate::db::Database) -> Self {
+        self.profile_permissions = Some(db);
+        self
+    }
+
+    fn check_external_model_permission(&self, local: bool) -> Result<(), LlmError> {
+        if !local
+            && self
+                .profile_permissions
+                .as_ref()
+                .is_some_and(|db| !crate::modules::onboarding::allowed(db, "external_model"))
+        {
+            return Err(LlmError::ExternalModelDisabled);
+        }
+        Ok(())
     }
 
     pub fn with_model_pool(mut self, mut pool: super::model_pool::ModelPoolRuntime) -> Self {
@@ -97,7 +153,17 @@ impl LlmClient {
                 candidate.client.set_json_object_output();
             }
         }
+        pool.set_generation_overrides(self.generation);
         self.pool = Some(pool.with_thinking_mode(self.thinking_mode));
+        self
+    }
+
+    /// A caller that accounts for one provider request may select a pool
+    /// without spending additional unmetered requests on fallback tiers.
+    pub(crate) fn with_one_pool_attempt(mut self) -> Self {
+        if let Some(pool) = self.pool.as_mut() {
+            pool.candidates.truncate(1);
+        }
         self
     }
 
@@ -113,12 +179,36 @@ impl LlmClient {
         }
     }
 
+    pub fn with_generation_overrides(
+        mut self,
+        generation: super::generation::GenerationOverrides,
+    ) -> Self {
+        self.set_generation_overrides(generation);
+        self
+    }
+
+    pub(super) fn set_generation_overrides(
+        &mut self,
+        generation: super::generation::GenerationOverrides,
+    ) {
+        self.generation = generation;
+        if let Some(pool) = &mut self.pool {
+            pool.set_generation_overrides(generation);
+        }
+    }
+
+    fn generation_options(&self) -> super::generation::GenerationOptions {
+        super::generation::GenerationOptions::for_model(&self.config, self.thinking_mode)
+    }
+
     fn request_body(&self, request: ChatCompletionRequest) -> Result<serde_json::Value, LlmError> {
         let mut value =
             serde_json::to_value(request).map_err(|e| LlmError::Parse(e.to_string()))?;
         self.thinking_mode
             .apply(&self.config, &mut value)
             .map_err(LlmError::Api)?;
+        self.generation
+            .apply_sampling(self.generation_options(), &mut value);
         self.apply_response_format(&mut value);
         Ok(value)
     }
@@ -151,12 +241,26 @@ impl LlmClient {
     ) -> Option<u32> {
         let input_upper_bound = conservative_input_token_upper_bound(messages, tools)?;
         let remaining = total_token_budget.checked_sub(input_upper_bound)?;
-        let output_limit = remaining.min(u64::from(self.config.max_tokens));
+        let output_limit = remaining.min(u64::from(self.max_output_tokens()));
         (output_limit > 0).then_some(output_limit.min(u64::from(u32::MAX)) as u32)
     }
 
     pub fn max_output_tokens(&self) -> u32 {
-        self.config.max_tokens
+        if let Some(pool) = &self.pool {
+            let configured_limit = self.config.max_tokens;
+            let pool_limit = pool
+                .candidates
+                .iter()
+                .map(|candidate| candidate.client.max_output_tokens())
+                .max();
+            return pool_limit.map_or(configured_limit, |limit| configured_limit.min(limit));
+        }
+        self.generation
+            .output_limit(self.generation_options(), self.config.max_tokens)
+    }
+
+    pub(crate) fn model_identity(&self) -> (&str, &str) {
+        (&self.config.provider, &self.config.name)
     }
 
     pub fn invoke_timeout(&self) -> Duration {
@@ -180,7 +284,11 @@ impl LlmClient {
             .map_err(|_| LlmError::SecretUnavailable)?;
         match resolved {
             Some(key) => Ok(key),
-            None if matches!(self.config.provider.as_str(), "ollama" | "lmstudio") => {
+            None if matches!(
+                self.config.provider.as_str(),
+                "ollama" | "lmstudio" | "llamacpp"
+            ) =>
+            {
                 Ok(SecretString::from(String::new()))
             }
             None => Err(LlmError::NoApiKey),
@@ -188,12 +296,11 @@ impl LlmClient {
     }
 
     /// Resolve the embedding API key through the SecretResolver.
-    async fn embedding_api_key(&self) -> Result<SecretString, LlmError> {
+    async fn embedding_api_key(&self) -> Result<Option<SecretString>, LlmError> {
         self.resolver
             .resolve_embedding_api_key(&self.config)
             .await
-            .map_err(|_| LlmError::SecretUnavailable)?
-            .ok_or(LlmError::EmbeddingNoApiKey)
+            .map_err(|_| LlmError::SecretUnavailable)
     }
 
     // ============================================================
@@ -206,7 +313,7 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> Result<ChatCompletionResponse, LlmError> {
-        self.invoke_with_max_tokens(messages, tools, self.config.max_tokens)
+        self.invoke_with_max_tokens(messages, tools, self.max_output_tokens())
             .await
     }
 
@@ -243,13 +350,17 @@ impl LlmClient {
             },
             tool_choice: None,
             temperature: Some(self.config.temperature),
-            max_tokens: Some(max_tokens),
+            max_tokens: Some(
+                self.generation
+                    .output_limit(self.generation_options(), max_tokens),
+            ),
             stream: false,
             stream_options: None,
         };
 
         let request = self.request_body(request)?;
         let api_key = self.api_key().await?;
+        self.check_external_model_permission(self.config.uses_local_chat())?;
         if let Some(recorder) = &self.usage_recorder {
             recorder.request_started();
         }
@@ -270,7 +381,8 @@ impl LlmClient {
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
-            .await?;
+            .await
+            .map_err(LlmError::from_model_request)?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -308,8 +420,6 @@ impl LlmClient {
             return Err(LlmError::EmbeddingNotConfigured);
         }
 
-        let api_key = self.embedding_api_key().await?;
-
         let url = format!(
             "{}/embeddings",
             self.config.embedding_base_url.trim_end_matches('/')
@@ -326,25 +436,47 @@ impl LlmClient {
             "calling embedding API"
         );
 
-        let response = self
-            .http
-            .post(&url)
-            .header(
-                "Authorization",
-                format!("Bearer {}", api_key.expose_secret()),
-            )
-            .header("Content-Type", "application/json")
+        let loopback = self.config.has_local_embedding();
+        let client = if loopback {
+            // Bypass proxy settings while permitting redirects within the same local origin.
+            static LOCAL_HTTP: std::sync::LazyLock<reqwest::Client> =
+                std::sync::LazyLock::new(|| {
+                    reqwest::Client::builder()
+                        .redirect(model_redirect_policy())
+                        .no_proxy()
+                        .build()
+                        .expect("loopback embedding client configuration")
+                });
+            &*LOCAL_HTTP
+        } else {
+            &self.http
+        };
+        let mut request_builder = client.post(&url).timeout(self.invoke_timeout());
+        let bundled_local_runtime = loopback
+            && matches!(
+                self.config.embedding_model.as_str(),
+                "BAAI/bge-small-zh-v1.5" | "Qwen/Qwen3-Embedding-0.6B"
+            );
+        let key = if bundled_local_runtime {
+            None
+        } else {
+            self.embedding_api_key().await?
+        };
+        match key {
+            Some(key) => request_builder = request_builder.bearer_auth(key.expose_secret()),
+            None if !loopback => return Err(LlmError::EmbeddingNoApiKey),
+            None => {}
+        }
+        self.check_external_model_permission(loopback)?;
+        let response = request_builder
             .json(&request)
             .send()
-            .await?;
+            .await
+            .map_err(LlmError::from_model_request)?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api(format!(
-                "embedding HTTP {}: {}",
-                status, body
-            )));
+            return Err(LlmError::Api(format!("embedding HTTP {status}")));
         }
 
         let raw: serde_json::Value = response.json().await?;
@@ -388,6 +520,14 @@ impl LlmClient {
         Ok(vec)
     }
 
+    pub async fn embed_query(&self, query: &str) -> Result<Vec<f32>, LlmError> {
+        match self.config.embedding_model.as_str() {
+            "BAAI/bge-small-zh-v1.5" => self.embed(&format!("为这个句子生成表示以用于检索相关文章：{query}")).await,
+            "Qwen/Qwen3-Embedding-0.6B" => self.embed(&format!("Instruct: Retrieve relevant personal memories for the given query\nQuery: {query}")).await,
+            _ => self.embed(query).await,
+        }
+    }
+
     // ============================================================
     // Streaming invoke
     // ============================================================
@@ -399,7 +539,7 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> Result<tokio::sync::mpsc::Receiver<Result<StreamChunk, LlmError>>, LlmError> {
-        self.invoke_stream_with_max_tokens(messages, tools, self.config.max_tokens)
+        self.invoke_stream_with_max_tokens(messages, tools, self.max_output_tokens())
             .await
     }
 
@@ -421,7 +561,10 @@ impl LlmClient {
             },
             tool_choice: None,
             temperature: Some(self.config.temperature),
-            max_tokens: Some(max_tokens),
+            max_tokens: Some(
+                self.generation
+                    .output_limit(self.generation_options(), max_tokens),
+            ),
             stream: true,
             stream_options: Some(StreamOptions {
                 include_usage: true,
@@ -430,6 +573,7 @@ impl LlmClient {
 
         let request = self.request_body(request)?;
         let api_key = self.api_key().await?;
+        self.check_external_model_permission(self.config.uses_local_chat())?;
         if let Some(recorder) = &self.usage_recorder {
             recorder.request_started();
         }
@@ -451,7 +595,8 @@ impl LlmClient {
             .header("Accept", "text/event-stream")
             .json(&request)
             .send()
-            .await?;
+            .await
+            .map_err(LlmError::from_model_request)?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -469,7 +614,7 @@ impl LlmClient {
         let provider = self.config.provider.clone();
         tokio::spawn(async move {
             let mut byte_stream = response.bytes_stream();
-            let mut buffer = String::new();
+            let mut buffer = Vec::new();
             let mut finished = false;
 
             loop {
@@ -479,18 +624,17 @@ impl LlmClient {
                 };
                 match next {
                     Ok(Ok(Some(bytes))) => {
-                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-
-                        // Process complete SSE lines from buffer
-                        while let Some(line_end) = buffer.find('\n') {
-                            let line = buffer[..line_end].trim().to_string();
-                            buffer = buffer[line_end + 1..].to_string();
-
-                            if line.is_empty() {
-                                continue;
-                            }
-
-                            if let Some(data) = line.strip_prefix("data: ") {
+                        buffer.extend_from_slice(&bytes);
+                        let Some(complete) = buffer.iter().rposition(|&byte| byte == b'\n') else {
+                            continue;
+                        };
+                        // Decode only complete lines: HTTP byte chunks can end
+                        // partway through a CJK character or emoji.
+                        for raw in buffer[..complete].split(|&byte| byte == b'\n') {
+                            let line = String::from_utf8_lossy(raw);
+                            if let Some(data) =
+                                line.trim().strip_prefix("data:").map(str::trim_start)
+                            {
                                 if data == "[DONE]" {
                                     // Stream complete
                                     return;
@@ -512,12 +656,13 @@ impl LlmClient {
                                         }
                                     }
                                     Err(e) => {
-                                        tracing::warn!("SSE parse error: {} in line: {}", e, data);
+                                        tracing::warn!("SSE parse error: {}", e);
                                         // Continue — some providers have non-standard fields
                                     }
                                 }
                             }
                         }
+                        buffer.drain(..=complete);
                     }
                     Ok(Ok(None)) => {
                         if !finished {
@@ -568,15 +713,24 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
         max_tokens: u32,
-        on_token: F,
+        mut on_token: F,
     ) -> Result<StreamAccumulator, LlmError>
     where
         F: FnMut(&str) + Send,
     {
-        self.stream_with_reasoning_max_tokens(messages, tools, max_tokens, on_token, |_| {})
-            .await
+        self.stream_with_reasoning_max_tokens(
+            messages,
+            tools,
+            max_tokens,
+            |token| {
+                on_token(token);
+                std::future::ready(())
+            },
+            |_| {},
+        )
+        .await
     }
-    pub async fn stream_with_reasoning_max_tokens<F, R>(
+    pub async fn stream_with_reasoning_max_tokens<F, R, TokenFuture>(
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
@@ -585,8 +739,9 @@ impl LlmClient {
         on_reasoning: R,
     ) -> Result<StreamAccumulator, LlmError>
     where
-        F: FnMut(&str) + Send,
+        F: FnMut(&str) -> TokenFuture + Send,
         R: FnMut(&str) + Send,
+        TokenFuture: std::future::Future<Output = ()> + Send,
     {
         if let Some(pool) = &self.pool {
             return pool
@@ -607,15 +762,24 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
         max_tokens: u32,
-        on_token: F,
+        mut on_token: F,
     ) -> Result<StreamAccumulator, LlmError>
     where
         F: FnMut(&str) + Send,
     {
-        self.stream_single_with_reasoning_max_tokens(messages, tools, max_tokens, on_token, |_| {})
-            .await
+        self.stream_single_with_reasoning_max_tokens(
+            messages,
+            tools,
+            max_tokens,
+            |token| {
+                on_token(token);
+                std::future::ready(())
+            },
+            |_| {},
+        )
+        .await
     }
-    pub(super) async fn stream_single_with_reasoning_max_tokens<F, R>(
+    pub(super) async fn stream_single_with_reasoning_max_tokens<F, R, TokenFuture>(
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
@@ -624,8 +788,9 @@ impl LlmClient {
         mut on_reasoning: R,
     ) -> Result<StreamAccumulator, LlmError>
     where
-        F: FnMut(&str) + Send,
+        F: FnMut(&str) -> TokenFuture + Send,
         R: FnMut(&str) + Send,
+        TokenFuture: std::future::Future<Output = ()> + Send,
     {
         let mut rx = self
             .invoke_stream_with_max_tokens(messages, tools, max_tokens)
@@ -645,6 +810,9 @@ impl LlmClient {
                     }
                     for choice in &chunk.choices {
                         accumulator.apply_delta(&choice.delta);
+                        if choice.finish_reason.is_some() {
+                            accumulator.finish_reason.clone_from(&choice.finish_reason);
+                        }
                         if let Some(reasoning) = choice
                             .delta
                             .reasoning_content
@@ -657,7 +825,7 @@ impl LlmClient {
                         // Emit content tokens as they arrive
                         if let Some(ref content) = choice.delta.content {
                             if !content.is_empty() {
-                                on_token(content);
+                                on_token(content).await;
                             }
                         }
                     }
@@ -805,6 +973,46 @@ mod tests {
             );
         }
         (axum::http::StatusCode::OK, Json(responses[idx].clone()))
+    }
+
+    #[tokio::test]
+    async fn embed_accepts_loopback_service_without_credentials() {
+        let (addr, _state, _handle) = start_mock_embed_server(vec![serde_json::json!({
+            "data": [{"embedding": [0.4, 0.6]}]
+        })])
+        .await;
+        let mut config = config_for_mock(&addr);
+        config.embedding_api_key.clear();
+        assert_eq!(
+            LlmClient::new(&config, test_resolver())
+                .embed("本地记忆")
+                .await
+                .unwrap(),
+            vec![0.4, 0.6]
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_invoke_rechecks_permission_after_client_creation() {
+        let db = crate::db::Database::new(std::path::Path::new(":memory:")).unwrap();
+        let config = ModelConfig {
+            base_url: "https://provider.example.invalid/v1".into(),
+            api_key: "revocation-test-key".into(),
+            ..Default::default()
+        };
+        let client = LlmClient::new(&config, test_resolver())
+            .with_profile_permissions(db.clone_connection());
+        assert!(crate::modules::onboarding::allowed(&db, "external_model"));
+        db.conn().execute(
+            "UPDATE local_onboarding SET profile=json_set(profile, '$.permissions.external_model', json('false'))",
+            [],
+        ).unwrap();
+        assert!(matches!(
+            client
+                .invoke(&[ChatMessage::user("synthetic request")], &[])
+                .await,
+            Err(LlmError::ExternalModelDisabled)
+        ));
     }
 
     #[tokio::test]

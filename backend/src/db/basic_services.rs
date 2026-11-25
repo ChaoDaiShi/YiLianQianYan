@@ -45,16 +45,7 @@ impl Database {
         &self,
         id: &str,
     ) -> Result<Option<BasicServiceProfile>, String> {
-        self.conn()
-            .query_row(
-                "SELECT payload FROM basic_service_profiles WHERE id=?1",
-                [id],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?
-            .map(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
-            .transpose()
+        get_basic_service_profile_on(&self.conn(), id)
     }
     pub fn save_basic_service_profile(
         &self,
@@ -64,13 +55,13 @@ impl Database {
         if input.label.trim().is_empty() || input.model.trim().is_empty() {
             return Err("名称和模型不能为空".into());
         }
-        if !matches!(input.service_kind.as_str(), "vision" | "image") {
-            return Err("服务用途必须是识图或生图".into());
-        }
-        if input.service_kind == "vision" && input.adapter != "openai"
-            || input.service_kind == "image"
-                && !matches!(input.adapter.as_str(), "openai" | "dashscope" | "minimax")
-        {
+        let valid_adapter = match input.service_kind.as_str() {
+            "vision" | "embedding" => input.adapter == "openai",
+            "image" => matches!(input.adapter.as_str(), "openai" | "dashscope" | "minimax"),
+            "stt" | "tts" => matches!(input.adapter.as_str(), "openai" | "minimax"),
+            _ => false,
+        };
+        if !valid_adapter {
             return Err("服务用途与协议不匹配".into());
         }
         if !self
@@ -100,6 +91,14 @@ impl Database {
         if let Some(expected) = input.expected_revision {
             if conn.execute("UPDATE basic_service_profiles SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",params![profile.revision,payload,id,expected]).map_err(|e|e.to_string())?!=1{return Err("revision_conflict".into());}
         } else {
+            let existing = conn.query_row(
+                "SELECT payload FROM basic_service_profiles WHERE json_extract(payload, '$.provider_account_id')=?1 AND json_extract(payload, '$.model')=?2 AND json_extract(payload, '$.service_kind')=?3 AND json_extract(payload, '$.adapter')=?4 AND json_type(payload, '$.parameters')=json_type(?5, '$.parameters') AND json_extract(payload, '$.parameters') IS json_extract(?5, '$.parameters') ORDER BY rowid LIMIT 1",
+                params![profile.provider_account_id, profile.model, profile.service_kind, profile.adapter, payload],
+                |row| row.get::<_, String>(0),
+            ).optional().map_err(|error| error.to_string())?;
+            if let Some(existing) = existing {
+                return serde_json::from_str(&existing).map_err(|error| error.to_string());
+            }
             conn.execute(
                 "INSERT INTO basic_service_profiles VALUES(?1,?2,?3)",
                 params![id, profile.revision, payload],
@@ -138,14 +137,27 @@ impl Database {
     }
     pub fn delete_basic_service_profile(&self, id: &str) -> Result<(), String> {
         if self.list_model_pools()?.iter().any(|p| {
-            p.tiers
-                .iter()
-                .any(|t| t.profile_ids.iter().any(|p| p == id))
+            p.service_kind != "chat"
+                && p.tiers
+                    .iter()
+                    .any(|t| t.profile_ids.iter().any(|p| p == id))
         }) {
             return Err("服务档案仍被模型池引用，请先移除引用".into());
         }
         let mut conn = self.conn();
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        if super::workspace_service_settings::workspace_service_reference_exists(
+            &tx,
+            "profile",
+            id,
+            Some(false),
+        )
+        .map_err(|e| e.to_string())?
+        {
+            return Err("服务档案仍被工作空间引用，请先移除覆盖".into());
+        }
         let count: i64 = tx
             .query_row(
                 "SELECT count(*) FROM basic_service_defaults WHERE profile_id=?1",
@@ -186,6 +198,21 @@ impl Database {
             .optional()
             .map_err(|e| e.to_string())
     }
+}
+
+pub(super) fn get_basic_service_profile_on(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> Result<Option<BasicServiceProfile>, String> {
+    conn.query_row(
+        "SELECT payload FROM basic_service_profiles WHERE id=?1",
+        [id],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|e| e.to_string())?
+    .map(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
+    .transpose()
 }
 impl Database {
     pub fn save_search_provider(

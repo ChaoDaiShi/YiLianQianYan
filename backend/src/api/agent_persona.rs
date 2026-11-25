@@ -1,7 +1,18 @@
 //! User-owned persona profiles, kept separate from private execution templates.
-use crate::db::Database;
+use crate::{db::Database, integrations::llm::generation::GenerationOverrides};
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplyVariation {
+    #[default]
+    Default,
+    Consistent,
+    Flexible,
+    Playful,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Persona {
@@ -13,6 +24,14 @@ pub struct Persona {
     pub tone: String,
     #[serde(default)]
     pub language: String,
+    #[serde(default)]
+    pub scenario: String,
+    #[serde(default)]
+    pub reply_examples: String,
+    #[serde(default)]
+    pub reply_variation: ReplyVariation,
+    #[serde(default)]
+    pub generation: GenerationOverrides,
     #[serde(default)]
     pub avatar_resource_id: Option<String>,
 }
@@ -26,15 +45,33 @@ pub struct AgentProfile {
     #[serde(default)]
     pub persona: Persona,
 }
+impl AgentProfile {
+    pub fn generation(&self) -> GenerationOverrides {
+        if self.persona_enabled {
+            self.persona.generation
+        } else {
+            GenerationOverrides::default()
+        }
+    }
+}
 fn key(id: &str) -> String {
     format!("agent.user_profile.v1:{id}")
 }
+pub fn reset_profile(db: &Database, id: &str) -> Result<AgentProfile, String> {
+    profile_for_agent(db, id)?;
+    let profile = AgentProfile::default();
+    save_profile(db, id, &profile)?;
+    Ok(profile)
+}
 pub fn save_profile(db: &Database, id: &str, profile: &AgentProfile) -> Result<(), String> {
+    profile.persona.generation.validate()?;
     if profile.user_prompt.chars().count() > 32000
         || profile.persona.description.chars().count() > 4000
         || profile.persona.display_name.chars().count() > 120
         || profile.persona.tone.chars().count() > 2000
         || profile.persona.language.chars().count() > 120
+        || profile.persona.scenario.chars().count() > 4000
+        || profile.persona.reply_examples.chars().count() > 6000
         || profile
             .persona
             .avatar_resource_id
@@ -89,10 +126,21 @@ pub fn compose_user_persona(profile: &AgentProfile) -> String {
             ("角色简介", persona.description.as_str()),
             ("语气", persona.tone.as_str()),
             ("语言", persona.language.as_str()),
+            ("扮演场景", persona.scenario.as_str()),
+            ("回复示例", persona.reply_examples.as_str()),
         ] {
             if !value.trim().is_empty() {
                 fields.push(format!("{label}：{}", value.trim()));
             }
+        }
+        let variation = match persona.reply_variation {
+            ReplyVariation::Default => None,
+            ReplyVariation::Consistent => Some("保持称呼、语气与回答结构稳定，优先沿用符合角色的惯用表达。"),
+            ReplyVariation::Flexible => Some("保持角色的身份与语气，根据话题自然调整表达和示例。"),
+            ReplyVariation::Playful => Some("主动变换表达方式、举例角度和叙述节奏；在适合创作的语境中尝试不同写法，同时保持角色设定与事实准确。"),
+        };
+        if let Some(variation) = variation {
+            fields.push(format!("回复变化：{variation}"));
         }
         if !fields.is_empty() {
             sections.push(format!("用户启用的角色设定：\n{}", fields.join("\n")));
@@ -106,6 +154,31 @@ pub fn compose_user_persona(profile: &AgentProfile) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn role_scenario_examples_and_variation_roundtrip_in_the_user_prompt_layer() {
+        let db = Database::new(std::path::Path::new(":memory:")).unwrap();
+        let profile = AgentProfile {
+            persona_enabled: true,
+            persona: Persona {
+                scenario: "你在为博物馆访客介绍展品".into(),
+                reply_examples: "先讲一件展品的来历".into(),
+                reply_variation: ReplyVariation::Playful,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        save_profile(&db, "default", &profile).unwrap();
+        let mut saved = profile_for_agent(&db, "default").unwrap();
+        let prompt = compose_user_persona(&saved);
+        assert!(prompt.contains(&saved.persona.scenario));
+        assert!(prompt.contains(&saved.persona.reply_examples));
+        assert!(prompt.contains("变换表达方式"));
+        saved.persona_enabled = false;
+        assert!(compose_user_persona(&saved).is_empty());
+        let legacy: Persona = serde_json::from_str(r#"{"tone":"沉稳"}"#).unwrap();
+        assert_eq!(legacy.reply_variation, ReplyVariation::Default);
+    }
+
     #[test]
     fn user_profiles_persist_and_role_toggle_preserves_user_prompt() {
         let db = Database::new(std::path::Path::new(":memory:")).unwrap();

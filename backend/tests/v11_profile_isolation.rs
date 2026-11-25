@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 use uuid::Uuid;
 
 use yilian_backend::db::Database;
@@ -387,6 +387,163 @@ fn test_s3_5_legacy_database_quarantine_with_sqlite_backup() {
         .query_row("SELECT val FROM legacy_test", [], |r| r.get(0))
         .unwrap();
     assert_eq!(val, "preserved_in_quarantine");
+}
+
+#[test]
+fn memory_purge_replays_after_restoring_profile_database_snapshot() {
+    use yilian_backend::db::{CreateMemoryRequest, MessageRow, RetrieveQuery};
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("app.db");
+    let snapshot_path = tmp.path().join("snapshot.db");
+    let (purged, retained, conversation, activity) = {
+        let db = Database::new(&db_path).unwrap();
+        let conversation = db.create_conversation("隔离备份测试").unwrap().id;
+        let activity = "isolated-activity";
+        db.add_message(&MessageRow {
+            id: activity.into(),
+            conversation_id: conversation.clone(),
+            role: "user".into(),
+            content: "需要独立保留的对话原文".into(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_result: None,
+            created_at: chrono::Utc::now().timestamp_millis(),
+        })
+        .unwrap();
+        let create = |content: &str| {
+            db.create_memory(&CreateMemoryRequest {
+                content: content.into(),
+                category: "note".into(),
+                source: "manual".into(),
+                source_conversation_id: Some(conversation.clone()),
+                metadata: None,
+            })
+            .unwrap()
+            .id
+        };
+        let purged = create("备份后永久清除的独立条目");
+        let retained = create("同一备份保留的独立条目");
+        sqlite_copy(&db_path, &snapshot_path);
+        db.delete_memory(&purged).unwrap();
+        assert!(db
+            .remove_memory_activity(&format!("message:{activity}"))
+            .unwrap());
+        (purged, retained, conversation, activity.to_string())
+    };
+    sqlite_copy(&snapshot_path, &db_path);
+    let db = Database::new(&db_path).unwrap();
+    assert!(db.find_memory(&purged).unwrap().is_none());
+    assert!(db.memory_history(&purged).unwrap().is_empty());
+    assert!(db
+        .retrieve_memories(&RetrieveQuery {
+            q: "备份后永久清除的独立条目".into(),
+            top_k: 10,
+            category: None
+        })
+        .unwrap()
+        .iter()
+        .all(|item| item.memory.id != purged));
+    assert!(db.find_memory(&retained).unwrap().is_some());
+    assert!(db
+        .get_conversation(&conversation)
+        .unwrap()
+        .messages
+        .iter()
+        .any(|message| message.id == activity));
+    assert!(db
+        .search_memory_activity(false, None, 40, 0)
+        .unwrap()
+        .iter()
+        .all(|entry| entry.id != format!("message:{activity}")));
+    assert!(db
+        .search_memory_activity(true, None, 40, 0)
+        .unwrap()
+        .iter()
+        .any(|entry| entry.id == format!("message:{activity}")));
+    assert!(db.conn().query_row("SELECT deleted FROM cloud_entity_revisions WHERE entity_type='memory' AND entity_id=?1", [&purged], |row| row.get::<_, bool>(0)).unwrap());
+}
+
+fn sqlite_copy(source: &Path, destination: &Path) {
+    let source = rusqlite::Connection::open(source).unwrap();
+    let mut destination = rusqlite::Connection::open(destination).unwrap();
+    rusqlite::backup::Backup::new(&source, &mut destination)
+        .unwrap()
+        .run_to_completion(5, std::time::Duration::from_millis(1), None)
+        .unwrap();
+}
+
+#[test]
+fn legacy_profile_readoption_replays_guest_purge_intents() {
+    use yilian_backend::db::CreateMemoryRequest;
+    let tmp = TempDir::new();
+    let app_data = tmp.path();
+    let original = app_data.join("yilianqianyan-v1.db");
+    let id = Database::new(&original)
+        .unwrap()
+        .create_memory(&CreateMemoryRequest {
+            content: "早期游客档案中后来清除的条目".into(),
+            category: "note".into(),
+            source: "manual".into(),
+            source_conversation_id: None,
+            metadata: None,
+        })
+        .unwrap()
+        .id;
+    let (migrated, _, _) = ProfileManager::resolve_active_profile_db_path(app_data).unwrap();
+    Database::new(&migrated)
+        .unwrap()
+        .delete_memory(&id)
+        .unwrap();
+    std::fs::remove_file(app_data.join("profile-registry.json")).unwrap();
+    let (readopted, _, _) = ProfileManager::resolve_active_profile_db_path(app_data).unwrap();
+    assert_ne!(migrated, readopted);
+    assert!(Database::new(&readopted)
+        .unwrap()
+        .find_memory(&id)
+        .unwrap()
+        .is_none());
+    assert!(Database::new(&original)
+        .unwrap()
+        .find_memory(&id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn authoritative_memory_deletion_receipt_survives_offline_snapshot_restore() {
+    use yilian_backend::modules::cloud::domain::SyncOperation;
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("app.db");
+    let backup_path = tmp.path().join("before-remote-delete.db");
+    let id = "remote-note";
+    let payload = serde_json::json!({"schema_version":1,"content":"另一设备已清除的记录","category":"note","source":"manual"});
+    {
+        let db = Database::new(&db_path).unwrap();
+        db.apply_remote_sync_change("memory", id, 1, SyncOperation::Upsert, Some(&payload), 1)
+            .unwrap();
+        sqlite_copy(&db_path, &backup_path);
+        assert!(!db
+            .apply_remote_sync_change("memory", id, 2, SyncOperation::Delete, None, 2)
+            .unwrap());
+        assert!(db.find_memory(id).unwrap().is_none());
+    }
+    sqlite_copy(&backup_path, &db_path);
+    let db = Database::new(&db_path).unwrap();
+    assert!(db.find_memory(id).unwrap().is_none());
+    assert!(db.memory_history(id).unwrap().is_empty());
+    let conn = db.conn();
+    let (deleted, revision): (bool, i64) = conn.query_row("SELECT deleted,authoritative_revision FROM cloud_entity_revisions WHERE entity_type='memory' AND entity_id=?1", [id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+    assert_eq!((deleted, revision), (true, 2));
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM cloud_sync_outbox WHERE entity_type='memory' AND entity_id=?1",
+            [id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
 }
 
 #[tokio::test]

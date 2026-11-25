@@ -5,7 +5,7 @@ import { buildModelTree, providerLabel } from "./llmModelUtils";
 export default function ModelTree({ models }: { models: LlmModel[] }) {
   const nodes = buildModelTree(models);
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3" data-testid="llm-model-tree">
+    <div className="glass-card rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3" data-testid="llm-model-tree">
       <div className="mb-2 flex items-center justify-between text-xs text-[var(--text-secondary)]">
         <span className="inline-flex items-center gap-1.5"><TreePine className="h-3.5 w-3.5 text-[var(--accent-primary)]" />模型森林</span>
         <span>{models.length} / 32 枝</span>

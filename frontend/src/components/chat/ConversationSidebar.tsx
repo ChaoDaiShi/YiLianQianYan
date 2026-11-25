@@ -233,7 +233,9 @@ export default function ConversationSidebar({
           </div>
         )}
       </div>
-      <ConfirmDialog open={!!deleteTarget} title="删除对话" tone="danger" confirmLabel="删除对话" description={deleteTarget && families.find(family => family.id === deleteTarget.id && family.conversationIds.length > 1) ? `将删除“${deriveTaskDisplayTitle(deleteTarget.title)}”这条主线及其消息。其他分支会保留，并按剩余关系显示。` : `将删除“${deriveTaskDisplayTitle(deleteTarget?.title)}”这条对话及其消息。`} onConfirm={() => deleteTarget ? removeConversation(deleteTarget) : undefined} onCancel={() => setDeleteTarget(null)} />
+      <ConfirmDialog open={!!deleteTarget} title="删除对话" tone="danger" confirmLabel="删除对话" description={deleteTarget && families.find(family => family.id === deleteTarget.id && family.conversationIds.length > 1) ? `将删除“${deriveTaskDisplayTitle(deleteTarget.title)}”这条主线、其消息及其并行运行，其他分支会保留。` : `将删除“${deriveTaskDisplayTitle(deleteTarget?.title)}”这条对话、其消息及其并行运行。`} onConfirm={() => deleteTarget ? removeConversation(deleteTarget) : undefined} onCancel={() => setDeleteTarget(null)}>
+        <p className="text-sm text-[var(--text-secondary)]">已保存的记忆和底层记忆记录会保留，并显示对话来源已移除。可在记忆页单独清除。</p>
+      </ConfirmDialog>
     </aside>
   );
 }

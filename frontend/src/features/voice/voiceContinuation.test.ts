@@ -86,6 +86,13 @@ describe("voice continuation evidence", () => {
     });
   });
 
+  it("reads the final assistant reply without earlier tool narration", () => {
+    expect(reduceConversationEvents([
+      event("token", { token: "我先看看资料。" }),
+      event("done", { message_id: "final", result: "这是最终答复。" }),
+    ])).toEqual({ assistantText: "这是最终答复。", messageId: "final" });
+  });
+
   it("rejects an incomplete or approval-paused conversation stream", () => {
     expect(() =>
       reduceConversationEvents([event("token", { token: "未完成" }), event("stream_end")]),

@@ -20,43 +20,54 @@ use crate::api::{
     agents, approvals, artifact_download, capabilities, chat, cloud, commands, conversations,
     events, llm_models, logs, mcp_runtime, memories, plugins, projections, resources, search,
     secrets, security, security_grants, settings, skill_candidates, skills_route, subagents,
-    system, task_world, tasks, tools, voice, workflow_runtime, workflows, workspaces,
+    system, tasks, tools, voice, workflow_runtime, workflows, workspaces,
 };
+mod automations;
 mod control;
+mod task_world;
 use control::{control_plane_cors, require_control_session};
 
 pub fn build_router(server: Arc<AppServer>) -> Router {
     let protected = Router::new()
+        .merge(crate::modules::onboarding::router())
+        .merge(crate::modules::resource::policy::router())
+        .merge(crate::api::activity_events::router())
+        .route(
+            "/api/workflow-runs/:run_id/context-manifest",
+            get(crate::api::context_manifest::get_workflow_handler),
+        )
+        .route("/api/work-index", get(crate::api::work_index::list))
+        .route(
+            "/api/work-index/reconcile",
+            post(crate::api::work_index::reconcile),
+        )
+        .route("/api/outputs", get(crate::api::outputs::list))
+        .route(
+            "/api/outputs/:kind/:id/preview",
+            get(crate::api::outputs::preview),
+        )
+        .route(
+            "/api/outputs/:kind/:id/download",
+            get(crate::api::outputs::download),
+        )
+        .route(
+            "/api/conversations/:id/context-manifest",
+            get(crate::api::context_manifest::get_handler),
+        )
         .merge(crate::api::connectors::router())
         .merge(crate::api::knowledge::router())
         .merge(crate::api::knowledge_build::router())
         .merge(crate::api::conversation_outputs::router())
+        .merge(crate::api::rich_content::router())
+        .merge(workspaces::router())
         .merge(crate::api::creations::router())
+        .merge(crate::api::browser_sites::router())
         .merge(crate::api::conversations::messages::router())
         .merge(crate::api::learning::router())
         .merge(crate::api::workspace_code::router())
         .merge(crate::api::workspace_files::router())
         .merge(crate::api::channels::router())
-        .route(
-            "/api/automations",
-            get(crate::api::automations::list).post(crate::api::automations::create),
-        )
-        .route(
-            "/api/automations/:id",
-            put(crate::api::automations::update).delete(crate::api::automations::delete),
-        )
-        .route(
-            "/api/automations/:id/enabled",
-            post(crate::api::automations::enabled),
-        )
-        .route(
-            "/api/automations/:id/run",
-            post(crate::api::automations::run),
-        )
-        .route(
-            "/api/automations/:id/history",
-            get(crate::api::automations::history),
-        )
+        .merge(automations::router())
         .route("/api/memories/withdrawn", get(memories::withdrawn_handler))
         .route(
             "/api/memories/:id/governance",
@@ -64,6 +75,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         .route("/api/memories/:id/history", get(memories::history_handler))
         .route("/api/memories/:id/correct", post(memories::correct_handler))
+        .route("/api/memories/:id/restore", post(memories::restore_handler))
         .route(
             "/api/memories/:id/withdraw",
             post(memories::withdraw_handler),
@@ -73,6 +85,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .merge(crate::api::conversation_modes::router())
         .merge(crate::api::settings_canvas::router())
         .merge(crate::api::plugin_settings::router())
+        .merge(crate::api::plugin_services::router())
         .merge(crate::api::software::router())
         .route("/api/logs/tools", get(logs::get_tool_logs))
         .merge(crate::api::connector_messages::router())
@@ -87,10 +100,18 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         .route(
             "/api/agents/:id/profile",
-            get(agents::get_agent_profile).put(agents::update_agent_profile),
+            get(agents::get_agent_profile)
+                .put(agents::update_agent_profile)
+                .delete(agents::reset_agent_profile),
+        )
+        .route("/api/companion/display", get(agents::companion_display))
+        .route(
+            "/api/agents/:id/generation-options",
+            get(agents::get_agent_generation_options),
         )
         .merge(crate::api::model_pools::router())
         .merge(crate::api::basic_services::router())
+        .merge(crate::api::workspace_service_settings::router())
         .route("/api/conversations/:id", put(conversations::rename_handler))
         .route(
             "/api/conversations/:id/turns",
@@ -99,6 +120,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route(
             "/api/conversations/:id/workspace",
             get(conversations::workspace_handler).put(conversations::workspace_update_handler),
+        )
+        .route(
+            "/api/conversations/:id/goal",
+            get(conversations::goal::get_handler).put(conversations::goal::put_handler),
         )
         .route(
             "/api/conversations/:id/inputs",
@@ -110,6 +135,10 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         .route("/api/chat", post(chat::chat_handler))
         .route("/api/chat/readiness", get(chat::readiness_handler))
+        .route("/api/chat/cli-providers", get(chat::cli::list))
+        .route("/api/chat/task-command", post(chat::task_commands::handle))
+        .route("/api/chat/steer", post(chat::steering::handle))
+        .merge(chat::lanes::router())
         .route("/api/cloud/identity", get(cloud::identity_handler))
         .route("/api/cloud/profile", get(cloud::profile_handler))
         .route(
@@ -229,83 +258,7 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             "/api/projections/tasks",
             get(projections::task_projections_handler),
         )
-        // v1 Task World graph state (all routes remain under the control
-        // session middleware applied to this protected router).
-        .route("/api/task-world/graphs", get(task_world::list_graphs))
-        .route("/api/task-world/graphs", post(task_world::create_graph))
-        .route(
-            "/api/task-world/graphs/:graph_id",
-            get(task_world::get_graph).delete(task_world::delete_graph),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/detail",
-            get(task_world::get_graph_detail),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/review",
-            post(task_world::review_graph),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/canvas-view",
-            get(task_world::get_canvas_view),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/canvas-view",
-            put(task_world::put_canvas_view),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/nodes",
-            post(task_world::add_node),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/nodes/:node_id",
-            put(task_world::update_node),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/nodes/:node_id",
-            delete(task_world::delete_node),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/nodes/:node_id/start",
-            post(task_world::start_node),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/nodes/:node_id/executions",
-            post(task_world::start_execution).get(task_world::list_executions),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/executions/:execution_id/cancel",
-            post(task_world::cancel_execution),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/rerun",
-            post(task_world::rerun),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/nodes/:node_id/execute-command",
-            post(task_world::execute_command),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/nodes/:node_id/cancel-command",
-            post(task_world::cancel_command),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/edges",
-            post(task_world::add_edge),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/edges/:from/:to",
-            delete(task_world::delete_edge),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/checkpoint",
-            post(task_world::checkpoint),
-        )
-        .route(
-            "/api/task-world/graphs/:graph_id/restore",
-            post(task_world::restore),
-        )
-        .merge(task_world::proofloop_router())
+        .merge(task_world::router())
         .route("/api/conversations", get(conversations::list_handler))
         .route("/api/conversations", post(conversations::create_handler))
         .route("/api/conversations/:id", get(conversations::load_handler))
@@ -325,7 +278,15 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             post(settings::verify_provider_handler),
         )
         .route("/api/llm/models", get(llm_models::list_handler))
+        .route(
+            "/api/llm/provider-models",
+            get(crate::api::provider_models::list),
+        )
         .route("/api/llm/models", post(llm_models::create_handler))
+        .route(
+            "/api/llm/models/discover",
+            post(crate::api::llm_catalog::discover),
+        )
         .route("/api/llm/models/:id", put(llm_models::update_handler))
         .route("/api/llm/models/:id", delete(llm_models::delete_handler))
         .route(
@@ -338,6 +299,14 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         .route("/api/llm/usage", get(llm_models::usage_handler))
         .route("/api/tools", get(tools::list_handler))
+        .route(
+            "/api/harnesses",
+            get(crate::api::harnesses::get).put(crate::api::harnesses::put),
+        )
+        .route(
+            "/api/harnesses/active",
+            post(crate::api::harnesses::activate),
+        )
         .route("/api/system", get(system::system_info))
         .route("/api/system/cpu", get(system::cpu_info))
         .route("/api/system/memory", get(system::memory_info))
@@ -347,9 +316,29 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         )
         // Memories API
         .route("/api/memories", get(memories::list_handler))
-        .merge(memories::library_router())
+        .route("/api/memories/library", get(memories::library_handler))
+        .merge(memories::graph::router())
+        .route("/api/memories/activity", get(memories::activity_handler))
+        .route(
+            "/api/memories/activity/:id",
+            delete(memories::remove_activity_handler),
+        )
         .route("/api/memories", post(memories::create_handler))
         .route("/api/memories/stats", get(memories::stats_handler))
+        .route("/api/memories/extract", post(memories::candidates::extract))
+        .route(
+            "/api/memories/candidates/feedback",
+            post(memories::candidates::stage_feedback),
+        )
+        .route("/api/memories/candidates", get(memories::candidates::list))
+        .route(
+            "/api/memories/candidates/:id/accept",
+            post(memories::candidates::accept),
+        )
+        .route(
+            "/api/memories/candidates/:id/dismiss",
+            post(memories::candidates::dismiss),
+        )
         .route("/api/memories/retrieve", get(memories::retrieve_handler))
         // Reserved future endpoints
         .route(
@@ -363,6 +352,12 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route("/api/memories/export", get(memories::export_handler))
         .route("/api/memories/merge", post(memories::merge_handler))
         .route("/api/memories/reindex", post(memories::reindex_handler))
+        .route(
+            "/api/memories/index-job",
+            get(memories::indexing::status)
+                .post(memories::indexing::start)
+                .delete(memories::indexing::cancel),
+        )
         // Must be after fixed paths
         .route("/api/memories/:id", get(memories::get_handler))
         .route("/api/memories/:id", put(memories::update_handler))
@@ -423,12 +418,6 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
             "/api/workflow-runs/:run_id/cancel",
             post(workflow_runtime::cancel_workflow_run),
         )
-        // Workspace API
-        .route("/api/workspaces", get(workspaces::list_workspaces))
-        .route("/api/workspaces", post(workspaces::create_workspace))
-        .route("/api/workspaces/:id", get(workspaces::get_workspace))
-        .route("/api/workspaces/:id", put(workspaces::update_workspace))
-        .route("/api/workspaces/:id", delete(workspaces::delete_workspace))
         // Task API
         .route("/api/tasks", get(tasks::list_tasks))
         .route("/api/tasks", post(tasks::create_task))
@@ -510,6 +499,14 @@ pub fn build_router(server: Arc<AppServer>) -> Router {
         .route(
             "/api/capabilities/imports/confirm",
             post(capabilities::confirm_import),
+        )
+        .route(
+            "/api/capabilities/imports/previews/:id",
+            delete(capabilities::discard_import_preview),
+        )
+        .route(
+            "/api/capabilities/plugins/template",
+            post(capabilities::plugin_template),
         )
         .route(
             "/api/capabilities/imports/:id",

@@ -1,3 +1,6 @@
+mod browser_availability;
+mod local_discovery;
+pub use local_discovery::discover_local_services;
 // ============================================================
 // Capabilities API — discovery-only, control-session protected.
 //
@@ -46,6 +49,7 @@ pub async fn list_capabilities(
     Query(query): Query<CapabilityQuery>,
 ) -> Json<serde_json::Value> {
     let registry = server.capability_registry().await;
+    let native_available = server.browser_runtime.available();
     let kind = query.kind.as_deref().and_then(parse_kind);
     let provider = query.provider.as_deref().and_then(parse_provider);
     let status = query.status.as_deref().and_then(parse_status);
@@ -53,13 +57,18 @@ pub async fn list_capabilities(
     let mut descriptors: Vec<_> = registry
         .list()
         .into_iter()
+        .map(|d| browser_availability::effective_descriptor(d, native_available))
         .filter(|d| kind.is_none() || Some(d.kind) == kind)
         .filter(|d| provider.is_none() || Some(d.provider) == provider)
         .filter(|d| status.is_none() || Some(d.status) == status)
         .collect();
 
     if let Some(q) = query.q.as_deref() {
-        descriptors = registry.search(q);
+        descriptors = registry
+            .search(q)
+            .into_iter()
+            .map(|d| browser_availability::effective_descriptor(d, native_available))
+            .collect();
         descriptors.retain(|d| kind.is_none() || Some(d.kind) == kind);
         descriptors.retain(|d| provider.is_none() || Some(d.provider) == provider);
         descriptors.retain(|d| status.is_none() || Some(d.status) == status);
@@ -68,7 +77,20 @@ pub async fn list_capabilities(
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let total = descriptors.len();
-    let page: Vec<_> = descriptors.into_iter().skip(offset).take(limit).collect();
+    let tools = server.build_agent_tool_registry().await;
+    let names = tools
+        .list_tools()
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect();
+    let page: Vec<_> = descriptors
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|descriptor| {
+            crate::modules::capability::availability::public_descriptor(&descriptor, &names)
+        })
+        .collect();
 
     Json(serde_json::json!({
         "capabilities": page,
@@ -86,7 +108,17 @@ pub async fn get_capability(
     let descriptor = registry
         .get(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "能力不存在".to_string()))?;
-    Ok(Json(serde_json::json!(descriptor)))
+    let descriptor =
+        browser_availability::effective_descriptor(descriptor, server.browser_runtime.available());
+    let tools = server.build_agent_tool_registry().await;
+    let names = tools
+        .list_tools()
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect();
+    Ok(Json(
+        crate::modules::capability::availability::public_descriptor(&descriptor, &names),
+    ))
 }
 
 pub async fn refresh_capabilities(State(server): State<Arc<AppServer>>) -> Json<serde_json::Value> {
@@ -120,6 +152,11 @@ pub enum InspectImportRequest {
     },
     Zip {
         data_base64: String,
+        #[serde(default)]
+        plugin_only: bool,
+    },
+    PluginSource {
+        files: std::collections::BTreeMap<String, String>,
     },
     Directory {
         id: String,
@@ -128,12 +165,17 @@ pub enum InspectImportRequest {
         directory: String,
     },
     Github {
+        #[serde(default)]
         id: String,
+        #[serde(default)]
         name: String,
+        #[serde(default)]
         version: String,
         repository: String,
         commit: String,
         path: String,
+        #[serde(default)]
+        plugin_only: bool,
     },
 }
 pub async fn inspect_import(
@@ -155,14 +197,20 @@ pub async fn inspect_import(
             version,
             directory,
         } => directory_skill_package(&id, &name, &version, &directory),
-        InspectImportRequest::Zip { data_base64 } => {
+        InspectImportRequest::PluginSource { files } => {
+            import_archive::inspect_plugin_source(files)
+        }
+        InspectImportRequest::Zip {
+            data_base64,
+            plugin_only,
+        } => {
             if data_base64.len() > import_store::MAX_PACKAGE_BYTES * 4 / 3 + 8 {
                 return Err(import_error("zip_input_limit".into()));
             }
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(data_base64)
                 .map_err(|_| import_error("invalid_zip_encoding".into()))?;
-            import_archive::inspect_zip(&bytes, "zip")
+            require_plugin(import_archive::inspect_zip(&bytes, "zip"), plugin_only)
         }
         InspectImportRequest::Github {
             id,
@@ -171,7 +219,11 @@ pub async fn inspect_import(
             repository,
             commit,
             path,
+            plugin_only,
         } => {
+            if plugin_only && !path.ends_with(".zip") {
+                return Err(import_error("github_plugin_zip_required".into()));
+            }
             if !(path.ends_with(".md") || path.ends_with(".zip")) {
                 return Err(import_error("github_markdown_or_zip_required".into()));
             }
@@ -180,7 +232,7 @@ pub async fn inspect_import(
                 .map_err(import_error)?;
             let source = format!("{repository}@{commit}/{path}");
             if path.ends_with(".zip") {
-                import_archive::inspect_zip(&bytes, &source)
+                require_plugin(import_archive::inspect_zip(&bytes, &source), plugin_only)
             } else {
                 let content = std::str::from_utf8(&bytes)
                     .map_err(|_| import_error("invalid_markdown_utf8".into()))?;
@@ -189,9 +241,55 @@ pub async fn inspect_import(
         }
     }
     .map_err(import_error)?;
+    if package.kind == "plugin" {
+        plugin_contributions::validate_import(&package).map_err(import_error)?;
+    }
     import_store::inspect(&server.db, package, chrono::Utc::now().timestamp_millis())
         .map(Json)
         .map_err(import_error)
+}
+
+fn require_plugin(
+    package: Result<crate::modules::capability::import_store::Package, String>,
+    required: bool,
+) -> Result<crate::modules::capability::import_store::Package, String> {
+    let package = package?;
+    if required && package.kind != "plugin" {
+        return Err("plugin_archive_required".into());
+    }
+    Ok(package)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginTemplateRequest {
+    id: String,
+    name: String,
+    version: String,
+}
+
+pub async fn plugin_template(
+    Json(request): Json<PluginTemplateRequest>,
+) -> Result<Json<serde_json::Value>, ImportError> {
+    use base64::Engine;
+    let bytes = crate::modules::capability::import_archive::plugin_template(
+        &request.id,
+        &request.name,
+        &request.version,
+    )
+    .map_err(import_error)?;
+    Ok(Json(
+        serde_json::json!({"data_base64":base64::engine::general_purpose::STANDARD.encode(bytes)}),
+    ))
+}
+
+pub async fn discard_import_preview(
+    State(server): State<Arc<AppServer>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ImportError> {
+    crate::modules::capability::import_store::discard_preview(&server.db, &id)
+        .map_err(import_error)?;
+    Ok(Json(serde_json::json!({"discarded":true})))
 }
 
 #[derive(Deserialize)]
@@ -215,15 +313,31 @@ fn public_import(
     server: &AppServer,
     record: crate::modules::capability::import_store::InstalledPackage,
 ) -> serde_json::Value {
+    let service_plugin = record.package.kind == "plugin"
+        && record
+            .package
+            .files
+            .get("plugin.json")
+            .and_then(|raw| crate::plugin::parse_manifest(raw).ok())
+            .is_some_and(|manifest| !manifest.contributes.services.is_empty());
     let runtime_ready = record.installed
         && record.enabled
-        && server.managed_skill_store().is_some_and(|store| {
-            crate::modules::capability::import_owner::is_active(&store, &record.package)
-        });
+        && (service_plugin && cfg!(windows)
+            || server.managed_skill_store().is_some_and(|store| {
+                crate::modules::capability::import_owner::is_active(&store, &record.package)
+            }));
     let runtime_status = if !record.installed {
         "uninstalled"
     } else if record.package.kind != "skill" {
-        "declarative_only"
+        if service_plugin && record.enabled {
+            if cfg!(windows) {
+                "service_managed"
+            } else {
+                "runtime_unavailable"
+            }
+        } else {
+            "declarative_only"
+        }
     } else if !record.enabled {
         "disabled"
     } else if runtime_ready {
@@ -242,13 +356,26 @@ fn restore_runtime(
         .unwrap_or(Ok(()))
 }
 
+#[cfg(test)]
 pub(super) fn change_import_owned(
     server: &AppServer,
     id: &str,
     revision: u64,
     action: &str,
 ) -> Result<crate::modules::capability::import_store::InstalledPackage, String> {
+    change_import_owned_collect_credentials(server, id, revision, action, &mut Vec::new())
+}
+
+fn change_import_owned_collect_credentials(
+    server: &AppServer,
+    id: &str,
+    revision: u64,
+    action: &str,
+    revoked: &mut Vec<crate::integrations::secret::SecretRef>,
+) -> Result<crate::modules::capability::import_store::InstalledPackage, String> {
     use crate::modules::capability::{import_owner, import_store};
+
+    let _operation = server.plugin_services.operations.lock();
 
     let current = import_store::get(&server.db, id)?.ok_or("package_not_found")?;
     if current.revision != revision {
@@ -275,8 +402,9 @@ pub(super) fn change_import_owned(
         None
     };
 
-    match import_store::change(&server.db, id, revision, action) {
-        Ok(record) => {
+    match import_store::change_with_revoked_service_credentials(&server.db, id, revision, action) {
+        Ok((record, references)) => {
+            revoked.extend(references);
             if saved.is_some() {
                 server.refresh_skill_discovery();
             }
@@ -315,10 +443,15 @@ pub async fn confirm_import(
 ) -> Result<Json<serde_json::Value>, ImportError> {
     use crate::modules::capability::{import_owner, import_store};
 
+    let _operation = server.plugin_services.operations.lock();
+
     let now = chrono::Utc::now().timestamp_millis();
     let preview =
         import_store::get_preview(&server.db, &request.preview_id, now).map_err(import_error)?;
     let current = import_store::get(&server.db, &preview.package.id).map_err(import_error)?;
+    if current.as_ref().map(|record| record.revision) != preview.expected_revision {
+        return Err(import_error("stale_import_preview".into()));
+    }
     if let Some(record) = current
         .as_ref()
         .filter(|r| r.enabled && r.package.kind == "plugin" && !preview.unchanged)
@@ -326,9 +459,10 @@ pub async fn confirm_import(
         plugin_contributions::change_plugin_runtime(&server, record, "disable")
             .map_err(import_error)?;
     }
-    let saved = if current
-        .as_ref()
-        .is_some_and(|record| record.enabled && record.package.kind == "skill")
+    let saved = if !preview.unchanged
+        && current
+            .as_ref()
+            .is_some_and(|record| record.enabled && record.package.kind == "skill")
     {
         let store = server
             .managed_skill_store()
@@ -372,18 +506,38 @@ pub async fn change_import(
     Path(id): Path<String>,
     Json(request): Json<ChangeImportRequest>,
 ) -> Result<Json<serde_json::Value>, ImportError> {
-    change_import_owned(&server, &id, request.revision, &request.action)
-        .map(|record| Json(public_import(&server, record)))
-        .map_err(import_error)
+    change_import_response(&server, &id, request.revision, &request.action).await
 }
 pub async fn remove_import(
     State(server): State<Arc<AppServer>>,
     Path(id): Path<String>,
     Json(request): Json<RemoveImportRequest>,
 ) -> Result<Json<serde_json::Value>, ImportError> {
-    change_import_owned(&server, &id, request.revision, "uninstall")
-        .map(|record| Json(public_import(&server, record)))
-        .map_err(import_error)
+    change_import_response(&server, &id, request.revision, "uninstall").await
+}
+
+async fn change_import_response(
+    server: &AppServer,
+    id: &str,
+    revision: u64,
+    action: &str,
+) -> Result<Json<serde_json::Value>, ImportError> {
+    let mut revoked = Vec::new();
+    let result =
+        change_import_owned_collect_credentials(server, id, revision, action, &mut revoked);
+    let mut cleanup_failed = false;
+    for reference in revoked {
+        if server.secret_store.delete(&reference).await.is_err() {
+            cleanup_failed = true;
+            tracing::warn!(plugin_id = %id, "Removed plugin credential could not be removed from the secret store");
+        }
+    }
+    let mut view = public_import(server, result.map_err(import_error)?);
+    if cleanup_failed {
+        view["credential_cleanup_warning"] =
+            serde_json::json!("服务令牌已撤销，系统密钥库中仍有条目未能清理");
+    }
+    Ok(Json(view))
 }
 
 pub async fn list_plugin_features(
@@ -410,7 +564,7 @@ pub async fn list_plugin_features(
                 .get(&feature.target.contribution)
                 .ok_or_else(|| import_error("plugin_contribution_missing".into()))?;
             let resource_id = record.resources.get(&feature.target.contribution).cloned();
-            features.push(serde_json::json!({"resource_id":resource_id,"plugin_id":record.package.id,"plugin_name":record.package.name,"id":feature.id,"title":feature.title,"description":feature.description,"target":feature.target,"content":content}));
+            features.push(serde_json::json!({"resource_id":resource_id,"plugin_id":record.package.id,"plugin_name":record.package.name,"id":feature.id,"title":feature.title,"description":feature.description,"placements":feature.placements,"target":feature.target,"content":content}));
         }
     }
     Ok(Json(serde_json::json!({"features":features})))
@@ -423,142 +577,6 @@ pub struct LocalDiscoveryRequest {
     #[serde(default)]
     pub include_listeners: bool,
 }
-pub async fn discover_local_services(
-    Json(request): Json<LocalDiscoveryRequest>,
-) -> Result<Json<serde_json::Value>, ImportError> {
-    if request.directories.len() > 16 {
-        return Err(import_error("too_many_discovery_directories".into()));
-    }
-    let mut candidates = Vec::new();
-    let mut errors = Vec::new();
-    for directory in request.directories {
-        let path = std::path::Path::new(&directory);
-        if !path.is_absolute() {
-            return Err(import_error("absolute_discovery_directory_required".into()));
-        }
-        match std::fs::read_dir(path) {
-            Ok(entries) => {
-                let mut roots = vec![path.to_path_buf()];
-                roots.extend(
-                    entries
-                        .take(256)
-                        .filter_map(Result::ok)
-                        .map(|e| e.path())
-                        .filter(|p| p.is_dir()),
-                );
-                for root in roots {
-                    if root.join("SKILL.md").is_file() {
-                        candidates.push(serde_json::json!({"kind":"skill","name":root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),"source":directory,"path":root.to_string_lossy(),"protocol":"SKILL.md"}));
-                    }
-                    let config = root.join("mcp.json");
-                    if config.is_file() {
-                        if let Ok(raw) = std::fs::read_to_string(&config) {
-                            if raw.len() <= 512 * 1024 {
-                                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
-                                    if let Some(servers) =
-                                        value.get("mcpServers").and_then(|v| v.as_object())
-                                    {
-                                        for (name, server) in servers {
-                                            // Imported secrets are intentionally not projected to the browser.
-                                            candidates.push(serde_json::json!({"kind":"mcp","name":name,"source":config.to_string_lossy(),"path":config.to_string_lossy(),"protocol":if server.get("url").is_some(){"streamable_http"}else{"stdio"},"url":server.get("url"),"command":server.get("command"),"args":server.get("args")}));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                errors.push(serde_json::json!({"source":directory,"error":"directory_unavailable"}))
-            }
-        }
-    }
-    if request.include_listeners {
-        #[cfg(windows)]
-        {
-            let output = tokio::process::Command::new("netstat")
-                .args(["-ano", "-p", "tcp"])
-                .output()
-                .await
-                .map_err(|_| import_error("listener_enumeration_failed".into()))?;
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                let fields: Vec<_> = line.split_whitespace().collect();
-                if fields.len() >= 5 && fields[0] == "TCP" && fields[3] == "LISTENING" {
-                    if let Some(port) = fields[1]
-                        .rsplit(':')
-                        .next()
-                        .and_then(|v| v.parse::<u16>().ok())
-                    {
-                        let url = format!("http://127.0.0.1:{port}");
-                        if !candidates
-                            .iter()
-                            .any(|c| c.get("url").and_then(|v| v.as_str()) == Some(url.as_str()))
-                        {
-                            candidates.push(serde_json::json!({"kind":"listener","name":format!("本机 TCP {port}"),"source":"Windows TCP listener","url":url,"protocol":"unverified","pid":fields[4]}));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_millis(800))
-        .build()
-        .map_err(|_| import_error("local_probe_client_failed".into()))?;
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
-    let mut probes = tokio::task::JoinSet::new();
-    for (index, candidate) in candidates
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c["kind"] == "listener")
-        .take(128)
-    {
-        let base = candidate["url"].as_str().unwrap_or_default().to_string();
-        let client = client.clone();
-        let semaphore = semaphore.clone();
-        probes.spawn(async move {
-            let _permit = semaphore.acquire_owned().await.ok()?;
-            if let Ok(response) = client.get(format!("{base}/v1/models")).send().await {
-                if response.status().is_success() && response.content_length().unwrap_or(0) <= 512 * 1024 {
-                    if let Ok(value) = response.json::<serde_json::Value>().await {
-                        if let Some(models) = value.get("data").and_then(|v|v.as_array()) {
-                            let ids: Vec<String> = models.iter().filter_map(|m|m["id"].as_str().map(String::from)).take(100).collect();
-                            return Some((index,"model",format!("{base}/v1"),ids));
-                        }
-                    }
-                }
-            }
-            if let Ok(response) = client.post(format!("{base}/mcp")).header("Accept","application/json, text/event-stream").json(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"YiLian-local-discovery","version":"1.0"}}})).send().await {
-                if response.status().is_success() && response.content_length().unwrap_or(0) <= 512 * 1024 {
-                    if let Ok(value) = response.json::<serde_json::Value>().await {
-                        if value["result"]["protocolVersion"].is_string() { return Some((index,"mcp",format!("{base}/mcp"),Vec::new())); }
-                    }
-                }
-            }
-            None
-        });
-    }
-    while let Some(result) = probes.join_next().await {
-        if let Ok(Some((index, kind, url, models))) = result {
-            candidates[index]["kind"] = kind.into();
-            candidates[index]["url"] = url.into();
-            candidates[index]["protocol"] = if kind == "mcp" {
-                "streamable_http"
-            } else {
-                "openai"
-            }
-            .into();
-            candidates[index]["models"] = serde_json::json!(models);
-        }
-    }
-    Ok(Json(
-        serde_json::json!({"candidates":candidates,"errors":errors}),
-    ))
-}
-
 #[path = "capability_plugins.rs"]
 pub mod plugin_contributions;
 pub use plugin_contributions::enabled_plugin_resources;

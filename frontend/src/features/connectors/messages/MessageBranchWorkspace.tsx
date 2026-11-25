@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Background, Controls, MarkerType, ReactFlow, ReactFlowProvider, useNodesInitialized, useReactFlow, useStore, type Node, type NodeProps, type Viewport } from "@xyflow/react";
 import { GitBranch, Plus } from "lucide-react";
 import { Button } from "../../../components/ui";
+import PageShell from "../../../components/layout/PageShell";
 import { createConversation } from "../../../api/conversations";
 import { bindConnectorResource } from "../../../api/connectors";
 import { stopGeneration, type AgentEvent } from "../../../api/chat";
@@ -33,7 +34,7 @@ function Speech({ data, selected }: NodeProps<SpeechNode>) {
   </article>;
 }
 const nodeTypes = { speech: Speech };
-interface Props { initialConversationId?: string | null; canvasId: string; agentId: string; onResourcesChanged?: () => void }
+interface Props { initialConversationId?: string | null; canvasId: string; agentId: string; canvasActions: ReactNode; onResourcesChanged?: () => void }
 interface ActiveTurn {
   root: string; canvas: string; conversation: string | null; controller: AbortController | null;
   userId: string; answerId: string; parentId: string | null; cancelled: boolean; ended: boolean;
@@ -41,7 +42,7 @@ interface ActiveTurn {
 const explain = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 const preferenceKey = (canvas: string) => `yilian.connector.message-root.${canvas}`;
 
-function Workspace({ canvasId, agentId, initialConversationId, onResourcesChanged }: Props) {
+function Workspace({ canvasId, agentId, initialConversationId, canvasActions, onResourcesChanged }: Props) {
   const flow = useReactFlow<SpeechNode>();
   const canvasWidth=useStore(state=>state.width);
   const canvasHeight=useStore(state=>state.height);
@@ -233,12 +234,14 @@ function Workspace({ canvasId, agentId, initialConversationId, onResourcesChange
   const focused=messages.find(message=>message.id===selected);
 
   return <section className="message-branch-workspace" aria-label="消息分支画布">
-    <header className="message-branch-toolbar">
-      <label>对话目录<select aria-label="消息画布对话目录" value={root} disabled={busy || loading} onChange={event => void openRoot(event.target.value)}><option value="" disabled>选择对话</option>{sources.conversations.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
-      <Button variant="secondary" size="sm" disabled={busy || loading} onClick={() => void newRoot()}><Plus size={14} />新建对话</Button>
-      {root && <Link className="text-sm text-[var(--accent-primary)]" to={`/chat/${root}`}>在主页打开对话</Link>}
-      <span>拖动平移 · 滚轮缩放 · 选中后在右侧查看全文</span>
-    </header>
+    <PageShell.Header title="画布" className="message-canvas-header" actions={<div className="message-branch-toolbar">
+      <div className="canvas-toolbar-group">
+        <label>对话目录<select aria-label="消息画布对话目录" value={root} disabled={busy || loading} onChange={event => void openRoot(event.target.value)}><option value="" disabled>选择对话</option>{sources.conversations.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
+        <Button variant="secondary" size="sm" disabled={busy || loading} onClick={() => void newRoot()}><Plus size={14} />新建对话</Button>
+        {root && <Link className="text-sm text-[var(--accent-primary)]" to={`/chat/${root}`}>在主页打开对话</Link>}
+      </div>
+      {canvasActions}
+    </div>} />
     {error && <p className="message-branch-error" role="alert">{error}</p>}
     <div className="message-canvas-layout"><div className="message-canvas-primary"><div className="conversation-canvas-shell"><div className="message-branch-stage">
       <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} viewport={viewport} onViewportChange={setViewport}

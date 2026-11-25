@@ -33,6 +33,9 @@ pub(crate) fn runtime_error(error: TaskWorldRuntimeError) -> Response {
         }
         TaskWorldRuntimeError::ExecutionPaused(_) => (StatusCode::CONFLICT, "task_paused"),
         TaskWorldRuntimeError::ExecutionCancelled(_) => (StatusCode::CONFLICT, "task_cancelled"),
+        TaskWorldRuntimeError::ShuttingDown => {
+            (StatusCode::SERVICE_UNAVAILABLE, "app_shutting_down")
+        }
         TaskWorldRuntimeError::ExecutionControlGenerationOverflow => {
             (StatusCode::INTERNAL_SERVER_ERROR, "task_world_error")
         }

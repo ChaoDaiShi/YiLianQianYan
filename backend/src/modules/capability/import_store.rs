@@ -135,6 +135,16 @@ pub fn validate_package(package: &mut Package) -> Result<(), String> {
     {
         return Err("missing_skill_markdown".into());
     }
+    if package.kind == "plugin" {
+        let manifest = crate::plugin::parse_manifest(
+            package
+                .files
+                .get("plugin.json")
+                .ok_or("plugin_manifest_missing")?,
+        )
+        .map_err(|e| e.to_string())?;
+        crate::plugin::service::validate_files(&manifest, &package.files)?;
+    }
     let content = if package.file_encodings.is_empty() {
         serde_json::to_vec(&(
             &package.id,
@@ -175,14 +185,14 @@ fn read_state(conn: &rusqlite::Connection) -> Result<Inventory, String> {
 }
 fn transact<T>(
     db: &Database,
-    operation: impl FnOnce(&mut Inventory) -> Result<T, String>,
+    operation: impl FnOnce(&mut Inventory, &rusqlite::Transaction<'_>) -> Result<T, String>,
 ) -> Result<T, String> {
     let mut conn = db.conn();
     let transaction = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|_| "import_store_unavailable")?;
     let mut state = read_state(&transaction)?;
-    let result = operation(&mut state)?;
+    let result = operation(&mut state, &transaction)?;
     let value = serde_json::to_string(&state).map_err(|_| "invalid_import_state")?;
     if value.len() > 16 * 1024 * 1024 {
         return Err("import_storage_limit".into());
@@ -196,12 +206,15 @@ fn transact<T>(
 
 pub fn inspect(db: &Database, mut package: Package, now: i64) -> Result<ImportPreview, String> {
     validate_package(&mut package)?;
-    transact(db, |state| {
+    transact(db, |state, _| {
         state.previews.retain(|preview| preview.expires_at > now);
         if state.previews.len() >= 4 {
             return Err("too_many_pending_previews".into());
         }
         let current = state.records.get(&package.id);
+        if current.is_some_and(|record| record.package.kind != package.kind) {
+            return Err("import_kind_conflict".into());
+        }
         let before = current.map(|record| &record.package.files);
         let preview = ImportPreview {
             preview_id: uuid::Uuid::new_v4().to_string(),
@@ -251,8 +264,17 @@ pub fn inspect(db: &Database, mut package: Package, now: i64) -> Result<ImportPr
     })
 }
 
+pub fn discard_preview(db: &Database, preview_id: &str) -> Result<(), String> {
+    transact(db, |state, _| {
+        state
+            .previews
+            .retain(|preview| preview.preview_id != preview_id);
+        Ok(())
+    })
+}
+
 pub fn confirm(db: &Database, preview_id: &str, now: i64) -> Result<InstalledPackage, String> {
-    transact(db, |state| {
+    transact(db, |state, _| {
         let index = state
             .previews
             .iter()
@@ -303,24 +325,49 @@ pub fn confirm(db: &Database, preview_id: &str, now: i64) -> Result<InstalledPac
     })
 }
 
+#[cfg(test)]
 pub fn change(
     db: &Database,
     id: &str,
     revision: u64,
     action: &str,
 ) -> Result<InstalledPackage, String> {
-    transact(db, |state| {
+    change_with_revoked_service_credentials(db, id, revision, action).map(|(record, _)| record)
+}
+
+pub(crate) fn change_with_revoked_service_credentials(
+    db: &Database,
+    id: &str,
+    revision: u64,
+    action: &str,
+) -> Result<
+    (
+        InstalledPackage,
+        Vec<crate::integrations::secret::SecretRef>,
+    ),
+    String,
+> {
+    transact(db, |state, transaction| {
         let record = state.records.get_mut(id).ok_or("package_not_found")?;
         if record.revision != revision {
             return Err("stale_package_revision".into());
         }
         record.owned_resource_ids = owned_resource_ids(record)?;
+        let mut revoked = Vec::new();
         match action {
             "enable" if record.installed => record.enabled = true,
             "disable" if record.installed => record.enabled = false,
             "uninstall" if record.installed => {
                 record.installed = false;
                 record.enabled = false;
+                for id in record
+                    .owned_resource_ids
+                    .iter()
+                    .filter(|id| crate::plugin::service::is_managed_mcp_id(id))
+                {
+                    revoke_managed_mcp_grants(transaction, id)?;
+                    revoked.extend(crate::plugin::cloud_auth::revoke_on(transaction, id)?);
+                }
             }
             "restore" if !record.installed => {
                 record.installed = true;
@@ -336,8 +383,30 @@ pub fn change(
         }
         record.resources = plugin_resource_ids(&record.package)?;
         record.revision = record.revision.checked_add(1).ok_or("revision_overflow")?;
-        Ok(record.clone())
+        Ok((record.clone(), revoked))
     })
+}
+
+fn revoke_managed_mcp_grants(
+    transaction: &rusqlite::Transaction<'_>,
+    server_id: &str,
+) -> Result<(), String> {
+    let matches_server = "SELECT grant_id FROM security_grants WHERE permission_id='mcp.invoke' AND json_extract(resource_json,'$.type')='mcp' AND json_extract(resource_json,'$.server_id')=?1";
+    transaction
+        .execute(
+            &format!(
+                "DELETE FROM security_access_rule_scopes WHERE grant_id IN ({matches_server})"
+            ),
+            [server_id],
+        )
+        .map_err(|_| "managed_mcp_grant_revocation_failed")?;
+    transaction
+        .execute(
+            &format!("DELETE FROM security_grants WHERE grant_id IN ({matches_server})"),
+            [server_id],
+        )
+        .map_err(|_| "managed_mcp_grant_revocation_failed")?;
+    Ok(())
 }
 
 pub fn list(db: &Database) -> Result<Vec<InstalledPackage>, String> {
@@ -349,6 +418,7 @@ fn owned_resource_ids(
 ) -> Result<std::collections::BTreeSet<String>, String> {
     let mut owned = record.owned_resource_ids.clone();
     owned.extend(record.resources.values().cloned());
+    owned.extend(plugin_resource_ids(&record.package)?.into_values());
     for package in &record.history {
         owned.extend(plugin_resource_ids(package)?.into_values());
     }
@@ -404,61 +474,7 @@ pub fn enabled_skill(db: &Database, id: &str) -> Result<Option<String>, String> 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    fn db() -> Database {
-        Database::new(std::path::Path::new(":memory:")).unwrap()
-    }
-    fn package(content: &str) -> Package {
-        markdown_package("demo", "Demo", "1.0.0", content, "markdown").unwrap()
-    }
-    #[test]
-    fn import_preview_confirm_update_disable_uninstall_and_restore_are_transactional() {
-        let db = db();
-        let first = inspect(
-            &db,
-            package("# Inert instructions\nDo not run these during inspection."),
-            1,
-        )
-        .unwrap();
-        assert!(list(&db).unwrap().is_empty());
-        let installed = confirm(&db, &first.preview_id, 2).unwrap();
-        assert!(!installed.enabled);
-        assert!(confirm(&db, &first.preview_id, 3).is_err());
-        let enabled = change(&db, "demo", installed.revision, "enable").unwrap();
-        let preview = inspect(&db, package("# Changed"), 4).unwrap();
-        assert_eq!(preview.changed, vec!["SKILL.md"]);
-        let updated = confirm(&db, &preview.preview_id, 5).unwrap();
-        assert!(!updated.enabled);
-        assert_eq!(updated.history.len(), 1);
-        assert!(change(&db, "demo", enabled.revision, "uninstall").is_err());
-        let removed = change(&db, "demo", updated.revision, "uninstall").unwrap();
-        assert!(!removed.installed);
-        assert!(!removed.enabled);
-        let restored = change(&db, "demo", removed.revision, "restore").unwrap();
-        assert!(restored.installed);
-        let rolled_back = change(&db, "demo", restored.revision, "rollback").unwrap();
-        assert!(rolled_back.package.files["SKILL.md"].contains("Inert"));
-    }
-    #[test]
-    fn stale_preview_dedup_and_persistence_failure_leave_inventory_unchanged() {
-        let db = db();
-        let first = inspect(&db, package("# first"), 1).unwrap();
-        let competing = inspect(&db, package("# second"), 1).unwrap();
-        let installed = confirm(&db, &first.preview_id, 2).unwrap();
-        assert!(confirm(&db, &competing.preview_id, 3).is_err());
-        let same = inspect(&db, package("# first"), 4).unwrap();
-        assert!(same.unchanged);
-        assert_eq!(
-            confirm(&db, &same.preview_id, 5).unwrap().revision,
-            installed.revision
-        );
-        let before = serde_json::to_value(list(&db).unwrap()).unwrap();
-        db.conn().execute_batch("CREATE TRIGGER fail_import_write BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
-        assert!(change(&db, "demo", installed.revision, "enable").is_err());
-        assert_eq!(serde_json::to_value(list(&db).unwrap()).unwrap(), before);
-    }
-}
+mod tests;
 
 pub fn plugin_resource_ids(package: &Package) -> Result<BTreeMap<String, String>, String> {
     if package.kind != "plugin" {
@@ -472,6 +488,21 @@ pub fn plugin_resource_ids(package: &Package) -> Result<BTreeMap<String, String>
     )
     .map_err(|e| e.to_string())?;
     let mut resources = BTreeMap::new();
+    for path in &manifest.contributes.services {
+        let definition = crate::plugin::service::ServiceDefinition::parse(
+            package
+                .files
+                .get(path)
+                .ok_or("plugin_contribution_missing")?,
+            &manifest,
+        )?;
+        if definition.mcp_path.is_some() {
+            resources.insert(
+                path.clone(),
+                crate::plugin::service::managed_mcp_id(&package.id, &definition.id),
+            );
+        }
+    }
     for (kind, paths) in [
         ("skill", manifest.contributes.skills),
         ("workflow", manifest.contributes.workflows),

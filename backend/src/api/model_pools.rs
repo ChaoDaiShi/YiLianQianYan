@@ -101,7 +101,10 @@ struct AccountView {
     credential_configured: bool,
 }
 async fn account_view(s: &AppServer, account: ProviderAccount) -> AccountView {
-    let required = !matches!(account.provider_id.as_str(), "ollama" | "lmstudio");
+    let required = !matches!(
+        account.provider_id.as_str(),
+        "ollama" | "lmstudio" | "llamacpp"
+    );
     let credential = match account.credential_id.as_ref() {
         Some(id) => {
             s.secret_resolver
@@ -158,6 +161,17 @@ async fn persist_account(s: &AppServer, mut a: AccountInput) -> Result<ProviderA
             .into_iter()
             .find(|old| old.id == a.account.id);
     let existing_key = old.as_ref().and_then(|o| o.credential_id.clone());
+    if old.as_ref().is_some_and(|previous| {
+        crate::modules::settings::application::model_defaults::account_has_single_default(
+            s, previous,
+        ) && (previous.provider_id != a.account.provider_id
+            || previous.base_url != a.account.base_url
+            || a.credential_action.as_deref() == Some("reuse_model"))
+    }) {
+        return Err(error(
+            "账户正在为语音或向量服务提供默认模型，请先切换这些默认模型".into(),
+        ));
+    }
     // Reuse is an explicit configuration operation. Runtime resolution still
     // reads exactly the selected account and never searches other models.
     a.account.credential_id = match a.credential_action.as_deref().unwrap_or("keep") {
@@ -244,6 +258,11 @@ async fn remove_account(
     State(s): State<Arc<AppServer>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, Error> {
+    if s.db.list_provider_accounts().map_err(error)?.iter().any(|account| {
+        account.id == id && crate::modules::settings::application::model_defaults::account_has_single_default(&s, account)
+    }) {
+        return Err(error("账户正在为语音或向量服务提供默认模型，请先切换这些默认模型".into()));
+    }
     s.db.delete_provider_account(&id).map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }

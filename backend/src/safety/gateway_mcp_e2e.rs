@@ -323,7 +323,7 @@ async fn gateway_mcp_resource_grants_preserve_high_risk_and_trusted_evidence() {
             server_id: "gateway-mcp-e2e".into(),
             tool_name: "ping".into(),
             grant_id: None,
-            one_shot_approval: true,
+            one_shot_approval: false,
         }]
     );
     let mut grant = SecurityGrant {
@@ -380,5 +380,146 @@ async fn gateway_mcp_resource_grants_preserve_high_risk_and_trusted_evidence() {
         "denied invocations must add zero calls"
     );
     db.delete_grant(&grant.id).unwrap();
+    assert!(db.list_grants("local-user").unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn gateway_mcp_model_evidence_matches_the_consumed_approval_or_scoped_rule() {
+    use crate::config::types::{AppConfig, PermissionMode};
+    use crate::db::access_rules::{AccessMode, AccessRule};
+    use crate::safety::grant::{AuthorizedResource, GrantResource};
+    use crate::safety::{
+        ApprovalStore, PermissionId, ResourceDescriptor, ResourceScope, SideEffectKind,
+        ToolSecurityDescriptor,
+    };
+    use crate::tools::trait_def::{ToolExecutionContext, ToolResult};
+
+    struct Probe;
+    #[async_trait::async_trait]
+    impl Tool for Probe {
+        fn name(&self) -> &str {
+            "mcp_probe_authority"
+        }
+        fn description(&self) -> &str {
+            "Test-only MCP authority probe"
+        }
+        fn parameters(&self) -> Value {
+            json!({"type":"object"})
+        }
+        fn security_descriptor(
+            &self,
+            _: &Value,
+        ) -> Result<ToolSecurityDescriptor, crate::safety::DescriptorError> {
+            Ok(ToolSecurityDescriptor {
+                tool_name: self.name().into(),
+                requested_permissions: vec![
+                    PermissionId::McpInvoke.in_scope(ResourceScope::McpServer)
+                ],
+                resources: vec![ResourceDescriptor::Mcp {
+                    server_id: "fixture-mcp".into(),
+                    tool_name: "inspect".into(),
+                }],
+                default_risk: RiskLevel::High,
+                side_effects: vec![SideEffectKind::ExternalService],
+            })
+        }
+        async fn execute(&self, _: Value) -> ToolResult {
+            ToolResult::error("Gateway context required")
+        }
+        async fn execute_with_context(
+            &self,
+            _: Value,
+            context: &ToolExecutionContext,
+        ) -> ToolResult {
+            let evidence =
+                context
+                    .authorized_resources
+                    .iter()
+                    .find_map(|resource| match resource {
+                        AuthorizedResource::Mcp {
+                            grant_id,
+                            one_shot_approval,
+                            ..
+                        } => Some(json!({"grant":grant_id,"once":one_shot_approval})),
+                        _ => None,
+                    });
+            ToolResult::success("MCP scope observed").with_structured(evidence)
+        }
+    }
+
+    let db = Arc::new(Database::new(std::path::Path::new(":memory:")).unwrap());
+    let config = Arc::new(parking_lot::RwLock::new(AppConfig::default()));
+    config.write().permissions.mode = PermissionMode::FullAccess;
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(Probe));
+    let gateway = SecurityExecutionGateway::with_sandbox_and_registry(
+        SandboxConfig::default(),
+        ".",
+        Arc::new(registry),
+    )
+    .with_db(Arc::clone(&db))
+    .with_permissions_config(Arc::clone(&config))
+    .with_grant_enforcement();
+    let request = request("mcp_probe_authority");
+    let evidence = |outcome| match outcome {
+        SecurityExecutionOutcome::Executed { tool_result, .. } => tool_result.structured.unwrap(),
+        other => panic!("Expected MCP execution, got {other:?}"),
+    };
+    assert_eq!(
+        evidence(gateway.execute(&request, RiskLevel::High).await.unwrap()),
+        json!({"grant":null,"once":false})
+    );
+
+    config.write().permissions.mode = PermissionMode::FullApproval;
+    let SecurityExecutionOutcome::RequiresApproval { risk_level, reason } =
+        gateway.execute(&request, RiskLevel::High).await.unwrap()
+    else {
+        panic!("Full approval mode must pause the MCP call");
+    };
+    let approvals = ApprovalStore::new();
+    let pending = approvals.create(
+        request.conversation_id.clone(),
+        request.tool_call_id.clone(),
+        request.tool_name.clone(),
+        request.arguments.clone(),
+        risk_level,
+        reason,
+        request.subject.subject_id.clone(),
+    );
+    let consumed = approvals
+        .consume_for_approval(&pending.approval_id, &request.conversation_id)
+        .unwrap();
+    assert_eq!(
+        evidence(
+            gateway
+                .execute_approved(&request, consumed.risk_level)
+                .await
+                .unwrap()
+        ),
+        json!({"grant":null,"once":true})
+    );
+
+    config.write().permissions.mode = PermissionMode::FullAccess;
+    db.replace_access_rules(&[AccessRule {
+        id: "allowed-mcp-resource".into(),
+        scope: "resource".into(),
+        subject_id: None,
+        permission_id: PermissionId::McpInvoke,
+        resource: Some(GrantResource::Mcp {
+            server_id: "fixture-mcp".into(),
+            tool_name: Some("inspect".into()),
+        }),
+        mode: AccessMode::Full,
+    }])
+    .unwrap();
+    assert_eq!(
+        evidence(gateway.execute(&request, RiskLevel::High).await.unwrap()),
+        json!({"grant":"allowed-mcp-resource","once":false})
+    );
+    db.replace_access_rules(&[]).unwrap();
+    assert_eq!(
+        evidence(gateway.execute(&request, RiskLevel::High).await.unwrap()),
+        json!({"grant":null,"once":false})
+    );
     assert!(db.list_grants("local-user").unwrap().is_empty());
 }

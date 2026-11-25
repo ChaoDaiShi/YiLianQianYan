@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Play } from "lucide-react";
 import { Button, FormField, Modal, Textarea } from "../../components/ui";
 import { startWorkflowRun, type WorkflowGraphRecord, type WorkflowRunInputs } from "../../api/workflows";
@@ -14,8 +14,10 @@ export default function WorkflowRunDialog({ graph, onClose, onStarted }: {
 }) {
   const [values, setValues] = useState(() => initialValues(graph));
   const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
   const [error, setError] = useState("");
   async function start() {
+    if (startingRef.current) return;
     setError("");
     const inputs: WorkflowRunInputs = {};
     for (const node of graph.definition.nodes) {
@@ -37,8 +39,10 @@ export default function WorkflowRunDialog({ graph, onClose, onStarted }: {
         case "output": inputs[node.id] = { type: "output", template: value || null }; break;
       }
     }
+    startingRef.current = true;
     setStarting(true);
     const response = await startWorkflowRun(graph.id, inputs);
+    startingRef.current = false;
     setStarting(false);
     if (response.ok) onStarted(response.data.run_id);
     else setError(response.error);

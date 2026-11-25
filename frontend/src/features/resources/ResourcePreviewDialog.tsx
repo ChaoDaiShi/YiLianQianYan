@@ -51,6 +51,7 @@ export function ResourcePreviewPane({ file, source, onMetadataChange }: PreviewP
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [zoom, setZoom] = useState(100);
+  const [actualPixels, setActualPixels] = useState(false);
   const [sheet, setSheet] = useState(0);
   const [slide, setSlide] = useState(0);
   const [query, setQuery] = useState("");
@@ -129,20 +130,27 @@ export function ResourcePreviewPane({ file, source, onMetadataChange }: PreviewP
   const searchCount = searchableDocument ? documentMatches.length : count;
   const canZoom = preview?.status === "ready" && ["image", "docx", "rtf", "xlsx", "xls", "pptx", "text"].includes(preview.kind);
   const canSearch = searchableDocument || (preview?.kind === "text" && fullText !== null);
-  const metadata = `${preview ? (kindLabels[preview.kind] ?? preview.kind.toUpperCase()) : "文件"}${typeof file.size === "number" ? ` · ${file.size < 1024 * 1024 ? `${Math.ceil(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}` : ""}`;
+  const imageDimensions = preview?.kind === "image" && preview.width && preview.height ? ` · ${preview.width.toLocaleString()} × ${preview.height.toLocaleString()} 像素` : "";
+  const metadata = `${preview ? (kindLabels[preview.kind] ?? preview.kind.toUpperCase()) : "文件"}${imageDimensions}${typeof file.size === "number" ? ` · ${file.size < 1024 * 1024 ? `${Math.ceil(file.size / 1024)} KiB` : `${(file.size / 1024 / 1024).toFixed(1)} MiB`}` : ""}`;
+  const visionCopy = preview?.kind === "image" && (preview.mime_type === "image/png" || preview.mime_type === "image/jpeg") &&
+    (Math.max(preview.width ?? 0, preview.height ?? 0) > 4096 || (file.size ?? 0) > 6 * 1024 * 1024);
+  const visionUnavailable = preview?.kind === "image" && preview.mime_type !== "image/png" && preview.mime_type !== "image/jpeg";
   useEffect(() => { onMetadataChange?.(metadata); }, [metadata, onMetadataChange]);
   return <section className="resource-preview-workspace" aria-label={`预览内容 ${file.name}`}>
       {(!onMetadataChange || canZoom || canSearch) && <div className="resource-preview-toolbar">
         {!onMetadataChange && <span className="resource-preview-meta">{metadata}</span>}
-        {canZoom && <div className="resource-preview-controls"><button type="button" aria-label="缩小" disabled={zoom <= 50} onClick={() => setZoom(value => value - 10)}><Minus size={15}/></button><span>{zoom}%</span><button type="button" aria-label="放大" disabled={zoom >= 200} onClick={() => setZoom(value => value + 10)}><Plus size={15}/></button></div>}
+        {canZoom && <div className="resource-preview-controls"><button type="button" aria-label="缩小" disabled={!actualPixels && zoom <= 50} onClick={() => { setActualPixels(false); setZoom(value => actualPixels ? 90 : value - 10); }}><Minus size={15}/></button><span>{actualPixels ? "原始像素" : `${zoom}%`}</span><button type="button" aria-label="放大" disabled={!actualPixels && zoom >= 200} onClick={() => { setActualPixels(false); setZoom(value => actualPixels ? 110 : value + 10); }}><Plus size={15}/></button></div>}
+        {preview?.kind === "image" && preview.width && <div className="resource-preview-controls"><button type="button" aria-pressed={!actualPixels && zoom === 100} onClick={() => { setActualPixels(false); setZoom(100); }}>适应窗口</button><button type="button" aria-pressed={actualPixels} onClick={() => setActualPixels(true)}>原始像素</button></div>}
         {canSearch && <div className="resource-preview-search"><input aria-label="搜索文件内容" placeholder="搜索当前内容" value={query} onChange={event => { setQuery(event.target.value); setMatch(0); }}/><span>{searchCount ? `${Math.min(match + 1, searchCount)}/${searchCount}` : "0/0"}</span><button type="button" aria-label="上一处匹配" disabled={!searchCount} onClick={() => setMatch((match + searchCount - 1) % searchCount)}><ChevronLeft size={15}/></button><button type="button" aria-label="下一处匹配" disabled={!searchCount} onClick={() => setMatch((match + 1) % searchCount)}><ChevronRight size={15}/></button></div>}
       </div>}
+      {visionCopy && <p className="resource-preview-vision-note">这里显示原图。调用识图服务时会按请求限制缩放或压缩，细字可裁成局部图再发送。</p>}
+      {visionUnavailable && <p className="resource-preview-vision-note">此格式可预览。当前识图服务接受 PNG 和 JPEG，识别前请转换格式。</p>}
       {error && <p role="alert" className="resource-card-error">{error}</p>}
       {!preview && !error && <p role="status">正在读取文件内容…</p>}
       {preview && preview.status !== "ready" && <p role="status">{preview.error || "此文件暂不支持内容预览，可下载原文件。"}</p>}
       {preview?.status === "ready" && <div className="resource-preview-body" ref={contentRef}>
         {preview.kind === "pdf" && (url ? <iframe title={`${file.name} 的 PDF 预览`} src={url} className="resource-preview-pdf"/> : !error && <p role="status">正在加载 PDF…</p>)}
-        {preview.kind === "image" && (url ? <div className="resource-preview-image"><img src={url} alt={file.name} style={{ width: `${zoom}%` }} onError={() => setError("图片无法显示，请下载原文件查看。")}/></div> : !error && <p role="status">正在加载图片…</p>)}
+        {preview.kind === "image" && (url ? <div className="resource-preview-image"><img src={url} alt={file.name} style={{ width: actualPixels ? preview.width ?? undefined : `${zoom}%` }} onError={() => setError("图片无法显示，请下载原文件查看。")}/></div> : !error && <p role="status">正在加载图片…</p>)}
         {preview.kind === "audio" && (url ? <audio controls src={url} onError={() => setError("当前浏览器无法播放此音频，请下载原文件。")}>浏览器不支持此音频播放。</audio> : !error && <p role="status">正在加载音频…</p>)}
         {preview.kind === "video" && (url ? <video controls src={url} onError={() => setError("当前浏览器无法播放此视频，请下载原文件。")}>浏览器不支持此视频播放。</video> : !error && <p role="status">正在加载视频…</p>)}
         {preview.kind === "text" && (fullText !== null ? <div className="resource-preview-paper" style={{ fontSize: `${zoom}%` }}><SearchableText text={fullText} query={query} selected={match}/></div> : !error && <p role="status">正在加载正文…</p>)}

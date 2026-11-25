@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent, type ReactNode } from "react";
 import { AlertTriangle, AlertCircle } from "lucide-react";
 import Modal from "./Modal";
 import Button from "./Button";
@@ -8,6 +8,7 @@ export interface ConfirmDialogProps {
   open: boolean;
   title: string;
   description: string;
+  children?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: "default" | "danger";
@@ -21,6 +22,7 @@ export default function ConfirmDialog({
   open,
   title,
   description,
+  children,
   confirmLabel = "确认",
   cancelLabel = "取消",
   tone = "default",
@@ -31,14 +33,16 @@ export default function ConfirmDialog({
 }: ConfirmDialogProps) {
   const [typedText, setTypedText] = useState("");
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
+  const confirmingRef = useRef(false);
 
   useEffect(() => {
     if (open) {
       setTypedText("");
       // Focus cancel button for safety
-      setTimeout(() => {
+      const timer = window.setTimeout(() => {
         cancelBtnRef.current?.focus();
       }, 50);
+      return () => window.clearTimeout(timer);
     }
   }, [open]);
 
@@ -47,14 +51,16 @@ export default function ConfirmDialog({
   const effectiveLoading = loading || internalLoading;
 
   const handleConfirm = async () => {
-    if (!isConfirmedAllowed || effectiveLoading) return;
+    if (!isConfirmedAllowed || effectiveLoading || confirmingRef.current) return;
+    confirmingRef.current = true;
     try {
       const result = onConfirm();
-      if (result && typeof (result as Promise<void>).then === "function") {
+      if (result) {
         setInternalLoading(true);
         await result;
       }
     } finally {
+      confirmingRef.current = false;
       setInternalLoading(false);
     }
   };
@@ -92,8 +98,10 @@ export default function ConfirmDialog({
     <Modal
       open={open}
       onClose={onCancel}
+      closeDisabled={effectiveLoading}
       title={title}
       size="sm"
+      variant={tone === "danger" ? "danger" : "default"}
       footer={footer}
     >
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -115,6 +123,8 @@ export default function ConfirmDialog({
             {description}
           </p>
         </div>
+
+        {children}
 
         {requireText && (
           <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--surface-muted)] p-3">

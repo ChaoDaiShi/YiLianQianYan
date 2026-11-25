@@ -8,19 +8,22 @@ use serde::Serialize;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
-use super::completion_guard::{evaluate_completion, CompletionCheck};
+use super::completion_guard::{evaluate_turn_completion, CompletionCheck};
 use super::state::AgentState;
+use super::steering::{skip_tool, CURRENT_STEERING};
 use super::tool_loop::ToolLoopGuard;
 use super::verifier::replan_message;
 use crate::app::state::LogBuffer;
 use crate::config::types::AppConfig;
 use crate::integrations::llm::client::LlmClient;
-use crate::integrations::llm::types::ToolCall;
+use crate::integrations::llm::types::{ChatMessage, ToolCall};
+use crate::modules::settings::application::ServiceConfigurationSource;
 use crate::safety::approval::ApprovalStore;
 use crate::safety::execution_gateway::SecurityExecutionOutcome;
-use crate::safety::{SecurityExecutionGateway, SecurityExecutionRequest, SecuritySubject};
+use crate::safety::{SecurityExecutionGateway, SecurityExecutionRequest};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::trait_def::RiskLevel;
+use crate::tools::ToolResult;
 use crate::utils::text::truncate_chars;
 
 /// Agent streaming event (shared with API layer)
@@ -57,12 +60,17 @@ pub struct AgentEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration_source: Option<ServiceConfigurationSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub should_replan: Option<bool>,
 }
 
 impl From<AgentEvent> for serde_json::Value {
     fn from(event: AgentEvent) -> Self {
-        if matches!(event.event_type.as_str(), "model_route" | "workspace_mode") {
+        if matches!(
+            event.event_type.as_str(),
+            "model_route" | "workspace_mode" | "interaction_route" | "connected"
+        ) {
             if let Some(mut route) = event.args.clone() {
                 route["type"] = serde_json::json!(event.event_type);
                 route["conversation_id"] = serde_json::json!(event.conversation_id);
@@ -70,6 +78,9 @@ impl From<AgentEvent> for serde_json::Value {
             }
         }
         let mut value = serde_json::json!({"type":event.event_type,"conversation_id":event.conversation_id,"token":event.token,"tool_call_id":event.tool_call_id,"tool_name":event.tool_name,"args":event.args,"result":event.result,"status":event.status,"error":event.error,"message_id":event.message_id,"risk_level":event.risk_level,"reason":event.reason,"approval_id":event.approval_id,"verification_success":event.verification_success,"verification_reason":event.verification_reason,"should_replan":event.should_replan});
+        if let Some(source) = event.configuration_source {
+            value["configuration_source"] = serde_json::json!(source);
+        }
         value
             .as_object_mut()
             .expect("event object")
@@ -79,6 +90,25 @@ impl From<AgentEvent> for serde_json::Value {
 }
 
 impl AgentEvent {
+    pub(crate) fn tool_end(
+        conversation_id: &str,
+        call_id: &str,
+        name: &str,
+        status: &str,
+        result: &ToolResult,
+    ) -> Self {
+        Self {
+            event_type: "tool_end".into(),
+            tool_call_id: Some(call_id.into()),
+            tool_name: Some(name.into()),
+            status: Some(status.into()),
+            result: Some(crate::tools::ai_search::display_result(name, result)),
+            configuration_source: result.configuration_source.clone(),
+            error: None,
+            ..Self::error_event(conversation_id, String::new())
+        }
+    }
+
     pub(crate) fn error_event(conversation_id: &str, error: String) -> Self {
         Self {
             event_type: "error".into(),
@@ -96,6 +126,7 @@ impl AgentEvent {
             approval_id: None,
             verification_success: None,
             verification_reason: None,
+            configuration_source: None,
             should_replan: None,
         }
     }
@@ -114,6 +145,7 @@ pub enum RunOutcome {
 }
 
 const MAX_ITERATIONS: usize = 20;
+const CONTINUE_REPLY: &str = "继续上一条助手正文，从它结束的那个字符之后写起。原请求的篇幅、结构和格式继续生效。只输出接下来应追加的内容，包括必要的空格和换行。";
 const MAX_COMPLETION_REPLANS: usize = 2;
 
 fn record_reasoning_delta(
@@ -155,7 +187,7 @@ fn gate_final_response(
     state: &mut AgentState,
     completion_replans: &mut usize,
 ) -> Result<FinalResponseGate, String> {
-    match evaluate_completion(&state.messages) {
+    match evaluate_turn_completion(&state.messages, state.turn_user_start) {
         CompletionCheck::Ready => Ok(FinalResponseGate::Complete),
         CompletionCheck::MissingDesktopTextInputEvidence => {
             if *completion_replans >= MAX_COMPLETION_REPLANS {
@@ -163,7 +195,7 @@ fn gate_final_response(
             }
             *completion_replans += 1;
             state.add_system_message(
-                "当前任务尚未执行已验证的目标窗口文本输入。不要声称任务完成；请调用 keyboard，使用 action=type、text 和 target_application 完成输入，或在无法执行时明确失败。"
+                "当前任务尚未执行已验证的目标窗口文本输入。请使用本轮已开放且与目标应用匹配的工具，核对输入结果。微信草稿使用 software_wechat_draft；如已报告连接或许可问题，说明具体原因。"
                     .to_string(),
             );
             Ok(FinalResponseGate::Replan)
@@ -172,35 +204,70 @@ fn gate_final_response(
 }
 
 fn should_stream_response_tokens(state: &AgentState) -> bool {
-    matches!(evaluate_completion(&state.messages), CompletionCheck::Ready)
+    matches!(
+        evaluate_turn_completion(&state.messages, state.turn_user_start),
+        CompletionCheck::Ready
+    )
 }
 
-fn finish_with_local_result(
+fn record_reply(state: &mut AgentState, output: &str, reasoning: Option<String>) {
+    state.add_assistant_message(Some(output.to_owned()), None);
+    if let Some(message) = state.messages.last_mut() {
+        message.reasoning_content = reasoning;
+    }
+    state.output = output.to_owned();
+}
+
+fn append_reply(state: &mut AgentState, output: &str, reasoning: &str) {
+    let message = state.messages.last_mut().expect("continuation has a reply");
+    message
+        .content
+        .get_or_insert_with(String::new)
+        .push_str(output);
+    message
+        .reasoning_content
+        .get_or_insert_with(String::new)
+        .push_str(reasoning);
+    state.output.push_str(output);
+}
+
+async fn finish_reply(
     state: &mut AgentState,
     conversation_id: &str,
     tx: &Sender<AgentEvent>,
     output: String,
+    reasoning: Option<String>,
 ) -> RunOutcome {
-    state.add_assistant_message(Some(output.clone()), None);
-    state.output = output.clone();
-    let _ = tx.try_send(AgentEvent {
-        event_type: "done".into(),
-        conversation_id: conversation_id.to_string(),
-        token: None,
-        tool_call_id: None,
-        tool_name: None,
-        args: None,
-        result: None,
-        status: None,
-        error: None,
-        message_id: Some(uuid::Uuid::new_v4().to_string()),
-        risk_level: None,
-        reason: None,
-        approval_id: None,
-        verification_success: None,
-        verification_reason: None,
-        should_replan: None,
-    });
+    record_reply(state, &output, reasoning);
+    publish_reply_done(conversation_id, tx, output).await
+}
+
+pub(crate) async fn publish_reply_done(
+    conversation_id: &str,
+    tx: &Sender<AgentEvent>,
+    output: String,
+) -> RunOutcome {
+    let _ = tx
+        .send(AgentEvent {
+            event_type: "done".into(),
+            conversation_id: conversation_id.to_string(),
+            token: None,
+            tool_call_id: None,
+            tool_name: None,
+            args: None,
+            result: Some(output.clone()),
+            status: None,
+            error: None,
+            message_id: Some(uuid::Uuid::new_v4().to_string()),
+            risk_level: None,
+            reason: None,
+            approval_id: None,
+            verification_success: None,
+            verification_reason: None,
+            configuration_source: None,
+            should_replan: None,
+        })
+        .await;
     RunOutcome::Done { output }
 }
 
@@ -250,7 +317,7 @@ pub(crate) fn record_external_tool_accounting(
         ExternalToolAccounting::BillingUnknown
     };
 
-    let strict = scope.is_some_and(|scope| scope.goal_id.is_some() || scope.handoff_id.is_some());
+    let strict = scope.is_some_and(super::delegation::ExecutionScope::is_bounded);
     if strict && disposition != ExternalToolAccounting::Known {
         let scope = scope.ok_or_else(|| "proofloop_usage_unavailable".to_string())?;
         let budget = scope
@@ -278,7 +345,7 @@ async fn dispatch_tool_call(
         tool_call_id: tool_call.id.clone(),
         tool_name: tool_call.function.name.clone(),
         arguments: args.clone(),
-        subject: SecuritySubject::local_user(),
+        subject: security_gateway.react_subject(),
     };
     let execution_started = std::sync::atomic::AtomicBool::new(false);
 
@@ -302,6 +369,7 @@ async fn dispatch_tool_call(
                 approval_id: None,
                 verification_success: None,
                 verification_reason: None,
+                configuration_source: None,
                 should_replan: None,
             });
             log_buffer.push("tool", "tool", &format!("▶ {}", tool_call.function.name));
@@ -313,8 +381,17 @@ async fn dispatch_tool_call(
             tool_result,
             verification,
         }) => {
-            let status = if tool_result.ok { "success" } else { "error" };
-            let log_level = if tool_result.ok { "tool" } else { "error" };
+            let interpreted = crate::execution::interpret_tool_result(&tool_result, &verification);
+            let status = if interpreted.is_verified() {
+                "success"
+            } else {
+                "error"
+            };
+            let log_level = if interpreted.is_verified() {
+                "tool"
+            } else {
+                "error"
+            };
             let result_preview = truncate_chars(&tool_result.content, 80);
             log_buffer.push(
                 log_level,
@@ -327,29 +404,20 @@ async fn dispatch_tool_call(
                 ),
             );
 
-            let _ = tx.try_send(AgentEvent {
-                event_type: "tool_end".into(),
-                conversation_id: conversation_id.to_string(),
-                token: None,
-                tool_call_id: Some(tool_call.id.clone()),
-                tool_name: Some(tool_call.function.name.clone()),
-                args: None,
-                result: Some(tool_result.content.clone()),
-                status: Some(status.to_string()),
-                error: None,
-                message_id: None,
-                risk_level: None,
-                reason: None,
-                approval_id: None,
-                verification_success: None,
-                verification_reason: None,
-                should_replan: None,
-            });
+            let _ = tx
+                .send(AgentEvent::tool_end(
+                    conversation_id,
+                    &tool_call.id,
+                    &tool_call.function.name,
+                    status,
+                    &tool_result,
+                ))
+                .await;
 
             let scope = super::delegation::current_scope();
             let strict_goal_scope = scope
                 .as_ref()
-                .is_some_and(|scope| scope.goal_id.is_some() || scope.handoff_id.is_some());
+                .is_some_and(super::delegation::ExecutionScope::is_bounded);
             let external_accounting = match record_external_tool_accounting(
                 scope.as_ref(),
                 &tool_call.function.name,
@@ -369,7 +437,11 @@ async fn dispatch_tool_call(
                     return Err(error);
                 }
             };
-            let result_unknown = external_accounting == ExternalToolAccounting::ResultUnknown;
+            let result_unknown = external_accounting == ExternalToolAccounting::ResultUnknown
+                || matches!(
+                    interpreted,
+                    crate::execution::VerifiedExecutionResult::ResultUnknown { .. }
+                );
             let strict_billing_unknown =
                 strict_goal_scope && external_accounting == ExternalToolAccounting::BillingUnknown;
             if result_unknown || strict_billing_unknown {
@@ -417,6 +489,7 @@ async fn dispatch_tool_call(
                         verification.success
                     }),
                     verification_reason: Some(reason),
+                    configuration_source: None,
                     should_replan: Some(false),
                 });
                 return Ok(ToolDispatchOutcome::Stopped { output });
@@ -438,6 +511,7 @@ async fn dispatch_tool_call(
                 approval_id: None,
                 verification_success: Some(verification.success),
                 verification_reason: Some(verification.reason.clone()),
+                configuration_source: None,
                 should_replan: Some(verification.should_replan),
             });
 
@@ -456,7 +530,7 @@ async fn dispatch_tool_call(
                 ),
             );
 
-            let failure = (!tool_result.ok || !verification.success).then(|| {
+            let failure = (!interpreted.is_verified()).then(|| {
                 serde_json::json!({
                     "tool_ok": tool_result.ok,
                     "output": tool_result.content,
@@ -469,7 +543,11 @@ async fn dispatch_tool_call(
                 state.add_tool_result(
                     tool_call.id.clone(),
                     tool_call.function.name.clone(),
-                    replan_message(&tool_call.function.name, &verification.reason),
+                    replan_message(
+                        &tool_call.function.name,
+                        &verification.reason,
+                        &summarize_tool_result(&tool_result.content),
+                    ),
                 );
                 loop_guard.observe(&tool_call.function.name, args, failure)?;
                 return Ok(ToolDispatchOutcome::Replan);
@@ -500,7 +578,7 @@ async fn dispatch_tool_call(
                 args.clone(),
                 risk_level,
                 reason,
-                SecuritySubject::local_user().subject_id,
+                request.subject.subject_id.clone(),
             );
             if !created {
                 state.add_tool_result(
@@ -529,6 +607,7 @@ async fn dispatch_tool_call(
                 approval_id: Some(approval.approval_id.clone()),
                 verification_success: None,
                 verification_reason: None,
+                configuration_source: None,
                 should_replan: None,
             });
             log_buffer.push(
@@ -578,6 +657,7 @@ async fn dispatch_tool_call(
                     approval_id: None,
                     verification_success: None,
                     verification_reason: None,
+                    configuration_source: None,
                     should_replan: None,
                 });
             }
@@ -653,6 +733,14 @@ pub async fn run_react_loop_with_channel(
     super::state::tool_protocol::validate(&state.messages)?;
     let inherited = super::delegation::current_scope();
     let scope = super::delegation::ExecutionScope {
+        owner: inherited
+            .as_ref()
+            .and_then(|value| value.owner.clone())
+            .or_else(|| {
+                Some(crate::execution::ExecutionOwner::Conversation {
+                    conversation_id: conversation_id.to_owned(),
+                })
+            }),
         cancel: cancel_token.clone(),
         budget: inherited
             .as_ref()
@@ -705,13 +793,23 @@ async fn run_react_loop_inner(
     log_buffer: &LogBuffer,
 ) -> Result<RunOutcome, String> {
     let tools_openai = tool_registry.to_openai_tools();
+    let steering = CURRENT_STEERING
+        .try_with(std::sync::Arc::clone)
+        .ok()
+        .filter(|steering| steering.owns_conversation(conversation_id));
+    let read_only_tools = steering.as_ref().map(|_| {
+        tool_registry
+            .filtered(crate::interaction::chat_understanding::allows_read_tool)
+            .to_openai_tools()
+    });
     let mut iteration = 0;
     let mut loop_guard = ToolLoopGuard::default();
     let mut completion_replans = 0usize;
+    let mut continuing_reply = false;
     let reasoning_journal = parking_lot::Mutex::new(String::new());
     let mut compacted_context = state.compaction_checkpoint.clone();
 
-    loop {
+    'agent_loop: loop {
         if cancel_token.is_cancelled() {
             return Err("已取消".to_string());
         }
@@ -730,22 +828,65 @@ async fn run_react_loop_inner(
             ));
         }
 
+        if let Some(steering) = &steering {
+            if steering.apply(state, tx, conversation_id).await {
+                continuing_reply = false;
+            }
+        }
         // ── THINK: Call LLM with streaming ──
-        let model_messages = super::context_compaction::project(
-            &state.messages,
-            &tools_openai,
-            &_config.compaction,
-            client,
-            cancel_token,
-            &mut compacted_context,
-        )
-        .await?;
+        let tools = if continuing_reply {
+            &[]
+        } else if steering
+            .as_ref()
+            .is_some_and(|steering| steering.read_only())
+        {
+            read_only_tools.as_deref().unwrap_or_default()
+        } else {
+            tools_openai.as_slice()
+        };
+        use crate::execution::chat_context_cache::CURRENT_CHAT_CONTEXT;
+        let static_budget = state.messages.first().and_then(|system| {
+            CURRENT_CHAT_CONTEXT
+                .try_with(|observation| {
+                    observation.as_ref().filter(|observation| observation.owns_conversation(conversation_id)).and_then(|observation| {
+                        observation.static_budget(system, tools)
+                            .map_err(|error| tracing::warn!(%error, "context estimate cache unavailable"))
+                            .ok()
+                    })
+                })
+                .ok()
+                .flatten()
+        });
+        let mut model_messages = if let Some(budget) = &static_budget {
+            super::context_compaction::project_with_static_tokens(
+                &state.messages,
+                &_config.compaction,
+                client,
+                cancel_token,
+                &mut compacted_context,
+                budget.tokens,
+            )
+            .await?
+        } else {
+            super::context_compaction::project(
+                &state.messages,
+                tools,
+                &_config.compaction,
+                client,
+                cancel_token,
+                &mut compacted_context,
+            )
+            .await?
+        };
+        if continuing_reply {
+            model_messages.push(ChatMessage::user(CONTINUE_REPLY));
+        }
         state.compaction_checkpoint = compacted_context.clone();
         let stream_response_tokens = should_stream_response_tokens(state);
         let execution_scope = super::delegation::current_scope();
         let strict_budget = execution_scope
             .as_ref()
-            .is_some_and(|scope| scope.handoff_id.is_some() || scope.goal_id.is_some());
+            .is_some_and(super::delegation::ExecutionScope::is_bounded);
         let strict_output_limit = if strict_budget {
             execution_scope
                 .as_ref()
@@ -754,7 +895,7 @@ async fn run_react_loop_inner(
                     let input_upper_bound =
                         crate::integrations::llm::client::conservative_input_token_upper_bound(
                             &model_messages,
-                            &tools_openai,
+                            tools,
                         )
                         .ok_or_else(|| "proofloop_usage_unavailable".to_string())?;
                     budget.output_token_limit(
@@ -774,11 +915,28 @@ async fn run_react_loop_inner(
                 }
             }
         }
-        let on_token = |token: &str| {
-            if !stream_response_tokens {
-                return;
+        let output_limit = strict_output_limit.unwrap_or_else(|| client.max_output_tokens());
+        if iteration == 1 {
+            if let Some(budget) = &static_budget {
+                let _ = CURRENT_CHAT_CONTEXT.try_with(|observation| {
+                    if let Some(observation) = observation {
+                        if let Err(error) = observation.record_api(
+                            &model_messages,
+                            budget,
+                            _config.compaction.context_window,
+                            output_limit,
+                            compacted_context
+                                .as_ref()
+                                .map(super::context_compaction::CompactedContext::revision),
+                        ) {
+                            tracing::warn!(%error, "chat context receipt could not be persisted");
+                        }
+                    }
+                });
             }
-            let _ = tx.try_send(AgentEvent {
+        }
+        let on_token = |token: &str| {
+            let event = stream_response_tokens.then(|| AgentEvent {
                 event_type: "token".into(),
                 conversation_id: conversation_id.to_string(),
                 token: Some(token.to_string()),
@@ -794,16 +952,22 @@ async fn run_react_loop_inner(
                 approval_id: None,
                 verification_success: None,
                 verification_reason: None,
+                configuration_source: None,
                 should_replan: None,
             });
+            async move {
+                if let Some(event) = event {
+                    let _ = tx.send(event).await;
+                }
+            }
         };
         let on_reasoning = |reasoning: &str| {
             record_reasoning_delta(tx, conversation_id, &reasoning_journal, reasoning);
         };
         let invocation = client.stream_with_reasoning_max_tokens(
             &model_messages,
-            &tools_openai,
-            strict_output_limit.unwrap_or_else(|| client.max_output_tokens()),
+            tools,
+            output_limit,
             on_token,
             on_reasoning,
         );
@@ -857,6 +1021,48 @@ async fn run_react_loop_inner(
             Err(e) => return Err(format!("LLM调用失败: {}", e)),
         };
 
+        if steering.as_ref().is_some_and(|steering| steering.pending()) {
+            continue;
+        }
+        let length_limited = accumulator.finish_reason.as_deref() == Some("length");
+        if continuing_reply || length_limited {
+            if !length_limited
+                && steering
+                    .as_ref()
+                    .is_some_and(|steering| !steering.close_if_settled())
+            {
+                continue;
+            }
+            let has_tool_deltas = !accumulator.tool_calls.is_empty();
+            if continuing_reply {
+                if accumulator.content.trim().is_empty() || has_tool_deltas {
+                    return Err("自动续写没有返回可接续的正文，已保留生成的内容。".into());
+                }
+                append_reply(state, &accumulator.content, &accumulator.reasoning_content);
+            } else if stream_response_tokens && !accumulator.content.trim().is_empty() {
+                record_reply(
+                    state,
+                    &accumulator.content,
+                    Some(accumulator.reasoning_content),
+                );
+                if has_tool_deltas {
+                    return Err("模型在生成工具调用时达到输出上限，已保留回复正文。".into());
+                }
+            } else {
+                return Err("本次生成达到模型输出上限，尚未生成可交付的正文。".into());
+            }
+            if !length_limited {
+                return Ok(publish_reply_done(conversation_id, tx, state.output.clone()).await);
+            }
+            continuing_reply = true;
+            let mut checkpoint = AgentEvent::error_event(conversation_id, String::new());
+            checkpoint.event_type = "reply_checkpoint".into();
+            checkpoint.error = None;
+            checkpoint.result = Some(state.output.clone());
+            let _ = tx.send(checkpoint).await;
+            continue;
+        }
+
         // ── Check for tool calls ──
         if accumulator.has_tool_calls() {
             if let Some(tool_calls) = accumulator.to_tool_calls() {
@@ -906,10 +1112,17 @@ async fn run_react_loop_inner(
                     }
                     match parsed {
                         Ok(request) => {
+                            if steering
+                                .as_ref()
+                                .is_some_and(|steering| !steering.close_if_settled())
+                            {
+                                skip_tool(state, question, "user_supplement");
+                                continue 'agent_loop;
+                            }
                             return Ok(RunOutcome::WaitingInput {
                                 tool_call_id: question.id.clone(),
                                 request,
-                            })
+                            });
                         }
                         Err(error) => {
                             state.add_tool_result(
@@ -926,14 +1139,49 @@ async fn run_react_loop_inner(
                     if cancel_token.is_cancelled() {
                         return Err("已取消".to_string());
                     }
+                    if let Some(steering) = &steering {
+                        if steering.pending() {
+                            for skipped in &tool_calls[i..] {
+                                skip_tool(state, skipped, "user_supplement");
+                            }
+                            continue 'agent_loop;
+                        }
+                        if steering.read_only()
+                            && !crate::interaction::chat_understanding::allows_read_tool(
+                                &tc.function.name,
+                            )
+                        {
+                            skip_tool(state, tc, "user_read_only");
+                            continue;
+                        }
+                    }
 
                     let mut args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
                         .unwrap_or(serde_json::Value::Null);
-
                     if let Some(tool) = tool_registry.get(&tc.function.name) {
-                        if let Err(error) = tool.prepare_call_arguments(conversation_id, &mut args)
+                        if let Err(message) =
+                            tool.prepare_call_arguments(conversation_id, &mut args)
                         {
-                            state.add_tool_result(tc.id.clone(), tc.function.name.clone(), error);
+                            loop_guard.observe(
+                                &tc.function.name,
+                                &args,
+                                Some(serde_json::json!(&message)),
+                            )?;
+                            let result = ToolResult::error(message);
+                            let _ = tx
+                                .send(AgentEvent::tool_end(
+                                    conversation_id,
+                                    &tc.id,
+                                    &tc.function.name,
+                                    "error",
+                                    &result,
+                                ))
+                                .await;
+                            state.add_tool_result(
+                                tc.id.clone(),
+                                tc.function.name.clone(),
+                                result.content,
+                            );
                             continue;
                         }
                     }
@@ -982,6 +1230,27 @@ async fn run_react_loop_inner(
                             break;
                         }
                         ToolDispatchOutcome::Paused { approval_id } => {
+                            if steering
+                                .as_ref()
+                                .is_some_and(|steering| !steering.close_if_settled())
+                            {
+                                approval_store
+                                    .cancel(&approval_id, conversation_id)
+                                    .map_err(|error| error.to_string())?;
+                                for skipped in &tool_calls[i..] {
+                                    skip_tool(state, skipped, "user_supplement");
+                                }
+                                let mut event =
+                                    AgentEvent::error_event(conversation_id, String::new());
+                                event.event_type = "approval_resolved".into();
+                                event.error = None;
+                                event.approval_id = Some(approval_id);
+                                event.tool_call_id = Some(tc.id.clone());
+                                event.tool_name = Some(tc.function.name.clone());
+                                event.status = Some("cancelled".into());
+                                let _ = tx.send(event).await;
+                                continue 'agent_loop;
+                            }
                             for later in tool_calls.iter().skip(i + 1) {
                                 let skipped = format!(
                                     "工具 {} 的调用因等待审批被跳过，未执行。",
@@ -1006,12 +1275,7 @@ async fn run_react_loop_inner(
                                     ),
                                 );
                             }
-                            return Ok(finish_with_local_result(
-                                state,
-                                conversation_id,
-                                tx,
-                                output,
-                            ));
+                            return Ok(finish_reply(state, conversation_id, tx, output, None).await);
                         }
                     }
                 }
@@ -1023,34 +1287,20 @@ async fn run_react_loop_inner(
         if gate_final_response(state, &mut completion_replans)? == FinalResponseGate::Replan {
             continue;
         }
-        let output = accumulator.content.clone();
-        state.add_assistant_message(Some(output.clone()), None);
-        if let Some(message) = state.messages.last_mut() {
-            message.reasoning_content = Some(accumulator.reasoning_content.clone());
+        if steering
+            .as_ref()
+            .is_some_and(|steering| !steering.close_if_settled())
+        {
+            continue;
         }
-        state.output = output.clone();
-
-        let msg_id = uuid::Uuid::new_v4().to_string();
-        let _ = tx.try_send(AgentEvent {
-            event_type: "done".into(),
-            conversation_id: conversation_id.to_string(),
-            token: None,
-            tool_call_id: None,
-            tool_name: None,
-            args: None,
-            result: None,
-            status: None,
-            error: None,
-            message_id: Some(msg_id),
-            risk_level: None,
-            reason: None,
-            approval_id: None,
-            verification_success: None,
-            verification_reason: None,
-            should_replan: None,
-        });
-
-        return Ok(RunOutcome::Done { output });
+        return Ok(finish_reply(
+            state,
+            conversation_id,
+            tx,
+            accumulator.content,
+            Some(accumulator.reasoning_content),
+        )
+        .await);
     }
 }
 
@@ -1176,6 +1426,7 @@ mod tests {
     fn strict_acp_accounting_unknown_blocks_goal_budget_without_fabricated_usage() {
         let budget = crate::modules::task::resource_budget::SharedExecutionBudget::new(6, 24_000);
         let scope = crate::agent::delegation::ExecutionScope {
+            owner: None,
             cancel: tokio_util::sync::CancellationToken::new(),
             budget: Some(Arc::clone(&budget)),
             handoff_id: None,

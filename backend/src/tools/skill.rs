@@ -89,6 +89,7 @@ mod discovery_tests;
 
 pub struct LoadSkillTool {
     catalog: SkillCatalog,
+    allowed_names: Option<std::collections::HashSet<String>>,
 }
 enum SkillCatalog {
     Workspace(String),
@@ -99,12 +100,18 @@ impl LoadSkillTool {
     pub fn new(workspace_root: &str) -> Self {
         Self {
             catalog: SkillCatalog::Workspace(workspace_root.to_string()),
+            allowed_names: None,
         }
     }
     pub fn with_discovery(discovery: std::sync::Arc<parking_lot::RwLock<SkillDiscovery>>) -> Self {
         Self {
             catalog: SkillCatalog::Shared(discovery),
+            allowed_names: None,
         }
+    }
+    pub fn with_allowed_names(mut self, names: std::collections::HashSet<String>) -> Self {
+        self.allowed_names = Some(names);
+        self
     }
 }
 
@@ -141,6 +148,13 @@ impl Tool for LoadSkillTool {
 
         if name.is_empty() {
             return ToolResult::error("name不能为空");
+        }
+        if self
+            .allowed_names
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(name))
+        {
+            return ToolResult::error("当前 Harness 未配置此技能");
         }
 
         let (skill, available) = match &self.catalog {
@@ -226,7 +240,7 @@ impl Tool for WriteTodosTool {
     }
 
     fn description(&self) -> &str {
-        "创建和更新待办事项列表。用于规划复杂、多步骤的任务。每次调用传入完整的待办列表快照（非增量）。"
+        "为复杂任务记录按依赖排列的阶段和进度。每次传入完整列表，当前阶段设为 in_progress，拿到完成证据后设为 completed。开始工作、阶段完成或计划变化时更新；可与不依赖计划结果的读取工具同轮提交。"
     }
 
     fn parameters(&self) -> serde_json::Value {

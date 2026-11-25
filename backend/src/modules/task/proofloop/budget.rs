@@ -6,7 +6,9 @@ use super::{
 use crate::{
     app::state::AppServer,
     db::{Database, ProofLoopTimeRecord},
-    modules::task::{NodeExecutionId, NodeExecutionStatus, TaskGraphId},
+    modules::task::{
+        resource_budget::SharedExecutionBudget, NodeExecutionId, NodeExecutionStatus, TaskGraphId,
+    },
 };
 use parking_lot::Mutex;
 use std::{
@@ -31,6 +33,75 @@ pub struct BudgetLease {
     meter: Arc<GoalBudgetMeter>,
     key: Option<GoalKey>,
     remaining: Duration,
+}
+
+pub(crate) struct GoalModelReservation {
+    db: Database,
+    reservation_id: String,
+    budget: Arc<SharedExecutionBudget>,
+    started_at_ms: i64,
+    started: Instant,
+    settled: bool,
+}
+
+impl GoalModelReservation {
+    pub(crate) fn reserve(
+        db: &Database,
+        draft: &ProofDraft,
+        source: &str,
+    ) -> Result<Self, ProofError> {
+        let started_at_ms = now();
+        let (reservation_id, calls, tokens) = db.reserve_goal_model_call_with_remaining(
+            &draft.contract,
+            &draft.planning_usage,
+            source,
+            started_at_ms,
+        )?;
+        Ok(Self {
+            db: db.clone_connection(),
+            reservation_id,
+            budget: SharedExecutionBudget::new(calls, tokens),
+            started_at_ms,
+            started: Instant::now(),
+            settled: false,
+        })
+    }
+
+    pub(crate) fn budget(&self) -> Arc<SharedExecutionBudget> {
+        Arc::clone(&self.budget)
+    }
+
+    pub(crate) fn finish(&mut self) -> Result<(), String> {
+        if self.settled {
+            return Ok(());
+        }
+        self.settled = true;
+        let usage = match self.budget.usage() {
+            Ok((model_calls, total_tokens)) => PlanningUsage {
+                model_calls,
+                total_tokens,
+                started_at_ms: self.started_at_ms,
+                elapsed_ms: Some(self.started.elapsed().as_millis().min(u64::MAX as u128) as u64),
+            },
+            Err(error) => {
+                self.db
+                    .finish_goal_model_call(&self.reservation_id, None)
+                    .map_err(|e| e.to_string())?;
+                return Err(error);
+            }
+        };
+        self.db
+            .finish_goal_model_call(&self.reservation_id, Some(&usage))
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for GoalModelReservation {
+    fn drop(&mut self) {
+        if let Err(error) = self.finish() {
+            tracing::error!(%error, "ProofLoop model reservation could not be settled");
+        }
+    }
 }
 
 impl BudgetLease {

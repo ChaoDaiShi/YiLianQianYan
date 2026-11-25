@@ -105,6 +105,7 @@ async fn invoke_profile_inner(
     let (url, body) = service_request(p, base, request)?;
     let mut builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
+        .redirect(crate::integrations::llm::client::model_redirect_policy())
         .build()
         .map_err(|_| "请求客户端不可用")?
         .post(url)
@@ -116,7 +117,9 @@ async fn invoke_profile_inner(
         on_dispatched()?;
     }
     let response = builder.send().await.map_err(|e| {
-        BasicServiceError::Availability(crate::integrations::llm::client::LlmError::Http(e))
+        BasicServiceError::Availability(
+            crate::integrations::llm::client::LlmError::from_model_request(e),
+        )
     })?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
@@ -148,6 +151,9 @@ pub fn service_request(
             format!("{base}/chat/completions"),
             json!({"model":p.model,"messages":[{"role":"user","content":[{"type":"text","text":request.prompt},{"type":"image_url","image_url":{"url":image}}]}],"max_tokens":1024}),
         ));
+    }
+    if p.service_kind != "image" {
+        return Err("此用途通过对应的默认服务运行".into());
     }
     let mut body = match p.adapter.as_str() {
         "openai" => json!({"model":p.model,"prompt":request.prompt,"n":1}),

@@ -16,6 +16,30 @@ vi.mock("./speechMonitor", () => ({ openSpeechMonitor: vi.fn() }));
 beforeEach(() => { hooks.cleanup?.(); hooks.refs = []; hooks.cursor = 0; hooks.deps = null; hooks.cleanup = undefined; vi.resetAllMocks(); });
 
 describe("hands-free effect coordination", () => {
+  it("accepts another utterance after the previous capture failed", async () => {
+    let sample!: (rms: number, time: number) => void;
+    const stream = {} as MediaStream;
+    vi.mocked(openSpeechMonitor).mockImplementation(async (_signal, callback) => {
+      sample = callback;
+      return { stream, close: vi.fn() };
+    });
+    const capture = {
+      state: { status: "error" as const, lease: null, error: "语音识别失败", volume: 0 },
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn(),
+      cancel: vi.fn(),
+    };
+    useHandsFree({
+      enabled: true, sessionId: "voice", identityEpoch: 1, playing: false, capture, onError: vi.fn(),
+    });
+    await Promise.resolve();
+    sample(0, 0);
+    sample(0, 500);
+    sample(0.1, 600);
+    sample(0.1, 740);
+    expect(capture.start).toHaveBeenCalledWith("hands-free", stream);
+  });
+
   it.each([false, true])("binds deferred endpoint to its own operation across ordinary barge-in (manual replacement: %s)", async (replaced) => {
     let sample!: (rms: number, time: number) => void;
     vi.mocked(openSpeechMonitor).mockImplementation(async (_signal, callback) => {

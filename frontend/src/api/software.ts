@@ -121,3 +121,4 @@ export const readWechatConversation = (session: SoftwareSession) =>
 export const stopSoftware = (session: SoftwareSession) => sessionResult(read("POST", sessionPath(session.id) + "/stop", {generation: session.generation}));
 export const resumeSoftware = (session: SoftwareSession) => sessionResult(read("POST", sessionPath(session.id) + "/resume", {generation: session.generation}));
 export const acknowledgeSoftware = (session: SoftwareSession) => sessionResult(read("POST", sessionPath(session.id) + "/acknowledge", {generation: session.generation, confirmed: true}));
+

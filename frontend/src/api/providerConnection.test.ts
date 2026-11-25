@@ -6,7 +6,7 @@ vi.mock("./controlSession", () => ({
 
 import { getProviderReadiness, verifyProviderConnection } from "./providerConnection";
 import chatSource from "../components/chat/ChatView.tsx?raw";
-import taskCenterSource from "../pages/TaskCenterPage.tsx?raw";
+import taskPlannerSource from "../features/workflows/TaskGraphPlanner.tsx?raw";
 import taskWorldSource from "../features/task-world/TaskWorldPage.tsx?raw";
 
 afterEach(() => {
@@ -59,9 +59,9 @@ describe("provider connection API", () => {
   });
 
   it("guides chat, planning and AI review to model settings before invoking an unavailable model", () => {
-    for (const source of [chatSource, taskCenterSource, taskWorldSource]) {
+    for (const source of [chatSource, taskPlannerSource, taskWorldSource]) {
       expect(source).toMatch(/getProviderReadiness|getChatModelReadiness/);
-      expect(source).toContain("还没有配置可用的模型服务");
+      expect(source).toMatch(/还没有配置可用的模型服务|尚未配置可用的聊天模型/);
       expect(source).toContain("前往模型设置");
     }
   });

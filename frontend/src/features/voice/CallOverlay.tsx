@@ -12,5 +12,29 @@ export default function CallOverlay(){const {state,error,send,expanded}=useFloat
  const status=error||windowError?"error":state?.phase??"syncing";
  const statusText=error||windowError?"浮窗异常":state?compactLabels[state.phase]:"同步中";
  if(!expanded)return <div className="floating-orb-wrap"><button type="button" className="call-orb floating-orb" data-status={status} aria-label={`展开小涟通话 · ${statusText}`} title={`${state?labels[state.phase]:statusText}。点击展开，按住拖动${error||windowError||state?.notice?`。${error||windowError||state?.notice}`:""}`} {...orbDrag}><img src="/favicon.png" alt="" draggable={false}/><span className="floating-orb-status" role="status" aria-live="polite">{statusText}</span></button><button type="button" className="floating-orb-close" aria-label="结束通话并关闭浮窗" title="结束通话并关闭浮窗" onClick={()=>void closeFloatingSurface("call").catch(reportWindowError)}><X size={15}/></button></div>;
- return <main className="call-window"><header><button className="floating-drag-handle call-drag-handle" aria-label="拖动通话浮窗" {...headerDrag}><Move size={16}/><strong>与小涟通话</strong></button><button aria-label="收起通话浮窗" title="收起通话浮窗" onClick={()=>void resize(false)}><Minimize2 size={17}/></button><button aria-label="隐藏浮窗，通话继续" title="隐藏浮窗，通话继续；可从托盘重新显示" onClick={()=>void hideFloatingSurface("call").catch(reportWindowError)}><X size={17}/></button></header><div className="call-avatar"><img src="/favicon.png" alt="小涟"/></div><h1 aria-live="polite">{state?labels[state.phase]:"同步通话状态中"}</h1>{state?.phase==="connecting"&&<p className="call-checks">{Object.entries(state.checks).map(([key,value])=><span key={key} data-ready={value}>{({session:"会话",microphone:"麦克风",stt:"语音识别",tts:"语音合成",output:"音频输出"} as Record<string,string>)[key]} {value?"✓":"…"}</span>)}</p>}<p className="text-xs">当前对话：{state?.conversation_title??"尚未绑定对话"}</p>{state?.can_switch_conversation&&<button className="call-switch" onClick={()=>void send("switch_conversation")}>切换到当前对话 · {state.browsing_conversation_title}</button>}<p className="call-caption" aria-live="polite">{state?.notice||state?.caption||"等待连接主窗口中的通话服务…"}</p><div className="call-actions"><button aria-label={state?.muted?"取消麦克风静音":"麦克风静音"} onClick={()=>void send("microphone")} disabled={!state?.session_id}>{state?.muted?<MicOff/>:<Mic/>}</button><button aria-label={state?.speaker_enabled?"关闭扬声器":"打开扬声器"} onClick={()=>void send("speaker")} disabled={!state?.session_id}>{state?.speaker_enabled?<Volume2/>:<VolumeX/>}</button><button className="call-end" aria-label="结束通话" onClick={()=>void send("end")}><PhoneOff/></button></div>{(error||windowError)&&<p role="alert">{error||windowError}</p>}</main>;
+ const floatingError = error || windowError;
+ const caption = state?.notice || state?.caption || (!state && !floatingError ? "等待连接主窗口中的通话服务…" : "");
+ return <main className="call-window">
+  <header>
+   <button className="floating-drag-handle call-drag-handle" aria-label="拖动通话浮窗" {...headerDrag}><Move size={16}/><strong>与小涟通话</strong></button>
+   <button aria-label="收起通话浮窗" title="收起通话浮窗" onClick={()=>void resize(false)}><Minimize2 size={17}/></button>
+   <button aria-label="隐藏浮窗，通话继续" title="隐藏浮窗，通话继续；可从托盘重新显示" onClick={()=>void hideFloatingSurface("call").catch(reportWindowError)}><X size={17}/></button>
+  </header>
+  <div className="call-body">
+   <div className="call-avatar"><img src="/favicon.png" alt="小涟"/></div>
+   <h1 aria-live="polite">{state ? labels[state.phase] : floatingError ? "通话浮窗异常" : "同步通话状态中"}</h1>
+   {state && <p className="text-xs">当前对话：{state.conversation_title ?? "尚未绑定对话"}</p>}
+   {state?.can_switch_conversation && <button className="call-switch" onClick={()=>void send("switch_conversation")}>切换到当前对话 · {state.browsing_conversation_title}</button>}
+   <p className="call-caption" aria-live="polite">{caption}</p>
+   {floatingError && <p role="alert">{floatingError}</p>}
+   {state?.phase === "connecting" && <details className="call-readiness"><summary>连接详情</summary>
+    <p className="call-checks">{Object.entries(state.checks).map(([key,value])=><span key={key} data-ready={value}>{({session:"会话",microphone:"麦克风",stt:"语音识别",tts:"语音合成",output:"音频输出"} as Record<string,string>)[key]} {value?"✓":"…"}</span>)}</p>
+   </details>}
+  </div>
+  <div className="call-actions">
+   <button aria-label={state?.muted?"取消麦克风静音":"麦克风静音"} onClick={()=>void send("microphone")} disabled={!state?.session_id}>{state?.muted?<MicOff/>:<Mic/>}</button>
+   <button aria-label={state?.speaker_enabled?"关闭扬声器":"打开扬声器"} onClick={()=>void send("speaker")} disabled={!state?.session_id}>{state?.speaker_enabled?<Volume2/>:<VolumeX/>}</button>
+   <button className="call-end" aria-label="结束通话" onClick={()=>void send("end")}><PhoneOff/></button>
+  </div>
+ </main>;
 }

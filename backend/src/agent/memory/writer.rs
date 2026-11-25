@@ -77,10 +77,12 @@ impl MemoryWriter {
         policy: MemoryWritePolicy,
         resolver: Arc<SecretResolver>,
     ) -> Self {
-        let has_embedding = config.has_embedding();
+        let has_embedding = config.has_embedding()
+            && (config.has_local_embedding()
+                || crate::modules::onboarding::allowed(&db, "external_model"));
         Self {
+            llm: LlmClient::new(config, resolver).with_profile_permissions(db.clone_connection()),
             db,
-            llm: LlmClient::new(config, resolver),
             policy,
             has_embedding,
             embedding_model: crate::db::memory_governance::embedding_identity(config),
@@ -90,6 +92,18 @@ impl MemoryWriter {
     /// Validate and persist each candidate, deduplicating against both existing
     /// memories and candidates stored earlier in this same batch.
     pub async fn write(&self, candidates: Vec<MemoryCandidate>) -> WriteReport {
+        if !crate::modules::onboarding::allowed(&self.db, "memory") {
+            return WriteReport {
+                rejected: candidates.len(),
+                outcomes: candidates
+                    .iter()
+                    .map(|_| WriteOutcome::Rejected {
+                        reason: "memory_disabled".into(),
+                    })
+                    .collect(),
+                ..WriteReport::default()
+            };
+        }
         let mut existing = match self.db.list_memories(&MemoryQuery {
             category: None,
             source: None,
