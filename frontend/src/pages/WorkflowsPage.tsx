@@ -42,53 +42,84 @@ const BUILTIN_ICONS: Record<string, string> = {
 type Tab = "templates" | "runtime" | "taskgraphs";
 
 export default function WorkflowsPage({ embedded = false, initialGraphId }: { embedded?: boolean; initialGraphId?: string } = {}) {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [graphLoadError, setGraphLoadError] = useState("");
-  const [tab, setTab] = useState<Tab>("runtime");
   const [editorGraph, setEditorGraph] = useState<WorkflowGraphRecord | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runtimeRefresh, setRuntimeRefresh] = useState(0);
+  const requestedTab = searchParams.get("workflow_tab");
+  const tab = initialGraphId || (requestedTab !== "taskgraphs" && requestedTab !== "templates")
+    ? "runtime"
+    : requestedTab;
+  const showRuntimeEditor = tab === "runtime" && editorOpen;
+  const canvasWorkspace = showRuntimeEditor || tab === "taskgraphs";
 
-  useEffect(() => { if (!initialGraphId && searchParams.get("workflow_tab") === "templates") setTab("templates"); }, [initialGraphId, searchParams]);
-  useEffect(() => { if (!initialGraphId) return; let current = true; void getWorkflowGraph(initialGraphId).then(result => { if (!current) return; if (result.ok) { setGraphLoadError(""); setTab("runtime"); setEditorGraph(result.data); setEditorOpen(true); } else setGraphLoadError(result.error); }); return () => { current = false; }; }, [initialGraphId]);
+  function selectTab(id: Tab, replace = false) {
+    const next = new URLSearchParams(searchParams);
+    next.set("workflow_tab", id);
+    next.delete("workflow");
+    if (id !== "taskgraphs") next.delete("mode");
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace });
+  }
+
+  function toggleEditor(open: boolean) {
+    setEditorOpen(open);
+    if (!open && initialGraphId) selectTab("runtime", true);
+  }
+
+  useEffect(() => {
+    if (!initialGraphId) return;
+    let current = true;
+    void getWorkflowGraph(initialGraphId).then(result => {
+      if (!current) return;
+      if (result.ok) {
+        setGraphLoadError("");
+        setEditorGraph(result.data);
+        setEditorOpen(true);
+      } else setGraphLoadError(result.error);
+    });
+    return () => { current = false; };
+  }, [initialGraphId]);
   return (
     <ManagementFrame embedded={embedded}
       title="工作流"
-      description="管理可执行工作流、已有任务图与对话模板"
-      variant={editorOpen ? "workspace" : "standard"}
+      description="管理运行工作流、对话模板和任务画布"
+      variant={canvasWorkspace ? "workspace" : "standard"}
       className="page-canvas ui-opt-workflows flex h-full flex-col"
-      contentClassName={editorOpen ? "overflow-hidden p-0" : undefined}
+      contentClassName={showRuntimeEditor ? "overflow-hidden p-0" : undefined}
       actions={
-        !editorOpen ? (
+        !showRuntimeEditor ? (
           <Tabs
             tabs={[
               // Only the active tab panel is mounted, so omit aria-controls instead of
               // pointing it at a panel id that does not exist in the DOM.
               { id: "runtime", label: "运行工作流", panelId: false },
               { id: "templates", label: "模板工作流", panelId: false },
-              { id: "taskgraphs", label: "任务图工作流", panelId: false },
+              { id: "taskgraphs", label: "任务画布", panelId: false },
             ]}
             activeId={tab}
-            onChange={(id) => setTab(id as Tab)}
+            onChange={id => selectTab(id as Tab)}
             variant="segment"
             size="sm"
+            className="flex-wrap"
+            aria-label="工作流视图"
           />
         ) : null
       }
     >
       {graphLoadError && <p role="alert" className="text-[var(--danger)] p-3">{graphLoadError}</p>}
-      {tab === "taskgraphs" ? <div id="panel-taskgraphs" role="tabpanel" aria-labelledby="tab-taskgraphs" className="flex-1 min-h-0"><TaskGraphWorkflowList /></div> : tab === "templates" ? (
+      {tab === "taskgraphs" ? <div id="panel-taskgraphs" role="tabpanel" aria-labelledby="tab-taskgraphs" className="flex min-h-0 min-w-0 flex-1 flex-col"><TaskGraphWorkflowList /></div> : tab === "templates" ? (
         <div id="panel-templates" role="tabpanel" aria-labelledby="tab-templates" className="flex-1 min-h-0 flex flex-col">
           <TemplatesTab />
         </div>
       ) : (
-        <div id="panel-runtime" role="tabpanel" aria-labelledby="tab-runtime" className="flex-1 min-h-0 flex flex-col">
+        <div id="panel-runtime" role="tabpanel" aria-labelledby={showRuntimeEditor ? undefined : "tab-runtime"} aria-label={showRuntimeEditor ? "运行工作流编辑器" : undefined} className="flex-1 min-h-0 flex flex-col">
           <RuntimeTab
             editorGraph={editorGraph}
             setEditorGraph={setEditorGraph}
             editorOpen={editorOpen}
-            setEditorOpen={setEditorOpen}
+            setEditorOpen={toggleEditor}
             activeRunId={activeRunId}
             setActiveRunId={setActiveRunId}
             runtimeRefresh={runtimeRefresh}

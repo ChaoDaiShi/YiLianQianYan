@@ -56,6 +56,7 @@ export interface TaskGraphSummary {
   revision: number;
   node_count: number;
   edge_count: number;
+  preview_node_title?: string;
 }
 
 export interface TaskNodeStateSummary {
@@ -135,6 +136,16 @@ export interface TaskNodeExecutionSummary {
   finished_at: number | null;
 }
 
+export interface ExternalEffectReview {
+  outcome: "no_effect";
+  source: "user_statement";
+  reviewed_by: string;
+  note: string;
+  reviewed_at: number;
+  previous_failure_code: string | null;
+  previous_error: string | null;
+}
+
 export interface TaskEdge {
   from: string;
   to: string;
@@ -157,6 +168,7 @@ export interface TaskCheckpointSummary {
 }
 
 export interface TaskGraphDetail {
+  control_state?: "running" | "paused" | "cancelled";
   graph: TaskGraphSummary;
   graph_id: string;
   revision: number;

@@ -10,7 +10,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
  {id:"capabilities",workspaceIcon:"capabilities",to:"/capabilities",label:"能力",description:"Skill、工作流、MCP、工具与插件",icon:Boxes,group:"core",primary:true,shortcut:"Alt+4"},
  {id:"agents",workspaceIcon:"agent",to:"/agents",label:"智能体",description:"角色、用户提示词与能力绑定",icon:Bot,group:"capability",primary:false},
  {id:"memory",workspaceIcon:"memory-record",to:"/memory",label:"记忆",description:"管理偏好、事实与长期上下文",icon:Brain,group:"capability",primary:false},
- {id:"knowledge",workspaceIcon:"knowledge-base",to:"/knowledge",label:"知识库",description:"组织项目文档与知识来源",icon:BookOpen,group:"capability",primary:false},
+ {id:"knowledge",workspaceIcon:"knowledge-base",to:"/knowledge",label:"资料库",description:"组织项目文档与知识来源",icon:BookOpen,group:"capability",primary:false,keywords:["知识库","切片"]},
  {id:"system",workspaceIcon:"monitor",to:"/system",label:"监控",description:"资源状态与 Token 用量",icon:Activity,group:"system",primary:false},
  {id:"logs",workspaceIcon:"run-history",to:"/logs",label:"日志",description:"执行与运行记录",icon:ScrollText,group:"system",primary:false},
  {id:"settings",workspaceIcon:"settings-hub",to:"/settings",label:"设置",description:"基础配置、安全控制与外观",icon:Settings,group:"system",primary:false,shortcut:"Ctrl+,"},

@@ -9,20 +9,10 @@ export function applyThemeToDom(
   bgImageUrl?: string | null,
 ) {
   const root = document.documentElement;
-  const variables = buildThemeVariables(theme, scheme);
+  const variables = buildThemeVariables(theme, scheme, bgImageUrl);
 
   for (const [key, value] of Object.entries(variables)) {
     root.style.setProperty(key, value);
-  }
-
-  if (theme.bgMode === "gradient") {
-    const from = theme.gradientFrom || theme.colors.bg;
-    const to = theme.gradientTo || theme.colors.bg2;
-    root.style.setProperty("--bg-image", `linear-gradient(160deg, ${from}, ${to})`);
-  } else if (theme.bgMode === "image" && bgImageUrl) {
-    root.style.setProperty("--bg-image", `url(${bgImageUrl})`);
-  } else {
-    root.style.setProperty("--bg-image", "none");
   }
 
   root.classList.toggle("theme-mono", theme.monoTitles);
@@ -35,6 +25,7 @@ export function applyThemeToDom(
 export function buildThemeVariables(
   theme: ThemeConfig,
   scheme: ColorScheme,
+  bgImageUrl?: string | null,
 ): Record<string, string> {
   const semantic = { ...CYRENE_SEMANTIC_TOKENS[scheme] };
   const typographyVariables = Object.fromEntries(
@@ -51,6 +42,15 @@ export function buildThemeVariables(
   }
   semantic["--surface-alpha"] = String(theme.panelOpacity);
   semantic["--surface-blur"] = `${theme.blur}px`;
+  const backgroundFile = scheme === "dark" ? "night.png" : "daylight.png";
+  let background = `url("${import.meta.env.BASE_URL}backgrounds/${backgroundFile}")`;
+  if (theme.bgMode === "gradient") {
+    const from = theme.gradientFrom || theme.colors.bg;
+    const to = theme.gradientTo || theme.colors.bg2;
+    background = `linear-gradient(160deg, ${from}, ${to})`;
+  } else if (theme.bgMode === "image" && bgImageUrl) {
+    background = `url(${bgImageUrl})`;
+  }
   const legacyVariables: Record<string, string> = {
     "--bg": semantic["--bg-app"],
     "--bg-2": semantic["--bg-soft"],
@@ -77,6 +77,7 @@ export function buildThemeVariables(
     "--font-size-base": `${theme.fontSize}px`,
     "--bg-blur": `${theme.blur}px`,
     "--bg-brightness": String(theme.brightness),
+    "--bg-image": background,
   };
 
   return { ...legacyVariables, ...semantic, ...typographyVariables };

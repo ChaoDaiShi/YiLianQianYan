@@ -11,6 +11,7 @@ import type { AppConfig } from "../../../types";
 export function comparableConfig(config: AppConfig) {
   return JSON.stringify({
     ...config,
+    revision: undefined,
     model: {
       ...config.model,
       api_key: "",
@@ -24,6 +25,23 @@ export function comparableConfig(config: AppConfig) {
       tts: { ...config.voice.tts, api_key: "", clear_api_key: undefined },
     },
   });
+}
+
+/** Keep the user's edits while accepting current values for untouched settings. */
+export function rebaseConfigDraft<T extends AppConfig>(base: T, draft: T, latest: T): T {
+  const record = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  function merge(before: Record<string, unknown>, edited: Record<string, unknown>, current: Record<string, unknown>): Record<string, unknown> {
+    const next = { ...current };
+    for (const key of Object.keys(edited)) {
+      if (key === "revision") continue;
+      const a = before[key], b = edited[key], c = current[key];
+      if (record(a) && record(b) && record(c)) next[key] = merge(a, b, c);
+      else if (JSON.stringify(a) !== JSON.stringify(b)) next[key] = b;
+    }
+    return next;
+  }
+  return merge(base as unknown as Record<string, unknown>, draft as unknown as Record<string, unknown>, latest as unknown as Record<string, unknown>) as unknown as T;
 }
 
 /** How a configured provider credential is being supplied right now. */

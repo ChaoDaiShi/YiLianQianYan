@@ -46,7 +46,7 @@ export default class RouteErrorBoundary extends Component<Props, State> {
           aria-live="assertive"
           className="flex h-full w-full flex-col items-center justify-center p-6 text-center"
         >
-          <div className="flex max-w-md flex-col items-center rounded-2xl border border-[var(--danger-border)] bg-[var(--surface-solid)] p-6 shadow-[var(--shadow-card)]">
+          <div className="glass-card flex max-w-md flex-col items-center rounded-2xl border border-[var(--danger-border)] bg-[var(--surface-solid)] p-6 shadow-[var(--shadow-card)]">
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--danger-soft)] text-[var(--danger)]">
               <AlertCircle className="h-6 w-6" />
             </div>

@@ -17,10 +17,14 @@ import {
   type Workflow,
 } from "../../api/client";
 import { ArrowDown, ShieldAlert, FolderOpen } from "lucide-react";
-import ConversationWorkspaceControl from "./ConversationWorkspaceControl";
+import { useLocation } from "react-router-dom";
+import ConversationWorkspaceControl, { DefaultWorkspaceLink } from "./ConversationWorkspaceControl";
+import ConversationGoalControl from "./ConversationGoalControl";
 import ConversationOutputsModal from "../../features/outputs/ConversationOutputsModal";
 import { bindResources, getResource, listResourceBindings, unbindResource } from "../../api/resources";
 import { getChatModelReadiness } from "../../api/providerConnection";
+import { sendChatTaskCommand, steerChat } from "../../api/chat";
+import { createConversationLane } from "../../api/conversationLanes";
 import type { ConversationalAnchor } from "../../api/voice";
 import type { ChatVoiceControls } from "../../features/voice/ChatVoiceInput";
 import { chatRuntime } from "../../features/execution/chatRuntime";
@@ -43,6 +47,7 @@ import { createConversationBranch } from "../../api/conversations";
 import WorkbenchHome from "./WorkbenchHome";
 import ModelRouteNotice, { modelRouteReasonLabel } from "../../features/llm/ModelRouteNotice";
 import { showToast } from "../ui";
+import { ConversationLanes } from "./ConversationLanes";
 
 interface ChatViewProps {
   conversationId: string | null;
@@ -65,10 +70,14 @@ interface ChatViewProps {
   initialSuggestedText?: string;
   onWorkspaceModeChange?: (mode: WorkspaceMode) => void;
   headerActions?: ReactNode;
+  showCanvasLink?: boolean;
 }
 
 export interface ExecutionController {
   state: AgentRunState;
+  messages: Message[];
+  persistedMessages?: Message[];
+  chainRefreshKey: string;
   pendingApprovals: PendingApproval[];
   resolving: Record<string, boolean>;
   onApprove: (approval: PendingApproval) => void;
@@ -95,14 +104,19 @@ export default function ChatView({
   initialSuggestedText,
   onWorkspaceModeChange,
   headerActions,
+  showCanvasLink,
 }: ChatViewProps) {
   const [currentConvId, setCurrentConvId] = useState<string | null>(conversationId);
+  const [laneRevision, setLaneRevision] = useState(0);
   const [outputsConversation, setOutputsConversation] = useState<string | null>(null);
   const runtimeId = currentConvId || "__draft__";
   const subscribe = useCallback((listener: () => void) => chatRuntime.subscribe(runtimeId, listener), [runtimeId]);
   const getSnapshot = useCallback(() => chatRuntime.snapshot(runtimeId), [runtimeId]);
   const runtime = useSyncExternalStore(subscribe, getSnapshot);
   const { messages, modelRoute, loading: isLoading, run: runState, pendingApprovals, pendingInputs, resolving } = runtime;
+  const { search: locationSearch } = useLocation();
+  const sourceMessageId = new URLSearchParams(locationSearch).get("message");
+  const locatedSource = useRef<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const error = localError || runtime.error;
   const [finished, setFinished] = useState(false);
@@ -114,11 +128,20 @@ export default function ChatView({
   const [branching, setBranching] = useState(false);
   const retryInFlight = useRef(false);
   const persistedMessageIds = useMemo(() => new Set(runtime.conversation?.messages.map((message) => message.id) ?? []), [runtime.conversation]);
-  const [modelUnavailable, setModelUnavailable] = useState(false);
+  const [modelNotice, setModelNotice] = useState<"unavailable" | "unknown" | null>(null);
   const routeNotices = useRef(new Set<string>());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowMessagesRef = useRef(true);
   const ownership = useRef(createConversationOwnership(conversationId)).current;
+  const routeId = useRef(conversationId);
+  const selectLane = useCallback((id: string) => {
+    ownership.activate(id);
+    setCurrentConvId(id);
+    setOutputsConversation(null);
+    setLocalError(null);
+    setRestoredDraft(null);
+    routeNotices.current.clear();
+  }, [ownership]);
   useEffect(() => { onWorkspaceModeChange?.(runtime.workspaceMode); }, [runtime.workspaceMode, onWorkspaceModeChange]);
   useEffect(() => {
     if (!runtime.modeNotice?.automatic) return;
@@ -128,7 +151,8 @@ export default function ChatView({
     if (initialSuggestedText?.trim()) setSuggestedText(initialSuggestedText);
   }, [initialSuggestedText]);
   useLayoutEffect(() => {
-    if (ownership.id !== conversationId) {
+    if (routeId.current !== conversationId) {
+      routeId.current = conversationId;
       ownership.activate(conversationId);
       setCurrentConvId(conversationId);
       setOutputsConversation(null);
@@ -176,7 +200,7 @@ export default function ChatView({
   useEffect(() => {
     let active = true;
     void getChatModelReadiness(currentConvId).then((readiness) => {
-      if (active) setModelUnavailable(!readiness?.available);
+      if (active) setModelNotice(readiness ? readiness.available ? null : "unavailable" : "unknown");
     });
     return () => { active = false; };
   }, [currentConvId]);
@@ -232,22 +256,85 @@ export default function ChatView({
 
   const handleSend = useCallback(
     async (text: string, resourceIds: string[] = [], options?: ChatRequestOptions, workflowId?: string | null) => {
-      if ((!text.trim() && !resourceIds.length) || isLoading || runtime.historyMutation || branching || pendingApprovals.length > 0 || pendingInputs.length > 0) return false;
+      if ((!text.trim() && !resourceIds.length) || runtime.historyMutation || branching) return false;
+      if (/^(?:新任务|并行任务|闲聊|并行聊天)\s*[:：]\s*$/.test(text.trim())) return false;
       let ticket = ownership.capture();
-      if (!options?.model_profile_id) {
+      if (currentConvId && !resourceIds.length && text.trim()) {
+        try {
+          const reply = await sendChatTaskCommand(currentConvId, text);
+          if (!ownership.current(ticket)) return false;
+          if (reply) {
+            showToast(reply, "info");
+            return true;
+          }
+        } catch (error) {
+          if (ownership.current(ticket)) showToast(error instanceof Error ? error.message : "无法读取任务状态", "error");
+          return false;
+        }
+      }
+      const question = pendingInputs[0];
+      const supplement = text.match(/^\s*(?:补充回答|回答当前问题)\s*[:：]\s*([\s\S]+)$/)?.[1].trim();
+      if (currentConvId && pendingInputs.length === 1 && question && supplement && !resourceIds.length && (question.kind === "text" || question.allow_text)) {
+        return chatRuntime.answer(currentConvId, question, { revision: question.revision, text: supplement });
+      }
+      const correction = text.match(/^\s*(?:补充给当前任务|纠正当前任务)\s*[:：]\s*([\s\S]+)$/)?.[1].trim();
+      if (currentConvId && runtime.steeringTurnId && isLoading && correction && !resourceIds.length) {
+        try {
+          await steerChat(currentConvId, runtime.steeringTurnId, correction);
+          if (ownership.current(ticket)) showToast("已收到补充，当前步骤结束后纳入处理。", "info");
+          return ownership.current(ticket);
+        } catch (error) {
+          if (ownership.current(ticket)) showToast(error instanceof Error ? error.message : "补充未发送", "error");
+          return false;
+        }
+      }
+      const explicitWork = text.match(/^\s*(?:新任务|并行任务)\s*[:：]\s*([\s\S]+)$/)?.[1].trim();
+      const explicitChat = text.match(/^\s*(?:闲聊|并行聊天)\s*[:：]\s*([\s\S]+)$/)?.[1].trim();
+      const busy = isLoading || pendingApprovals.length > 0 || pendingInputs.length > 0;
+      if (correction || supplement) {
+        showToast("请先选择对应的运行或待回答问题。", "info");
+        return false;
+      }
+      const inParallel = Boolean(conversationId && (explicitWork || explicitChat || busy));
+      if (busy && !inParallel) {
+        const hint = question
+          ? question.kind === "text" || question.allow_text
+            ? "可用「补充回答：…」发送给当前问题，也可在问题卡片里回答。"
+            : "请在当前问题卡片中选择答案。"
+          : runtime.steeringTurnId
+            ? "可用「补充给当前任务：…」更新要求，也可查询进度或取消。"
+            : "当前轮次仍在处理中。你可以查询进度或取消，其他内容已留在输入框。";
+        showToast(hint, "info");
+        return false;
+      }
+      if (!options?.model_profile_id && !options?.agent_id) {
         const readiness = await getChatModelReadiness(currentConvId);
         if (!ownership.current(ticket)) return false;
-        if (!readiness?.available) { setModelUnavailable(true); return false; }
+        if (!readiness?.available) { setModelNotice(readiness ? "unavailable" : "unknown"); return false; }
       }
-      setModelUnavailable(false);
+      setModelNotice(null);
       const resources = await Promise.all(resourceIds.map(id => getResource(id)));
       if (!ownership.current(ticket)) return false;
       if (resources.some(resource => !resource)) throw new Error("附件元数据读取失败，请重新发送");
       const attachments = resources.map(resource => ({ id: resource!.id, name: resource!.name, mime_type: resource!.mime_type, size: resource!.size }));
       let targetId = currentConvId;
+      let parallelOptions = options;
+      const message = explicitWork || explicitChat || text;
+      if (inParallel && conversationId) {
+        const kind = explicitChat ? "chat" : explicitWork || resourceIds.length ? "work" : "auto";
+        try {
+          const lane = await createConversationLane(conversationId, message, kind);
+          if (!ownership.current(ticket)) return false;
+          targetId = lane.id;
+          parallelOptions = { ...options, workspace_mode: lane.kind === "chat" ? "chat" : explicitWork ? "work" : "auto" };
+        } catch (error) {
+          if (ownership.current(ticket)) showToast(error instanceof Error ? error.message : "启动并行运行失败", "error");
+          return false;
+        }
+      }
       let promotedDraft = false;
       if (!targetId) {
-        const created = await createConversation(text.trim().slice(0, 80) || "附件对话");
+        const created = await createConversation(text.trim().slice(0, 80) || "附件对话", { useDefaultWorkspace: true });
         if (!ownership.current(ticket)) return false;
         targetId = created.id;
         // The composer recreates its attachment queue when its conversation changes.
@@ -256,10 +343,11 @@ export default function ChatView({
         promotedDraft = true;
         ownership.promote(targetId);
         ticket = ownership.capture();
+        routeId.current = targetId;
         setCurrentConvId(targetId);
         onConversationChange(targetId);
       }
-      const removedRestoredResources = new Set(restoredDraft?.resources.filter((resource) => !resourceIds.includes(resource.id)).map((resource) => resource.id) ?? []);
+      const removedRestoredResources = new Set(inParallel ? [] : restoredDraft?.resources.filter((resource) => !resourceIds.includes(resource.id)).map((resource) => resource.id) ?? []);
       if (removedRestoredResources.size > 0 || resourceIds.length > 0) {
         const bindings = await listResourceBindings({ kind: "conversation", conversation_id: targetId });
         if (!ownership.current(ticket)) return false;
@@ -273,10 +361,14 @@ export default function ChatView({
       if (!ownership.current(ticket)) return false;
       shouldFollowMessagesRef.current = true;
       setLocalError(null);
-      const accepted = chatRuntime.send(targetId, text, workflowId === undefined ? activeWorkflow?.id : workflowId, {...options,resource_ids:resourceIds}, attachments);
+      const accepted = chatRuntime.send(targetId, inParallel ? message : text, parallelOptions?.workspace_mode === "chat" && inParallel ? null : workflowId === undefined ? activeWorkflow?.id : workflowId, {...parallelOptions,resource_ids:resourceIds}, attachments);
+      if (accepted && inParallel) {
+        selectLane(targetId);
+        setLaneRevision(value => value + 1);
+      }
       if (accepted) setRestoredDraft(promotedDraft ? { id: crypto.randomUUID(), text: "", resources: [] } : null);
       return accepted;
-    }, [activeWorkflow, currentConvId, isLoading, runtime.historyMutation, pendingApprovals.length, pendingInputs.length, onConversationChange, ownership, restoredDraft, branching]
+    }, [activeWorkflow, conversationId, currentConvId, isLoading, runtime.historyMutation, runtime.steeringTurnId, pendingApprovals.length, pendingInputs, onConversationChange, ownership, restoredDraft, branching, selectLane]
   );
 
   const handleRollback = useCallback((message: Message) => {
@@ -316,21 +408,33 @@ export default function ChatView({
     });
   }, [currentConvId, ownership]);
 
-  const handleLocateMessage = useCallback(() => {
+  const locateMessage = useCallback((id: string, behavior: ScrollBehavior) => {
     const viewport = messagesScrollRef.current;
     if (!viewport) return;
     const target = Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]"))
-      .find((element) => element.dataset.messageId === runtime.affectedUserMessageId);
-    if (!target) return;
+      .find((element) => element.dataset.messageId === id);
+    if (!target) return false;
     const viewportRect = viewport.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
     const offset = targetRect.top - viewportRect.top - viewport.clientTop;
     const centering = (viewport.clientHeight - Math.min(targetRect.height, viewport.clientHeight)) / 2;
     const top = Math.max(0, Math.min(viewport.scrollHeight - viewport.clientHeight, viewport.scrollTop + offset - centering));
     shouldFollowMessagesRef.current = false;
-    viewport.scrollTo({ top, behavior: "smooth" });
+    viewport.scrollTo({ top, behavior });
     target.focus({ preventScroll: true });
-  }, [runtime.affectedUserMessageId]);
+    return true;
+  }, []);
+
+  const handleLocateMessage = useCallback(() => {
+    if (runtime.affectedUserMessageId) locateMessage(runtime.affectedUserMessageId, "smooth");
+  }, [locateMessage, runtime.affectedUserMessageId]);
+
+  useEffect(() => {
+    if (!sourceMessageId) { locatedSource.current = null; return; }
+    const source = `${currentConvId}:${sourceMessageId}`;
+    if (currentConvId === conversationId && locatedSource.current !== source &&
+      locateMessage(sourceMessageId, "instant")) locatedSource.current = source;
+  }, [sourceMessageId, currentConvId, conversationId, messages, locateMessage]);
 
   const handleRetry = useCallback(() => {
     const submission = runtime.lastSubmission;
@@ -383,13 +487,21 @@ export default function ChatView({
     conversationId || messages.length > 0 || streaming || error
       ? "conversation-chat"
       : "";
+  const showHome = messages.length === 0 && !streaming && !error;
 
   return (
     <>
       <div className={`chat-region ${CHAT_COLUMN_VIEWPORT_CLASS_NAME} ${chatModeClass}`} data-workspace-mode={runtime.workspaceMode}>
         <ChatHeader
-          panelControls={<>{currentConvId && <ConversationWorkspaceControl key={currentConvId} conversationId={currentConvId} />}{currentConvId && <button type="button" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]" onClick={() => setOutputsConversation(currentConvId)} title="查看当前对话成果"><FolderOpen size={14}/><span>成果</span></button>}{headerActions}</>}
-          title="智能工作台"
+          panelControls={<>
+            {conversationId && currentConvId && <ConversationLanes key={`lanes:${conversationId}`} root={conversationId} selected={currentConvId}
+              onSelect={selectLane} onStartWork={() => setSuggestedText("新任务：")} revision={laneRevision} />}
+            {currentConvId ? <ConversationWorkspaceControl key={`workspace:${currentConvId}`} conversationId={currentConvId} /> : <DefaultWorkspaceLink />}
+            {currentConvId && <button type="button" className="chat-header-outputs inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+              onClick={() => setOutputsConversation(currentConvId)} aria-label="成果" title="查看当前对话成果"><FolderOpen size={14} aria-hidden="true"/><span className="chat-header-action-label">成果</span></button>}
+            {headerActions}
+          </>}
+          title={runtime.conversation?.title || "智能工作台"}
           connection={runState.connection}
           activeWorkflow={activeWorkflow}
           workflows={allWorkflows}
@@ -402,16 +514,24 @@ export default function ChatView({
           onToggleExecution={onToggleExecution}
           onSelectWorkflow={handleSelectWorkflow}
           finished={finished}
+          home={showHome}
+          showCanvasLink={showCanvasLink}
         />
 
-        {modelUnavailable ? (
-          <section className="mx-4 mt-3 rounded-[var(--radius-md)] border border-[var(--warning-border)] bg-[var(--warning-soft)] px-4 py-3 text-sm" role="status">
-            <p className="font-medium text-[var(--warning-fg)]">还没有配置可用的模型服务。</p>
-            <button type="button" className="mt-2 text-[var(--accent-primary)] underline" onClick={onOpenModelSettings}>
+        {currentConvId && <ConversationGoalControl key={currentConvId} conversationId={currentConvId} busy={isLoading || runtime.live || pendingApprovals.length > 0 || pendingInputs.length > 0} />}
+        {isLoading && runtime.interaction?.scope && (
+          <p role="status" className="shrink-0 px-4 py-1 text-xs text-[var(--text-muted)]">
+            {runtime.interaction.exchange === "mixed" ? "正在回应并处理请求" : runtime.interaction.scope === "software_read" ? "正在观察软件窗口" : ["software_control", "wechat_draft"].includes(runtime.interaction.scope) ? "正在操作软件窗口" : runtime.interaction.scope === "work" ? "正在处理工作" : runtime.interaction.scope === "read" ? "正在查阅上下文" : "正在回复"}
+          </p>
+        )}
+        {modelNotice && (
+          <section className="chat-model-notice" role="status" aria-label={modelNotice === "unknown" ? "模型状态提醒" : "模型配置提醒"}>
+            <p className="font-medium text-[var(--warning-fg)]">{modelNotice === "unknown" ? "暂时无法确认聊天模型状态，请检查本地服务后重试。" : "尚未配置可用的聊天模型。"}</p>
+            <button type="button" onClick={onOpenModelSettings}>
               前往模型设置
             </button>
           </section>
-        ) : null}
+        )}
         <ModelRouteNotice route={modelRoute}/>
         {pendingInputs.map((question) => <UserInputCard key={question.question_id} question={question} pending={Boolean(resolving[question.question_id])} onAnswer={(answer) => { if (currentConvId) chatRuntime.answer(currentConvId, question, answer); }} onCancel={() => { if (currentConvId) void chatRuntime.stop(currentConvId); }} />)}
 
@@ -434,7 +554,7 @@ export default function ChatView({
           </div>
         )}
 
-      {messages.length === 0 && !streaming && !error ? (
+      {showHome ? (
         <WorkbenchHome
           workspaceMode={runtime.workspaceMode}
           onWorkspaceModeChange={handleWorkspaceMode}
@@ -460,6 +580,7 @@ export default function ChatView({
         <>
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <MessageList
+              conversationId={currentConvId}
               messages={messages}
               streaming={streaming}
               scrollContainerRef={messagesScrollRef}
@@ -492,7 +613,7 @@ export default function ChatView({
 
           <footer className="conversation-composer shrink-0 px-3 pb-3 pt-2 min-[960px]:px-5 min-[960px]:pb-5">
             <div className="conversation-composer-column">
-            <p className="mb-1 px-2 text-xs text-[var(--text-muted)]">{branching ? "正在创建分支…" : "从当前路径的最新消息继续 · 历史回答可新建分支"}</p>
+            {branching && <p className="mb-1 px-2 text-xs text-[var(--text-muted)]" role="status">正在创建分支…</p>}
             <ChatInput
               key={currentConvId ?? "draft"}
               workspaceMode={runtime.workspaceMode}
@@ -502,6 +623,8 @@ export default function ChatView({
               onSend={handleSend}
               conversationId={currentConvId}
               isLoading={isLoading}
+              allowSendWhileRunning={Boolean(currentConvId)}
+              acceptsSteering={Boolean(runtime.steeringTurnId)}
               onStop={handleStop}
               suggestedText={suggestedText}
               onTextUsed={() => setSuggestedText("")}
@@ -519,6 +642,9 @@ export default function ChatView({
       {outputsConversation && outputsConversation === currentConvId && <ConversationOutputsModal key={outputsConversation} conversationId={outputsConversation} onClose={() => setOutputsConversation(null)} canRequestDownload={!isLoading && pendingApprovals.length === 0 && pendingInputs.length === 0} onRequestDownload={id => handleSend(`请继续下载当前对话已生成的图片，调用 image_generation，参数仅传 output_id：${id}。完成真实资源登记，不要重新生成图片。`)}/>}
       {renderExecution?.({
         state: runState,
+        messages,
+        persistedMessages: runtime.conversation?.messages,
+        chainRefreshKey: `${runtime.live}:${runState.terminal}:${runState.order.length}:${pendingApprovals.length}:${runtime.conversation?.run_status ?? ""}:${runtime.conversation?.updated_at ?? 0}`,
         pendingApprovals,
         resolving,
         onApprove: handleApprove,

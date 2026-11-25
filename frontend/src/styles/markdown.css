@@ -74,4 +74,11 @@
 }
 
 
+.conversation-markdown { overflow-wrap: anywhere; }
 .conversation-markdown code { font-size: var(--font-size-control); }
+
+.markdown-line-tail {
+  display: inline-block;
+  max-inline-size: 100%;
+  text-wrap: balance;
+}

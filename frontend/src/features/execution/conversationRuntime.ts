@@ -10,6 +10,17 @@ import { reconcilePersistedApproval } from "./approvalReconciliation";
 import type { AgentRunState } from "./model";
 import { projectConversationMessages } from "./conversationProcess";
 
+export type ConversationActivity = "idle" | "thinking" | "speaking" | "waiting" | "succeeded" | "failed";
+
+const activityByEvent = new Map<string, ConversationActivity>([
+  ["token", "speaking"],
+  ["tool_start", "thinking"],
+  ["approval_required", "waiting"],
+  ["user_input_required", "waiting"],
+  ["done", "succeeded"],
+  ["error", "failed"],
+]);
+
 interface RuntimeDependencies {
   loadConversation: (id: string) => Promise<Conversation>;
   rollbackMessage: (conversationId: string, messageId: string) => Promise<MessageRollbackResult>;
@@ -51,6 +62,8 @@ export interface ConversationRuntimeSnapshot {
   modeChanging: boolean;
   modeError: string | null;
   modeNotice: { mode: WorkspaceMode; reason: string; automatic: boolean } | null;
+  interaction: Pick<AgentEvent, "exchange" | "scope"> | null;
+  steeringTurnId: string | null;
   live: boolean;
 }
 interface RuntimeEntry {
@@ -70,6 +83,16 @@ interface RuntimeEntry {
 
 /** Conversation transports and execution outlive every page that observes them. */
 export function createConversationRuntime(dependencies: RuntimeDependencies) {
+  const activityListeners = new Set<(activity: ConversationActivity) => void>();
+  let activityConversation: string | null = null;
+  let activity: ConversationActivity = "idle";
+
+  function publishActivity(next: ConversationActivity) {
+    if (activity === next) return;
+    activity = next;
+    activityListeners.forEach(listener => listener(next));
+  }
+
   const entries = new Map<string, RuntimeEntry>();
   function entry(id: string): RuntimeEntry {
     let value = entries.get(id);
@@ -77,7 +100,7 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
       value = {
         snapshot: { messages: [], run: createInitialAgentRunState(id), loading: false, error: null,
           finished: false, lastSubmittedText: "", lastSubmission: null, retryMessageId: null, historyMutation: null, affectedUserMessageId: null, modelRoute: null, conversation: null, pendingApprovals: [], pendingInputs: [], resolving: {},
-          workspaceMode: "chat", modeChanging: false, modeError: null, modeNotice: null, live: false },
+          workspaceMode: "auto", modeChanging: false, modeError: null, modeNotice: null, interaction: null, steeringTurnId: null, live: false },
         listeners: new Set(), revision: 0, refreshVersion: 0, streaming: false, streamError: null,
         submittedAt: null, previousRunStartedAt: null, accepted: false, requestRejected: false, optimisticMessageId: null, poll: null,
       };
@@ -153,6 +176,16 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
         lastSubmittedText: pendingSubmission ? value.snapshot.lastSubmittedText : latestUser?.content ?? value.snapshot.lastSubmittedText,
         lastSubmission,
         finished: status === "completed" && !value.streamError, resolving: {} });
+      if (activityConversation === id) {
+        if (pendingApprovals.length || pendingInputs.length || status === "waiting_approval" || status === "waiting_input") {
+          publishActivity("waiting");
+        } else if (status === "running") {
+          publishActivity("thinking");
+        } else {
+          activityConversation = null;
+          publishActivity(completedCurrentRun ? "succeeded" : failed && (value.accepted || persistedCurrentRun) ? "failed" : "idle");
+        }
+      }
     } catch (error) {
       if (revision === value.revision && version === value.refreshVersion) {
         publish(id, { error: error instanceof Error ? error.message : "读取执行状态失败" });
@@ -164,7 +197,7 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
     if (incoming.conversation_id && incoming.conversation_id !== id) return;
     const value = entry(id);
     const previous = value.snapshot;
-    if (["connected", "token", "reasoning", "reasoning_snapshot", "tool_start", "tool_end", "approval_required", "approval_resolved", "user_input_required", "user_input_resolved", "done"].includes(incoming.type)) value.accepted = true;
+    if (["connected", "token", "reply_checkpoint", "reasoning", "reasoning_snapshot", "tool_start", "tool_end", "approval_required", "approval_resolved", "user_input_required", "user_input_resolved", "done"].includes(incoming.type)) value.accepted = true;
     if (incoming.request_rejected) value.requestRejected = true;
     const run = reduceAgentEvent(previous.run, incoming);
     const patch: Partial<ConversationRuntimeSnapshot> = { run };
@@ -172,9 +205,18 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
       patch.messages = previous.messages.map((message) => message.id === value.optimisticMessageId ? { ...message, id: incoming.user_message_id! } : message);
       value.optimisticMessageId = null;
     }
+    if (incoming.type === "connected" && incoming.accepts_steering) patch.steeringTurnId = incoming.turn_id ?? null;
+    if (incoming.type === "steering_applied" && incoming.message_id && incoming.result) {
+      patch.messages = previous.messages.some(message => message.id === incoming.message_id) ? previous.messages : [
+        ...previous.messages, { id: incoming.message_id, role: "user", content: incoming.result, created_at: Date.now() },
+      ];
+    }
     if (incoming.type === "workspace_mode" && incoming.mode) {
       patch.workspaceMode = incoming.mode;
       patch.modeNotice = { mode: incoming.mode, reason: incoming.reason || "", automatic: incoming.automatic === true };
+    }
+    if (incoming.type === "interaction_route") {
+      patch.interaction = { exchange: incoming.exchange, scope: incoming.scope };
     }
     if (incoming.type === "approval_required" && incoming.approval_id) {
       const risk = incoming.risk_level;
@@ -211,10 +253,18 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
       value.streaming = false;
       patch.resolving = {};
       patch.live = false;
+      patch.steeringTurnId = null;
       // EOF is not a backend terminal state. Read the persisted run state.
       if (previous.pendingApprovals.length > 0 || previous.pendingInputs.length > 0) patch.loading = false;
     }
     publish(id, patch);
+    if (id === activityConversation) {
+      const nextActivity = activityByEvent.get(incoming.type);
+      if (nextActivity) {
+        if (nextActivity === "succeeded" || nextActivity === "failed") activityConversation = null;
+        publishActivity(nextActivity);
+      }
+    }
     if (incoming.type === "stream_end") void refresh(id);
   }
   function start(id: string) {
@@ -229,7 +279,9 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
     value.optimisticMessageId = null;
     if (value.poll) clearTimeout(value.poll);
     value.poll = null;
-    publish(id, { loading: true, error: null, finished: false, live: true, retryMessageId: null, affectedUserMessageId: null });
+    publish(id, { loading: true, error: null, finished: false, live: true, retryMessageId: null, affectedUserMessageId: null, steeringTurnId: null });
+    activityConversation = id;
+    publishActivity("thinking");
     return value.revision;
   }
   async function changeHistory<T extends MessageMutationResult>(id: string, messageId: string, operation: () => Promise<T>): Promise<T> {
@@ -292,6 +344,10 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
     } catch (error) {
       value.streaming = false;
       publish(id, { loading: false, resolving: {}, error: error instanceof Error ? error.message : "审批请求失败" });
+      if (activityConversation === id && revision === value.revision) {
+        activityConversation = null;
+        publishActivity("failed");
+      }
       // Another client may already have consumed this approval and resumed the task.
       // Reconcile its actual status and restore observation before returning the error.
       await refresh(id);
@@ -301,6 +357,11 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
   return {
     snapshot: (id: string) => entry(id).snapshot,
     subscribe: (id: string, listener: () => void) => { entry(id).listeners.add(listener); return () => { entry(id).listeners.delete(listener); }; },
+    subscribeActivity(listener: (next: ConversationActivity) => void) {
+      activityListeners.add(listener);
+      return () => { activityListeners.delete(listener); };
+    },
+    currentActivity: () => activity,
     refresh,
     rollback(id: string, messageId: string) { return changeHistory(id, messageId, () => dependencies.rollbackMessage(id, messageId)); },
     deleteMessage(id: string, messageId: string) { return changeHistory(id, messageId, () => dependencies.deleteMessage(id, messageId)); },
@@ -323,7 +384,7 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
       const requestOptions = { ...options, workspace_mode: options?.workspace_mode ?? value.snapshot.workspaceMode };
       const messageId = crypto.randomUUID();
       value.optimisticMessageId = messageId;
-      publish(id, { run: { ...createInitialAgentRunState(id), connection: "connecting" }, modelRoute: null,
+      publish(id, { run: { ...createInitialAgentRunState(id), connection: "connecting" }, modelRoute: null, interaction: null,
         workspaceMode: requestOptions.workspace_mode,
         lastSubmittedText: text, lastSubmission: { text, workflowId, options: requestOptions, attachments: attachments ?? [] }, messages: [...value.snapshot.messages, { id: messageId, role: "user", content: text, created_at: Date.now(), attachments }] });
       dependencies.sendMessage(text, id, (incoming) => { if (revision === value.revision) event(id, incoming); }, workflowId, requestOptions);
@@ -339,7 +400,12 @@ export function createConversationRuntime(dependencies: RuntimeDependencies) {
     },
     decide(approval: PendingApproval, decision: "approve" | "reject") { return decisions.submit(approval.approval_id, decision); },
     async stop(id: string) {
+      const revision = entry(id).revision;
       await dependencies.stopGeneration(id);
+      if (activityConversation === id && revision === entry(id).revision) {
+        activityConversation = null;
+        publishActivity("idle");
+      }
       // Keep listening until the backend reports and persists cancellation.
       if (!entry(id).streaming) await refresh(id);
     },

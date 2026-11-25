@@ -1,22 +1,267 @@
-import { PROVIDER_PRESETS, type ProviderPresetId } from "../../llm/llmModelUtils";
-import { useEffect,useRef,useState } from "react";
-
-import { Button,Input } from "../../../components/ui";
+import { useEffect, useState } from "react";
+import { Button, Input, Select } from "../../../components/ui";
 import { listLlmModels } from "../../../api/system";
-import type { LlmModel } from "../../../types";
 import AccountCredentialFields from "../../llm/AccountCredentialFields";
-import { credentialChoice, credentialReady } from "../../llm/accountCredentials";
-import { poolRequest,type ProviderAccount,type ModelPool } from "../../llm/modelPools";
-import { listBasicServices,listBasicAccounts,testBasicService,type BasicServiceKind,type BasicServiceProfile,type BasicServiceResult } from "../basicServices";
-const selectStyle="w-full rounded-xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2 text-sm";
-export default function BasicServicePanel({kind}:{kind:BasicServiceKind}){
- const initialized=useRef(false);const [provider,setProvider]=useState<ProviderPresetId>(kind==="vision"?"deepseek":"openai");const [base,setBase]=useState(kind==="vision"?PROVIDER_PRESETS.deepseek.baseUrl:PROVIDER_PRESETS.openai.baseUrl);const [key,setKey]=useState("");
- const [models,setModels]=useState<LlmModel[]>([]);const [credentialModelId,setCredentialModelId]=useState("");
- const[profiles,setProfiles]=useState<BasicServiceProfile[]>([]);const[accounts,setAccounts]=useState<ProviderAccount[]>([]);const[draft,setDraft]=useState<BasicServiceProfile|null>(null);const[error,setError]=useState("");const[busy,setBusy]=useState(false);const[prompt,setPrompt]=useState(kind==="vision"?"请描述这张图片中的内容。":"一朵粉色莲花，简洁插画，纯白背景。");const[image,setImage]=useState("");const[result,setResult]=useState<BasicServiceResult|null>(null);const[defaultId,setDefaultId]=useState<string|null>(null);const[pools,setPools]=useState<ModelPool[]>([]);const[testPool,setTestPool]=useState("");
- async function refresh(){const[p,a,d,poolRows,modelRows]=await Promise.all([listBasicServices(),listBasicAccounts(),poolRequest<{source:"profile"|"pool"|null;id:string|null}>("GET",`/api/service-defaults/${kind}`),poolRequest<ModelPool[]>("GET","/api/model-pools"),listLlmModels()]);if(!modelRows)throw new Error("无法读取已保存的模型凭据来源。");setModels(modelRows);setProfiles(p.filter(p=>p.service_kind===kind));setAccounts(a);setDefaultId(d.id);setPools(poolRows.filter(p=>p.service_kind===kind));if(!initialized.current){initialized.current=true;const selected=d.source==="profile"?p.find(profile=>profile.id===d.id&&profile.service_kind===kind):undefined;if(selected){const account=a.find(account=>account.id===selected.provider_account_id);if(account)setProvider(account.provider_id as ProviderPresetId)}setDraft(selected?structuredClone(selected):{id:"",label:kind==="vision"?"识图服务":"生图服务",provider_account_id:"",service_kind:kind,model:kind==="vision"?"deepseek-flash":"",adapter:"openai",parameters:{},revision:0,test:null});if(d.source==="pool"&&d.id)setTestPool(d.id);}}
- useEffect(()=>{void refresh().catch(e=>setError(String(e)))},[kind]);
- function newDraft(){setResult(null);setProvider(kind==="vision"?"deepseek":"openai");setBase(kind==="vision"?PROVIDER_PRESETS.deepseek.baseUrl:PROVIDER_PRESETS.openai.baseUrl);setKey("");setCredentialModelId("");setDraft({id:"",label:kind==="vision"?"识图模型":"生图模型",provider_account_id:"",service_kind:kind,model:kind==="vision"?"deepseek-flash":"",adapter:"openai",parameters:{},revision:0,test:null});}
- const savedProfile=profiles.find(profile=>profile.id===draft?.id);const savedAccount=accounts.find(account=>account.id===savedProfile?.provider_account_id);
- async function run(action:()=>Promise<void>){setBusy(true);setError("");try{await action();await refresh();}catch(e){setError(e instanceof Error?e.message:String(e))}finally{setBusy(false)}}
- return <div className="space-y-4"><header><h2 className="font-semibold">{kind==="vision"?"图像识别服务":"图像生成服务"}</h2><p className="mt-1 text-sm text-[var(--text-secondary)]">{kind==="vision"?"选择识图服务，上传图片并查看实际识别结果。":"配置生图服务，输入提示词并查看实际生成的图片。"}</p></header><p className="text-sm text-[var(--text-muted)]">可新建或复用厂商账户；保存并设为默认会解除该服务当前的模型池绑定。</p>{error&&<p role="alert" className="text-sm text-red-500">{error}</p>}<div className="flex gap-2"><select aria-label="服务档案" className={selectStyle} value={draft?.id??""} onChange={e=>{const p=profiles.find(p=>p.id===e.target.value);setDraft(p?structuredClone(p):null);setKey("");setCredentialModelId("");if(p){const a=accounts.find(a=>a.id===p.provider_account_id);if(a)setProvider(a.provider_id as ProviderPresetId)}setResult(null)}}><option value="">选择服务档案</option>{profiles.map(p=><option key={p.id} value={p.id}>{p.label}{defaultId===p.id?" · 默认":""}</option>)}</select><Button onClick={newDraft}>{kind==="vision"?"新建识图服务":"新建生图服务"}</Button></div>{draft&&<><Input label="显示名称" value={draft.label} onChange={e=>setDraft({...draft,label:e.target.value})}/><label className="block text-sm">服务商<select className={selectStyle} value={provider} onChange={e=>{const id=e.target.value as ProviderPresetId;setProvider(id);setBase(PROVIDER_PRESETS[id].baseUrl);setKey("");setCredentialModelId("");setDraft({...draft,provider_account_id:"",model:kind==="vision"&&id==="deepseek"?"deepseek-flash":"",adapter:kind==="image"&&id==="minimax"?"minimax":kind==="image"&&id==="qwen"?"dashscope":"openai"})}}>{Object.entries(PROVIDER_PRESETS).filter(([,p])=>(p.services as string[]).includes(kind)).map(([id,p])=><option key={id} value={id}>{p.label}</option>)}</select></label><label className="block text-sm">账户<select className={selectStyle} value={draft.provider_account_id} onChange={e=>{setKey("");setCredentialModelId("");setDraft({...draft,provider_account_id:e.target.value})}}><option value="">创建新账户</option>{accounts.filter(a=>a.provider_id===provider).map(a=><option key={a.id} value={a.id}>{a.label} · {a.credential_status === "configured" ? "已配置" : a.credential_status === "not_required" ? "无需凭据" : a.credential_status === "missing" ? "缺少凭据" : "凭据不可用"}</option>)}</select></label>{!draft.provider_account_id&&<Input label="API 地址" value={base} onChange={e=>{setBase(e.target.value);setCredentialModelId("")}}/>}<AccountCredentialFields account={accounts.find(a=>a.id===draft.provider_account_id)} provider={provider} baseUrl={accounts.find(a=>a.id===draft.provider_account_id)?.base_url ?? base} models={models} apiKey={key} modelId={credentialModelId} onKey={setKey} onModel={setCredentialModelId}/><Input label="模型 ID" value={draft.model} onChange={e=>setDraft({...draft,model:e.target.value})}/>{kind==="image"&&<label className="block text-sm">图像协议<select className={selectStyle} value={draft.adapter} onChange={e=>setDraft({...draft,adapter:e.target.value as BasicServiceProfile['adapter']})}><option value="openai">OpenAI / Google / 火山方舟兼容生图</option><option value="dashscope">阿里云百炼同步生图</option><option value="minimax">MiniMax Image Generation</option></select></label>}<div className="flex flex-wrap gap-2"><Button disabled={busy||!credentialReady(accounts.find(a=>a.id===draft.provider_account_id),provider,key,credentialModelId)||(!draft.provider_account_id&&!base.trim())} onClick={()=>void run(async()=>{let account=accounts.find(a=>a.id===draft.provider_account_id);if(!credentialReady(account,provider,key,credentialModelId))throw new Error("请先输入 API Key 或明确选择已配置模型凭据。");if(!account){account=await poolRequest<ProviderAccount>("POST","/api/provider-accounts",{id:"",provider_id:provider,label:PROVIDER_PRESETS[provider].label,base_url:base,credential_id:null,profile_ids:[],...credentialChoice(key,credentialModelId)});setAccounts(current=>[...current,account!]);setDraft({...draft,provider_account_id:account.id});setKey("");setCredentialModelId("")}else if(key.trim()||credentialModelId){account=await poolRequest<ProviderAccount>("PUT",`/api/provider-accounts/${encodeURIComponent(account.id)}`,{id:account.id,provider_id:account.provider_id,label:account.label,base_url:account.base_url,credential_id:account.credential_id,profile_ids:account.profile_ids,...credentialChoice(key,credentialModelId)});setAccounts(current=>current.map(item=>item.id===account!.id?account!:item));setKey("");setCredentialModelId("")}if(!credentialReady(account,account.provider_id,"",""))throw new Error("账户凭据尚不可用，请检查 API Key 或凭据存储。");const accountId=account.id;const saved=await poolRequest<BasicServiceProfile>(draft.id?"PUT":"POST",`/api/service-profiles${draft.id?`/${draft.id}`:""}`,{...draft,provider_account_id:accountId,expected_revision:draft.id?draft.revision:null});setDraft(saved);await poolRequest("PUT",`/api/service-defaults/${kind}`,{source:"profile",id:saved.id})})}>保存并设为默认</Button>{draft.id&&<><Button disabled={busy||!!key.trim()||!!credentialModelId||!savedAccount||!credentialReady(savedAccount,savedAccount.provider_id,"","")} onClick={()=>void run(async()=>{await poolRequest("PUT",`/api/service-defaults/${kind}`,{source:"profile",id:draft.id})})}>设为默认</Button><Button disabled={busy} onClick={()=>void run(async()=>{await poolRequest("DELETE",`/api/service-profiles/${draft.id}`);setDraft(null)})}>删除</Button></>}</div><hr className="border-[var(--border-soft)]"/><Input label={kind==="vision"?"识图问题":"生图提示词"} value={prompt} onChange={e=>setPrompt(e.target.value)}/>{kind==="vision"&&<label className="block text-sm">上传图片<input className="mt-2 block w-full" type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file){const reader=new FileReader();reader.onload=()=>setImage(String(reader.result));reader.readAsDataURL(file)}}}/></label>}{image&&kind==="vision"&&<img className="max-h-40 rounded-xl" src={image} alt="待识别图像"/>}<label className="block text-sm">测试来源<select className={selectStyle} value={testPool} onChange={e=>setTestPool(e.target.value)}><option value="">当前固定服务档案</option>{pools.map(p=><option key={p.id} value={p.id}>{p.label} · 模型池</option>)}</select></label><Button disabled={busy||(!testPool&&!draft.id)||kind==="vision"&&!image} onClick={()=>void run(async()=>{const response=testPool?await poolRequest<BasicServiceResult>("POST",`/api/model-pools/${testPool}/invoke`,{prompt,image_url:kind==="vision"?image:undefined}):await testBasicService(draft.id,prompt,kind==="vision"?image:undefined);setResult(response);if(!testPool){const p=(await listBasicServices()).find(p=>p.id===draft.id);if(p)setDraft(p)}})}>{busy?"正在请求服务…":kind==="vision"?"识别图片":"生成图片"}</Button>{draft.test&&<p className="text-sm">{draft.test.ok?"测试成功":"测试失败"} · 版本 {draft.test.revision} · {draft.test.tested_at}</p>}{result?.text&&<p className="whitespace-pre-wrap rounded-xl bg-[var(--surface-muted)] p-3 text-sm">{result.text}</p>}{result?.image_url&&<div><img src={result.image_url} className="max-h-96 rounded-xl" alt="服务实际生成的图像"/><a href={result.image_url} target="_blank" rel="noreferrer" className="text-sm underline">打开生成图像</a></div>}</>}</div>;
+import ModelCatalogField from "../../llm/ModelCatalogField";
+import { credentialChoice, credentialLabels, credentialReady } from "../../llm/accountCredentials";
+import { PROVIDER_PRESETS, type ProviderPresetId } from "../../llm/llmModelUtils";
+import { poolRequest, type ProviderAccount, type ModelPool } from "../../llm/modelPools";
+import { listBasicServices, listBasicAccounts, testBasicService, type BasicServiceKind, type BasicServiceProfile, type BasicServiceResult } from "../basicServices";
+import SettingsDialogLayout from "./SettingsDialogLayout";
+
+type DefaultSource = { source: "profile" | "pool" | null; id: string | null };
+
+async function loadServiceSettings(kind: BasicServiceKind) {
+  const [profiles, accounts, defaultSource, pools, models] = await Promise.all([
+    listBasicServices(),
+    listBasicAccounts(),
+    poolRequest<DefaultSource>("GET", "/api/service-defaults/" + kind),
+    poolRequest<ModelPool[]>("GET", "/api/model-pools"),
+    listLlmModels(),
+  ]);
+  if (!models) throw new Error("无法读取已保存的模型凭据来源。");
+  return {
+    profiles: profiles.filter((profile) => profile.service_kind === kind),
+    accounts,
+    defaultSource,
+    pools: pools.filter((pool) => pool.service_kind === kind),
+    models,
+  };
+}
+
+function newProfile(kind: BasicServiceKind): BasicServiceProfile {
+  return {
+    id: "", label: kind === "vision" ? "识图服务" : "生图服务", provider_account_id: "",
+    service_kind: kind, model: kind === "vision" ? "deepseek-flash" : "",
+    adapter: "openai", parameters: {}, revision: 0, test: null,
+  };
+}
+
+const adapters = [
+  { value: "openai", label: "OpenAI 兼容" },
+  { value: "dashscope", label: "阿里云百炼" },
+  { value: "minimax", label: "MiniMax Image Generation" },
+];
+
+export default function BasicServicePanel({ kind, onClose }: { kind: BasicServiceKind; onClose?: () => void }) {
+  const vision = kind === "vision";
+  const defaultProvider = vision ? "deepseek" : "openai";
+  const [provider, setProvider] = useState<ProviderPresetId>(defaultProvider);
+  const [base, setBase] = useState(PROVIDER_PRESETS[defaultProvider].baseUrl);
+  const [key, setKey] = useState("");
+  const [credentialModelId, setCredentialModelId] = useState("");
+  const [data, setData] = useState<Awaited<ReturnType<typeof loadServiceSettings>> | null>(null);
+  const [draft, setDraft] = useState<BasicServiceProfile | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState<"save" | "test" | "manage" | null>(null);
+  const [prompt, setPrompt] = useState(vision ? "请描述这张图片中的内容。" : "一朵粉色莲花，简洁插画，纯白背景。");
+  const [image, setImage] = useState("");
+  const [result, setResult] = useState<BasicServiceResult | null>(null);
+  const [testPool, setTestPool] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void loadServiceSettings(kind).then((loaded) => {
+      if (!active) return;
+      setData(loaded);
+      const selected = loaded.defaultSource.source === "profile"
+        ? loaded.profiles.find((profile) => profile.id === loaded.defaultSource.id) : undefined;
+      const account = loaded.accounts.find((item) => item.id === selected?.provider_account_id);
+      setProvider((account?.provider_id ?? defaultProvider) as ProviderPresetId);
+      setDraft(selected ?? newProfile(kind));
+      if (loaded.defaultSource.source === "pool" && loaded.defaultSource.id) setTestPool(loaded.defaultSource.id);
+    }).catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
+    return () => { active = false; };
+  }, [kind, defaultProvider]);
+
+  const accounts = data?.accounts ?? [];
+  const account = accounts.find((item) => item.id === draft?.provider_account_id);
+  const providerAccounts = accounts.filter((item) => item.provider_id === provider);
+  const savedProfile = data?.profiles.find((profile) => profile.id === draft?.id);
+  const savedAccount = accounts.find((item) => item.id === savedProfile?.provider_account_id);
+  const ready = credentialReady(account, provider, key, credentialModelId);
+  const effectiveBase = account?.base_url ?? base;
+  const category = PROVIDER_PRESETS[provider]?.category;
+  const showAddress = !draft?.provider_account_id && (category === "local" || category === "custom");
+
+  function resetEditor(profile: BasicServiceProfile) {
+    const selectedAccount = accounts.find((item) => item.id === profile.provider_account_id);
+    const id = (selectedAccount?.provider_id ?? defaultProvider) as ProviderPresetId;
+    setProvider(id);
+    setBase(PROVIDER_PRESETS[id]?.baseUrl ?? "");
+    setKey("");
+    setCredentialModelId("");
+    setDraft(profile);
+    setResult(null);
+    setError("");
+    setNotice("");
+  }
+
+  async function run(operation: "save" | "test" | "manage", action: () => Promise<void>) {
+    setBusy(operation);
+    setError("");
+    setNotice("");
+    try {
+      await action();
+      setData(await loadServiceSettings(kind));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const setDefaultProfile = (id: string) => poolRequest("PUT", "/api/service-defaults/" + kind, { source: "profile", id });
+
+  async function saveProfile() {
+    if (!draft) return;
+    await run("save", async () => {
+      let saved = account;
+      if (!credentialReady(saved, provider, key, credentialModelId)) throw new Error("请先输入 API Key 或选择已配置的凭据。");
+      if (!saved) {
+        saved = await poolRequest<ProviderAccount>("POST", "/api/provider-accounts", {
+          id: "", provider_id: provider, label: PROVIDER_PRESETS[provider].label, base_url: base,
+          credential_id: null, profile_ids: [], ...credentialChoice(key, credentialModelId),
+        });
+        setDraft({ ...draft, provider_account_id: saved.id });
+      } else if (key.trim() || credentialModelId) {
+        saved = await poolRequest<ProviderAccount>("PUT", "/api/provider-accounts/" + encodeURIComponent(saved.id), {
+          id: saved.id, provider_id: saved.provider_id, label: saved.label, base_url: saved.base_url,
+          credential_id: saved.credential_id, profile_ids: saved.profile_ids, ...credentialChoice(key, credentialModelId),
+        });
+      }
+      const savedCredentials = saved;
+      setData((current) => current && {
+        ...current,
+        accounts: [...current.accounts.filter((item) => item.id !== savedCredentials.id), savedCredentials],
+      });
+      setKey("");
+      setCredentialModelId("");
+      if (!credentialReady(saved, saved.provider_id, "", "")) throw new Error("账户凭据尚不可用，请检查 API Key 或凭据存储。");
+      const profile = await poolRequest<BasicServiceProfile>(draft.id ? "PUT" : "POST",
+        "/api/service-profiles" + (draft.id ? "/" + encodeURIComponent(draft.id) : ""),
+        { ...draft, provider_account_id: saved.id, expected_revision: draft.id ? draft.revision : null });
+      setDraft(profile);
+      try {
+        await setDefaultProfile(profile.id);
+      } catch (cause) {
+        throw new Error("服务档案已保存，设为默认失败。" + (cause instanceof Error ? cause.message : String(cause)));
+      }
+      setNotice("已保存并设为默认");
+    });
+  }
+
+  function uploadTestImage(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => setImage(String(reader.result));
+    reader.onerror = () => setError("无法读取测试图片，请重新选择。");
+    reader.readAsDataURL(file);
+  }
+
+  const providerOptions = Object.entries(PROVIDER_PRESETS)
+    .filter(([, preset]) => (preset.services as string[]).includes(kind))
+    .map(([value, preset]) => ({ value, label: preset.label }));
+
+  return (
+    <SettingsDialogLayout title={vision ? "图像理解" : "图像生成"} onClose={onClose} error={error} notice={notice}
+      action={<Button disabled={busy !== null || !draft?.model.trim() || !ready || (!draft.provider_account_id && !base.trim())}
+        onClick={() => void saveProfile()}>{busy === "save" ? "正在保存…" : "保存并设为默认"}</Button>}>
+      {!data ? !error && <p className="settings-help" role="status">正在读取服务配置…</p> : (
+        <fieldset className="min-w-0 space-y-3" disabled={busy !== null}>
+          {data.profiles.length > 0 && <Select label="服务档案" value={draft?.id ?? ""} options={[
+              { value: "", label: "新建服务档案" },
+              ...data.profiles.map((profile) => ({
+                value: profile.id,
+                label: profile.label + (data.defaultSource.source === "profile" && data.defaultSource.id === profile.id ? "（默认）" : ""),
+              })),
+            ]} onChange={(event) => {
+              const profile = data.profiles.find((item) => item.id === event.target.value);
+              resetEditor(profile ?? newProfile(kind));
+            }} />}
+
+          {draft && <>
+            <Select label="服务商" value={provider} options={providerOptions} onChange={(event) => {
+              const id = event.target.value as ProviderPresetId;
+              setProvider(id);
+              setBase(PROVIDER_PRESETS[id].baseUrl);
+              setKey("");
+              setCredentialModelId("");
+              setNotice("");
+              setDraft({
+                ...draft, provider_account_id: "", model: vision && id === "deepseek" ? "deepseek-flash" : "",
+                adapter: !vision && id === "minimax" ? "minimax" : !vision && id === "qwen" ? "dashscope" : "openai",
+              });
+            }} />
+            {(providerAccounts.length > 0 || draft.provider_account_id) && <Select label="账户" value={draft.provider_account_id} options={[
+              { value: "", label: "创建新账户" },
+              ...providerAccounts.map((item) => ({ value: item.id, label: item.label + " · " + credentialLabels[item.credential_status ?? "unavailable"] })),
+            ]} onChange={(event) => {
+              setKey("");
+              setCredentialModelId("");
+              setNotice("");
+              setDraft({ ...draft, provider_account_id: event.target.value });
+            }} />}
+            {showAddress && <Input label="API 地址" value={base} onChange={(event) => { setBase(event.target.value); setCredentialModelId(""); }} />}
+            <AccountCredentialFields account={account} provider={provider} baseUrl={effectiveBase} models={data.models}
+              apiKey={key} modelId={credentialModelId} onKey={setKey} onModel={setCredentialModelId} />
+            <ModelCatalogField provider={provider} baseUrl={effectiveBase} apiKey={key}
+              accountId={credentialModelId ? undefined : draft.provider_account_id} modelId={credentialModelId}
+              enabled={ready} preserveValue={Boolean(draft.id)} value={draft.model}
+              onChange={(model) => setDraft((current) => current && { ...current, model })}
+              advancedFields={<>
+                {!draft.provider_account_id && !showAddress && <Input label="API 地址" value={base}
+                  onChange={(event) => { setBase(event.target.value); setCredentialModelId(""); }} />}
+                <Input label="显示名称" value={draft.label} onChange={(event) => setDraft({ ...draft, label: event.target.value })} />
+                {!vision && <Select label="图像协议" options={adapters} value={draft.adapter}
+                  onChange={(event) => setDraft({ ...draft, adapter: event.target.value as BasicServiceProfile["adapter"] })} />}
+                {draft.id && <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" size="sm" disabled={busy !== null || !!key.trim() || !!credentialModelId || !savedAccount || !credentialReady(savedAccount, savedAccount.provider_id, "", "")}
+                    onClick={() => void run("manage", async () => { await setDefaultProfile(draft.id); setNotice("已设为默认"); })}>设为默认</Button>
+                  <Button variant="danger" size="sm" onClick={() => void run("manage", async () => {
+                    await poolRequest("DELETE", "/api/service-profiles/" + encodeURIComponent(draft.id));
+                    resetEditor(newProfile(kind));
+                  })}>删除</Button>
+                </div>}
+              </>} />
+            {data.defaultSource.source === "pool" && <p className="settings-help">保存并设为默认会替换当前模型池绑定。</p>}
+
+            <details className="u2-disclosure">
+              <summary>测试服务</summary>
+              <div className="space-y-3 pt-2">
+                <Input label={vision ? "识图问题" : "生图提示词"} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+                {vision && <label className="block text-sm">上传图片<input className="mt-2 block w-full" type="file" accept="image/*" onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) uploadTestImage(file);
+                }} /></label>}
+                {vision && image && <img className="max-h-40 rounded-lg" src={image} alt="待识别图像" />}
+                {data.pools.length > 0 && <Select label="测试来源" value={testPool} options={[
+                  { value: "", label: "当前固定服务档案" },
+                  ...data.pools.map((pool) => ({ value: pool.id, label: pool.label + " · 模型池" })),
+                ]} onChange={(event) => setTestPool(event.target.value)} />}
+                <Button variant="secondary" size="sm" disabled={busy !== null || (!testPool && !draft.id) || (vision && !image)}
+                  onClick={() => void run("test", async () => {
+                    setResult(null);
+                    const response = testPool
+                      ? await poolRequest<BasicServiceResult>("POST", "/api/model-pools/" + encodeURIComponent(testPool) + "/invoke", { prompt, image_url: vision ? image : undefined })
+                      : await testBasicService(draft.id, prompt, vision ? image : undefined);
+                    setResult(response);
+                    if (!testPool) {
+                      const tested = (await listBasicServices()).find((profile) => profile.id === draft.id);
+                      if (tested) setDraft(tested);
+                    }
+                  })}>{busy === "test" ? "正在请求服务…" : vision ? "识别图片" : "生成图片"}</Button>
+                {draft.test && <p className="settings-help">{draft.test.ok ? "测试成功" : "测试失败"} · 版本 {draft.test.revision} · {draft.test.tested_at}</p>}
+                {result?.text && <p className="whitespace-pre-wrap break-words rounded-lg bg-[var(--surface-muted)] p-3 text-sm">{result.text}</p>}
+                {result?.image_url && <div>
+                  <img src={result.image_url} className="max-h-96 rounded-lg" alt="服务实际生成的图像" />
+                  <a href={result.image_url} target="_blank" rel="noreferrer" className="text-sm underline">打开生成图像</a>
+                </div>}
+              </div>
+            </details>
+          </>}
+        </fieldset>
+      )}
+    </SettingsDialogLayout>
+  );
 }

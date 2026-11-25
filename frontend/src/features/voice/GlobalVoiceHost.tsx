@@ -8,6 +8,7 @@ import {
   getVoiceSession,
   interruptVoiceSession,
   startVoiceSession,
+  type ConversationalAnchor,
   type GlobalVoiceSession,
   type PresenceSnapshot,
   type VoiceRuntimeSnapshot,
@@ -127,6 +128,8 @@ export default function GlobalVoiceHost({
   }, [runtime]);
 
   const session = snapshot?.session ?? null;
+  const voiceAnchorMatches = session?.conversational_anchor?.conversation_id
+    === voiceContext.conversational_anchor?.conversation_id;
   runtime.commitSession(session);
   const finalTranscript = transcriptFromTurn(snapshot);
 
@@ -310,13 +313,14 @@ export default function GlobalVoiceHost({
   });
   invalidateContextRef.current = () => { capture.cancel(); playback.interrupt(); };
   useHandsFree({
-    enabled: handsFreeEnabled && session?.state !== "ended",
+    enabled: handsFreeEnabled && session?.state !== "ended" && voiceAnchorMatches,
     sessionId: session?.voice_session_id ?? null,
     identityEpoch: runtime.readIdentityEpoch(),
     playing: playback.state.status === "playing" || playback.state.status === "synthesizing",
     capture: {
       ...capture,
       start: async (reason, stream) => {
+        setNotice(null);
         const operation = runtime.beginCaptureOperation();
         chatDraftCaptureRef.current = false;
         // Snapshot only actual audio playback, before barge-in releases it.
@@ -427,7 +431,8 @@ export default function GlobalVoiceHost({
     chatDraftCaptureRef.current = true;
     setNotice(null);
     if (session && session.state !== "ended") {
-      await startCapture(true);
+      if (voiceAnchorMatches) await startCapture(true);
+      else pendingChatCaptureRef.current = true;
       return;
     }
     pendingChatCaptureRef.current = true;
@@ -438,13 +443,13 @@ export default function GlobalVoiceHost({
       return;
     }
     chatOwnedSessionRef.current = started.voice_session_id;
-  }, [capture.state.status, session, startCapture, startSession]);
+  }, [capture.state.status, session, startCapture, startSession, voiceAnchorMatches]);
 
   useEffect(() => {
-    if (!pendingChatCaptureRef.current || !session || session.state === "ended") return;
+    if (!pendingChatCaptureRef.current || !session || session.state === "ended" || !voiceAnchorMatches) return;
     pendingChatCaptureRef.current = false;
     void startCapture(true);
-  }, [session?.generation, session?.state, session?.voice_session_id, startCapture]);
+  }, [session?.generation, session?.state, session?.voice_session_id, startCapture, voiceAnchorMatches]);
 
   const chatVoiceControls = useMemo<ChatVoiceControls>(() => ({
     status: capture.state.status,
@@ -462,11 +467,22 @@ export default function GlobalVoiceHost({
     subscribeChatFinal,
   ]);
 
-  const requestGlobalVoiceSession=useCallConnection({session,epoch:callStartEpoch,startSession:()=>startSession(true),
+  const connectCall=useCallConnection({session,epoch:callStartEpoch,startSession:()=>startSession(true),
     onStart:()=>{callPinnedRef.current=true;setGlobalConversationEnabled(true);setExpanded(true);setConnecting(true);setNotice(null);setMicrophoneMuted(false);setHandsFreeEnabled(false);setConnectedAt(null);setCallChecks({session:false,microphone:false,stt:false,tts:false,output:false});},
     onOutputReady:()=>setCallChecks(value=>({...value,output:true})),onServicesReady:(stt,tts)=>setCallChecks(value=>({...value,stt,tts})),
     onSessionReady:()=>{setCallChecks(value=>({...value,session:true}));setHandsFreeEnabled(true);},onFailure:message=>{setConnecting(false);setHandsFreeEnabled(false);setNotice(message);},
   });
+  const requestGlobalVoiceSession = useCallback((anchor?: ConversationalAnchor) => {
+    if (anchor) {
+      callPinnedRef.current = false;
+      updateContext({
+        focused_surface: "conversation",
+        conversational_anchor: anchor,
+        anchor_action: "replace",
+      });
+    }
+    connectCall();
+  }, [connectCall, updateContext]);
   const toggleMicrophone=useCallback(()=>{const next=!microphoneMuted;setMicrophoneMuted(next);setHandsFreeEnabled(!next);if(next)capture.cancel();},[capture.cancel,microphoneMuted]);
 
   const switchToBrowsingConversation=useCallback(()=>{

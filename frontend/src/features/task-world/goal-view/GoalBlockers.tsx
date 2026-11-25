@@ -1,6 +1,8 @@
+import { Link } from "react-router-dom";
+import { goalBlockerDestination } from "./GoalTrackingSummary";
 import type { GoalViewState } from "./goalViewModel";
 
-export default function GoalBlockers({ state, loading = false }: { state: GoalViewState; loading?: boolean }) {
+export default function GoalBlockers({ state, loading = false, linkBlockers = false }: { state: GoalViewState; loading?: boolean; linkBlockers?: boolean }) {
   return (
     <section className="goal-view-card" aria-label="待处理事项">
       <div className="goal-view-section-heading">
@@ -12,12 +14,13 @@ export default function GoalBlockers({ state, loading = false }: { state: GoalVi
       </div>
       {state.blockers.length ? (
         <ul className="goal-view-blocker-list">
-          {state.blockers.map((blocker, index) => (
-            <li key={`${blocker.code}:${blocker.nodeId || "goal"}:${index}`}>
+          {state.blockers.map((blocker, index) => {
+            const href = linkBlockers && goalBlockerDestination(state.graphId, blocker);
+            return <li key={`${blocker.code}:${blocker.nodeId || "goal"}:${index}`}>
               <strong>{blocker.nodeId ? "任务步骤" : "目标"}</strong>
-              <span>{blocker.message}</span>
-            </li>
-          ))}
+              <span>{href ? <Link to={href}>{blocker.message}</Link> : blocker.message}</span>
+            </li>;
+          })}
         </ul>
       ) : state.phase === "completed" ? (
         <p className="goal-view-empty">当前目标和交付物已通过验收。</p>

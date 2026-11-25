@@ -32,7 +32,8 @@ export function useHandsFree(options: HandsFreeOptions): void {
     void openSpeechMonitor(controller.signal, (rms, time) => {
       if (!isOwner() || !monitor) return;
       const current = latest.current;
-      const ready = !starting && current.capture.state.status === "idle";
+      const status = current.capture.state.status;
+      const ready = !starting && (status === "idle" || status === "error");
       const event = detector.sample(rms, time, current.playing, ready);
       if (event === "start") {
         starting = true;

@@ -21,7 +21,7 @@ function setup(initial = conversation("idle")) {
   const load = vi.fn(async () => initial);
   const pending = vi.fn(async (): Promise<PendingApproval[]> => []);
   const lookup = vi.fn(async (): Promise<PendingApproval | null> => null);
-  const setMode = vi.fn(async (_id: string, mode: "chat" | "work" | "create") => ({ mode }));
+  const setMode = vi.fn(async (_id: string, mode: "auto" | "chat" | "work" | "create") => ({ mode }));
   const decide = vi.fn(async (_id: string, _conv: string | null, cb: (event: AgentEvent) => void) => {
     emit = cb;
   });
@@ -44,6 +44,64 @@ function setup(initial = conversation("idle")) {
 describe("conversation runtime ownership", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+  it("publishes distinct chat activity through a reply, confirmation pause and resumed result", async () => {
+    const { runtime, emit, pending, decide } = setup();
+    const listener = vi.fn();
+    runtime.subscribeActivity(listener);
+    runtime.send("a", "看看运行情况");
+    emit({ type: "token", token: "收到" });
+    emit({ type: "token", token: "，正在检查" });
+    pending.mockResolvedValue([approval]);
+    emit({ type: "approval_required", approval_id: approval.approval_id });
+    emit({ type: "stream_end" });
+    expect(listener.mock.calls.flat()).toEqual(["thinking", "speaking", "waiting"]);
+    decide.mockImplementationOnce(async (_id, _conversationId, callback) => {
+      callback({ type: "done", conversation_id: "a", message_id: "result", result: "完成" });
+    });
+    await runtime.decide(approval, "approve");
+    expect(listener.mock.calls.flat()).toEqual(["thinking", "speaking", "waiting", "thinking", "succeeded"]);
+  });
+  it("uses persisted run status after an EOF without a terminal event", async () => {
+    const { runtime, emit, load } = setup(conversation("running"));
+    const listener = vi.fn();
+    runtime.subscribeActivity(listener);
+    runtime.send("a", "开始");
+    emit({ type: "connected" });
+    emit({ type: "stream_end" });
+    await runtime.refresh("a");
+    expect(listener.mock.calls.flat()).toEqual(["thinking"]);
+    load.mockResolvedValue(conversation("completed"));
+    await runtime.refresh("a");
+    expect(listener.mock.calls.flat()).toEqual(["thinking", "succeeded"]);
+  });
+  it("keeps a terminal reaction when the reply stream closes", () => {
+    const { runtime, emit } = setup();
+    const listener = vi.fn();
+    runtime.subscribeActivity(listener);
+    runtime.send("a", "开始");
+    emit({ type: "done", message_id: "reply", result: "完成" });
+    emit({ type: "stream_end" });
+    expect(listener.mock.calls.flat()).toEqual(["thinking", "succeeded"]);
+  });
+  it("uses the complete server answer instead of earlier streamed text", () => {
+    const { runtime, emit } = setup();
+    runtime.send("a", "详细说一下");
+    emit({ type: "token", token: "我先查看资料。" });
+    emit({ type: "token", token: "最终段落的开头" });
+    emit({ type: "done", message_id: "reply", result: "完整答复。\n\n## 第二部分\n末尾内容。" });
+    const messages = runtime.snapshot("a").messages;
+    expect(messages[messages.length - 1].content).toBe("完整答复。\n\n## 第二部分\n末尾内容。");
+  });
+  it("keeps the accepted reply when the model pool retries the continuation", () => {
+    const { runtime, emit } = setup();
+    runtime.send("a", "写长文");
+    emit({ type: "token", token: "第一部分" });
+    emit({ type: "reply_checkpoint", result: "第一部分" });
+    emit({ type: "token", token: "不完整的候选续写" });
+    emit({ type: "model_route", phase: "switched", replace_content: true });
+    emit({ type: "token", token: "和后续正文" });
+    expect(runtime.snapshot("a").run.content).toBe("第一部分和后续正文");
+  });
   it("aligns the optimistic user bubble with the accepted server message identity", () => {
     const { runtime, emit } = setup();
     runtime.send("a", "查看系统服务");
@@ -168,7 +226,7 @@ describe("conversation runtime ownership", () => {
   it("takes automatic workspace changes only from real backend mode events", async () => {
     const { runtime, emit, load } = setup();
     runtime.send("a", "请帮我处理项目");
-    expect(runtime.snapshot("a").workspaceMode).toBe("chat");
+    expect(runtime.snapshot("a").workspaceMode).toBe("auto");
     emit({ type: "workspace_mode", mode: "work", reason: "需要操作工作区", automatic: true });
     expect(runtime.snapshot("a").workspaceMode).toBe("work");
     expect(runtime.snapshot("a").modeNotice?.automatic).toBe(true);
@@ -176,6 +234,18 @@ describe("conversation runtime ownership", () => {
     emit({ type: "stream_end" });
     await runtime.refresh("a");
     expect(runtime.snapshot("a").workspaceMode).toBe("work");
+  });
+
+  it("shows an applied supplement in the current turn and clears provisional text", () => {
+    const { runtime, emit, send } = setup();
+    runtime.send("a", "写入交付");
+    emit({ type: "connected", turn_id: "turn-1", accepts_steering: true, user_message_id: "original" });
+    emit({ type: "token", token: "原方案" });
+    emit({ type: "steering_applied", message_id: "supplement-1", result: "改为只讨论" });
+    expect(runtime.snapshot("a").steeringTurnId).toBe("turn-1");
+    expect(runtime.snapshot("a").run.content).toBe("");
+    expect(runtime.snapshot("a").messages.slice(-1)[0]).toMatchObject({ id: "supplement-1", role: "user", content: "改为只讨论" });
+    expect(send).toHaveBeenCalledTimes(1);
   });
   it("persists manual selection and restores the backend workspace mode on a fresh load", async () => {
     const { runtime, setMode } = setup({ ...conversation("idle"), workspace_mode: "create" });

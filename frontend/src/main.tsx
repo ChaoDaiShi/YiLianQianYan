@@ -7,7 +7,9 @@ import "./index.css";
 async function bootstrap() {
   const root = document.getElementById("root") as HTMLElement;
   try {
-    await initializeControlSession();
+    if (window.location.pathname !== "/floating/pet" && window.location.pathname !== "/floating/desktop-widget") {
+      await initializeControlSession();
+    }
     ReactDOM.createRoot(root).render(
       <React.StrictMode>
         <App />

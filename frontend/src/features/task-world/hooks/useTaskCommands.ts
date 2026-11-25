@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import type { ApiError } from "../../../api/taskWorld";
 
 type CommandResult = { ok: true; data: unknown } | { ok: false; error: ApiError };
@@ -15,17 +15,24 @@ export function useTaskCommands(
   onSavingChange: (saving: boolean) => void,
   onSaveError: (error: ApiError | null) => void,
 ) {
+  const pending = useRef(false);
   return useCallback(async (operation: () => Promise<CommandResult>) => {
+    if (pending.current) return false;
+    pending.current = true;
     onSavingChange(true);
     onSaveError(null);
-    const result = await operation();
-    onSavingChange(false);
-    if (!result.ok) {
-      onSaveError(result.error);
-      if (result.error.code === "stale_revision" || result.error.code === "stale_view_revision") await reload();
-      return false;
+    try {
+      const result = await operation();
+      if (!result.ok) {
+        onSaveError(result.error);
+        if (result.error.code === "stale_revision" || result.error.code === "stale_view_revision") await reload();
+        return false;
+      }
+      await reload();
+      return true;
+    } finally {
+      pending.current = false;
+      onSavingChange(false);
     }
-    await reload();
-    return true;
   }, [onSaveError, onSavingChange, reload]);
 }

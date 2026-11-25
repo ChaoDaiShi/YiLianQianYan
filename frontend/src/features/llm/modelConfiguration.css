@@ -1,0 +1,159 @@
+.model-config-overview,
+.model-config-editor {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+}
+
+.model-config-section-heading,
+.model-config-account-header,
+.model-config-inline-action,
+.model-config-row-title,
+.model-config-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.model-config-section-heading,
+.model-config-account-header { justify-content: space-between; }
+
+.model-config-section-heading h4,
+.model-config-connection h4 {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.model-config-section-heading p,
+.model-config-account-header p,
+.model-config-hint,
+.model-config-model-id,
+.model-config-saved-identity span,
+.model-config-default small,
+.model-config-detail-header p {
+  color: var(--text-secondary);
+  font-size: 0.79rem;
+  overflow-wrap: anywhere;
+}
+
+.model-config-defaults {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.model-config-default {
+  display: grid;
+  align-content: start;
+  text-align: left;
+  min-width: 0;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  overflow-wrap: anywhere;
+}
+
+button.model-config-default:hover,
+.model-config-saved-row:hover { background: var(--surface-hover); }
+
+.model-config-default-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.77rem;
+}
+
+.model-config-default strong { font-size: 0.86rem; }
+
+.model-config-account,
+.model-config-empty {
+  margin-top: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.model-config-account-header { padding: 10px 12px; }
+.model-config-account-header > div { flex: 1 1 180px; min-width: 0; }
+.model-config-account-header strong,
+.model-config-row-title strong { overflow-wrap: anywhere; }
+
+.model-config-empty,
+.model-config-account-empty,
+.model-config-loading { padding: 16px 12px; color: var(--text-secondary); }
+.model-config-empty { display: flex; align-items: center; gap: 10px; }
+.model-config-empty svg { flex-shrink: 0; }
+
+.model-config-saved-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 16px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border-soft);
+  text-align: left;
+}
+
+.model-config-saved-identity { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.model-config-saved-identity strong { font-size: 0.86rem; }
+.model-config-saved-row .model-config-tags { justify-content: flex-end; }
+
+.model-config-connection,
+.model-config-catalog {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.model-config-connection { padding-bottom: 14px; border-bottom: 1px solid var(--border-soft); }
+.model-config-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.model-config-fields > :last-child { grid-column: 1 / -1; }
+.model-config-search { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+.model-config-search svg { flex-shrink: 0; }
+.model-config-search { flex-wrap: wrap; }
+.model-config-search > div { flex: 1 1 220px; }
+.model-config-model-list { display: grid; gap: 8px; }
+.model-config-model-row,
+.model-config-purpose-detail {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+
+.model-config-purpose-options { display: flex; flex-wrap: wrap; gap: 5px 10px; }
+.model-config-purpose-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  font-size: 0.8rem;
+}
+
+.model-config-purpose-option input { accent-color: var(--accent-primary); }
+.model-config-purpose-option:has(input:disabled) { color: var(--text-secondary); }
+.model-config-manual summary { color: var(--text-secondary); cursor: pointer; }
+.model-config-inline-action { align-items: end; padding-top: 8px; }
+.model-config-inline-action > :first-child { flex: 1 1 200px; }
+.model-config-detail-header { display: grid; gap: 3px; overflow-wrap: anywhere; }
+.model-config-detail-list { display: grid; gap: 8px; }
+.model-config-test-image { display: grid; gap: 5px; font-size: 0.8rem; }
+.model-config-test-image input { max-width: 100%; }
+
+@media (max-width: 580px) {
+  .model-config-defaults { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .model-config-saved-row { grid-template-columns: minmax(0, 1fr) 16px; gap: 5px 8px; }
+  .model-config-saved-row .model-config-tags { grid-column: 1; justify-content: start; }
+  .model-config-saved-row > svg { grid-column: 2; grid-row: 1 / span 2; }
+  .model-config-fields { grid-template-columns: minmax(0, 1fr); }
+}

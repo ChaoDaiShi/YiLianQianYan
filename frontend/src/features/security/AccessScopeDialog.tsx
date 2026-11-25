@@ -1,12 +1,21 @@
 import { useEffect, useState } from "react";
 import { Button, Modal } from "../../components/ui";
-import { accessPermissions, type AccessRule, type AccessMode, type PermissionId } from "../../api/accessRules";
+import { accessPermissions, type AccessRule, type AccessMode, type PermissionId, type DelegatedAccessSubject } from "../../api/accessRules";
 import { requestResult } from "../../api/transport";
 interface Resource {kind:string;entity_id:string;label:string}
-export function AccessScopeDialog({rule,onClose,onSave,initialAgentId,initialAgentLabel}:{rule:AccessRule|null;onClose:()=>void;onSave:(rule:AccessRule)=>Promise<void>;initialAgentId?:string;initialAgentLabel?:string}){
+export function AccessScopeDialog({rule,onClose,onSave,initialAgentId,initialAgentLabel,subagents}:{rule:AccessRule|null;onClose:()=>void;onSave:(rule:AccessRule)=>Promise<void>;initialAgentId?:string;initialAgentLabel?:string;subagents:DelegatedAccessSubject[]}){
  const [draft,setDraft]=useState<AccessRule>(()=>rule??{id:crypto.randomUUID(),scope:"agent",subject_id:initialAgentId??null,permission_id:"filesystem.read",resource:null,mode:"approve"});
  const [resources,setResources]=useState<Resource[]>([]);const [path,setPath]=useState(String(rule?.resource?.root??""));const [host,setHost]=useState(String(rule?.resource?.host??""));const [serverId,setServerId]=useState(String(rule?.resource?.server_id??""));const [tool,setTool]=useState(String(rule?.resource?.tool_name??""));const [busy,setBusy]=useState(false);const [error,setError]=useState("");
  useEffect(()=>{let active=true;void requestResult<{resources:Resource[]}>("GET","/api/connectors/resources").then(r=>{if(active){if(r.ok)setResources(r.data.resources);else setError(r.error)}});return()=>{active=false}},[]);
+ const agents = resources
+  .filter(resource => resource.kind === "agent")
+  .map(resource => ({ subject_id: resource.entity_id, label: resource.label }));
+ const agentOptions = [...agents, ...subagents.map(subject => ({
+  ...subject,
+  label: `${subject.label}（${subject.kind === "acp" ? "忆涟级外部 ACP" : "忆涟级子智能体"}）`,
+ }))];
+ const scopedSubject = initialAgentId ?? draft.subject_id;
+ const childSelected = subagents.some(subject => subject.subject_id === scopedSubject);
  const change=(update:Partial<AccessRule>)=>setDraft(v=>({...v,...update}));
  async function save(){
   let resource:Record<string,unknown>|null=null;
@@ -20,15 +29,29 @@ export function AccessScopeDialog({rule,onClose,onSave,initialAgentId,initialAge
    else {setError("该操作支持默认、智能体或工具范围");return}
   }
   if((draft.scope==="agent"||draft.scope==="capability")&&!draft.subject_id){setError("请选择关联对象");return}
-  setBusy(true);setError("");try{await onSave({...draft,resource,subject_id:initialAgentId??(draft.scope==="resource"?null:draft.subject_id)})}catch(e){setError(String(e))}finally{setBusy(false)}
+  setBusy(true);setError("");try{await onSave({...draft,resource,subject_id:scopedSubject})}catch(e){setError(String(e))}finally{setBusy(false)}
  }
  return <Modal open title={initialAgentId?`${initialAgentLabel??initialAgentId} 的权限范围`:"权限作用范围"} onClose={onClose} size="md" footer={<><Button onClick={onClose} disabled={busy}>取消</Button><Button variant="primary" onClick={()=>void save()} loading={busy}>保存规则</Button></>}>
  <div className="grid gap-4">
  <label>操作<select className="settings-select" value={draft.permission_id} onChange={e=>change({permission_id:e.target.value as PermissionId})}>{accessPermissions.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
  <label>权限<select className="settings-select" value={draft.mode} onChange={e=>change({mode:e.target.value as AccessMode})}><option value="full">完全权限</option><option value="approve">需批准</option><option value="deny">禁止</option></select></label>
- <label>作用范围<select className="settings-select" value={draft.scope} onChange={e=>change({scope:e.target.value as AccessRule["scope"],subject_id:initialAgentId??null})}><option value="agent">指定智能体</option>{!initialAgentId&&<option value="capability">指定工具</option>}<option value="resource">指定资源</option></select></label>
+ <label>作用范围<select className="settings-select" value={draft.scope} onChange={e=>{
+  const scope = e.target.value as AccessRule["scope"];
+  const keepAgent = draft.scope !== "capability" && scope !== "capability";
+  change({scope, subject_id: initialAgentId ?? (keepAgent ? draft.subject_id : null)});
+ }}><option value="agent">指定智能体</option>{!initialAgentId&&<option value="capability">指定工具</option>}<option value="resource">指定资源</option></select></label>
  {initialAgentId&&<p className="settings-help">作用于智能体：{initialAgentLabel??initialAgentId}</p>}
- {!initialAgentId&&(draft.scope==="agent"||draft.scope==="capability")&&<label>关联对象<select className="settings-select" value={draft.subject_id??""} onChange={e=>change({subject_id:e.target.value||null})}><option value="">请选择</option>{resources.filter(r=>r.kind===(draft.scope==="agent"?"agent":"tool")).map(r=><option key={r.entity_id} value={r.entity_id}>{r.label}</option>)}</select></label>}
+ {!initialAgentId && (draft.scope === "agent" || draft.scope === "resource") && (
+  <label>适用智能体<select className="settings-select" value={draft.subject_id ?? ""} onChange={e=>change({subject_id:e.target.value||null})}>
+   <option value="">{draft.scope === "resource" ? "全局规则" : "请选择"}</option>
+   {draft.subject_id && !agentOptions.some(subject => subject.subject_id === draft.subject_id) && (
+    <option value={draft.subject_id}>{draft.subject_id}</option>
+   )}
+   {agentOptions.map(subject => <option key={subject.subject_id} value={subject.subject_id}>{subject.label}</option>)}
+  </select></label>
+ )}
+ {!initialAgentId && draft.scope === "capability" && <label>关联对象<select className="settings-select" value={draft.subject_id??""} onChange={e=>change({subject_id:e.target.value||null})}><option value="">请选择</option>{resources.filter(r=>r.kind==="tool").map(r=><option key={r.entity_id} value={r.entity_id}>{r.label}</option>)}</select></label>}
+ {childSelected && <p className="settings-help">子智能体执行时仍检查全局审批模式和禁止规则。需要独立批准的操作会中止本次委派。</p>}
  {draft.scope==="resource"&&draft.permission_id.startsWith("filesystem.")&&<label>文件或目录<input className="settings-text-input" value={path} onChange={e=>setPath(e.target.value)} placeholder="F:\\项目资料"/><span className="settings-help">对该目录及其子目录生效。</span></label>}
  {draft.scope==="resource"&&draft.permission_id==="network.request"&&<label>HTTPS 主机<input className="settings-text-input" value={host} onChange={e=>setHost(e.target.value)} placeholder="api.example.com"/></label>}
  {draft.scope==="resource"&&draft.permission_id==="mcp.invoke"&&<><label>MCP 服务<select className="settings-select" value={serverId} onChange={e=>setServerId(e.target.value)}><option value="">请选择</option>{resources.filter(r=>r.kind==="mcp").map(r=><option key={r.entity_id} value={r.entity_id}>{r.label}</option>)}</select></label><label>工具名称<input className="settings-text-input" value={tool} onChange={e=>setTool(e.target.value)} placeholder="留空应用到该服务全部工具"/></label></>}

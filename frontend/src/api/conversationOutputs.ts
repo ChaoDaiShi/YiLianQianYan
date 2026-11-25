@@ -3,6 +3,7 @@ import { controlSessionHeaders } from "./controlSession";
 
 export interface ConversationOutput {
   id: string; conversation_id: string; kind: "image" | "code"; title: string;
+  tool_call_id?: string;
   source_tool: "image_generation" | "assistant_message"; profile_id: string | null;
   status: "awaiting_download" | "ready" | "download_failed";
   resource_id: string | null; preview_url: string | null; download_url: string | null;

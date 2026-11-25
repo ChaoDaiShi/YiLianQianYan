@@ -35,48 +35,31 @@ interface WorkbenchHomeProps {
 interface QuickAction {
   icon: LucideIcon;
   title: string;
-  subtitle: string;
   prompt: string;
-  tone: "blue" | "pink" | "purple" | "water";
 }
 
 const QUICK_ACTIONS: QuickAction[] = [
   {
     icon: Folder,
     title: "查看文件目录",
-    subtitle: "整理文件",
     prompt: "列出当前目录的文件",
-    tone: "blue",
   },
   {
     icon: ListChecks,
     title: "查找 TODO",
-    subtitle: "扫描代码标记",
     prompt: "搜索包含 TODO 的文件",
-    tone: "pink",
   },
   {
     icon: FileCode,
     title: "编写脚本",
-    subtitle: "生成或修改脚本",
     prompt: "创建一个 Python 脚本",
-    tone: "purple",
   },
   {
     icon: Activity,
     title: "查看系统进程",
-    subtitle: "分析当前运行状态",
     prompt: "查看系统进程",
-    tone: "water",
   },
 ];
-
-function greeting(): string {
-  const hour = new Date().getHours();
-  if (hour >= 5 && hour < 12) return "早上好，主人～";
-  if (hour >= 12 && hour < 18) return "下午好，主人～";
-  return "晚上好，主人～";
-}
 
 const STATUS_META: Record<
   AgentStatus,
@@ -134,50 +117,25 @@ export default function WorkbenchHome({
     finished,
   });
   const statusMeta = STATUS_META[status];
+  const taskShortcutLabel = conversationId ? "打开当前任务" : "打开任务工作流";
 
   return (
     <div className="scrollbar-thin relative flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div
-        className="home-ambient home-ambient-strong pointer-events-none absolute inset-0"
-        aria-hidden="true"
-      />
-      <div
-        className="home-ambient-stars pointer-events-none absolute inset-0 opacity-70"
-        aria-hidden="true"
-      />
-
       <div className="home-content relative z-10 flex min-h-full flex-1 flex-col items-center justify-center px-6 py-8">
         <div className="home-hero">
-          <div className="text-center">
-            <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">
-              {greeting()}{" "}
-              <span className="text-[var(--accent-gold)]" aria-hidden="true">
-                ✦
-              </span>
-            </h1>
-            <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              有什么想让我帮你完成的吗？
-            </p>
-          </div>
-
           <button
             type="button"
             onClick={onOpenCurrentTask}
-            aria-label="打开连接器"
-            className="home-character home-character-scene relative border-0 bg-transparent"
+            aria-label={taskShortcutLabel}
+            title={taskShortcutLabel}
+            className="home-brand-button"
           >
-            <div className="home-character-glow" aria-hidden="true" />
-            <div className="home-character-ripple" aria-hidden="true" />
-            <div className="home-character-petals" aria-hidden="true" />
-            <img
-              src="/cyrene-home-character.png"
-              alt="小涟"
-              className="home-character-image h-[168px] w-[168px] object-contain"
-            />
+            <img src="/favicon.png" alt="" width={40} height={40} />
           </button>
+          <h1>今天想做什么？</h1>
         </div>
 
-        <div
+        {status !== "idle" && <div
           className="home-status flex items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--surface-solid)] px-3.5 py-1.5 text-xs text-[var(--text-secondary)] shadow-[var(--shadow-card)]"
           aria-live="polite"
         >
@@ -187,7 +145,7 @@ export default function WorkbenchHome({
             }`}
           />
           {statusMeta.label}
-        </div>
+        </div>}
 
         <ChatInput
           workspaceMode={workspaceMode}
@@ -206,9 +164,7 @@ export default function WorkbenchHome({
           onRequestGlobalVoiceSession={onRequestGlobalVoiceSession}
         />
 
-        <details className="home-suggestions">
-          <summary>试试这些任务</summary>
-        <div className="home-quick-actions">
+        <div className="home-quick-actions" aria-label="快捷任务" role="group">
           {QUICK_ACTIONS.map((action) => {
             const Icon = action.icon;
             return (
@@ -216,24 +172,14 @@ export default function WorkbenchHome({
                 key={action.title}
                 type="button"
                 onClick={() => onHint?.(action.prompt)}
-                className="home-quick-action flex flex-col items-start gap-2 rounded-xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-3 text-left transition-[background-color,border-color] duration-[var(--motion-fast)] hover:border-[var(--accent-border)]"
+                className="home-quick-action"
               >
-                <span className={`quick-action-icon-well quick-action-icon-well-${action.tone}`}>
-                  <Icon className="h-4 w-4" />
-                </span>
-                <span>
-                  <span className="block text-sm font-medium text-[var(--text)]">
-                    {action.title}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-[var(--text-faint)]">
-                    {action.subtitle}
-                  </span>
-                </span>
+                <Icon size={15} aria-hidden="true" />
+                {action.title}
               </button>
             );
           })}
         </div>
-        </details>
       </div>
     </div>
   );

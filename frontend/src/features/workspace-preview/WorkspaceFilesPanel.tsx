@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Download, FileText, Folder, GitBranch, RefreshCw } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Download, FileText, Folder, GitBranch, RefreshCw } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getWorkspaceFileContent, listWorkspaceFiles, readWorkspaceFile, type WorkspaceFileEntry, type WorkspaceTextFile } from "../../api/workspaceFiles";
 import { getWorkspaceGit, type WorkspaceGitStatus } from "../../api/workspaceGit";
+import { importKnowledge } from "../../api/knowledge";
 import { Button, EmptyState, ErrorState } from "../../components/ui";
+import { markdownLineTailPlugins } from "../../utils/markdownLineTail";
 import { ResourcePreviewPane } from "../resources/ResourcePreviewDialog";
 
 export const isBinaryPreviewFile = (path: string) => /\.(docx?|xlsx?|pptx?|pdf|rtf|zip|png|jpe?g|gif|webp|mp3|wav|ogg|mp4|webm)$/i.test(path);
@@ -12,11 +15,13 @@ export const isBinaryPreviewFile = (path: string) => /\.(docx?|xlsx?|pptx?|pdf|r
 interface Props {
   workspaceId: string;
   rootPath?: string | null;
+  readOnly?: boolean;
   onEdit: () => void;
   onShowChanges: () => void;
 }
 
-export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onShowChanges }: Props) {
+export default function WorkspaceFilesPanel({ workspaceId, rootPath, readOnly = false, onEdit, onShowChanges }: Props) {
+  const navigate = useNavigate();
   const [directories, setDirectories] = useState<Record<string, WorkspaceFileEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState<Set<string>>(new Set());
@@ -24,6 +29,8 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
   const [selectedPath, setSelectedPath] = useState("");
   const [file, setFile] = useState<WorkspaceTextFile | null>(null);
   const [fileError, setFileError] = useState("");
+  const [learning, setLearning] = useState(false);
+  const [learningError, setLearningError] = useState("");
   const [reading, setReading] = useState(false);
   const [git, setGit] = useState<WorkspaceGitStatus | null>(null);
   const [gitError, setGitError] = useState("");
@@ -32,6 +39,7 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
   const onDocumentMetadata = useCallback((label: string) => setDocumentMetadata({ path: selectedPath, label }), [selectedPath]);
   const binarySelected = isBinaryPreviewFile(selectedPath);
   const selectedEntry = Object.values(directories).flat().find(entry => entry.path === selectedPath);
+  const canLearn = !readOnly && selectedEntry?.kind === "file" && /\.(md|markdown|txt|csv|pdf|rtf|docx|xlsx|pptx)$/i.test(selectedEntry.name);
 
   const loadDirectory = useCallback(async (path: string) => {
     setLoading(current => new Set(current).add(path));
@@ -60,6 +68,7 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
   }, [workspaceId, rootPath, revision, loadDirectory]);
 
   useEffect(() => {
+    setLearningError("");
     if (!selectedPath) return;
     if (binarySelected) { setFile(null); setFileError(""); setReading(false); return; }
     let active = true;
@@ -89,6 +98,18 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
       const link = document.createElement("a"); link.href = url; link.download = file.name; link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) { setFileError(error instanceof Error ? error.message : "下载文件失败"); }
+  }
+
+  async function learnFromFile() {
+    if (!selectedEntry || !canLearn || learning) return;
+    setLearning(true); setLearningError("");
+    try {
+      const bytes = await getWorkspaceFileContent(workspaceId, selectedEntry.path);
+      const { document } = await importKnowledge(new File([bytes], selectedEntry.name, { type: bytes.type }));
+      navigate(`/workspaces/${encodeURIComponent(workspaceId)}/learning?${new URLSearchParams({ document: document.id })}`);
+    } catch (error) {
+      setLearningError(error instanceof Error ? error.message : "无法将文件用作学习资料");
+    } finally { setLearning(false); }
   }
 
   function tree(path: string, depth: number) {
@@ -126,11 +147,17 @@ export default function WorkspaceFilesPanel({ workspaceId, rootPath, onEdit, onS
       <p className="workspace-file-root" title={rootPath}>{rootPath}</p>
     </aside>
     <section className="workspace-file-preview" aria-label="文件预览">
-      <header className="workspace-preview-toolbar"><div className="workspace-preview-mode"><span>预览</span><button type="button" onClick={onShowChanges}>修改对比</button></div>{binarySelected&&<><span className="workspace-preview-active-file" title={selectedPath}>{selectedPath}</span>{documentMetadata?.path === selectedPath && <span className="workspace-preview-file-meta">{documentMetadata.label}</span>}</>}{file && <Button variant="ghost" size="sm" onClick={() => void download()}><Download size={15} />下载文件</Button>}</header>
+      <header className="workspace-preview-toolbar"><div className="workspace-preview-mode"><span>预览</span><button type="button" onClick={onShowChanges}>修改对比</button></div>{binarySelected&&<><span className="workspace-preview-active-file" title={selectedPath}>{selectedPath}</span>{documentMetadata?.path === selectedPath && <span className="workspace-preview-file-meta">{documentMetadata.label}</span>}</>}
+        <div className="flex flex-wrap items-center gap-2">
+          {canLearn && <Button variant="secondary" size="sm" disabled={learning} loading={learning} onClick={() => void learnFromFile()}><BookOpen size={15} />用于学习</Button>}
+          {file && <Button variant="ghost" size="sm" onClick={() => void download()}><Download size={15} />下载文件</Button>}
+        </div>
+      </header>
       <div className="workspace-preview-content scrollbar-thin" data-mode={binarySelected?"document":"text"}>
+        {learningError && <ErrorState title="文件暂不能用于学习" description={learningError} />}
         {binarySelected ? <ResourcePreviewPane key={`${workspaceId}:${selectedPath}:${revision}`} file={{name:selectedPath.split(/[\\/]/).pop()!,size:selectedEntry?.size}} source={{kind:"workspace",workspaceId,path:selectedPath}} onMetadataChange={onDocumentMetadata}/> : reading ? <p className="workspace-tree-note" role="status">正在读取文件…</p> : fileError ? <ErrorState title="文件暂不能预览" description={fileError} /> : !file ? <EmptyState icon={<FileText size={24} />} title="选择一个文件" description="从左侧项目文件中选择文件阅读。" /> : <>
           <p className="workspace-preview-filename"><FileText size={14} />{file.path}<span>{file.size < 1024 ? `${file.size} B` : `${(file.size / 1024).toFixed(1)} KB`}</span></p>
-          {/\.(md|markdown)$/i.test(file.name) ? <article className="workspace-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{file.content}</ReactMarkdown></article> : <pre className="workspace-text-preview">{file.content || "（空文件）"}</pre>}
+          {/\.(md|markdown)$/i.test(file.name) ? <article className="workspace-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={markdownLineTailPlugins}>{file.content}</ReactMarkdown></article> : <pre className="workspace-text-preview">{file.content || "（空文件）"}</pre>}
         </>}
       </div>
       <footer className="workspace-git-summary"><GitBranch size={17} /><span>{gitError ? "Git 状态读取失败" : !git ? "正在读取 Git 状态…" : git.is_repository ? `Git：${git.files.length} 个文件变更${git.branch ? ` · ${git.branch}` : ""}` : "当前目录尚未初始化 Git"}</span><button type="button" onClick={onShowChanges}>查看差异<ChevronRight size={14} /></button>{gitError && <span className="sr-only">{gitError}</span>}</footer>

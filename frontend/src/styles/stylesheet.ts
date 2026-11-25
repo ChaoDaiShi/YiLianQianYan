@@ -49,4 +49,8 @@ export const stylesheetText = [
   "ui-optimization/management-preview.css",
   "ui-optimization/learning-creation-preview.css",
   "ui-optimization/workspace-preview.css",
+  "workspaceIcons.css",
+  "ui-optimization/experience-density.css",
+  "desktop-workspace.css",
+  "frosted-surfaces.css",
 ].map(styleFile).join("\n");

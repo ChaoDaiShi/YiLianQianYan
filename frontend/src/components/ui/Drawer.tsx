@@ -38,6 +38,7 @@ export default function Drawer({
   const isDraggingRef = useRef(false);
   const startXRef = useRef(0);
   const startWidthRef = useRef(width ?? MIN_WIDTH);
+  const previousUserSelect = useRef("");
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 960);
 
   useEffect(() => {
@@ -47,6 +48,13 @@ export default function Drawer({
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  useEffect(() => () => {
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      document.body.style.userSelect = previousUserSelect.current;
+    }
+  }, [open]);
 
   const clampWidth = useCallback((val: number) => {
     const maxAllowed = Math.min(MAX_WIDTH, (typeof window !== "undefined" ? window.innerWidth : 1024) - 16);
@@ -59,6 +67,7 @@ export default function Drawer({
     startXRef.current = e.clientX;
     startWidthRef.current = width ?? MIN_WIDTH;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    previousUserSelect.current = document.body.style.userSelect;
     document.body.style.userSelect = "none";
   };
 
@@ -74,7 +83,7 @@ export default function Drawer({
   const handlePointerUp = (e: React.PointerEvent) => {
     if (!isDraggingRef.current) return;
     isDraggingRef.current = false;
-    document.body.style.userSelect = "";
+    document.body.style.userSelect = previousUserSelect.current;
     try {
       (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {
@@ -107,7 +116,7 @@ export default function Drawer({
   return (
     <div className="fixed inset-0 z-[var(--z-rail-drawer,50)] flex" role="presentation">
       <div
-        className="absolute inset-0 bg-[var(--backdrop)] backdrop-blur-sm"
+        className="ui-dialog-scrim absolute inset-0"
         aria-hidden="true"
         onClick={onClose}
       />
@@ -140,6 +149,7 @@ export default function Drawer({
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
+            onLostPointerCapture={handlePointerUp}
             onKeyDown={handleKeyDown}
             className={cn(
               "absolute top-0 bottom-0 z-20 w-2 cursor-col-resize hover:bg-[var(--accent-primary)]/40 focus-visible:bg-[var(--accent-primary)] focus-visible:outline-none transition-colors",

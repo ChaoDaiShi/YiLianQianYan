@@ -1,0 +1,15 @@
+.plugin-service-panel { min-width: 0; width: 100%; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+.plugin-service-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.plugin-service-status { display: grid; gap: 0; margin: 0; border-block: 1px solid var(--border-soft); }
+.plugin-service-status > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); padding: 8px 0; gap: 12px; }
+.plugin-service-status dt, .plugin-service-help { color: var(--text-muted); font-size: 13px; }
+.plugin-service-status dd, .plugin-service-command dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.plugin-service-status dd span { display: block; margin-top: 5px; font-size: 13px; }
+.plugin-service-channel { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.plugin-service-channel select { flex: 1 1 180px; min-width: 0; max-width: 100%; padding: 9px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-solid); }
+.plugin-service-notice { margin: 0; padding: 12px; border: 1px solid var(--border-soft); border-radius: 8px; overflow-wrap: anywhere; font-size: 13px; }
+.plugin-service-command { display: grid; gap: 8px; margin-block: 16px 0; font-size: 13px; }
+.plugin-service-command dt { color: var(--text-muted); }
+.plugin-service-details summary { width: fit-content; max-width: 100%; cursor: pointer; font-size: 13px; }
+.plugin-service-details .plugin-service-status { border: 0; }
+@media (max-width: 600px) { .plugin-service-panel { padding: 12px; } .plugin-service-status > div { grid-template-columns: minmax(0, 1fr); gap: 6px; } .plugin-service-channel { align-items: stretch; flex-direction: column; } .plugin-service-channel select { flex: none; width: 100%; } }

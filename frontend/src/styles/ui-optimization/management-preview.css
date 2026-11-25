@@ -141,7 +141,7 @@
   .management-status-tabs { gap: 5px; }
   .management-status-tabs button { padding: 7px 15px; }
   .management-automation-row { grid-template-columns: 34px minmax(0, 1fr) 36px 25px; padding: 16px 12px; gap: 10px; }
-  .management-automation-row > .ui-badge { grid-column: 2; grid-row: 2; justify-self: start; }
+  .management-automation-row > .automation-runtime-status { grid-column: 2; grid-row: 2; justify-self: start; }
   .management-automation-icon { width: 34px; height: 38px; }
   .management-automation-name { grid-column: 2; }
   .management-automation-time { grid-column: 2 / -1; grid-row: 3; }

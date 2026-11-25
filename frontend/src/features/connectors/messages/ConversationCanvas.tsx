@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { createConversationBranch } from "../../../api/conversations";
 import { bindResources } from "../../../api/resources";
@@ -12,6 +12,7 @@ import type { ChatRequestOptions } from "../../../components/chat/chatRequestOpt
 import { useSelectedMessageFocus } from "./useSelectedMessageFocus";
 import { originLabel } from "../../../components/chat/conversationHistoryModel";
 import { Button } from "../../../components/ui";
+import PageShell from "../../../components/layout/PageShell";
 import { sendMessage, stopGeneration, type AgentEvent } from "../../../api/chat";
 import { getMessageCanvas, saveMessageCanvasLayout, type ConnectorMessage, type MessageCanvasOverview } from "../../../api/connectorMessages";
 import { ancestorPath, layoutMessageTree, placeNewMessages, type MessagePosition } from "./messageTree";
@@ -47,7 +48,10 @@ const explain = (cause: unknown) => cause instanceof Error ? cause.message : Str
 interface Turn { conversation: string; controller: AbortController | null; cancelled: boolean; ended: boolean }
 interface LiveNode { id: string; conversation: string; parentId: string | null; previousIds: string[]; content: string; reasoning: string; createdAt: number }
 
-function Overview({ initialConversationId }: { initialConversationId?: string | null }) {
+interface ConversationCanvasProps { initialConversationId?: string | null; canvasActions: ReactNode }
+const sourceChoices = [{ id: "desktop", label: "桌面" }, { id: "channel", label: "渠道" }, { id: "all", label: "全部来源" }];
+
+function Overview({ initialConversationId, canvasActions }: ConversationCanvasProps) {
   const { conversationRefresh } = useGlobalVoiceContext();
   const flow = useReactFlow<SpeechNode>();
   const canvasWidth=useStore(state=>state.width);
@@ -143,17 +147,28 @@ function Overview({ initialConversationId }: { initialConversationId?: string | 
       const conversation=camera.startsWith("conversation:")?overview?.conversations.find(item=>item.id===camera.slice("conversation:".length)):null;
       const target=conversation?.nodes[conversation.nodes.length-1]?.id??camera;
       const family=conversation?conversationFamilies(overview?.conversations??[]).find(item=>item.conversationIds.includes(conversation.id)):null;
-      const ids=camera==="fit"?null:new Set(family?(overview?.conversations.filter(item=>family.conversationIds.includes(item.id)).flatMap(item=>item.nodes.map(node=>node.id))??[]):ancestorPath(all,target).slice(-3));
+      const fitAll = camera === "fit";
+      const ids=fitAll?null:new Set(family?(overview?.conversations.filter(item=>family.conversationIds.includes(item.id)).flatMap(item=>item.nodes.map(node=>node.id))??[]):ancestorPath(all,target).slice(-3));
       if(ids&&liveNode?.id===target){ids.add(target);ancestorPath(all,liveNode.parentId).slice(-2).forEach(id=>ids.add(id));}
       const visible=flow.getNodes().filter(node=>!ids||ids.has(node.id));
       if(!visible.length)return;
-      void flow.fitView({nodes:visible,padding:.18,minZoom:camera==="fit"||Boolean(conversation)?0.1:0.45,maxZoom:.95,duration:180}).then(fitted=>{if(fitted)setCamera(current=>current===camera?null:current);});
+      void flow.fitView({
+        nodes: visible,
+        padding: .18,
+        minZoom: fitAll || conversation ? 0.1 : 0.45,
+        maxZoom: .95,
+        duration: fitAll ? 0 : 180,
+      }).then(fitted => {
+        if (fitted) setCamera(current => current === camera ? null : current);
+      });
     });
     return()=>cancelAnimationFrame(frame);
   }, [camera, initialized, flow, overview, canvasWidth, canvasHeight, liveNode?.id]);
 
   async function persist(next: Record<string, MessagePosition>, cameraPosition = viewport) {
-    const messageIds = new Set(overview?.conversations.flatMap(conversation => conversation.nodes.map(message => message.id)));
+    // React Flow can emit a viewport event before the saved layout has loaded.
+    if (!overview) return;
+    const messageIds = new Set(overview.conversations.flatMap(conversation => conversation.nodes.map(message => message.id)));
     try { await saveMessageCanvasLayout({ nodes: Object.entries(next).filter(([id]) => messageIds.has(id)).map(([id, point]) => ({ id, ...point })), viewport: cameraPosition }); }
     catch (cause) { if (mounted.current) setError(explain(cause)); }
   }
@@ -294,12 +309,20 @@ function Overview({ initialConversationId }: { initialConversationId?: string | 
   const focused=messages.find(message=>message.id===selected);
 
   return <section className="message-branch-workspace conversation-canvas" aria-label="对话组消息画布" data-conversation-group={familyFilter}>
-    <header className="message-branch-toolbar">
-      <div className="canvas-source-filter" role="group" aria-label="画布会话来源">{[{id:"desktop",label:"桌面"},{id:"channel",label:"渠道"},{id:"all",label:"全部来源"}].map(source=><button type="button" key={source.id} aria-pressed={sourceFilter===source.id} disabled={busy||forking} onClick={()=>openSource(source.id)}>{source.label}</button>)}</div>
-      <label>对话组<select aria-label="当前对话组" value={familyFilter} disabled={busy||forking||loading} onChange={event=>openFamily(event.target.value)}>{!familyFilter&&<option value="">{sourceFamilies.length?"选择对话组":"暂无对话组"}</option>}{sourceFamilies.map(family=><option key={family.id} value={family.id}>{family.title}</option>)}</select></label>
-      {familyEntries.length>0&&<label>续聊路径<select aria-label="当前续聊路径" value={activePath??""} disabled={busy||forking} onChange={event=>openPath(event.target.value)}>{familyEntries.map((entry,index)=><option key={entry.id} value={entry.id}>{entry.id===familyFilter?"主线":`分支 ${index}`} · {entry.title}</option>)}</select></label>}
-      <Button variant="secondary" size="sm" onClick={()=>setCamera("fit")}><Maximize2 size={14}/>适应画布</Button><Button variant="secondary" size="sm" disabled={loading} onClick={()=>{setError("");void refresh().catch(cause=>setError(explain(cause)));}}><RefreshCw size={14}/>刷新</Button><span>{messages.length} 条消息 · {familyEntries.length} 条路径</span>
-    </header>
+    <PageShell.Header title="画布" className="message-canvas-header" actions={<div className="message-branch-toolbar">
+      <div className="canvas-toolbar-group">
+        <div className="canvas-source-filter" role="group" aria-label="画布会话来源">{sourceChoices.map(source=><button type="button" key={source.id} aria-pressed={sourceFilter===source.id} disabled={busy||forking} onClick={()=>openSource(source.id)}>{source.label}</button>)}</div>
+        <select className="canvas-source-select" aria-label="画布会话来源" value={sourceFilter} disabled={busy||forking} onChange={event=>openSource(event.target.value)}>
+          {sourceChoices.map(source=><option key={source.id} value={source.id}>{source.label}</option>)}
+        </select>
+        <label><span className="canvas-field-caption">对话组</span><select aria-label="当前对话组" value={familyFilter} disabled={busy||forking||loading} onChange={event=>openFamily(event.target.value)}>{!familyFilter&&<option value="">{sourceFamilies.length?"选择对话组":"暂无对话组"}</option>}{sourceFamilies.map(family=><option key={family.id} value={family.id}>{family.title}</option>)}</select></label>
+        <label><span className="canvas-field-caption">续聊路径</span><select aria-label="当前续聊路径" value={activePath??""} disabled={busy||forking||loading||!familyEntries.length} onChange={event=>openPath(event.target.value)}>{!activePath&&<option value="" disabled>{familyEntries.length?"选择续聊路径":"暂无续聊路径"}</option>}{familyEntries.map((entry,index)=><option key={entry.id} value={entry.id}>{entry.id===familyFilter?"主线":`分支 ${index}`} · {entry.title}</option>)}</select></label>
+        <Button variant="secondary" size="sm" iconOnly className="canvas-toolbar-icon" aria-label="适应画布" title="适应画布" onClick={()=>setCamera("fit")}><Maximize2 size={14}/></Button>
+        <Button variant="secondary" size="sm" iconOnly className="canvas-toolbar-icon" aria-label="刷新" title="刷新" disabled={loading} onClick={()=>{setError("");void refresh().catch(cause=>setError(explain(cause)));}}><RefreshCw size={14}/></Button>
+        <span className="message-canvas-metrics">{messages.length} 条消息 · {familyEntries.length} 条路径</span>
+      </div>
+      {canvasActions}
+    </div>} />
     {error && <p className="message-branch-error" role="alert">{error}</p>}
     <div className="message-canvas-layout"><div className="message-canvas-primary"><div className="conversation-canvas-shell"><div className="message-branch-stage"><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} viewport={viewport} onViewportChange={setViewport} minZoom={0.1} maxZoom={2} nodesConnectable={false} deleteKeyCode={null}
       onNodesChange={onNodesChange}
@@ -310,11 +333,11 @@ function Overview({ initialConversationId }: { initialConversationId?: string | 
 
     </div>
     {(busy || activity.length > 0) && <div className="message-branch-activity" role="status">{activity.slice(-3).map((line, index) => <p key={index}>{line}</p>)}{activeConversation && <Link to={`/chat/${activeConversation}`}>打开当前执行对话与审批</Link>}</div>}
-    <BranchComposer contextLabel="从当前路径的最新消息继续" parent={branchParent??undefined} onSend={send} onStop={()=>void stop()} busy={busy} disabled={!activePath||loading||forking} emptyHint="选择一个对话组开始" conversationId={activePath} conversationTitle={activePath?byConversation.get(activePath)?.title:undefined}/>
+    <BranchComposer continuingPath onSend={send} onStop={()=>void stop()} busy={busy} disabled={!activePath||loading||forking} emptyHint="选择一个对话组开始" conversationId={activePath}/>
     </div>{focused&&<MessageSelectionPanel key={focused.id} message={focused} title={byConversation.get(focused.conversation_id)?.title} origin={originLabel(byConversation.get(focused.conversation_id)?.origin)} busy={busy||forking} onClose={()=>setSelected(null)} onBranch={()=>chooseBranch(focused)}/>}</div>
   </section>;
 }
 
-export default function ConversationCanvas(props: { initialConversationId?: string | null }) {
+export default function ConversationCanvas(props: ConversationCanvasProps) {
   return <ReactFlowProvider><Overview {...props} /></ReactFlowProvider>;
 }

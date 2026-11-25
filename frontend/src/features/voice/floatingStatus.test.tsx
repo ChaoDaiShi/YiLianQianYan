@@ -5,10 +5,10 @@ import MonitorOverlay from "../monitor/MonitorOverlay";
 import type { CallPresentation } from "./callPresentation";
 import type { MonitorProjection } from "../monitor/TokenUsagePanel";
 
-const projection = vi.hoisted(() => ({ state: null as unknown, error: null as string | null }));
+const projection = vi.hoisted(() => ({ state: null as unknown, error: null as string | null, expanded: false }));
 vi.mock("./floatingSurface", async importOriginal => ({
   ...await importOriginal<typeof import("./floatingSurface")>(),
-  useFloatingSubscriber: () => ({ ...projection, expanded: false, send: vi.fn() }),
+  useFloatingSubscriber: () => ({ ...projection, send: vi.fn() }),
 }));
 const call: CallPresentation = {
   phase: "listening", conversation_title: "当前通话", browsing_conversation_title: null,
@@ -47,5 +47,31 @@ describe("collapsed floating status", () => {
     expect(html).toContain(`data-status="${status}"`);
     expect(html).toContain(label); expect(html).toContain('role="status"');
     expect(html).toContain("展开 Token 监控 · ");
+  });
+});
+
+describe("expanded floating call status", () => {
+  function renderCall(state: CallPresentation | null, error: string | null = null) {
+    Object.assign(projection, { state, error, expanded: true });
+    return renderToStaticMarkup(<CallOverlay />);
+  }
+
+  it("renders the host wait only while awaiting the first call projection", () => {
+    expect(renderCall(null)).toContain("等待连接主窗口中的通话服务");
+    const active = renderCall(call);
+    expect(active).not.toContain("等待连接主窗口中的通话服务");
+    expect(active).toContain("正在聆听");
+    expect(active).toContain("当前通话");
+    expect(active).toContain('aria-label="结束通话"');
+    expect(active).toContain('aria-label="麦克风静音"');
+    expect(active).toContain('aria-label="关闭扬声器"');
+    expect(renderCall(null, "浮窗连接失败")).not.toContain("等待连接主窗口中的通话服务");
+  });
+
+  it("keeps connecting readiness available in a disclosure and shows notices directly", () => {
+    const html = renderCall({ ...call, phase: "connecting", notice: "请授权使用麦克风" });
+    expect(html).toContain('<details class="call-readiness"><summary>连接详情</summary>');
+    expect(html).toContain("语音识别");
+    expect(html).toContain("请授权使用麦克风");
   });
 });

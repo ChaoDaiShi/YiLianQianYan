@@ -21,7 +21,7 @@ const guest: CloudIdentity = {
 };
 
 it("presents guest mode as complete local use rather than an error", () => {
-  expect(identityPresentation(guest)).toEqual({ label: "仅本地", tone: "default", description: "核心功能可用，登录后可启用跨设备同步。" });
+  expect(identityPresentation(guest)).toEqual({ label: "仅本地", tone: "default" });
 });
 
 it("keeps sync backlog and errors visible", () => {
@@ -33,7 +33,11 @@ it("keeps sync backlog and errors visible", () => {
     last_success_at: 1,
     last_error_code: "SERVICE_UNAVAILABLE",
   };
-  expect(syncPresentation(sync)).toEqual({ label: "需要处理", tone: "warning", detail: "3 项待同步 · 1 项冲突 · 2 项失败" });
+  const identity = { ...guest, status: "authenticated" as const };
+  expect(syncPresentation({ identity, sync, sync_existing_choice: "sync" })).toEqual({ label: "需要处理", tone: "warning", detail: "3 项待同步 · 1 项冲突 · 2 项失败" });
+  expect(syncPresentation({ identity, sync, sync_existing_choice: "local_only" })).toMatchObject({ label: "仅本地", detail: "3 项待同步 · 1 项冲突 · 2 项失败" });
+  expect(syncPresentation({ identity: { ...identity, status: "offline_authenticated" }, sync, sync_existing_choice: "sync" })).toMatchObject({ label: "离线，等待联网", detail: "3 项待同步 · 1 项冲突 · 2 项失败" });
+  expect(syncPresentation({ identity: guest, sync, sync_existing_choice: "undecided" })).toMatchObject({ label: "登录后可用" });
 });
 
 it("requires model readiness but keeps identity search and voice optional", () => {

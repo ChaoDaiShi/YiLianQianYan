@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { listLlmModels } from "../../api/system";
-import { getProviderReadiness } from "../../api/providerConnection";
+import { getChatModelReadiness } from "../../api/providerConnection";
 import type { LlmModel, LlmModelPayload } from "../../types";
 import { PROVIDER_PRESETS, type ProviderPresetId } from "../llm/llmModelUtils";
 import { connectSetupModel, type ConnectionStage } from "./connectSetupModel";
 
 const initialDraft = () => ({
-  provider: "deepseek", name: PROVIDER_PRESETS.deepseek.model,
+  provider: "deepseek", name: "",
   base_url: PROVIDER_PRESETS.deepseek.baseUrl, api_key: "",
 });
 
@@ -32,7 +32,7 @@ export function useQuickModelSetup() {
   const load = async () => {
     setLoading(true);
     setLoadError("");
-    const [models, readiness] = await Promise.all([listLlmModels(), getProviderReadiness()]);
+    const [models, readiness] = await Promise.all([listLlmModels(), getChatModelReadiness(null)]);
     if (!models || !readiness) {
       setLoadError("无法读取模型配置，请确认本地服务可用后重新加载。");
     } else {
@@ -40,7 +40,7 @@ export function useQuickModelSetup() {
       if (active) {
         setProfile(active);
         setDraft({ provider: active.provider, name: active.model, base_url: active.base_url, api_key: "" });
-        setReady(Boolean(active.verified_at && !active.last_error && readiness.model.available));
+        setReady(Boolean(active.verified_at && !active.last_error && readiness.available));
       }
     }
     setLoading(false);
@@ -54,7 +54,7 @@ export function useQuickModelSetup() {
   };
   const changeProvider = (provider: ProviderPresetId) => {
     const preset = PROVIDER_PRESETS[provider];
-    setDraft({ provider, name: preset.model, base_url: preset.baseUrl, api_key: "" });
+    setDraft({ provider, name: "", base_url: preset.baseUrl, api_key: "" });
     setProfile(null);
     setReady(false);
     setMessage("");
@@ -81,8 +81,8 @@ export function useQuickModelSetup() {
       }
       setProfile(result.model);
       setStage("checking");
-      const readiness = await getProviderReadiness();
-      if (!readiness?.model.available) {
+      const readiness = await getChatModelReadiness(null);
+      if (!readiness?.available) {
         setMessage("模型已启用，但未能确认可用状态，请检查本地服务后重试。");
         return false;
       }

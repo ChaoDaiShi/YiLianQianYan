@@ -3,7 +3,7 @@
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer .composer-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas: "feedback feedback feedback" "mode input actions";
+  grid-template-areas: "mode input actions";
   align-items: center;
   gap: 0 8px;
   width: 100%;
@@ -50,12 +50,47 @@
 .compact-composer .chat-voice-listening,.compact-composer .chat-voice-meter { position: absolute; bottom: 40px; padding: 3px 7px; border-radius: 8px; background: var(--surface-solid); white-space: nowrap; font-size:0.625rem; }
 .compact-composer .chat-voice-listening { right: 60px; }
 .compact-composer .chat-voice-meter { right: 0; }
-.compact-composer .composer-feedback { grid-area: feedback; padding-bottom: 8px; min-width: 0; }
+.compact-composer .composer-feedback { padding: 0 10px 6px; overflow-wrap: anywhere; }
+.compact-composer .composer-attachments {
+  max-height: 132px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-bottom: 8px;
+  padding: 3px 6px;
+}
+.compact-composer .composer-attachments .resource-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 158px), 1fr));
+  gap: 7px;
+  margin: 0;
+}
+.compact-composer .composer-attachments .resource-card-shell { width: 100%; }
+.compact-composer .composer-attachments .resource-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 0 8px;
+  min-height: 50px;
+  padding: 5px 30px 5px 5px;
+  border-radius: 12px;
+}
+.compact-composer .composer-attachments .resource-card-visual {
+  grid-row: span 2;
+  height: 34px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.compact-composer .composer-attachments .resource-card-visual > svg { width: 17px; }
+.compact-composer .composer-attachments :is(.resource-card-expand, .resource-card-caption > svg) { display: none; }
+.compact-composer .composer-attachments .resource-card-caption { padding: 0; font-size: .75rem; line-height: 1.25; }
+.compact-composer .composer-attachments .resource-card-status { padding: 0; font-size: .6875rem; }
+.compact-composer .composer-attachments .resource-card-remove { top: 9px; right: 5px; }
+.composer-attachment-count { margin: 0 0 4px; color: var(--text-secondary); font-size: var(--font-size-caption); }
 .compact-composer[data-workspace-mode="work"] .composer-card,.compact-composer[data-workspace-mode="create"] .composer-card,
 .workbench-grid .home-composer.compact-composer[data-workspace-mode="work"] .composer-card,.workbench-grid .home-composer.compact-composer[data-workspace-mode="create"] .composer-card,
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode="work"] .composer-card,
 .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode="create"] .composer-card {
-  grid-template-areas: "feedback feedback feedback" "input input input" "mode . actions";
+  grid-template-areas: "input input input" "mode . actions";
   min-height: 92px;
   row-gap: 0;
   padding: 8px 12px;
@@ -63,22 +98,115 @@
 }
 .compact-composer[data-workspace-mode="work"] .composer-textarea,.compact-composer[data-workspace-mode="create"] .composer-textarea,
 .workbench-grid .home-composer.compact-composer[data-workspace-mode="work"] textarea,.workbench-grid .home-composer.compact-composer[data-workspace-mode="create"] textarea { min-height: 36px; max-height: 128px; }
-.composer-popover-backdrop { position: fixed; inset: 0; z-index: 119; border: 0; padding: 0; background: transparent; cursor: default; }
-.composer-popover { position: fixed; z-index: 120; width: 296px; max-width: calc(100vw - 24px); max-height: 70vh; overflow: auto; padding: 8px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--surface-solid); box-shadow: var(--shadow-float); color: var(--text-primary); }
-.composer-menu-options { display: grid; gap: 3px; }
-.composer-menu-options button { display: flex; width: 100%; align-items: center; gap: 10px; border: 0; border-radius: 10px; padding: 10px; background: transparent; text-align: left; }
-.composer-menu-options button:hover,.composer-menu-options button[aria-pressed="true"] { background: var(--accent-soft); }
-.composer-menu-options button > span:first-of-type { flex: 1; }
-.composer-menu-options strong { display: block; font-size:0.75rem; font-weight: 500; }
-.composer-menu-options small { display: block; margin-top: 3px; font-size:0.6875rem; line-height: 1.5; color: var(--text-muted); }
-.composer-menu-hint { margin: 4px 8px; font-size:0.625rem; line-height: 1.6; color: var(--text-faint); }
-.composer-model-options { display: grid; gap: 12px; padding: 8px; font-size:0.75rem; }
-.composer-model-options label { display: grid; gap: 7px; color: var(--text-secondary); }
-.composer-model-options select { width: 100%; max-width: none; padding: 8px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-muted); color: var(--text-primary); }
+.composer-popover {
+  position: fixed;
+  z-index: 120;
+  width: min(326px, calc(100vw - 24px));
+  max-height: min(70vh, calc(100vh - 24px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+}
+.composer-popover:focus { outline: none; }
+.composer-menu-options { display: grid; gap: 4px; }
+.composer-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+.composer-option:hover:enabled { background: var(--surface-hover); }
+.composer-option[aria-pressed="true"] { border-color: var(--accent-border); background: var(--accent-soft); }
+.composer-option:focus-visible, .composer-depth input:focus-visible { outline: 2px solid var(--focus-outline); outline-offset: -2px; }
+.composer-option:disabled { opacity: .65; cursor: default; }
+.composer-option-icon { display: grid; place-items: center; width: 33px; height: 33px; border-radius: 10px; background: var(--surface-muted); color: var(--text-secondary); }
+.composer-option[aria-pressed="true"] .composer-option-icon, .composer-depth .composer-option-icon { background: var(--accent-soft); color: var(--accent-soft-fg); }
+.composer-option-check { color: var(--accent-soft-fg); }
+.composer-option[data-important="true"] :is(.composer-option-icon, .composer-option-copy strong) { color: var(--danger); }
+.composer-option[data-important="true"] .composer-option-icon { background: var(--danger-soft); }
+.composer-option-copy { min-width: 0; overflow-wrap: anywhere; }
+.composer-option-copy strong { display: block; font-size: .8125rem; font-weight: 600; line-height: 1.3; }
+.composer-option-copy small { display: block; margin-top: 2px; font-size: .75rem; line-height: 1.4; color: var(--text-muted); }
+.composer-menu-hint { margin: 4px 8px; font-size: .6875rem; line-height: 1.6; color: var(--text-muted); }
+.composer-model-search { display: flex; align-items: center; gap: 6px; margin: 4px 2px 8px; padding: 5px 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface-step-2); color: var(--text-secondary); }
+.composer-model-search input { flex: 1; min-width: 0; background: transparent; color: var(--text-primary); font-size: var(--font-size-caption); }
+.composer-model-search:focus-within { box-shadow: var(--field-focus-shadow); }
+.composer-menu-hint[role="alert"] { color: var(--danger); }
+.composer-model-options { display: grid; gap: 6px; }
+.composer-model-heading { padding: 4px 8px 1px; font-size: .75rem; font-weight: 600; color: var(--text-secondary); }
+.composer-model-list { max-height: min(204px, 32vh); overflow-y: auto; }
+.composer-depth { padding: 8px; border-top: 1px solid var(--border-soft); }
+.composer-depth-label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 4px 10px; }
+.composer-depth input { grid-column: 1 / -1; width: 100%; margin: 4px 0 0; border-radius: 999px; accent-color: var(--accent-soft-fg); }
+.composer-depth-ticks { display: flex; justify-content: space-between; gap: 3px; padding: 1px 3px 0; font-size: .6875rem; color: var(--text-muted); }
+.composer-depth-ticks [data-current="true"] { color: var(--accent-soft-fg); font-weight: 600; }
+
+/* A bound task adds a status region above the empty conversation. Its illustration
+   yields space to the input dock, rather than pushing writing controls off screen. */
+.workbench-grid .chat-region:has(.conversation-goal-control) .home-content {
+  min-height: 0;
+  padding-block: 12px;
+  gap: 10px;
+}
+.workbench-grid .chat-region:has(.conversation-goal-control) .home-hero {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 8px;
+  margin-bottom: 0;
+  justify-content: center;
+}
+.workbench-grid .chat-region:has(.conversation-goal-control) .home-character-scene {
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  max-height: 160px;
+}
+.workbench-grid .chat-region:has(.conversation-goal-control) .home-character-image {
+  height: 100%;
+  width: auto;
+  max-height: 160px;
+  max-width: 100%;
+}
+.workbench-grid .chat-region:has(.conversation-goal-control) :is(.home-status, .home-composer, .home-suggestions) {
+  flex: none;
+  margin-top: 0;
+}
+.workbench-grid .chat-region:has(.conversation-goal-control) .home-suggestions>summary { padding-block: 4px; }
 @media(max-width: 640px) {
   .composer-model-label,.composer-model-trigger > svg:last-child { display: none; }
   .composer-model-trigger { width: 28px; padding: 0; }
   .compact-composer .composer-card { column-gap: 3px; padding-right: 6px; padding-left: 6px; }
   .composer-control { width: 27px; }
   .compact-composer .chat-voice-entry,.compact-composer .chat-voice-microphone,.compact-composer .chat-voice-cancel { width: 27px; }
+}
+
+/* Keep a real writing area when the mode and tool controls share a narrow window. */
+@media (max-width: 900px) {
+  .compact-composer[data-workspace-mode] .composer-card,
+  .workbench-grid .home-composer.compact-composer[data-workspace-mode] .composer-card,
+  .workbench-grid[data-chat-view="conversation"] .conversation-composer .compact-composer[data-workspace-mode] .composer-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "input input" "mode actions";
+    gap: 6px;
+    min-height: 94px;
+    padding: 10px;
+    border-radius: 18px;
+  }
+  .compact-composer .composer-mode-slot { justify-self: start; }
+  .compact-composer .composer-actions { justify-self: end; }
+  .compact-composer .composer-workspace-mode { white-space: nowrap; }
+  .compact-composer .composer-textarea,
+  .workbench-grid .home-composer.compact-composer textarea { min-height: 36px; line-height: 22px; }
 }

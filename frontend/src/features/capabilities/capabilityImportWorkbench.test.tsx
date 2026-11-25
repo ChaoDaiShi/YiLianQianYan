@@ -24,6 +24,8 @@ describe("capability import workbench", () => {
     expect(html).toContain('aria-label="插件列表"');
     expect(html).toContain('aria-label="插件详情"');
     expect(html).toContain("导入插件");
+    expect(html).toContain("开发插件");
+    expect(html).not.toContain('href="/capabilities?category=import&amp;import_tab=packages"');
     expect(html).not.toContain("Markdown Skill");
     expect(html).not.toContain("Skill 目录绝对路径");
     expect(html).not.toContain('role="dialog"');

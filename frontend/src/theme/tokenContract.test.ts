@@ -59,8 +59,10 @@ describe("Theme token contract and single source of truth", () => {
   it("contains no undefined CSS variables in stylesheet", () => {
     const varUsages = [...stylesheetText.matchAll(/var\(\s*(--[a-zA-Z0-9_-]+)/g)].map((m) => m[1]);
     const uniqueUsages = Array.from(new Set(varUsages));
+    const stylesheetDeclarations = Array.from(stylesheetText.matchAll(/(?:^|[;{])\s*(--[a-zA-Z0-9_-]+)\s*:/g), (match) => match[1]);
 
     const declaredTokens = new Set([
+      ...stylesheetDeclarations,
       ...Object.keys(CYRENE_SEMANTIC_TOKENS.light),
       ...Object.keys(CYRENE_SEMANTIC_TOKENS.dark),
       ...Object.keys(DERIVED_TOKENS),

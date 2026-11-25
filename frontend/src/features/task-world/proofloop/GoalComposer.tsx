@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { AlertCircle, CheckSquare, Sparkles, Square, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { createProofDraft, type PlanningStrategy, type ProofDraft } from "../../../api/proofloop";
+import { createProofDraft, type AttentionGoalSource, type PlanningStrategy, type ProofDraft } from "../../../api/proofloop";
 import { Button, Textarea } from "../../../components/ui";
 
 export interface AvailableCapabilityItem {
@@ -13,6 +13,7 @@ export interface AvailableCapabilityItem {
 export interface GoalComposerProps {
   workspaceId: string;
   initialGoal?: string;
+  source?: AttentionGoalSource;
   availableCapabilities?: AvailableCapabilityItem[];
   modelUnavailable?: boolean;
   onDraftCreated: (draft: ProofDraft) => void;
@@ -23,6 +24,7 @@ export interface GoalComposerProps {
 export default function GoalComposer({
   workspaceId,
   initialGoal = "",
+  source,
   availableCapabilities = [],
   modelUnavailable = false,
   onDraftCreated,
@@ -79,6 +81,7 @@ export default function GoalComposer({
         {
           workspace_id: workspaceId || "default",
           user_goal: trimmedGoal,
+          ...(source ? { source } : {}),
           allowed_capability_ids: selectedCapabilities,
           planning: {
             strategy: planningStrategy,
@@ -106,7 +109,7 @@ export default function GoalComposer({
       }
       setLoading(false);
     }
-  }, [goal, workspaceId, selectedCapabilities, planningStrategy, candidateCount, onDraftCreated]);
+  }, [goal, workspaceId, source, selectedCapabilities, planningStrategy, candidateCount, onDraftCreated]);
 
   return (
     <div className={`goal-composer flex flex-col gap-4 rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--surface)] p-4 ${className}`}>
@@ -126,6 +129,8 @@ export default function GoalComposer({
           </button>
         )}
       </div>
+
+      {source && <p className="text-xs text-[var(--text-secondary)] [overflow-wrap:anywhere]">来源观察 {source.observation_id}</p>}
 
       {modelUnavailable && (
         <div className="flex items-start gap-2 rounded-[var(--radius-md)] border border-[var(--warning-border)] bg-[var(--warning-soft)] p-3 text-xs text-[var(--warning-fg)]">

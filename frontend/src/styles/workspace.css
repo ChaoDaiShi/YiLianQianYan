@@ -42,7 +42,7 @@
   .shell-ambient {
     background-image:
       linear-gradient(135deg, rgba(248, 246, 253, 0.06), rgba(239, 232, 250, 0.12)),
-      url("/cyrene-home-background.png");
+      var(--bg-image);
     background-position: center;
     background-repeat: no-repeat;
     background-size: cover;
@@ -349,7 +349,7 @@
   .home-ambient-strong {
     background-image:
       radial-gradient(ellipse at 50% 48%, rgba(255, 255, 255, 0.24), transparent 54%),
-      url("/cyrene-home-background.png");
+      var(--bg-image);
     background-position: center;
     background-repeat: no-repeat;
     background-size: cover;
@@ -649,7 +649,6 @@
 
     .nav-rail-item {
       min-height: 2.25rem !important;
-      width: 3rem !important;
       gap: 0 !important;
 
     }

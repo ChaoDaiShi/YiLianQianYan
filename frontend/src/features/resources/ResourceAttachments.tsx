@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getResourceContent, getResourcePreview, type ResourcePreview } from "../../api/resources";
-import type { Attachment } from "./attachmentQueue";
+import { MAX_ATTACHMENTS, type Attachment } from "./attachmentQueue";
 import { ResourceCard } from "./ResourceCard";
 
 const LABELS = { queued: "等待上传", uploading: "上传中", parsing: "获取解析结果", ready: "已就绪", failed: "失败", removed: "已移除" };
@@ -32,12 +32,19 @@ export function ControlledResourcePreview({ resourceId }: { resourceId: string }
   </div>;
 }
 
-export default function ResourceAttachments({ items, onRemove }: { items: Attachment[]; onRemove: (id: string) => void }) {
-  return <ul aria-label="输入附件" className="resource-card-grid">
-    {items.filter(item=>item.state!=="removed").map(item => <li key={item.id}>
-      <ResourceCard file={{id:item.resourceId||"",name:item.name}} onRemove={()=>onRemove(item.id)} status={LABELS[item.state]} error={item.error}/>
-    </li>)}
-  </ul>;
+export default function ResourceAttachments({ items, onRemove, onRetry, disabled }: {
+  items: Attachment[]; onRemove: (id: string) => void; onRetry: (id: string) => void; disabled: boolean;
+}) {
+  return <section aria-label="待发送附件">
+    <p className="composer-attachment-count">附件 {items.length}/{MAX_ATTACHMENTS} · 每个最多 25 MiB</p>
+    <ul aria-label="输入附件" className="resource-card-grid">
+      {items.map(item => <li key={item.id}>
+        <ResourceCard file={{ id: item.state === "ready" ? item.resourceId || "" : "", name: item.name, mime_type: item.mimeType, size: item.size }}
+          onRemove={() => onRemove(item.id)} onRetry={item.retryable ? () => onRetry(item.id) : undefined} actionsDisabled={disabled}
+          status={LABELS[item.state]} error={item.error} upload={item.state === "uploading" ? { loaded: item.loaded, total: item.size } : undefined} />
+      </li>)}
+    </ul>
+  </section>;
 }
 
 export function ResourcePreviewDisclosure({ resourceId }: { resourceId: string }) {

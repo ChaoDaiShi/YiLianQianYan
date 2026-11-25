@@ -38,7 +38,7 @@ export interface Message {
 export interface ProcessToolCall { toolCallId: string; name: string; args?: Record<string, unknown>; arguments?: string; result?: string; execution?: ToolCallRecord }
 export interface ConversationProcess { reasoning?: string; tools: ProcessToolCall[] }
 
-export type WorkspaceMode = "chat" | "work" | "create";
+export type WorkspaceMode = "auto" | "chat" | "work" | "create";
 export interface Conversation {
   origin?: ConversationOrigin;
   unassigned_attachments?: AttachmentReference[];
@@ -173,6 +173,7 @@ export interface CompactionConfig {
 }
 
 export interface AppConfig {
+  revision?: number;
   agent: AgentConfig;
   model: ModelConfig;
   voice: VoiceConfig;

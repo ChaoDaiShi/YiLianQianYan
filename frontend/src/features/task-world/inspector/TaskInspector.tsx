@@ -60,6 +60,7 @@ interface TaskInspectorProps {
   onAddDependency: (from: string, to: string) => Promise<void>;
   onRemoveDependency: (from: string, to: string) => Promise<void>;
   graphLocked: boolean;
+  executionBlockedReason?: string;
 }
 
 /**
@@ -89,6 +90,7 @@ export default function TaskInspector({
   onAddDependency,
   onRemoveDependency,
   graphLocked,
+  executionBlockedReason,
 }: TaskInspectorProps) {
   const capabilityDraft=useCapabilityDraft(graphId,node?.id,expectedRevision,node?.executor_ref);
   const [argumentError,setArgumentError]=useState("");
@@ -248,12 +250,14 @@ export default function TaskInspector({
       <StateSection node={node} />
 
       <ExecutionSection
+        graphId={graphId}
         node={node}
         saving={saving}
         graphLocked={graphLocked}
         onStartExecution={onStartExecution}
         onCancelExecution={onCancelExecution}
         onRerun={onRerun}
+        blockedReason={executionBlockedReason}
       />
 
       </details>

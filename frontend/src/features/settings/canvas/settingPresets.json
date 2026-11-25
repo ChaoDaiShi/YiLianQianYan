@@ -1,5 +1,5 @@
 [
-  {"id": "model", "label": "对话模型", "description": "配置对话模型和厂商账户", "group": "services", "side": "right"},
+  {"id": "model", "label": "模型配置", "description": "管理厂商账户、模型和用途", "group": "services", "side": "right"},
   {"id": "model-pools", "label": "高级模型池", "description": "配置对话、识图和生图的候选层级", "group": "services", "side": "right"},
   {"id": "stt", "label": "语音识别", "description": "配置语音输入使用的识别服务", "group": "services", "side": "right"},
   {"id": "tts", "label": "语音合成", "description": "配置朗读声音与语音合成服务", "group": "services", "side": "right"},

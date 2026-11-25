@@ -1,31 +1,38 @@
-import { useState } from "react";
-import PersonaDialog from "../../agents/PersonaDialog";
-import { Button } from "../../../components/ui";
-import { Input } from "../../../components/ui";
+import { Link } from "react-router-dom";
 import type { AppConfig } from "../../../types";
 
 interface AgentSettingsProps {
   config: AppConfig & { ai_repair_enabled?: boolean };
-  onAiRepairChange?: (enabled: boolean) => void;
-  updateField: (section: keyof AppConfig, key: string, value: any) => void;
+  onAiRepairChange: (enabled: boolean) => void;
+  linksDisabled: boolean;
 }
 
-export default function AgentSettings({ config, updateField, onAiRepairChange }: AgentSettingsProps) {
-  const [roleOpen,setRoleOpen]=useState(false);
+const ownerLinks = [
+  { path: "/agents?agent=default", label: "编辑伙伴名称与角色" },
+  { path: "/workspaces", label: "管理工作空间目录" },
+];
+
+export default function AgentSettings({ config, onAiRepairChange, linksDisabled }: AgentSettingsProps) {
   return (
-    <section className="settings-card">
-      <header className="settings-card-header">
-        <div><h3>身份与工作区</h3><p>定义智能体名称、默认目录、用户提示词与角色。</p></div>
-      </header>
-      <div className="settings-card-body">
-      <label className="flex items-start gap-3 rounded border border-[var(--border-soft)] p-3">
-        <input type="checkbox" aria-label="AI 辅助修复" checked={config.ai_repair_enabled === true} disabled={!onAiRepairChange} onChange={(event) => onAiRepairChange?.(event.target.checked)} />
-        <span><span className="block font-medium">AI 辅助修复</span><span className="text-xs text-[var(--text-secondary)]">开启后使用当前模型分析真实失败原因，消耗计入任务预算；应用修复前仍需确认。</span></span>
-      </label>
-      <Input label="名称" value={config.agent.name} onChange={(e) => updateField("agent", "name", e.target.value)} />
-      <Input label="工作区根目录" value={config.agent.workspace_root} onChange={(e) => updateField("agent", "workspace_root", e.target.value)} placeholder="默认当前目录" />
-      <div><label className="settings-control-label">角色与用户提示词</label><p className="settings-help">设置小涟的表达方式和角色，保存后用于下一轮文字与语音对话。</p><Button onClick={()=>setRoleOpen(true)}>编辑用户提示词与角色</Button><PersonaDialog open={roleOpen} agentId="default" onClose={()=>setRoleOpen(false)}/></div>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+        {ownerLinks.map(({ path, label }) => <Link key={path} className="focus-ring-token underline aria-disabled:opacity-50" to={path}
+          aria-disabled={linksDisabled || undefined} onClick={event => {
+            if (linksDisabled) event.preventDefault();
+          }}>{label}</Link>)}
       </div>
-    </section>
+      {linksDisabled && <p className="settings-help">保存或放弃当前修改后可打开其他管理页面。</p>}
+      <details className="u2-disclosure">
+        <summary>高级选项</summary>
+        <label className="flex cursor-pointer items-start gap-3 py-2">
+          <input className="mt-1 shrink-0 accent-[var(--accent-soft-fg)]" type="checkbox" aria-label="AI 辅助修复"
+            checked={config.ai_repair_enabled === true} onChange={(event) => onAiRepairChange(event.target.checked)} />
+          <span>
+            <span className="block text-sm font-medium">AI 辅助修复</span>
+            <span className="settings-help block">用当前模型分析失败原因，用量计入任务预算。应用修复前需要确认。</span>
+          </span>
+        </label>
+      </details>
+    </div>
   );
 }

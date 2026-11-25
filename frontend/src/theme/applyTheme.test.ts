@@ -3,6 +3,16 @@ import { buildThemeVariables } from "./applyTheme";
 import { DEFAULT_THEME } from "./presets";
 
 describe("Cyrene semantic variables", () => {
+  it("selects the matching built-in background and uses a supplied custom image", () => {
+    const custom = { ...DEFAULT_THEME, bgMode: "image" as const };
+    const base = import.meta.env.BASE_URL;
+
+    expect(buildThemeVariables(DEFAULT_THEME, "light")["--bg-image"]).toBe(`url("${base}backgrounds/daylight.png")`);
+    expect(buildThemeVariables(DEFAULT_THEME, "dark")["--bg-image"]).toBe(`url("${base}backgrounds/night.png")`);
+    expect(buildThemeVariables(custom, "dark", "data:image/png;base64,AA==")["--bg-image"]).toBe("url(data:image/png;base64,AA==)");
+    expect(buildThemeVariables(custom, "dark", null)["--bg-image"]).toBe(`url("${base}backgrounds/night.png")`);
+  });
+
   it("scales shared typography with the chosen interface size", () => {
     const variables = buildThemeVariables({ ...DEFAULT_THEME, fontSize: 20 }, "light");
     expect(variables["--font-size-base"]).toBe("20px");
@@ -21,7 +31,7 @@ describe("Cyrene semantic variables", () => {
   it("emits the restrained light palette", () => {
     const light = buildThemeVariables(DEFAULT_THEME, "light");
 
-    expect(light["--bg-app"]).toBe("#F8F6FD");
+    expect(light["--bg-app"]).toBe("#F8F6FA");
     expect(light["--surface"]).toContain("rgba");
     expect(light["--text-primary"]).toBe("#292536");
     expect(light["--accent-primary"]).toBe("#ea91b9");

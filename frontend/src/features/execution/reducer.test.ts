@@ -3,6 +3,7 @@ import {
   createInitialAgentRunState,
   createInitialAgentWorkspaceState,
   hydrateToolCallRecords,
+  hydratePersistedExecutionRecords,
   reduceAgentEvent,
   reduceExecutionWorkspace,
   selectActiveRun,
@@ -10,6 +11,36 @@ import {
 } from "./reducer";
 
 describe("reduceAgentEvent", () => {
+  it("shows the same model source during the live turn and after history reload", () => {
+    const source = {
+      scope: "workspace",
+      source: "pool",
+      id: "image-pool",
+      label: "工作区生图",
+      revision: 2,
+      actual_profile: { id: "image-profile", model: "image-model", revision: 3 },
+    } as const;
+    const event = {
+      type: "tool_end",
+      conversation_id: "conv-model",
+      tool_call_id: "generate",
+      tool_name: "image_generation",
+      status: "success",
+      result: "图片已保存",
+      configuration_source: source,
+    };
+    const live = reduceAgentEvent(createInitialAgentRunState("conv-model"), event);
+    const history = hydratePersistedExecutionRecords([
+      { toolCallId: "generate", result: "图片已保存", configurationSource: source },
+      { toolCallId: "legacy", result: "原有结果" },
+    ], "conv-model");
+
+    expect(live.records.generate.configurationSource).toEqual(source);
+    expect(history[0].configurationSource).toEqual(source);
+    expect(history[1].configurationSource).toBeUndefined();
+    expect(history[1].result).toBe("原有结果");
+  });
+
   it("reconciles a partial live thought with the complete persisted provider snapshot", () => {
     let state = createInitialAgentRunState("c");
     state = reduceAgentEvent(state, { type: "reasoning", conversation_id: "c", token: "first " });

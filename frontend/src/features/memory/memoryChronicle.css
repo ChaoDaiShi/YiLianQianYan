@@ -1,0 +1,245 @@
+.memory-chronicle {
+  --memory-ink: #2d2340;
+  --memory-muted: #51466b;
+  --memory-accent: #943d74;
+  --memory-relation: #7457be;
+  --memory-pending: #6e668d;
+  --memory-history: #7768a6;
+  --memory-event: #a54173;
+  --memory-base: #396cae;
+  --memory-paper: #faf7fc;
+  --memory-control: #f0eaf8;
+  --memory-rule: #765b9d40;
+  --memory-star-face: radial-gradient(circle at 31% 24%, #b565ad, #794391 65%, #4a356c);
+  --memory-star-shine: #fff2fd;
+  --memory-star-halo: #9661bc42;
+  --memory-dust: #7263a33c;
+  color: var(--memory-ink);
+  --memory-backdrop:
+    radial-gradient(ellipse at 52% 41%, #fffaff 0, transparent 77%),
+    linear-gradient(112deg, #ebe9fa, #f7eef9 48%, #e6ecf9);
+  position: relative;
+  isolation: isolate;
+  padding: clamp(9px, 1.25vw, 17px);
+}
+
+.memory-chronicle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--memory-backdrop);
+  mask-image: linear-gradient(90deg, transparent, #000 9px, #000 calc(100% - 9px), transparent),
+    linear-gradient(transparent, #000 9px, #000 calc(100% - 9px), transparent);
+  mask-composite: intersect;
+}
+
+[data-color-scheme="dark"] .memory-chronicle {
+  --memory-ink: #f5eaf7;
+  --memory-muted: #c7c0d8;
+  --memory-accent: #f0a7d5;
+  --memory-relation: #b8a5ee;
+  --memory-pending: #abb7dc;
+  --memory-history: #ad9cdb;
+  --memory-event: #ed87bd;
+  --memory-base: #85b4f9;
+  --memory-paper: #232239;
+  --memory-control: #2b2840;
+  --memory-rule: #a492d14f;
+  --memory-star-face: radial-gradient(circle at 28% 23%, #d486c8, #8f4f9c 51%, #593a82 83%);
+  --memory-star-shine: #ffd9f5;
+  --memory-star-halo: #b775cd54;
+  --memory-dust: #baaaf46b;
+  --memory-backdrop:
+    radial-gradient(ellipse at 48% 39%, #2d2c4c 0, transparent 73%),
+    linear-gradient(114deg, #1a1827, #1d1c32 55%, #171e31);
+}
+
+.memory-chronicle-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 22px;
+  border-bottom: 1px solid var(--memory-rule);
+  padding-bottom: 9px;
+}
+
+.memory-chronicle-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--memory-accent);
+  flex: 0 0 auto;
+}
+
+.memory-chronicle-heading h2 {
+  font: 600 20px/1.25 "Noto Serif CJK SC", "Songti SC", SimSun, Georgia, serif;
+  letter-spacing: .15em;
+}
+
+.memory-chronicle-seal {
+  width: 12px;
+  height: 12px;
+  border: 1px solid currentColor;
+  transform: rotate(45deg);
+  display: grid;
+  place-items: center;
+  margin-inline: 2px;
+}
+
+.memory-chronicle-seal::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  background: currentColor;
+}
+
+.memory-chronicle .memory-network-modes {
+  flex: 1 1 600px;
+  justify-content: flex-end;
+  min-width: 0;
+  color: var(--memory-ink);
+}
+
+.memory-chronicle .memory-network-filter {
+  width: clamp(118px, 11vw, 160px);
+}
+
+.memory-chronicle-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 22px;
+  row-gap: 4px;
+}
+
+.memory-chronicle-status p { margin: 0; }
+
+.memory-chronicle .memory-network-modes input {
+  accent-color: var(--memory-accent);
+}
+
+.memory-chronicle .memory-network-filter select,
+.memory-chronicle .memory-network-modes .ui-button,
+.memory-chronicle .memory-space-controls .ui-button {
+  color: var(--memory-ink);
+  background: var(--memory-control);
+  border: 1px solid var(--memory-rule);
+}
+
+.memory-chronicle .memory-network-filter select + svg {
+  color: var(--memory-muted);
+}
+
+.memory-chronicle .memory-network-modes .memory-chronicle-switch {
+  color: var(--memory-paper);
+  background: var(--memory-accent);
+  border-color: var(--memory-accent);
+}
+
+.memory-chronicle .memory-network-toolbar .ui-button,
+.memory-chronicle .memory-inspector-heading .ui-button {
+  color: var(--memory-accent);
+}
+
+.memory-chronicle .ui-button:focus-visible,
+.memory-chronicle select:focus-visible {
+  outline: 2px solid var(--memory-accent);
+  outline-offset: 2px;
+}
+
+.memory-chronicle :is(.memory-graph-legend, .memory-semantic-hint, .memory-network-toolbar, .memory-network-relations, .memory-inspector-scroll small) {
+  color: var(--memory-muted);
+}
+
+.memory-chronicle .memory-network {
+  isolation: isolate;
+}
+
+.memory-chronicle .memory-network::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 21px 29px, var(--memory-dust) 0, var(--memory-dust) 1px, transparent 1.6px),
+    radial-gradient(circle at 58px 75px, var(--memory-dust) 0, var(--memory-dust) .55px, transparent 1.25px),
+    radial-gradient(circle at 83px 17px, var(--memory-dust) 0, var(--memory-dust) .8px, transparent 1.4px);
+  background-size: 151px 131px, 179px 147px, 229px 193px;
+  mask-image: radial-gradient(ellipse, #0008, #0003 73%, transparent);
+}
+
+.memory-chronicle .memory-network .memory-star-core {
+  background: var(--memory-star-face);
+  color: #fff5fe;
+  border-color: var(--memory-star-shine);
+  box-shadow: 0 0 0 1px var(--memory-accent), 0 2px 12px var(--memory-star-halo);
+}
+
+.memory-chronicle .memory-star-core i {
+  border-color: var(--memory-accent);
+  opacity: .55;
+}
+
+.memory-chronicle .memory-star-core i:nth-child(even) {
+  border-style: dotted;
+}
+
+.memory-chronicle .memory-world-node button:is(:focus-visible, [aria-pressed="true"]) .memory-star-core {
+  outline-color: var(--memory-star-shine);
+}
+
+.memory-chronicle .memory-star-content {
+  color: var(--memory-ink);
+  text-shadow: 0 1px 4px var(--memory-paper);
+}
+
+.memory-chronicle .memory-network .react-flow__controls-button,
+.memory-chronicle .memory-network .react-flow__node.memory-world-entity,
+.memory-chronicle .memory-graph-inspector {
+  color: var(--memory-ink);
+  background: var(--memory-paper);
+  border-color: var(--memory-rule);
+}
+
+.memory-chronicle .memory-network .react-flow__arrowhead path { stroke: var(--memory-relation); fill: var(--memory-relation); }
+.memory-chronicle .memory-network .react-flow__edge-path { stroke: var(--memory-relation); }
+.memory-chronicle .memory-network .memory-edge-pending .react-flow__edge-path { stroke: var(--memory-pending); }
+.memory-chronicle .memory-network .react-flow__edge-text { fill: var(--memory-ink); }
+.memory-chronicle .memory-network .react-flow__edge-textbg { fill: var(--memory-paper); }
+
+.memory-chronicle .memory-space-controls,
+.memory-chronicle .memory-space-caption {
+  background: color-mix(in srgb, var(--memory-paper) 70%, transparent);
+  color: var(--memory-muted);
+}
+
+.memory-chronicle .memory-space-marker-label:not(.is-above) rect {
+  fill: var(--memory-paper);
+  stroke: var(--memory-rule);
+}
+
+.memory-chronicle :is(.memory-space-marker-title, .memory-space-link text) {
+  fill: var(--memory-ink);
+  stroke: var(--memory-paper);
+}
+
+.memory-chronicle .memory-space-core-revision { stroke: #392242; }
+.memory-chronicle .memory-space-marker:focus-visible .memory-space-marker-hit,
+.memory-chronicle .memory-space-link:focus-visible .memory-space-link-hit { stroke: var(--memory-accent); }
+.memory-chronicle .memory-space-key-dot { background: var(--memory-accent); border-color: var(--memory-accent); }
+.memory-chronicle .memory-space-key-dot.is-older { background: var(--memory-history); border-color: var(--memory-history); }
+.memory-chronicle .memory-space-key-dot.is-base { background: var(--memory-base); border-color: var(--memory-base); }
+.memory-chronicle :is(.memory-space-key-link, .memory-graph-legend i) { border-color: var(--memory-relation); }
+.memory-chronicle :is(.memory-space-key-pending, .memory-graph-legend .memory-legend-pending) { border-color: var(--memory-pending); }
+.memory-chronicle :is(.memory-space-key-riser, .memory-graph-legend .memory-legend-history) { border-color: var(--memory-history); }
+.memory-chronicle :is(.memory-space-key-event, .memory-graph-legend .memory-legend-event) { border-color: var(--memory-event); }
+
+@media (max-width: 960px) {
+  .memory-chronicle-header { gap: 8px 14px; }
+  .memory-chronicle-heading h2 { font-size: 17px; }
+  .memory-chronicle .memory-network-modes { justify-content: flex-start; flex-basis: 510px; }
+}

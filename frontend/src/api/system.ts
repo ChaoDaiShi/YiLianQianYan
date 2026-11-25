@@ -13,8 +13,32 @@ export async function getSettings() {
   return request<AppConfig>("GET", "/api/settings");
 }
 
-export async function updateSettings(config: AppConfig) {
-  return request<{ status?: string; error?: string }>("PUT", "/api/settings", config);
+export type SettingsPendingApplication =
+  | { field: "skills.directories"; action: "refresh_skill_discovery" }
+  | { field: "subagents.directories"; action: "restart_application" };
+
+export interface SettingsUpdateResult {
+  status?: string;
+  error?: string;
+  code?: string;
+  field?: string;
+  revision?: number;
+  application?: "next_read";
+  pending_application?: SettingsPendingApplication[];
+}
+
+export async function updateSettings(config: AppConfig): Promise<SettingsUpdateResult> {
+  const { revision, ...settings } = config;
+  const result = await requestResult<SettingsUpdateResult>("PUT", "/api/settings", {
+    ...settings, expected_revision: revision,
+  }, true);
+  if (result.ok) return result.data;
+  return {
+    error: result.error,
+    code: typeof result.details?.code === "string" ? result.details.code : undefined,
+    field: typeof result.details?.field === "string" ? result.details.field : undefined,
+    revision: typeof result.details?.revision === "number" ? result.details.revision : undefined,
+  };
 }
 
 export async function listLlmModels() {

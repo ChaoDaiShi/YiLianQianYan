@@ -34,7 +34,7 @@ class ToastManager {
   show(
     message: string,
     type: ToastType = "info",
-    duration = 3000,
+    duration = 2500,
     action?: ToastAction,
   ) {
     const id = crypto.randomUUID();
@@ -66,7 +66,7 @@ export const toastManager = new ToastManager();
 export function showToast(
   message: string,
   type: ToastType = "info",
-  duration = 3000,
+  duration?: number,
   action?: ToastAction,
 ) {
   return toastManager.show(message, type, duration, action);
@@ -77,13 +77,6 @@ const TYPE_ICONS: Record<ToastType, React.ReactNode> = {
   error: <AlertCircle className="h-4 w-4 text-[var(--danger)] shrink-0" />,
   warning: <AlertTriangle className="h-4 w-4 text-[var(--warning)] shrink-0" />,
   info: <Info className="h-4 w-4 text-[var(--info)] shrink-0" />,
-};
-
-const TYPE_BORDERS: Record<ToastType, string> = {
-  success: "border-l-4 border-l-[var(--success)] border-[var(--border-soft)]",
-  error: "border-l-4 border-l-[var(--danger)] border-[var(--border-soft)]",
-  warning: "border-l-4 border-l-[var(--warning)] border-[var(--border-soft)]",
-  info: "border-l-4 border-l-[var(--info)] border-[var(--border-soft)]",
 };
 
 export default function CyreneToast() {
@@ -101,7 +94,7 @@ export default function CyreneToast() {
 
   const content = (
     <div
-      className="pointer-events-none fixed top-4 right-4 z-[var(--z-toast-tooltip,90)] flex flex-col gap-2 max-w-sm w-full"
+      className="pointer-events-none fixed top-4 right-4 z-[var(--z-toast-tooltip,90)] flex w-[calc(100%-2rem)] max-w-sm flex-col gap-2"
       role="region"
       aria-live="polite"
       aria-atomic="true"
@@ -110,12 +103,10 @@ export default function CyreneToast() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`pointer-events-auto flex items-center gap-2.5 rounded-xl bg-[var(--surface-solid)] text-[var(--text-primary)] p-3 shadow-[var(--shadow-float)] backdrop-blur-md animate-scale-in transition-all ${
-            TYPE_BORDERS[toast.type || "info"]
-          }`}
+          className="cyrene-toast glass-popup pointer-events-auto flex items-center gap-2.5 rounded-xl border border-[var(--border-soft)] p-3 text-[var(--text-primary)] shadow-[var(--shadow-float)]"
         >
           {TYPE_ICONS[toast.type || "info"]}
-          <span className="flex-1 text-xs leading-5 break-words font-medium">
+          <span className="min-w-0 flex-1 break-words text-xs leading-5 font-medium [text-wrap:pretty]">
             {toast.message}
           </span>
           {toast.action && (

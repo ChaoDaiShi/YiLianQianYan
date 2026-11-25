@@ -1,15 +1,20 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Check, Copy, GitBranch, Trash2, Undo2, Volume2 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Message } from "../../types";
 import ToolCallCard, { ToolResultContent } from "./ToolCallCard";
-import { isExternalHttpUrl, openExternalUrl } from "./externalLink";
+import ConversationMarkdown from "./ConversationMarkdown";
 import MessageProcess from "./MessageProcess";
+import ReplyImagePreviews, { type OpenReplyImage, type ReplyImage } from "./ReplyImagePreviews";
 import { ResourceCards } from "../../features/resources/ResourceCard";
+import { replyWebSources } from "./ReplyWebSources";
+import { RichReply, hasRichFence } from "./RichContent";
+import SaveAnswerToPage from "./SaveAnswerToPage";
 
 export interface MessageBubbleProps {
   message: Message;
+  conversationId?: string | null;
+  images?: readonly ReplyImage[];
+  onOpenImage?: OpenReplyImage;
   /** TTS stays a deliberate user gesture and is supplied by GlobalVoiceHost. */
   onSpeak?: (text: string) => void;
   onRollback?: (message: Message) => void;
@@ -24,6 +29,9 @@ export function areMessageBubblePropsEqual(
 ) {
   return (
     previous.message === next.message &&
+    previous.conversationId === next.conversationId &&
+    previous.images === next.images &&
+    previous.onOpenImage === next.onOpenImage &&
     previous.onSpeak === next.onSpeak &&
     previous.onRollback === next.onRollback &&
     previous.onDelete === next.onDelete &&
@@ -32,10 +40,11 @@ export function areMessageBubblePropsEqual(
   );
 }
 
-function MessageBubble({ message, onSpeak, onRollback, onDelete, onBranch, actionsDisabled = false }: MessageBubbleProps) {
+function MessageBubble({ message, conversationId, images, onOpenImage, onSpeak, onRollback, onDelete, onBranch, actionsDisabled = false }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle");
+  const sources = useMemo(() => replyWebSources(message.process?.tools ?? []), [message.process]);
 
   if (isTool) {
     return message.content?.startsWith("data:image/") ? (
@@ -56,32 +65,6 @@ function MessageBubble({ message, onSpeak, onRollback, onDelete, onBranch, actio
       setCopyStatus("error");
       window.setTimeout(() => setCopyStatus("idle"), 2000);
     }
-  };
-
-  const renderMarkdownLink = ({
-    href,
-    children,
-    ...props
-  }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
-    const external = Boolean(href && isExternalHttpUrl(href));
-    return (
-      <a
-        {...props}
-        href={href}
-        target={external ? "_blank" : undefined}
-        rel={external ? "noreferrer" : undefined}
-        onClick={
-          external
-            ? (event) => {
-                event.preventDefault();
-                void openExternalUrl(href!);
-              }
-            : undefined
-        }
-      >
-        {children}
-      </a>
-    );
   };
 
   return (
@@ -106,32 +89,14 @@ function MessageBubble({ message, onSpeak, onRollback, onDelete, onBranch, actio
           {!isUser&&message.attachments?.length ? <ResourceCards files={message.attachments}/> : null}
           {isUser ? (
             message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>
-          ) : (
-            <div className="conversation-markdown prose prose-sm max-w-none">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  a: renderMarkdownLink,
-                  table: ({ children, ...props }) => (
-                    <div className="table-scroll-container my-3 max-w-full overflow-x-auto">
-                      <table className="min-w-full divide-y border border-[var(--border-soft)]" {...props}>
-                        {children}
-                      </table>
-                    </div>
-                  ),
-                  pre: ({ children, ...props }) => (
-                    <pre className="code-scroll-container my-3 max-w-full overflow-x-auto rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] p-3 text-xs" {...props}>
-                      {children}
-                    </pre>
-                  ),
-                }}
-              >
-                {message.content}
-              </ReactMarkdown>
-            </div>
-          )}
-          {!isUser && message.content && (
+          ) : conversationId && hasRichFence(message.content)
+            ? <RichReply key={conversationId + ":" + message.id} conversation={conversationId} message={message.id} text={message.content} sources={sources} />
+            : <ConversationMarkdown text={message.content} sources={sources} />}
+          {!isUser && <ReplyImagePreviews images={images} onOpen={onOpenImage} />}
+          {!isUser && (message.content || images?.length) && (
             <div className="conversation-message-actions mt-3 flex flex-wrap items-center gap-1" role="group" aria-label="回答操作">
+              {conversationId && <SaveAnswerToPage conversation={conversationId} message={message.id}
+                imageIds={images?.map(image => image.resourceId)} disabled={actionsDisabled} />}
               {onBranch && <button type="button" onClick={()=>onBranch(message)} disabled={actionsDisabled}
                 className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface-solid)] px-2 py-1.5 text-xs text-[var(--accent-soft-fg)] disabled:opacity-50"
                 title="保留当前路径，从这条回答新建分支" aria-label="从这条回答新建分支"><GitBranch className="h-3.5 w-3.5"/>新建分支</button>}

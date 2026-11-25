@@ -1,0 +1,89 @@
+html:has(.desktop-pet),
+body:has(.desktop-pet) {
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.desktop-pet {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100vw;
+  height: 100vh;
+  padding-top: 8px;
+}
+
+.desktop-pet-character {
+  position: relative;
+  width: calc(100vw - 16px);
+  height: calc(100vh - 24px);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.desktop-pet-character:active { cursor: grabbing; }
+.desktop-pet-character[data-position-locked="true"] { cursor: pointer; }
+.desktop-pet-cubism { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.desktop-pet-character img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  animation: desktop-pet-idle 4s ease-in-out infinite;
+}
+
+.desktop-pet:hover .desktop-pet-character img { animation-play-state: paused; }
+
+.desktop-pet-character img[data-pet-clip] { animation: none; }
+
+.desktop-pet-close {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 4px;
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border: 1px solid var(--border-soft);
+  border-radius: 50%;
+  background: var(--surface-solid);
+  color: var(--text-primary);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.desktop-pet:hover .desktop-pet-close,
+.desktop-pet:focus-within .desktop-pet-close { opacity: 1; }
+
+.desktop-pet :focus-visible { outline: 2px solid var(--focus-outline); }
+
+.desktop-pet-error,
+.desktop-pet-bubble {
+  position: absolute;
+  inset: auto 3px 3px;
+  padding: 2px 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  color: var(--danger-fg);
+  text-align: center;
+  font-size: 10px;
+  pointer-events: none;
+}
+.desktop-pet-bubble { inset-inline: auto; max-width: calc(100vw - 6px); padding-inline: 5px; color: var(--text-primary); }
+
+@keyframes desktop-pet-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-pet-character img { animation: none; }
+}

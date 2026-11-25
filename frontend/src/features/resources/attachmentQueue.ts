@@ -1,7 +1,9 @@
+import { ResourceUploadError } from "../../api/resources";
+
 export type AttachmentState = "queued" | "uploading" | "parsing" | "ready" | "failed" | "removed";
-export interface Attachment { id: string; name: string; state: AttachmentState; resourceId?: string; error?: string }
+export interface Attachment { id: string; name: string; state: AttachmentState; resourceId?: string; error?: string; size?: number; mimeType?: string; loaded?: number; retryable?: boolean }
 export interface AttachmentQueueOptions {
-  upload: (file: File, signal: AbortSignal) => Promise<{ id: string }>;
+  upload: (file: File, signal: AbortSignal, onProgress: (loaded: number) => void) => Promise<{ id: string }>;
   preview: (id: string, signal: AbortSignal) => Promise<{ status: string; error?: string }>;
   changed?: () => void;
 }
@@ -49,11 +51,21 @@ export class AttachmentQueue {
     this.items = this.items.filter(item => item.state !== "removed");
     for (const file of files) {
       const error = validateAttachment(file);
-      const item: Attachment = { id: crypto.randomUUID(), name: file.name, state: error ? "failed" : "queued", ...(error ? { error } : {}) };
+      const item: Attachment = { id: crypto.randomUUID(), name: file.name, size: file.size, mimeType: file.type, state: error ? "failed" : "queued", ...(error ? { error } : {}) };
       this.items.push(item);
       if (!error) this.files.set(item.id, file);
     }
     this.options.changed?.();
+  }
+  retry(id: string): Promise<void> {
+    const item = this.items.find(entry => entry.id === id);
+    if (this.disposed || item?.state !== "failed" || !item.retryable) return Promise.resolve();
+    item.state = "queued";
+    item.error = undefined;
+    item.loaded = undefined;
+    item.retryable = false;
+    this.options.changed?.();
+    return this.process();
   }
   remove(id: string): void {
     const item = this.items.find(item => item.id === id);
@@ -73,22 +85,36 @@ export class AttachmentQueue {
     while (!this.disposed) {
       const item = this.items.find(item => item.state === "queued");
       if (!item) break;
-      const file = this.files.get(item.id); if (!file) continue;
+      const file = this.files.get(item.id);
+      if (!item.resourceId && !file) break;
       const controller = new AbortController(); this.controllers.set(item.id, controller);
       const current = () => !this.disposed && !controller.signal.aborted && item.state !== "removed";
       try {
-        item.state = "uploading"; this.options.changed?.();
-        const resource = await this.options.upload(file, controller.signal);
-        if (!current()) continue;
-        item.resourceId = resource.id; item.state = "parsing"; this.options.changed?.();
-        const preview = await this.options.preview(resource.id, controller.signal);
+        if (!item.resourceId && file) {
+          item.state = "uploading"; this.options.changed?.();
+          const resource = await this.options.upload(file, controller.signal, loaded => {
+            if (!current() || item.state !== "uploading") return;
+            item.loaded = Math.min(loaded, file.size);
+            this.options.changed?.();
+          });
+          if (!current()) continue;
+          item.resourceId = resource.id;
+        }
+        if (!item.resourceId) break;
+        item.state = "parsing"; this.options.changed?.();
+        const preview = await this.options.preview(item.resourceId, controller.signal);
         if (!current()) continue;
         item.state = preview.status === "ready" ? "ready" : "failed";
-        item.error = item.state === "failed" ? preview.error || "无法解析此文件，请移除后重试" : undefined;
+        item.error = item.state === "failed" ? preview.error || "无法解析此文件，请更换附件" : undefined;
       } catch (error) {
-        if (current()) { item.state = "failed"; item.error = error instanceof Error ? error.message : "资源导入失败"; }
+        if (current()) {
+          item.state = "failed";
+          item.error = error instanceof Error ? error.message : "资源导入失败";
+          item.retryable = !(error instanceof ResourceUploadError) || error.retryable;
+        }
       } finally {
-        this.controllers.delete(item.id); this.files.delete(item.id);
+        this.controllers.delete(item.id);
+        if (item.resourceId || !item.retryable) this.files.delete(item.id);
         if (current()) this.options.changed?.();
       }
     }

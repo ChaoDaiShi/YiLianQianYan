@@ -112,6 +112,7 @@ export interface WorkflowNodeRun {
   started_at?: number | null;
   finished_at?: number | null;
   error?: string | null;
+  input?: Record<string, unknown>;
   result?: { summary: string } | null;
 }
 
@@ -119,6 +120,7 @@ export interface WorkflowRunRecord {
   run_id: string;
   workflow_graph_id?: string;
   execution_id: string;
+  parent_execution_id?: string | null;
   subject_id: string;
   status: WorkflowRunStatus;
   created_at: number;
@@ -203,6 +205,7 @@ export async function getWorkflowRun(runId: string) {
 
 export interface WorkflowRunsQuery {
   workflow_graph_id?: string;
+  parent_execution_id?: string;
   status?: WorkflowRunStatus;
   limit?: number;
   offset?: number;
@@ -211,6 +214,7 @@ export interface WorkflowRunsQuery {
 export async function listWorkflowRuns(query: WorkflowRunsQuery = {}) {
   const params = new URLSearchParams();
   if (query.workflow_graph_id) params.set("workflow_graph_id", query.workflow_graph_id);
+  if (query.parent_execution_id) params.set("parent_execution_id", query.parent_execution_id);
   if (query.status) params.set("status", query.status);
   if (query.limit !== undefined) params.set("limit", String(query.limit));
   if (query.offset !== undefined) params.set("offset", String(query.offset));
@@ -219,7 +223,7 @@ export async function listWorkflowRuns(query: WorkflowRunsQuery = {}) {
     "GET",
     `/api/workflow-runs${qs ? `?${qs}` : ""}`
   );
-  return res.ok ? { ok: true, data: res.data.runs } : res;
+  return res.ok ? { ok: true, data: res.data.runs } as const : res;
 }
 
 export async function cancelWorkflowRun(runId: string) {

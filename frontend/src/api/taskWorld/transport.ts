@@ -89,11 +89,13 @@ function errorCode(payload: unknown): string | null {
 }
 
 export function graphSummary(graph: TaskGraphDefinition): TaskGraphSummary {
+  const previewNode = graph.nodes[0];
   return {
     id: graph.id,
     schema_version: graph.schema_version,
     revision: graph.revision,
     node_count: graph.nodes.length,
     edge_count: graph.edges.length,
+    ...(previewNode && { preview_node_title: previewNode.title }),
   };
 }

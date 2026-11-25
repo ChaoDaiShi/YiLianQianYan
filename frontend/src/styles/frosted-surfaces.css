@@ -1,0 +1,167 @@
+:root {
+  --frost-card-tint: #fffaff;
+  --frost-dialog-tint: #fffcff;
+  --frost-card-opacity: clamp(38%, calc(var(--surface-alpha) * 100% - 6%), 96%);
+  --frost-dialog-opacity: clamp(62%, calc(var(--surface-alpha) * 100% + 18%), 98%);
+  --frost-reading-opacity: min(98%, calc(var(--frost-card-opacity) + 12%));
+  --frost-workspace-fill: rgb(255 250 255 / 16%);
+  --frost-card-blur: 24px;
+  --frost-dialog-blur: 32px;
+  --frost-saturation: 112%;
+  --frost-brightness: 100%;
+  --frost-card-filter: blur(calc(var(--frost-card-blur) + var(--surface-blur) / 2)) saturate(var(--frost-saturation)) brightness(var(--frost-brightness));
+  --frost-dialog-filter: blur(calc(var(--frost-dialog-blur) + var(--surface-blur) / 2)) saturate(var(--frost-saturation)) brightness(var(--frost-brightness));
+  --frost-reflection: rgb(255 255 255 / 28%);
+  --frost-edge: rgb(255 255 255 / 72%);
+  --frost-border-gradient: linear-gradient(128deg, rgb(255 255 255 / 96%), rgb(237 148 193 / 82%) 22%, rgb(173 151 244 / 76%) 48%, rgb(140 197 239 / 76%) 76%, rgb(255 211 233 / 90%));
+  --frost-side-light: rgb(237 148 193 / 39%);
+  --frost-side-cool: rgb(132 182 236 / 42%);
+  --frost-bottom-light: rgb(173 151 244 / 36%);
+  --frost-shadow: rgb(54 38 70 / 9%);
+  --frost-scrim: rgb(48 39 62 / 18%);
+}
+
+:root[data-color-scheme="dark"] {
+  --frost-card-tint: #202639;
+  --frost-dialog-tint: #202637;
+  --frost-card-opacity: clamp(42%, calc(var(--surface-alpha) * 100%), 96%);
+  --frost-dialog-opacity: clamp(66%, calc(var(--surface-alpha) * 100% + 24%), 98%);
+  --frost-workspace-fill: rgb(32 38 57 / 22%);
+  --frost-card-blur: 30px;
+  --frost-dialog-blur: 38px;
+  --frost-saturation: 82%;
+  --frost-brightness: 82%;
+  --frost-reflection: rgb(159 177 211 / 17%);
+  --frost-edge: rgb(187 203 234 / 18%);
+  --frost-border-gradient: linear-gradient(128deg, rgb(240 186 225 / 92%), rgb(183 163 242 / 78%) 26%, rgb(116 156 242 / 58%) 53%, rgb(114 210 230 / 75%) 81%, rgb(191 164 251 / 82%));
+  --frost-side-light: rgb(211 157 231 / 42%);
+  --frost-side-cool: rgb(115 198 236 / 38%);
+  --frost-bottom-light: rgb(164 149 244 / 43%);
+  --frost-shadow: rgb(3 6 14 / 30%);
+  --frost-scrim: rgb(5 8 16 / 38%);
+}
+
+:root {
+  --frost-rim: inset 0 1px 0 var(--frost-edge), inset 1px 0 0 var(--frost-side-light),
+    inset -1px 0 0 var(--frost-side-cool), inset 0 -1px 0 var(--frost-bottom-light);
+}
+
+/* Shared cards and existing page-specific card surfaces. */
+:root[data-color-scheme] :is(
+  .glass-card, .glass-surface, .ui-panel,
+  .workspace-project-card, .workspace-project-summary, .workspace-folder-list,
+  .workspace-file-tree, .workspace-file-preview, .workspace-batch-toolbar,
+  .workbench-grid .compact-composer .composer-card,
+  .branch-composer-card .compact-composer .composer-card,
+  .conversation-approval-card, .conversation-tool-card, .agent-progress-card,
+  .resource-card, .u2-artifact-card, .search-result-card,
+  .management-memory-list, .management-agent-list, .management-agent-editor,
+  .management-automation-row, .capability-category-nav, .settings-node-manager, .cloud-section-nav,
+  .software-category-sidebar, .software-catalog,
+  .capability-list-row, .capability-resource-row, .capability-catalog-results--card .capability-catalog-row,
+  .capability-detail-panel, .capability-resource-detail, .capability-filter-surface, .capability-refresh-report,
+  .capability-navigation-card, .knowledge-collections, .knowledge-documents, .knowledge-search-hit,
+  .knowledge-build-claims article, .knowledge-build-sources article,
+  .lc-output-card, .lc-practice-card, .lc-detail, .lc-assets-panel article,
+  .cloud-card, .cloud-auth-card, .preview-monitor-overview,
+  .system-metric-card, .monitor-toolbox-card, .ui-opt-metric-card,
+  .goal-view-card, .goal-view-deliverable, .goal-composer, .plan-review-panel, .acceptance-panel, .repair-review-panel,
+  .connector-node, .message-branch-node, .message-selection-panel, .workflow-canvas-node, .task-world-node,
+  .workflow-editor-library, .workflow-editor-inspector, .workflow-canvas-panel, .workflow-edges-panel,
+  .channel-provider-card, .channels-inbox-card, .channel-management-card,
+  .channel-getting-started, .channel-guide-cards article, .channel-preset-list, .channel-preset-editor,
+  .quick-setup-card, .quick-setup-model-summary, .settings-card:not(.settings-card--flush), .settings-subcard,
+  .settings-overview-list, .settings-overview-more > summary, .settings-status-card,
+  .preview-more .more-directory > section, .preview-plugin-section .navigation-entry,
+  .preview-plugin-page .preview-plugin-content, .user-manual-body
+) {
+  background: linear-gradient(140deg, var(--frost-reflection), transparent 68%),
+    color-mix(in srgb, var(--frost-card-tint) var(--frost-surface-opacity, var(--frost-card-opacity)), transparent);
+  backdrop-filter: var(--frost-card-filter);
+  box-shadow: var(--frost-rim), var(--frost-selection-ring, 0 0 transparent), 0 5px 16px var(--frost-shadow);
+}
+
+:is(.workspace-file-preview, .capability-detail-panel, .capability-resource-detail,
+  .management-agent-editor, .message-selection-panel, .workflow-editor-inspector, .lc-detail, .user-manual-body) {
+  --frost-surface-opacity: var(--frost-reading-opacity);
+}
+
+:is(.workspace-project-card[data-default="true"], .workspace-project-card[data-selected="true"],
+  .workflow-canvas-node-selected, .task-world-node.is-selected, .message-branch-node[data-role="user"],
+  .capability-list-row-selected, .capability-resource-row[aria-current="true"],
+  .capability-catalog-results--card .capability-catalog-row:is([aria-selected="true"], :hover)) {
+  --frost-reflection: color-mix(in srgb, var(--accent-soft) 48%, transparent);
+  --frost-border-opacity: 1;
+}
+
+@layer components {
+  :where(.glass-card, .ui-panel, .workspace-project-card, .cloud-card, .connector-node,
+    .message-branch-node, .workflow-canvas-node, .task-world-node, .capability-list-row,
+    .capability-resource-row, .capability-catalog-results--card .capability-catalog-row) {
+    position: relative;
+  }
+}
+
+:root[data-color-scheme] :is(.glass-card, .ui-panel, .workspace-project-card, .cloud-card,
+  .connector-node, .message-branch-node, .workflow-canvas-node, .task-world-node,
+  .capability-list-row, .capability-resource-row, .capability-catalog-results--card .capability-catalog-row,
+  .shared-dialog)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--frost-border-gradient);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: var(--frost-border-opacity, .76);
+}
+
+.shared-dialog { --frost-border-opacity: 1; }
+
+.task-world-node:is(.is-selected, [data-running="true"]) { --frost-selection-ring: 0 0 0 2px var(--accent-soft); }
+.message-branch-node[data-selected="true"] { --frost-selection-ring: 0 0 0 3px var(--focus-ring-soft); }
+
+:is(.ui-panel[role="button"], .resource-card, .knowledge-search-hit):focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+/* Backdrop filters create a stacking context. Raise a card while its menu is open. */
+.workspace-project-card:has(.workspace-row-menu[open]) { position: relative; z-index: 2; }
+.workspace-preview-page .workspace-batch-toolbar { z-index: 3; }
+
+.app-shell .management-memory-page .management-memory-row:not(.memory-row-selected) { background: transparent; }
+
+/* Portal dialogs inherit the same theme from the document root. */
+:root[data-color-scheme] :is(
+  [role="dialog"], [role="alertdialog"], .glass-popup, .ui-tooltip, .channel-action-menu,
+  .global-voice-panel, .global-voice-pill, .call-window, .call-orb,
+  .workspace-row-menu > div, .settings-canvas-action-list, .memory-page-more-panel,
+  .canvas-studio .studio-panel, .studio-technical-info > dl
+) {
+  background: linear-gradient(140deg, var(--frost-reflection), transparent 70%),
+    color-mix(in srgb, var(--frost-dialog-tint) var(--frost-dialog-opacity), transparent);
+  backdrop-filter: var(--frost-dialog-filter);
+  box-shadow: var(--frost-rim), var(--shadow-float);
+}
+
+.shared-dialog-footer { background-color: color-mix(in srgb, var(--frost-dialog-tint) 26%, transparent); }
+
+:root[data-color-scheme] :is(.ui-dialog-scrim, .execution-history-modal-backdrop) {
+  background: var(--frost-scrim);
+}
+
+.app-shell [role="dialog"] :is(.conversation-sidebar, .execution-sidebar) { background: transparent; }
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-color-scheme] {
+    --frost-card-opacity: 100%;
+    --frost-reading-opacity: 100%;
+    --frost-dialog-opacity: 100%;
+    --frost-card-filter: none;
+    --frost-dialog-filter: none;
+  }
+}

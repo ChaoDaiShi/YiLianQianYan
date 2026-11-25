@@ -1,25 +1,12 @@
-import { useMemo } from "react";
-import type { AcceptanceReport, CurrentDeliverableEvidence, EvidenceSnapshot, GoalContract } from "../../../api/proofloop";
+import { useId, useMemo } from "react";
+import type { AcceptanceReport, CurrentDeliverableEvidence, EvidenceSnapshot, GoalContract, GoalConversation } from "../../../api/proofloop";
 import type { ArtifactRecord } from "../../../api/evidence";
 import type { TaskGraphDetail, TaskNodeExecutionSummary } from "../../../api/taskWorld";
 import { executionStatusLabel } from "../taskGraphProjection";
 import DeliverableList from "./DeliverableList";
 import GoalBlockers from "./GoalBlockers";
-import GoalProgress from "./GoalProgress";
-import { buildGoalViewState, type GoalViewPhase } from "./goalViewModel";
-
-const PHASE_LABELS: Record<GoalViewPhase, string> = {
-  planning: "规划中",
-  needs_input: "需要补充信息",
-  ready: "等待开始",
-  running: "执行中",
-  waiting_approval: "等待审批",
-  verifying: "验收中",
-  completed: "已通过验收",
-  failed: "未通过",
-  cancelled: "已取消",
-  needs_revalidation: "需要重新验收",
-};
+import GoalProgress, { goalStepStage } from "./GoalProgress";
+import { buildGoalViewState, GOAL_PHASE_LABELS } from "./goalViewModel";
 
 interface GoalOverviewProps {
   graphId: string;
@@ -28,10 +15,12 @@ interface GoalOverviewProps {
   report: AcceptanceReport | null;
   snapshot: EvidenceSnapshot | null;
   currentEvidence: CurrentDeliverableEvidence[] | null;
+  conversations?: GoalConversation[];
   artifacts: ArtifactRecord[];
   artifactError: string | null;
-  proofError: string | null;
+  proofError?: string | null;
   proofLoading: boolean;
+  inCanvas?: boolean;
   onDownloadArtifact: (artifact: ArtifactRecord) => Promise<void>;
   onViewExecution: (nodeId: string, executionId: string) => void;
 }
@@ -51,38 +40,40 @@ function nodeExecutions(detail: TaskGraphDetail): Array<{ nodeId: string; nodeTi
 }
 
 export default function GoalOverview(props: GoalOverviewProps) {
-  const state = buildGoalViewState(props.graphId, props.contract, props.detail, props.report, props.snapshot, null, props.currentEvidence);
+  const sectionId = useId();
+  const sections = { plan: `${sectionId}-plan`, deliverables: `${sectionId}-deliverables`, executions: `${sectionId}-executions` };
+  const state = buildGoalViewState(props.graphId, props.contract, props.detail, props.report, props.snapshot, null, props.currentEvidence, props.conversations);
   const executions = useMemo(() => nodeExecutions(props.detail), [props.detail]);
 
   return (
-    <div className="goal-overview-scroll" data-testid="goal-overview">
+    <div className="goal-overview-scroll" data-testid="goal-overview" data-graph-id={state.graphId} data-phase={state.phase}>
       <div className="goal-overview-content">
         <header className="goal-view-card goal-view-hero">
           <div className="goal-view-section-heading">
             <div className="min-w-0">
               <span className="goal-view-eyebrow">任务目标</span>
-              <h1>{props.proofLoading && !props.contract ? "正在读取目标…" : state.title}</h1>
-              <p>{props.contract ? `当前方案 · ${props.detail.nodes.length} 个步骤 · 修订 r${props.detail.revision}` : props.proofLoading ? "正在读取任务目标和验收记录。" : "当前任务图 · 尚未关联可验证目标"}</p>
+              {state.title.length > 140 ? <details className="goal-view-full-title"><summary><h1>{state.title}</h1><span>展开完整目标</span></summary><p>{state.title}</p></details> : <h1>{props.proofLoading && !props.contract ? "正在读取目标…" : state.title}</h1>}
+              {!props.inCanvas && <p>{props.contract ? `当前方案 · ${props.detail.nodes.length} 个步骤 · 修订 r${props.detail.revision}` : props.proofLoading ? "正在读取任务目标和验收记录。" : "当前任务图 · 尚未关联可验证目标"}</p>}
             </div>
-            <span className={`goal-view-phase goal-view-phase-${state.phase}`}>{PHASE_LABELS[state.phase]}</span>
+            <span className={`goal-view-phase goal-view-phase-${state.phase}`}>{GOAL_PHASE_LABELS[state.phase]}</span>
           </div>
           <div className="goal-view-actions" aria-label="目标快捷入口">
-            <button type="button" onClick={() => scrollTo("goal-plan")}>查看方案</button>
-            <button type="button" onClick={() => scrollTo("goal-deliverables")}>查看成果</button>
-            <button type="button" onClick={() => scrollTo("goal-executions")}>查看执行记录</button>
+            <button type="button" onClick={() => scrollTo(sections.plan)}>查看方案</button>
+            <button type="button" onClick={() => scrollTo(sections.deliverables)}>查看成果</button>
+            <button type="button" onClick={() => scrollTo(sections.executions)}>查看执行记录</button>
           </div>
           {props.proofError && <p className="goal-view-error" role="alert">目标和验收状态加载失败：{props.proofError}</p>}
           {props.proofLoading && <p className="goal-view-artifact-meta" role="status">正在同步当前图、执行记录与验收结果…</p>}
         </header>
 
-        <GoalProgress state={state} detail={props.detail} />
-        <GoalBlockers state={state} loading={props.proofLoading && !props.contract} />
+        <GoalProgress state={state} detail={props.detail} summaryOnly={props.inCanvas} />
+        <GoalBlockers state={state} loading={props.proofLoading && !props.contract} linkBlockers={props.inCanvas} />
 
-        <section className="goal-view-card" id="goal-plan" aria-label="当前任务方案">
+        <section className="goal-view-card" id={sections.plan} aria-label="当前任务方案">
           <div className="goal-view-section-heading">
             <div>
               <h2>当前方案</h2>
-              <p>来自此任务图的当前修订，不另建目标或计划。</p>
+              {!props.inCanvas && <p>来自此任务图的当前修订，不另建目标或计划。</p>}
             </div>
             <span className="goal-view-count">{props.detail.nodes.length} 步</span>
           </div>
@@ -94,9 +85,13 @@ export default function GoalOverview(props: GoalOverviewProps) {
                   <div className="min-w-0 flex-1">
                     <h3>{node.title}</h3>
                     {node.instruction_summary && <p>{node.instruction_summary}</p>}
-                    {node.executor_ref && <span className="goal-view-tool">{node.executor_ref}</span>}
+                    {node.executor_ref && (props.inCanvas
+                      ? <details className="goal-view-tool-detail"><summary>执行器</summary><span className="goal-view-tool">{node.executor_ref}</span></details>
+                      : <span className="goal-view-tool">{node.executor_ref}</span>)}
                     {node.acceptance_criteria.length > 0 && <p>完成条件：{node.acceptance_criteria.join("；")}</p>}
+                    {props.inCanvas && node.result_summary && <p>{node.result_summary}</p>}
                   </div>
+                  {props.inCanvas && <span className="goal-view-step-stage">{goalStepStage(node)}</span>}
                 </li>
               ))}
             </ol>
@@ -104,6 +99,7 @@ export default function GoalOverview(props: GoalOverviewProps) {
         </section>
 
         <DeliverableList
+          sectionId={sections.deliverables}
           deliverables={state.deliverables}
           artifacts={props.artifacts}
           snapshot={props.snapshot}
@@ -114,7 +110,7 @@ export default function GoalOverview(props: GoalOverviewProps) {
           onViewExecution={props.onViewExecution}
         />
 
-        <section className="goal-view-card" id="goal-executions" aria-label="任务执行记录">
+        <section className="goal-view-card" id={sections.executions} aria-label="任务执行记录">
           <div className="goal-view-section-heading">
             <div>
               <h2>执行记录</h2>

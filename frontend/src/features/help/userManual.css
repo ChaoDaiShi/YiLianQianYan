@@ -1,0 +1,9 @@
+.user-manual-toc { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.user-manual-toc a { padding: 5px 9px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface-solid); color: var(--text-secondary); font-size: 12px; }
+.user-manual-toc a:hover { background: var(--surface-hover); color: var(--text-primary); }
+.user-manual-body { min-width: 0; padding: clamp(14px, 3vw, 25px); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface-solid); color: var(--text-primary); font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.user-manual-body h2 { margin-top: 22px; margin-bottom: 6px; color: var(--text-primary); font-size: 17px; font-weight: 650; scroll-margin-top: 12px; }
+.user-manual-body p + p { margin-top: 8px; }
+.user-manual-body ol { list-style: decimal; padding-left: 1.5em; }
+.user-manual-body li + li { margin-top: 4px; }
+.user-manual-body a { color: var(--accent-soft-fg); text-decoration: underline; text-underline-offset: 2px; }

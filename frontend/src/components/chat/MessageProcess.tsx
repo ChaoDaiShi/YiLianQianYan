@@ -1,13 +1,18 @@
 import type { ConversationProcess } from "../../types";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
+import { ProcessDisplay } from "./ProcessDisplay";
 import ToolCallCard from "./ToolCallCard";
 import { formatToolDisplayName } from "./toolDisplay";
 import "./chatProcess.css";
 
 export default function MessageProcess({ process, streaming = false }: { process?: ConversationProcess; streaming?: boolean }) {
   const failedCount = process?.tools.filter(tool=>tool.execution?.status==="error"||tool.execution?.verificationStatus==="failed").length??0;
-  const [open, setOpen] = useState(streaming || failedCount>0);
-  useEffect(() => { if (streaming || failedCount>0) setOpen(true); }, [streaming,failedCount]);
+  const preference = useContext(ProcessDisplay);
+  const [open, setOpen] = useState(preference === "展开" || (streaming && preference !== "收起") || failedCount>0);
+  useEffect(() => {
+    if (failedCount>0 || preference === "展开" || (streaming && preference !== "收起")) setOpen(true);
+    else if (preference === "收起") setOpen(false);
+  }, [streaming,failedCount,preference]);
   if (!process?.reasoning && !process?.tools.length) return null;
   return <details className="message-process" aria-label="本轮处理过程" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary><span aria-hidden="true">⌄</span><span>{streaming ? "本轮处理中" : "处理过程"}</span>{process.reasoning && !streaming && <span>模型返回的思考</span>}{process.tools.length > 0 && <span>{process.tools.length} 次工具调用</span>}{failedCount>0&&<span className="message-process-failure">{failedCount} 项失败</span>}</summary>

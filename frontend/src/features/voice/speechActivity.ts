@@ -1,9 +1,10 @@
 export class SpeechActivity {
-  private armed = false;
+  private armed = true;
   private speaking = false;
   private quietSince: number | null = null;
   private loudSince: number | null = null;
   private noiseFloor = 0.003;
+  private speechLevel = 0;
   private startedAt = 0;
   private needsNearSpeech = false;
   private nearSpeechSince: number | null = null;
@@ -16,7 +17,16 @@ export class SpeechActivity {
       this.loudSince = null;
       return null;
     }
-    const threshold = Math.max(playing ? 0.09 : 0.025, this.noiseFloor * 4);
+    // Starting needs a clear rise above the room noise. Ending can also use
+    // the drop from the current speaker's level, even over audible background.
+    let threshold = Math.max(0.018, this.noiseFloor * 2.2);
+    if (playing) {
+      threshold = Math.max(0.09, this.noiseFloor * 4);
+    } else if (this.speaking) {
+      threshold = this.needsNearSpeech && !this.nearSpeechConfirmed
+        ? Math.max(0.025, this.noiseFloor * 4)
+        : Math.max(0.008, this.noiseFloor * 1.6, this.speechLevel * 0.3);
+    }
     const loud = rms >= threshold;
     if (this.speaking && !playing && time - this.startedAt >= 160) {
       if (loud) {
@@ -29,21 +39,26 @@ export class SpeechActivity {
     if (!loud) {
       this.loudSince = null;
       this.quietSince ??= time;
-      if (!playing && rms < 0.025) this.noiseFloor = this.noiseFloor * 0.98 + rms * 0.02;
+      if (!playing && !this.speaking) this.noiseFloor = this.noiseFloor * 0.92 + rms * 0.08;
       if (this.speaking && time - this.quietSince >= 800) {
         this.speaking = false;
         this.armed = false;
         this.quietSince = null;
+        if (!playing) this.noiseFloor = Math.max(this.noiseFloor, rms);
         return this.needsNearSpeech && !this.nearSpeechConfirmed ? "discard" : "end";
       }
       if (!this.speaking && time - this.quietSince >= 500) this.armed = true;
     } else {
       this.quietSince = null;
       this.loudSince ??= time;
+      if (this.speaking && !playing) {
+        this.speechLevel = Math.max(rms, this.speechLevel * 0.97);
+      }
       if (this.armed && !this.speaking && time - this.loudSince >= 120) {
         this.speaking = true;
         this.armed = false;
         this.startedAt = time;
+        this.speechLevel = playing ? 0 : rms;
         this.needsNearSpeech = playing;
         this.nearSpeechSince = null;
         this.nearSpeechConfirmed = false;

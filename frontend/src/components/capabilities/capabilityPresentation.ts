@@ -3,6 +3,9 @@ export type CapabilityTone = "default" | "success" | "warning" | "danger" | "inf
 const KIND_LABELS: Record<string, string> = {
   tool: "工具",
   mcp_tool: "MCP 工具",
+  mcp_resource: "MCP 资源",
+  mcp_resource_template: "MCP 资源模板",
+  mcp_prompt: "MCP 提示词",
   subagent: "子智能体",
   agent: "Agent",
   workflow: "工作流",

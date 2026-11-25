@@ -1,9 +1,14 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { listConversationOutputs } from "../../api/conversationOutputs";
 import type { Message, ToolCallRecord } from "../../types";
 import { MESSAGE_LIST_VIEWPORT_CLASS_NAME } from "../layout/workspaceLayout";
+import Modal from "../ui/Modal";
 import { presentExecutionError } from "./errorDisplay";
 import MessageProcess from "./MessageProcess";
 import MessageBubble from "./MessageBubble";
+import ReplyImagePreviews, { type ReplyImage } from "./ReplyImagePreviews";
 import StreamingText from "./StreamingText";
+import { streamingRichMarkdown } from "./RichContent";
 
 export interface StreamingState {
   content: string;
@@ -12,6 +17,7 @@ export interface StreamingState {
 }
 
 interface MessageListProps {
+  conversationId: string | null;
   messages: Message[];
   streaming: StreamingState | null;
   scrollContainerRef: React.RefObject<HTMLDivElement>;
@@ -77,6 +83,7 @@ function ErrorNotice({ error, onRetry, onLocateMessage, retryLabel }: { error: s
 }
 
 export default function MessageList({
+  conversationId,
   messages,
   streaming,
   scrollContainerRef,
@@ -92,6 +99,73 @@ export default function MessageList({
   actionsDisabled,
   persistedMessageIds,
 }: MessageListProps) {
+  const [loadedImages, setLoadedImages] = useState<{
+    conversationId: string;
+    byCall: Map<string, ReplyImage>;
+  } | null>(null);
+  const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
+  const openImage = useCallback((title: string, blob: Blob) => {
+    setPreview({ title, url: URL.createObjectURL(blob) });
+  }, []);
+  useEffect(() => setPreview(null), [conversationId]);
+  useEffect(() => () => {
+    if (preview) URL.revokeObjectURL(preview.url);
+  }, [preview]);
+  const { messageByCall, savedImageCalls } = useMemo(() => {
+    const owners = new Map<string, string>();
+    const calls = [];
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      for (const tool of message.process?.tools ?? []) {
+        if (tool.name === "image_generation") {
+          owners.set(tool.toolCallId, message.id);
+          calls.push(`${tool.toolCallId}:${tool.execution?.status ?? ""}`);
+        }
+      }
+    }
+    return { messageByCall: owners, savedImageCalls: calls.join("\n") };
+  }, [messages]);
+  const completedImageCalls = streaming?.toolCalls.filter(tool =>
+    tool.name === "image_generation" && (tool.status === "success" || tool.status === "error")
+  ) ?? [];
+  const liveImageCalls = completedImageCalls.map(tool => tool.toolCallId).join("\n");
+
+  useEffect(() => {
+    if (!conversationId || (!savedImageCalls && !liveImageCalls)) return;
+    const controller = new AbortController();
+    void listConversationOutputs(conversationId, controller.signal).then(outputs => {
+      if (controller.signal.aborted) return;
+      const byCall = new Map<string, ReplyImage>();
+      for (const output of outputs) {
+        if (output.kind === "image" && output.status === "ready" && output.tool_call_id && output.resource_id) {
+          byCall.set(output.tool_call_id, { id: output.id, resourceId: output.resource_id, title: output.title });
+        }
+      }
+      setLoadedImages({ conversationId, byCall });
+    }).catch(() => {
+      // Conversation replies remain readable if the separate outputs request fails.
+    });
+    return () => controller.abort();
+  }, [conversationId, savedImageCalls, liveImageCalls]);
+
+  const imagesByCall = loadedImages && loadedImages.conversationId === conversationId ? loadedImages.byCall : undefined;
+  const imagesByMessage = useMemo(() => {
+    const grouped = new Map<string, ReplyImage[]>();
+    for (const [callId, messageId] of messageByCall) {
+      const image = imagesByCall?.get(callId);
+      if (image) {
+        const images = grouped.get(messageId) ?? [];
+        images.push(image);
+        grouped.set(messageId, images);
+      }
+    }
+    return grouped;
+  }, [imagesByCall, messageByCall]);
+  const streamingImages = completedImageCalls.flatMap(tool => {
+    const image = imagesByCall?.get(tool.toolCallId);
+    return image && !messageByCall.has(tool.toolCallId) ? [image] : [];
+  });
+
   return (
     <div
       ref={scrollContainerRef}
@@ -103,6 +177,9 @@ export default function MessageList({
           <MessageBubble
             key={message.id}
             message={message}
+            conversationId={persistedMessageIds && !persistedMessageIds.has(message.id) ? null : conversationId}
+            images={imagesByMessage.get(message.id)}
+            onOpenImage={openImage}
             onSpeak={onSpeak}
             onRollback={onRollback}
             onDelete={onDelete}
@@ -117,9 +194,10 @@ export default function MessageList({
 
             {streaming.content && (
               <div className="conversation-streaming-message conversation-message-assistant min-w-0 max-w-[820px] rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface-solid)] p-4 text-[var(--text-primary)]">
-                <StreamingText text={streaming.content} />
+                <StreamingText text={streamingRichMarkdown(streaming.content)} />
               </div>
             )}
+            <ReplyImagePreviews images={streamingImages} onOpen={openImage} />
 
             {!streaming.content && !streaming.reasoning && streaming.toolCalls.length === 0 && (
               <div className="conversation-streaming-wait flex items-center gap-3 px-1 py-3" aria-label="正在生成">
@@ -134,6 +212,9 @@ export default function MessageList({
 
         {error && <ErrorNotice error={error} onRetry={onRetry} onLocateMessage={onLocateMessage} retryLabel={retryLabel} />}
       </div>
+      <Modal open={Boolean(preview)} onClose={() => setPreview(null)} title="生成图片预览" size="xl">
+        {preview && <img src={preview.url} alt={preview.title} className="mx-auto block max-h-[70dvh] max-w-full object-contain" />}
+      </Modal>
     </div>
   );
 }

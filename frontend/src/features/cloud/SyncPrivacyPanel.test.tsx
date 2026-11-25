@@ -9,27 +9,27 @@ import {
 
 describe('SyncPrivacyPanel', () => {
   it('renders all default synchronization categories', () => {
-    const html = renderToStaticMarkup(<SyncPrivacyPanel />);
-    expect(html).toContain('云同步隐私与数据保护');
-    expect(html).toContain('数据最小化与自由文本边界声明');
+    const html = renderToStaticMarkup(<SyncPrivacyPanel canReadCloudData={false} initialCategories={DEFAULT_SYNC_CATEGORIES} />);
+    expect(html).toContain('同步范围');
 
     for (const cat of DEFAULT_SYNC_CATEGORIES) {
-      expect(html).toContain(cat.name);
+      expect(html).toContain(`aria-label="允许同步${cat.name}"`);
     }
   });
 
-  it('renders fail-closed security guarantee and capability usage notices', () => {
-    const html = renderToStaticMarkup(<SyncPrivacyPanel />);
-    expect(html).toContain('安全网关与授权解析 (Fail-Closed)');
-    expect(html).toContain('插件使用闭环 (Capability Usage)');
-    expect(html).toContain('授权记录损坏即阻断 (Fail-Closed)');
+  it('explains category permissions and the existing data boundary', () => {
+    const html = renderToStaticMarkup(<SyncPrivacyPanel canReadCloudData={false} />);
+    expect(html).toContain('启用跨设备同步后才会按此范围同步');
+    expect(html).toContain('关闭分类会暂停上传和恢复，已有本地和云端数据会保留');
+    expect(html).toContain('请勿将密钥等秘密粘贴到对话正文');
+    expect(html).not.toContain('同步开启');
   });
 
   it('renders explicit prohibited notices for sensitive fields', () => {
-    const html = renderToStaticMarkup(<SyncPrivacyPanel />);
-    expect(html).toContain('内部 system 消息、开发调试提示与工具原始执行参数永不同步');
-    expect(html).toContain('API 密钥、Token、环境变量与展开后的系统提示词禁止同步');
-    expect(html).toContain('禁止同步完整输入参数与执行结果，保护数据隐私');
+    const html = renderToStaticMarkup(<SyncPrivacyPanel canReadCloudData={false} initialCategories={DEFAULT_SYNC_CATEGORIES} />);
+    expect(html).toContain('系统消息、调试提示与工具原始参数');
+    expect(html).toContain('密钥、令牌、环境变量与展开后的系统提示词');
+    expect(html).toContain('完整输入参数与执行结果');
   });
 
   it('displays correct initial toggle states for custom categories', () => {
@@ -42,11 +42,18 @@ describe('SyncPrivacyPanel', () => {
         prohibitedNotice: '测试排除项',
       },
     ];
-    const html = renderToStaticMarkup(<SyncPrivacyPanel initialCategories={custom} />);
+    const html = renderToStaticMarkup(<SyncPrivacyPanel canReadCloudData={false} initialCategories={custom} />);
     expect(html).toContain('自定义数据');
-    expect(html).toContain('仅保留本地');
+    expect(html).toContain('不允许同步');
     expect(html).toContain('aria-checked="false"');
-    expect(html).toContain('已暂停此类数据的上传与恢复。已有本地和云端数据保留；重新开启后会继续同步。');
+  });
+
+  it('shows a single storage summary for accounts and no remote refresh action for guests', () => {
+    const signedIn = renderToStaticMarkup(<SyncPrivacyPanel canReadCloudData />);
+    expect(signedIn.match(/云端存储/g)).toHaveLength(1);
+    expect(signedIn).toContain('刷新概览');
+    const guest = renderToStaticMarkup(<SyncPrivacyPanel canReadCloudData={false} />);
+    expect(guest).not.toContain('刷新概览');
   });
 
   it('maps persisted profile policy to the category controls and back', () => {

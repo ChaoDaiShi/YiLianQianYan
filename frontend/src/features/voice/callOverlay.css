@@ -2,3 +2,14 @@ html:has(.call-window),body:has(.call-window),html:has(.call-orb),body:has(.call
 
 .call-window .call-switch{width:auto;height:auto;border-radius:10px;padding:7px 12px;font-size:12px;max-width:100%;overflow-wrap:anywhere}
 .call-orb.floating-orb{padding:3px;gap:0;cursor:grab}.call-orb.floating-orb img{width:35px;height:35px;flex-shrink:0}.call-orb .floating-orb-status{font-size:9px;line-height:13px;padding:0 3px}.call-window .call-drag-handle{width:auto;height:36px;display:flex;align-items:center;gap:8px;background:transparent;cursor:grab;border-radius:8px;flex:1;justify-content:flex-start}.call-window .call-drag-handle:active{cursor:grabbing}
+
+.call-window header,.call-actions{flex-shrink:0}
+.call-body{width:100%;min-height:0;overflow-y:auto;text-align:center;overflow-wrap:anywhere}
+.call-body>*+*{margin-top:8px}
+.call-avatar{margin-inline:auto}
+.call-body .call-switch{margin-inline:auto}
+.call-body .call-caption{min-height:0;max-height:none;overflow:visible;margin-top:8px}
+.call-caption:empty{margin-top:0}
+.call-readiness{font-size:12px;color:var(--text-secondary)}
+.call-readiness summary{width:max-content;max-width:100%;margin-inline:auto;cursor:pointer}
+.call-readiness .call-checks{margin-top:5px}

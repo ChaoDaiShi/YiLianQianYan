@@ -46,6 +46,11 @@ function outputDefinition(): WorkflowGraphDefinition {
 }
 
 describe("workflow runtime API client", () => {
+  it("reads child runs for one parent attempt", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ runs: [] })));
+    await listWorkflowRuns({ parent_execution_id: "attempt-1" });
+    expect(fetch).toHaveBeenCalledWith(`${API_BASE}/api/workflow-runs?parent_execution_id=attempt-1`, expect.anything());
+  });
   it("listWorkflowGraphs maps the { graphs } envelope", async () => {
     vi.stubGlobal(
       "fetch",

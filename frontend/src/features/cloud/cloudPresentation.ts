@@ -1,43 +1,59 @@
-import type { CloudIdentity, CloudSyncStatus, LifecycleJob, SearchResult } from "../../api/cloud";
+import type { CloudIdentity, CloudIdentityResponse, LifecycleJob, SearchResult } from "../../api/cloud";
 
 export type PresentationTone = "default" | "success" | "warning" | "danger" | "info" | "accent";
 
 export function identityPresentation(identity: CloudIdentity): {
   label: string;
   tone: PresentationTone;
-  description: string;
 } {
   switch (identity.status) {
     case "authenticated":
-      return { label: "已登录", tone: "success", description: "本地工作区可以按你的选择同步到账号。" };
+      return { label: "已登录", tone: "success" };
     case "offline_authenticated":
-      return { label: "离线工作", tone: "warning", description: "本地功能保持可用，联网后继续同步。" };
+      return { label: "离线工作", tone: "warning" };
     case "closing":
-      return { label: "账号注销中", tone: "warning", description: "本地数据仍由你控制，可查看云端删除进度。" };
+      return { label: "账号注销中", tone: "warning" };
     default:
-      return { label: "仅本地", tone: "default", description: "核心功能可用，登录后可启用跨设备同步。" };
+      return { label: "仅本地", tone: "default" };
   }
 }
 
-export function syncPresentation(sync: CloudSyncStatus): {
+export function syncPresentation({ identity, sync, sync_existing_choice: choice }: CloudIdentityResponse): {
   label: string;
   tone: PresentationTone;
   detail: string;
 } {
-  if (sync.conflict_count > 0 || sync.error_count > 0) {
-    return {
-      label: "需要处理",
-      tone: "warning",
-      detail: `${sync.pending_count} 项待同步 · ${sync.conflict_count} 项冲突 · ${sync.error_count} 项失败`,
-    };
+  if (identity.status === "guest") {
+    return { label: "登录后可用", tone: "default", detail: "本机工作区可继续使用。" };
+  }
+  const needsAttention = sync.conflict_count > 0 || sync.error_count > 0;
+  const detail = needsAttention
+    ? `${sync.pending_count} 项待同步 · ${sync.conflict_count} 项冲突 · ${sync.error_count} 项失败`
+    : sync.pending_count > 0
+      ? `${sync.pending_count} 项本地变更等待上传`
+      : "当前没有待同步项目";
+  if (identity.status === "closing") {
+    return { label: "账号注销中", tone: "warning", detail };
+  }
+  if (choice === "local_only") {
+    return { label: "仅本地", tone: "default", detail };
+  }
+  if (choice === "undecided") {
+    return { label: "尚未启用同步", tone: "default", detail };
+  }
+  if (identity.status === "offline_authenticated") {
+    return { label: "离线，等待联网", tone: "warning", detail };
+  }
+  if (needsAttention) {
+    return { label: "需要处理", tone: "warning", detail };
   }
   if (sync.pending_count > 0) {
-    return { label: "等待同步", tone: "info", detail: `${sync.pending_count} 项本地变更等待上传` };
+    return { label: "等待同步", tone: "info", detail };
   }
   return {
     label: sync.last_success_at ? "已同步" : "尚未同步",
     tone: sync.last_success_at ? "success" : "default",
-    detail: sync.last_success_at ? `上次成功：${new Date(sync.last_success_at).toLocaleString()}` : "当前没有待同步项目",
+    detail: sync.last_success_at ? `上次成功：${new Date(sync.last_success_at).toLocaleString()}` : detail,
   };
 }
 
@@ -86,7 +102,7 @@ export function lifecyclePresentation(job: LifecycleJob): {
   waitingForBackups: boolean;
 } {
   const isExport = job.kind === "export";
-  const title = isExport ? "云端数据导出任务" : "云端账号注销任务";
+  const title = isExport ? "数据导出进度" : "账号注销进度";
   const canDownload = isExport && job.status === "completed";
   const waitingForBackups = job.kind === "deletion" && job.status === "waiting_backup_expiry";
   const isTerminal = job.status === "completed" || job.status === "failed";
@@ -97,7 +113,7 @@ export function lifecyclePresentation(job: LifecycleJob): {
         title,
         label: "排队中",
         tone: "default",
-        description: "任务已排队，等待空闲工作节点领取",
+        description: "",
         isTerminal,
         canDownload,
         waitingForBackups,
@@ -107,7 +123,7 @@ export function lifecyclePresentation(job: LifecycleJob): {
         title,
         label: "处理中",
         tone: "accent",
-        description: "工作进程已锁定并执行流式处理",
+        description: "",
         isTerminal,
         canDownload,
         waitingForBackups,
@@ -115,9 +131,9 @@ export function lifecyclePresentation(job: LifecycleJob): {
     case "waiting_for_producers":
       return {
         title,
-        label: "等待写操作排空",
+        label: "等待进行中的操作完成",
         tone: "warning",
-        description: "正在等待进行中的导出或同步写入退出",
+        description: "云端正在完成已开始的导出或同步。",
         isTerminal,
         canDownload,
         waitingForBackups,
@@ -127,7 +143,7 @@ export function lifecyclePresentation(job: LifecycleJob): {
         title,
         label: "等待备份到期擦除",
         tone: "warning",
-        description: "活跃数据已清理，正在等待备份保留周期到期",
+        description: "",
         isTerminal: false,
         canDownload,
         waitingForBackups: true,
@@ -137,7 +153,7 @@ export function lifecyclePresentation(job: LifecycleJob): {
         title,
         label: "等待重试",
         tone: "danger",
-        description: "遇到临时异常，系统进入退避等待，稍后重试",
+        description: "遇到临时错误，稍后会自动重试。",
         isTerminal,
         canDownload,
         waitingForBackups,
@@ -147,7 +163,7 @@ export function lifecyclePresentation(job: LifecycleJob): {
         title,
         label: "已完成",
         tone: "success",
-        description: "任务目标已全部达成并通过一致性复核",
+        description: "",
         isTerminal: true,
         canDownload,
         waitingForBackups: false,
@@ -157,7 +173,7 @@ export function lifecyclePresentation(job: LifecycleJob): {
         title,
         label: "执行失败",
         tone: "danger",
-        description: "重试次数达到上限或遇到不可恢复错误",
+        description: "云端未能完成此操作。",
         isTerminal: true,
         canDownload,
         waitingForBackups: false,
@@ -167,7 +183,7 @@ export function lifecyclePresentation(job: LifecycleJob): {
         title,
         label: job.status,
         tone: "default",
-        description: "任务状态更新中",
+        description: "",
         isTerminal,
         canDownload,
         waitingForBackups,

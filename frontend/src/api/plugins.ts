@@ -136,8 +136,13 @@ export interface PluginFeatureEntry {
   title: string;
   description: string;
   resource_id: string | null;
-  target: { kind: "skill" | "workflow" | "agent"; contribution: string };
+  placements?: Array<"more" | "workspace">;
+  target: { kind: "skill" | "workflow" | "agent" | "service"; contribution: string };
   content: string;
+}
+
+export function pluginFeaturePath(feature: Pick<PluginFeatureEntry, "plugin_id" | "id">) {
+  return `/more/plugins/${encodeURIComponent(feature.plugin_id)}/${encodeURIComponent(feature.id)}`;
 }
 export async function listPluginFeatures(): Promise<PluginFeatureEntry[]> {
   const result = await requestResult<{ features: PluginFeatureEntry[] }>("GET", "/api/plugins/features");

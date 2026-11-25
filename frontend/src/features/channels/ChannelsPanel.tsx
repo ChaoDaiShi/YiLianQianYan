@@ -1,22 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, RefreshCw, Settings2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Plus, RefreshCw } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import Button from "../../components/ui/Button";
 import Modal from "../../components/ui/Modal";
+import SoftwareMountShell, { type PlatformContent } from "../software/SoftwareMountShell";
 import {
   checkChannel, deleteChannel, listChannelPresets, listChannelProviders, listChannels, setChannelEnabled,
   setChannelReplyMode, startChannelLogin, type ChannelCheckItem, type ChannelLogin, type ChannelPreset,
   type ChannelProvider, type ExternalChannel,
 } from "../../api/channels";
 import ChannelEditor from "./ChannelEditor";
+import ChannelActionMenu from "./ChannelActionMenu";
 import ChannelLoginDialog from "./ChannelLoginDialog";
 import ChannelPresetsPanel, { clearChannelPresetDraft, hasUnsavedChannelPresetDraft } from "./ChannelPresetsPanel";
 import ChannelSettingsDrawer from "./ChannelSettingsDrawer";
 import ChannelWorkspace, { type ChannelWorkspaceSection } from "./ChannelWorkspace";
-import { channelStatusLabel } from "./channelsModel";
+import { channelPlatforms, channelStatusLabel, replyModeLabel, type ChannelPlatform } from "./channelsModel";
 import "./channels.css";
 
 type PageView = "workspace" | "presets";
+type ViewTarget = { view: PageView; platform?: ChannelPlatform };
+const platformForProvider = (provider?: string) => channelPlatforms.find(platform => provider && platform.providers.includes(provider));
 let retainedPageView: PageView = "workspace";
 const problem = (value: unknown) => value instanceof Error ? value.message : "渠道操作失败";
 
@@ -24,12 +28,13 @@ export default function ChannelsPanel() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryChannelId = searchParams.get("channel") ?? "";
   const queryRunId = searchParams.get("run") ?? "";
+  const queryPlatform = searchParams.get("platform");
   const [providers, setProviders] = useState<ChannelProvider[]>([]);
   const [channels, setChannels] = useState<ExternalChannel[]>([]);
   const [presets, setPresets] = useState<ChannelPreset[]>([]);
   const [selectedId, setSelectedId] = useState(queryChannelId);
   const [section, setSection] = useState<ChannelWorkspaceSection>(queryRunId ? "activity" : "conversations");
-  const [view, setViewState] = useState<PageView>(() => retainedPageView);
+  const [view, setViewState] = useState<PageView>(() => queryChannelId || queryRunId ? "workspace" : retainedPageView);
   const [revision, setRevision] = useState(0);
   const [policyRevision, setPolicyRevision] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -38,7 +43,7 @@ export default function ChannelsPanel() {
   const [actionError, setActionError] = useState("");
   const [presetDirty, setPresetDirty] = useState(() => hasUnsavedChannelPresetDraft());
   const [presetBusy, setPresetBusy] = useState(false);
-  const [pendingView, setPendingView] = useState<PageView | null>(null);
+  const [pendingView, setPendingView] = useState<ViewTarget | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorChannel, setEditorChannel] = useState<ExternalChannel | null>(null);
@@ -53,9 +58,15 @@ export default function ChannelsPanel() {
   const alive = useRef(true);
 
   const orderedProviders = useMemo(() => [...providers].sort((a, b) => providerOrder(a.id) - providerOrder(b.id)), [providers]);
-  const selectedChannel = channels.find(channel => channel.id === selectedId) ?? null;
+  const linkedChannel = channels.find(channel => channel.id === queryChannelId);
+  const currentChannel = channels.find(channel => channel.id === selectedId) ?? channels[0];
+  const platform = platformForProvider(linkedChannel?.provider)
+    ?? channelPlatforms.find(item => item.id === queryPlatform)
+    ?? platformForProvider(currentChannel?.provider)
+    ?? channelPlatforms[0];
+  const platformChannels = channels.filter(channel => platform.providers.includes(channel.provider));
+  const selectedChannel = platformChannels.find(channel => channel.id === selectedId) ?? platformChannels[0] ?? null;
   const selectedProvider = selectedChannel ? orderedProviders.find(provider => provider.id === selectedChannel.provider) : undefined;
-  const selectedConnected = selectedChannel?.status === "connected" || selectedChannel?.status === "receiving";
 
   const refresh = useCallback(() => {
     setChecksByChannel({});
@@ -72,6 +83,16 @@ export default function ChannelsPanel() {
     retainedPageView = next;
     setViewState(next);
   }, []);
+
+  const commitView = useCallback((target: ViewTarget) => {
+    setView(target.view);
+    if (target.platform) {
+      setSelectedId("");
+      setSection("conversations");
+      setSettingsOpen(false);
+      setSearchParams({ platform: target.platform });
+    }
+  }, [setView, setSearchParams]);
 
   useEffect(() => {
     alive.current = true;
@@ -92,7 +113,7 @@ export default function ChannelsPanel() {
         const deepLinked = channelResult.channels.find(channel => channel.id === queryChannelId);
         setSelectedId(current => deepLinked?.id ?? (channelResult.channels.some(channel => channel.id === current)
           ? current : channelResult.channels[0]?.id ?? ""));
-        if (queryRunId) setSection("activity");
+        if (queryRunId) setSection(deepLinked?.provider === "onebot11" ? "activity" : "conversations");
       })
       .catch(reason => { if (active) setLoadError(problem(reason)); })
       .finally(() => { if (active) { setLoading(false); setRefreshing(false); } });
@@ -101,10 +122,10 @@ export default function ChannelsPanel() {
 
   useEffect(() => {
     if (pendingView && !presetDirty && !presetBusy) {
-      setView(pendingView);
+      commitView(pendingView);
       setPendingView(null);
     }
-  }, [pendingView, presetDirty, presetBusy]);
+  }, [pendingView, presetDirty, presetBusy, commitView]);
 
   useEffect(() => {
     if (view !== "workspace" || busyChannelId || replyBusyId || checkBusyId) return;
@@ -124,12 +145,13 @@ export default function ChannelsPanel() {
     return () => { active = false; window.clearInterval(timer); };
   }, [view, revision, busyChannelId, replyBusyId, checkBusyId]);
 
-  function requestView(next: PageView) {
+  function requestView(next: PageView, nextPlatform?: ChannelPlatform) {
+    const target = { view: next, platform: nextPlatform };
     if (view === "presets" && presetDirty && next !== view) {
-      setPendingView(next);
+      setPendingView(target);
       return;
     }
-    setView(next);
+    commitView(target);
   }
 
   function selectChannel(id: string) {
@@ -137,6 +159,11 @@ export default function ChannelsPanel() {
     setSection("conversations");
     setSettingsOpen(false);
     setSearchParams({ channel: id }, { replace: true });
+  }
+
+  function selectPlatform(id: ChannelPlatform, closeNavigation?: () => void) {
+    if (view === "presets") closeNavigation?.();
+    if (id !== platform.id || view !== "workspace") requestView("workspace", id === platform.id ? undefined : id);
   }
 
   async function changeReplyMode(channel: ExternalChannel) {
@@ -194,13 +221,14 @@ export default function ChannelsPanel() {
       setSelectedId(current => current === deleteTarget.id ? "" : current);
       setDeleteTarget(null);
       setSettingsOpen(false);
+      setSearchParams({ platform: platform.id }, { replace: true });
       refresh();
     } catch (reason) {
       if (alive.current) { setActionError(problem(reason)); setDeleteTarget(null); }
     } finally { if (alive.current) setBusyChannelId(""); }
   }
 
-  function addChannel(providerId = orderedProviders.find(provider => provider.supported)?.id ?? "") {
+  function addChannel(providerId = orderedProviders.find(provider => provider.supported && platform.providers.includes(provider.id))?.id ?? "") {
     setEditorChannel(null);
     setInitialProvider(providerId);
     setEditorOpen(true);
@@ -212,6 +240,7 @@ export default function ChannelsPanel() {
     setEditorChannel(null);
     setSelectedId(channelId);
     setSettingsOpen(false);
+    setSearchParams({ channel: channelId }, { replace: true });
     refresh();
   }
 
@@ -223,46 +252,63 @@ export default function ChannelsPanel() {
     setEditorOpen(true);
   }
 
-  const statusText = selectedChannel ? channelStatusLabel(selectedChannel.status) : channels.length ? "选择账号" : "未连接账号";
   const pageTitle = view === "presets" ? "回复预设" : "消息工作台";
+  const showOnboarding = view === "workspace" && !loading && !loadError && platformChannels.length === 0;
+  const showWorkspace = view === "workspace" && platformChannels.length > 0;
+  const connectionError = selectedChannel?.status === "error" ? selectedChannel.last_error : "";
+  const pageError = loadError || (settingsOpen ? "" : actionError || connectionError);
 
-  return <section className="channels-page channels-workspace-page">
-    <header className="channel-topbar">
-      <div className="channel-topbar-title"><h1>{pageTitle}</h1><span>{selectedChannel ? selectedChannel.name + (selectedChannel.self_id ? " · " + selectedChannel.self_id : "") : "本机消息账号"}</span></div>
-      <div className="channel-topbar-state" data-connected={selectedConnected}><i aria-hidden="true" />{statusText}<small>{selectedChannel?.enabled ? "已启用" : selectedChannel ? "已停用" : ""}</small></div>
-      <div className="channel-topbar-actions">
-        {view === "workspace" && selectedChannel && <>
-          <Button variant={section === "activity" ? "primary" : "secondary"} onClick={() => setSection("activity")}>机器人</Button>
-          <Button variant="ghost" onClick={() => requestView("presets")}>预设</Button>
-          <Button variant={selectedChannel.reply_mode === "automatic" ? "secondary" : "ghost"} disabled={replyBusyId === selectedChannel.id} loading={replyBusyId === selectedChannel.id} onClick={() => void changeReplyMode(selectedChannel)}>{selectedChannel.reply_mode === "automatic" ? "自动回复" : "审阅后发送"}</Button>
-        </>}
-        <Button variant="ghost" disabled={refreshing} loading={refreshing} aria-label="刷新消息工作台" onClick={refresh}><RefreshCw size={15} />刷新</Button>
-        {view === "presets" && <Button variant="secondary" onClick={() => requestView("workspace")}>返回消息</Button>}
-        {view === "workspace" && selectedChannel && <Button variant="secondary" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />设置</Button>}
-        <Button onClick={() => addChannel()}><Plus size={15} />添加渠道</Button>
-      </div>
-    </header>
+  function renderWorkspace(content: ReactNode, navigation: PlatformContent) {
+    const platformContent: PlatformContent | undefined = showWorkspace ? navigation : showOnboarding ? closeNavigation => (
+      <Button className="channel-platform-add" size="sm" variant="secondary" onClick={() => { closeNavigation?.(); addChannel(); }}><Plus size={15} />添加渠道</Button>
+    ) : undefined;
+    return <SoftwareMountShell platform={platform.id} platformContent={platformContent} onPlatformChange={selectPlatform} description={view === "presets" ? pageTitle : undefined}
+      actions={!showWorkspace && <>
+        <Button variant="ghost" size="sm" iconOnly disabled={refreshing} loading={refreshing} aria-label="刷新消息工作台" title="刷新消息工作台" onClick={refresh}><RefreshCw size={16} /></Button>
+        {view === "presets" && <Button variant="secondary" size="sm" onClick={() => requestView("workspace")}>返回消息</Button>}
+      </>}>
+      <section className="channels-page channels-workspace-page">
+        <h2 className="sr-only">{pageTitle}</h2>
+        {pageError && <p className="channels-error channels-action-error" role="alert">{pageError}</p>}
+        {loading && !showWorkspace && <p className="channels-page-loading" role="status">正在读取渠道配置…</p>}
+        {!loading && view === "presets" && !loadError && <div className="channels-presets-workspace"><ChannelPresetsPanel presets={presets} onPresetsChange={setPresets} onUnsavedChange={onPresetUnsavedChange} /></div>}
+        {showWorkspace && content}
+        {showOnboarding && <div className="channel-workspace-onboarding"><h2>{channels.length ? `还没有${platform.label}渠道` : "从一个消息账号开始"}</h2><p>从左侧添加账号后，可在这里查看会话和审阅回复。</p></div>}
+      </section>
+    </SoftwareMountShell>;
+  }
 
-    {(loadError || actionError) && <p className="channels-error channels-action-error" role="alert">{loadError || actionError}</p>}
-    {loading && <p className="channels-page-loading" role="status">正在读取渠道配置…</p>}
-    {!loading && view === "presets" && !loadError && <div className="channels-presets-workspace"><ChannelPresetsPanel presets={presets} onPresetsChange={setPresets} onUnsavedChange={onPresetUnsavedChange} /></div>}
-    {!loading && view === "workspace" && !loadError && channels.length > 0 && <ChannelWorkspace
-      channels={channels}
-      providers={orderedProviders}
+  return <>
+    <ChannelWorkspace
+      channels={platformChannels}
       presets={presets}
-      channel={selectedChannel}
-      section={section}
+      channel={showWorkspace ? selectedChannel : null}
+      section={selectedChannel?.provider === "onebot11" ? section : "conversations"}
       initialRunId={queryRunId}
       policyRevision={policyRevision}
       revision={revision}
       onSelectChannel={selectChannel}
       onSectionChange={setSection}
-    />}
-    {!loading && !loadError && channels.length === 0 && <div className="channel-workspace-onboarding"><h2>从一个消息账号开始</h2><p>连接成功后，平台真实会话和运行状态会显示在这里。</p><Button onClick={() => addChannel()}><Plus size={15} />添加渠道</Button></div>}
+      accountAction={closeNavigation => selectedChannel && <ChannelActionMenu busy={refreshing}
+        summary={`${selectedChannel.name} · ${channelStatusLabel(selectedChannel.status)} · ${replyModeLabel(selectedChannel.reply_mode)}`}
+        actions={[
+          ...(selectedChannel.provider === "onebot11" ? [
+            ...(section !== "conversations" ? [{ label: "返回会话", run: () => setSection("conversations") }] : []),
+            { label: "通讯录", run: () => setSection("contacts") },
+            { label: "机器人活动", run: () => setSection("activity") },
+          ] : []),
+          { label: "设置", run: () => setSettingsOpen(true) },
+          { label: "回复预设", run: () => requestView("presets") },
+          { label: "添加渠道", run: () => addChannel() },
+          { label: "刷新消息工作台", run: refresh },
+        ].map(({ label, run }) => ({ label, run: () => { closeNavigation?.(); run(); } }))} />}
+      render={renderWorkspace}
+    />
     {view === "workspace" && selectedChannel && <ChannelSettingsDrawer
       channel={selectedChannel}
       provider={selectedProvider}
       open={settingsOpen}
+      actionError={actionError}
       onClose={() => setSettingsOpen(false)}
       onPolicySaved={() => setPolicyRevision(value => value + 1)}
       onEdit={editSelectedChannel}
@@ -285,15 +331,15 @@ export default function ChannelsPanel() {
       {deleteTarget && <div className="channel-delete-copy"><p>将停止“{deleteTarget.name}”的连接，并删除该渠道配置、凭据、收件箱记录和会话关联。</p><p>已有本地对话与聊天消息会保留。已发送到平台的消息不会被撤回。</p></div>}
     </Modal>
     <Modal open={pendingView !== null} onClose={() => { if (!presetBusy) setPendingView(null); }} title="放弃未保存的预设修改？" size="sm" footer={(
-      <><Button variant="secondary" disabled={presetBusy} onClick={() => setPendingView(null)}>继续编辑</Button><Button variant="danger" disabled={presetBusy} onClick={() => { if (pendingView) { clearChannelPresetDraft(); setPresetDirty(false); setView(pendingView); setPendingView(null); } }}>放弃修改并离开</Button></>
+      <><Button variant="secondary" disabled={presetBusy} onClick={() => setPendingView(null)}>继续编辑</Button><Button variant="danger" disabled={presetBusy} onClick={() => { if (pendingView) { clearChannelPresetDraft(); setPresetDirty(false); commitView(pendingView); setPendingView(null); } }}>放弃修改并离开</Button></>
     )}>
       <p className="channel-confirm-copy">当前回复预设的修改尚未保存。切换页面会放弃这些更改。</p>
     </Modal>
-  </section>;
+  </>;
 }
 
 function providerOrder(provider: string) {
-  const order = ["onebot11", "wechat_onebot", "wechat_ilink", "feishu"];
+  const order = channelPlatforms.flatMap(platform => platform.providers);
   const index = order.indexOf(provider);
   return index < 0 ? 9 : index;
 }

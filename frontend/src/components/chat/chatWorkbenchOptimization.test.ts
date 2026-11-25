@@ -3,6 +3,7 @@ import chatPageSource from "../../pages/ChatPage.tsx?raw";
 import chatViewSource from "./ChatView.tsx?raw";
 import chatInputSource from "./ChatInput.tsx?raw";
 import messageBubbleSource from "./MessageBubble.tsx?raw";
+import conversationMarkdownSource from "./ConversationMarkdown.tsx?raw";
 import conversationSidebarSource from "./ConversationSidebar.tsx?raw";
 import toolCallCardSource from "./ToolCallCard.tsx?raw";
 import approvalCardSource from "../approval/ApprovalCard.tsx?raw";
@@ -26,8 +27,8 @@ describe("Work Package B: Chat Workbench Optimization Contracts", () => {
       expect(chatPageSource).toContain("target.closest(\"[role='dialog']\")");
     });
 
-    it("enforces central content width max 860px and alignment in CSS", () => {
-      expect(stylesheetText).toContain("width: min(100%, 860px);");
+    it("keeps the reading and composer columns aligned at responsive desktop widths", () => {
+      expect(stylesheetText).toContain("width: min(100%, clamp(860px, 72vw, 1180px));");
       expect(stylesheetText).toContain(".conversation-message-list-inner");
       expect(stylesheetText).toContain(".conversation-composer-inner");
       expect(stylesheetText).toContain("max-width: min(75%, 720px);");
@@ -58,8 +59,8 @@ describe("Work Package B: Chat Workbench Optimization Contracts", () => {
     });
 
     it("isolates code blocks and markdown tables to internal scrolling", () => {
-      expect(messageBubbleSource).toContain("table-scroll-container");
-      expect(messageBubbleSource).toContain("code-scroll-container");
+      expect(conversationMarkdownSource).toContain("table-scroll-container");
+      expect(conversationMarkdownSource).toContain("code-scroll-container");
       expect(stylesheetText).toContain(".code-scroll-container");
       expect(stylesheetText).toContain(".table-scroll-container");
     });

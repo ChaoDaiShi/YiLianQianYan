@@ -8,11 +8,13 @@ function environment() {
   const stream = { getTracks: () => [track] } as unknown as MediaStream;
   const getUserMedia = vi.fn().mockResolvedValue(stream);
   const source = { connect: vi.fn(), disconnect: vi.fn() };
+  const filter = { type: "", frequency: { value: 0 }, Q: { value: 0 }, connect: vi.fn(), disconnect: vi.fn() };
   const analyser = { fftSize: 1024, disconnect: vi.fn(), getFloatTimeDomainData: (data: Float32Array) => data.fill(0.1) };
   const close = vi.fn().mockResolvedValue(undefined);
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
   vi.stubGlobal("AudioContext", class {
     createMediaStreamSource = () => source;
+    createBiquadFilter = () => filter;
     createAnalyser = () => analyser;
     resume = vi.fn().mockResolvedValue(undefined);
     close = close;
@@ -20,7 +22,7 @@ function environment() {
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal("setInterval", (callback:()=>void) => {const tick=()=>{callback();frames.push(tick)};frames.push(tick);return 1;});
   vi.stubGlobal("clearInterval", vi.fn());
-  return { stream, track, getUserMedia, close, frames, source, analyser };
+  return { stream, track, getUserMedia, close, frames, source, filter, analyser };
 }
 
 describe("browser speech monitor resources", () => {
@@ -32,7 +34,12 @@ describe("browser speech monitor resources", () => {
     expect(monitor?.stream).toBe(env.stream);
     env.frames.shift()!(100);
     expect(sample).toHaveBeenCalledOnce();
-    expect(env.source.connect).toHaveBeenCalledWith(env.analyser);
+    expect(env.getUserMedia).toHaveBeenCalledWith({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    expect(env.source.connect).toHaveBeenCalledWith(env.filter);
+    expect(env.filter.type).toBe("highpass");
+    expect(env.filter.connect).toHaveBeenCalledWith(env.analyser);
     controller.abort();
     expect(env.track.stop).toHaveBeenCalledOnce();
     expect(env.close).toHaveBeenCalledOnce();

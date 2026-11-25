@@ -16,8 +16,8 @@ export function useProductPreferences() {
     return () => { active = false; window.removeEventListener(EVENT, receive); };
   }, []);
   const save = async (next: ProductPreferences) => {
-    if (!validPreferences(next)) throw new Error("布局无效，安全与恢复入口必须保留。");
     try {
+      if (!validPreferences(next)) throw new Error("布局无效，安全与恢复入口必须保留。");
       const saved = await saveProductPreferences(next);
       if (!validPreferences(saved)) throw new Error("服务返回了无效布局。");
       setError(""); setLoaded(true); setPreferences((current) => acceptPreferences(current, saved));

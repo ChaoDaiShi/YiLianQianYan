@@ -24,6 +24,9 @@ export interface MemoryVersion {
   revision: number; content: string; category: string; source: string;
   source_ref: string | null; scope: string; status: string; reason: string;
   recorded_at: number; valid_from: number | null; valid_until: number | null;
+  version_id: string; layer: number; baseline: boolean; relationship_known: boolean;
+  relationship?: unknown; source_conversation_id?: string | null;
+  source_message_id?: string | null; source_removed?: boolean;
 }
 
 export async function getMemoryGovernance(id: string): Promise<MemoryGovernance> {
@@ -50,6 +53,12 @@ export async function withdrawMemory(id: string, data: { expected_revision: numb
   return result.data;
 }
 
+export async function restoreMemoryVersion(id: string, data: { expected_revision: number; version_id: string }): Promise<MemoryRecord> {
+  const result = await requestResult<MemoryRecord>("POST", `/api/memories/${encodeURIComponent(id)}/restore`, data);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
 export async function listWithdrawnMemories(): Promise<MemoryRecord[]> {
   const result = await requestResult<MemoryRecord[]>("GET", "/api/memories/withdrawn");
   if (!result.ok) throw new Error(result.error);
@@ -64,6 +73,7 @@ export interface MemoryRecord {
   category: string;
   source: string;
   source_conversation_id?: string;
+  source_removed?: boolean;
   metadata?: string;
   created_at: number;
   updated_at: number;
@@ -116,7 +126,7 @@ export interface MemoryQuery {
   offset?: number;
 }
 
-export async function listMemories(query?: MemoryQuery): Promise<MemoryRecord[]> {
+export async function listMemories(query?: MemoryQuery, library = false): Promise<MemoryRecord[]> {
   const params = new URLSearchParams();
   if (query?.category) params.set("category", query.category);
   if (query?.source) params.set("source", query.source);
@@ -124,9 +134,35 @@ export async function listMemories(query?: MemoryQuery): Promise<MemoryRecord[]>
   if (query?.limit) params.set("limit", String(query.limit));
   if (query?.offset) params.set("offset", String(query.offset));
   const qs = params.toString();
-  const result = await requestResult<MemoryRecord[]>("GET", `/api/memories${qs ? `?${qs}` : ""}`);
+  const result = await requestResult<MemoryRecord[]>("GET", `/api/memories${library ? "/library" : ""}${qs ? `?${qs}` : ""}`);
   if (!result.ok) throw new Error(result.error);
   return result.data;
+}
+
+export interface MemoryActivity {
+  id: string;
+  kind: "chat_message" | "automation_message" | "memory_created" | "memory_edited" | "memory_withdrawn" | "memory_deleted";
+  recorded_at: number;
+  content: string | null;
+  conversation_id: string | null;
+  source_removed: boolean;
+  memory_id: string | null;
+  removable: boolean;
+  origin: "user_message" | "automation_message" | "manual" | "auto" | "document" | null;
+  memory_status: "active" | "withdrawn" | null;
+}
+
+export async function listMemoryActivity(recent: boolean, offset = 0, query = "") {
+  const result = await requestResult<{ entries: MemoryActivity[]; next_offset: number | null }>(
+    "GET", `/api/memories/activity?${new URLSearchParams({ recent: String(recent), offset: String(offset), q: query })}`,
+  );
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
+export async function deleteMemoryActivity(id: string) {
+  const result = await requestResult<{ status: string }>("DELETE", `/api/memories/activity/${encodeURIComponent(id)}`);
+  if (!result.ok) throw new Error(result.error);
 }
 
 export async function getMemory(id: string): Promise<MemoryRecord> {
@@ -140,6 +176,7 @@ export async function createMemory(data: {
   category?: string;
   source?: string;
   metadata?: string;
+  source_conversation_id?: string;
 }): Promise<MemoryRecord> {
   const result = await requestResult<MemoryRecord>("POST", "/api/memories", data);
   if (!result.ok) throw new Error(result.error);
@@ -148,10 +185,10 @@ export async function createMemory(data: {
 
 export async function updateMemory(
   id: string,
-  data: { content?: string; category?: string; metadata?: string }
+  data: { content?: string; category?: string; metadata?: string; expected_revision?: number }
 ): Promise<MemoryRecord> {
   const result = await requestResult<MemoryRecord>("PUT", `/api/memories/${id}`, data);
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw new Error(result.status === 409 && result.error === "memory_revision_conflict" ? "记忆已有新版本，请关闭编辑并刷新后再试。" : result.error);
   return result.data;
 }
 
@@ -167,19 +204,24 @@ export async function getMemoryStats(): Promise<MemoryStats> {
   return result.data;
 }
 
-export async function extractMemories(conversationId?: string): Promise<{
+export type MemoryExtractionMode = "memories" | "relationships";
+
+export async function extractMemories(conversationId?: string, mode: MemoryExtractionMode = "memories"): Promise<{
   ok: boolean;
   created: number;
   skipped: number;
   memories: MemoryRecord[];
+  candidate_ids: string[];
 }> {
   const result = await requestResult<{
     ok: boolean;
     created: number;
     skipped: number;
     memories: MemoryRecord[];
+    candidate_ids: string[];
   }>("POST", "/api/memories/extract", {
     conversation_id: conversationId,
+    ...(mode === "relationships" ? { mode } : {}),
   });
   if (!result.ok) throw new Error(result.error);
   return result.data;
@@ -211,6 +253,18 @@ export async function mergeMemories(ids: string[]) {
 
 export async function reindexMemories(): Promise<MemoryReindexResult> {
   const result = await requestResult<MemoryReindexResult>("POST", "/api/memories/reindex", { limit: 50 });
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
+
+export interface MemoryIndexJob {
+  phase: "idle" | "running" | "completed" | "cancelled" | "failed";
+  indexed: number;
+  error: string | null;
+}
+
+export async function memoryIndexJob(method: "GET" | "POST" | "DELETE" = "GET"): Promise<MemoryIndexJob> {
+  const result = await requestResult<MemoryIndexJob>(method, "/api/memories/index-job");
   if (!result.ok) throw new Error(result.error);
   return result.data;
 }

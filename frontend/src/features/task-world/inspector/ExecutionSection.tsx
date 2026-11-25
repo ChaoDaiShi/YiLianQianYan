@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { Button } from "../../../components/ui";
+import type { TaskNodeExecutionSummary } from "../../../api/taskWorld";
 import Identifier from "../../../components/Identifier";
+import TaskExecutionDetails from "./TaskExecutionDetails";
 import {
   executionStatusLabel,
   getExecutorAvailability,
@@ -8,9 +11,11 @@ import {
 } from "../taskGraphProjection";
 
 interface ExecutionSectionProps {
+  graphId: string;
   node: TaskNodeProjection;
   saving: boolean;
   graphLocked: boolean;
+  blockedReason?: string;
   onStartExecution?: () => Promise<void>;
   onCancelExecution?: () => Promise<void>;
   onRerun?: () => Promise<void>;
@@ -23,17 +28,23 @@ interface ExecutionSectionProps {
  * node keeps its semantic editing but cannot be run.
  */
 export default function ExecutionSection({
+  graphId,
   node,
   saving,
   graphLocked,
   onStartExecution,
   onCancelExecution,
   onRerun,
+  blockedReason,
 }: ExecutionSectionProps) {
+  const [viewedExecution, setViewedExecution] = useState<string | null>(null);
   const latestExecution = node.latest_execution;
   const execution_status = latestExecution?.status;
   const executionBusy = isActiveExecution(execution_status);
   const executionHistory = node.execution_history || [];
+  const selectedExecution = latestExecution?.execution_id === viewedExecution ? latestExecution :
+    executionHistory.find(execution => execution.execution_id === viewedExecution);
+  function openDetails(execution: TaskNodeExecutionSummary) { setViewedExecution(execution.execution_id); }
 
   return (
     <section
@@ -89,13 +100,15 @@ export default function ExecutionSection({
           {latestExecution.error ? ` · ${latestExecution.error}` : ""}
         </p>
       )}
+      {blockedReason && <p className="mt-2 text-xs text-[var(--text-secondary)]" role="status">{blockedReason}</p>}
       <div className="mt-3 flex flex-wrap gap-2">
+        {latestExecution && <Button type="button" size="sm" variant="secondary" onClick={() => openDetails(latestExecution)}>查看执行详情</Button>}
         {onStartExecution && !executionBusy && (
           <Button
             type="button"
             size="sm"
             variant="secondary"
-            disabled={saving || graphLocked || getExecutorAvailability(node.executor_ref,node.capability).kind !== "configured"}
+            disabled={saving || graphLocked || Boolean(blockedReason) || getExecutorAvailability(node.executor_ref,node.capability).kind !== "configured"}
             onClick={() => void onStartExecution()}
           >
             {latestExecution ? "再次执行" : "开始执行"}
@@ -134,19 +147,18 @@ export default function ExecutionSection({
           {executionHistory.map((execution) => (
             <li
               key={execution.execution_id}
-              className="flex items-center justify-between gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-muted)] px-2 py-1.5 text-xs"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-muted)] px-2 py-1.5 text-xs"
             >
               <span className="text-[var(--text-secondary)]">
                 #{execution.attempt} · {executionStatusLabel(execution.status)}
                 <Identifier kind="execution" value={execution.execution_id} className="ml-1" />
               </span>
-              <span className="truncate text-[var(--text-faint)]">
-                {execution.failure_code || execution.result_summary || execution.executor_ref || "—"}
-              </span>
+              <Button size="sm" variant="ghost" type="button" onClick={() => openDetails(execution)} aria-label={`查看第 ${execution.attempt} 次执行详情`}>详情</Button>
             </li>
           ))}
         </ol>
       )}
+      {selectedExecution && <TaskExecutionDetails key={selectedExecution.execution_id} graphId={graphId} nodeId={node.id} execution={selectedExecution} onClose={() => setViewedExecution(null)} />}
     </section>
   );
 }

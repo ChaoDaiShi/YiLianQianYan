@@ -1,5 +1,12 @@
 import type { ChannelMessage, ChannelReplyMode } from "../../api/channels";
 
+export type ChannelPlatform = "qq" | "wechat" | "feishu";
+export const channelPlatforms: { id: ChannelPlatform; label: string; providers: string[] }[] = [
+  { id: "qq", label: "QQ", providers: ["onebot11"] },
+  { id: "wechat", label: "微信", providers: ["wechat_onebot", "wechat_ilink"] },
+  { id: "feishu", label: "飞书", providers: ["feishu"] },
+];
+
 const channelLabels: Record<string, string> = {
   disabled: "已停用",
   configured: "已配置 · 等待连接",

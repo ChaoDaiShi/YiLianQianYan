@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { NAV_GROUPS } from "./navGroups";
 import navRailSource from "./NavRail.tsx?raw";
 import { NAV_ENTRIES, orderNavigationEntries } from "./navRegistry";
+// @ts-expect-error -- Node file access is test-only and not bundled.
+import { readFileSync } from "node:fs";
+
+const desktopWorkspaceStyles = readFileSync(new URL("../../styles/desktop-workspace.css", import.meta.url), "utf8");
 
 describe("NavRail groups", () => {
   it("keeps every current navigation route in one visual group", () => {
@@ -29,15 +33,16 @@ describe("NavRail groups", () => {
     expect(navRailSource).toContain("nav-rail-list");
     expect(navRailSource).toContain('aria-label="全局导航"');
     expect(navRailSource).toContain("后端状态：");
-    expect(navRailSource).toContain("min-[960px]:w-[80px]");
+    expect(desktopWorkspaceStyles).toMatch(/\.app-shell \.nav-rail\s*\{\s*width: 62px;/);
+    expect(desktopWorkspaceStyles).toMatch(/@media \(max-width: 959px\)\s*\{\s*\.app-shell \.nav-rail\s*\{\s*width: 50px;/);
     expect(navRailSource).toContain("min-h-14");
-    expect(navRailSource).toContain("min-[960px]:w-[68px]");
+    expect(desktopWorkspaceStyles).toMatch(/\.app-shell \.nav-rail-list \.nav-rail-item\s*\{\s*width: 100%;/);
     expect(navRailSource).toContain("<Tooltip key={item.id} content={item.label}>");
     expect(navRailSource).toContain("aria-label={item.label}");
-    expect(navRailSource).toContain("absolute right-1 top-1");
+    expect(navRailSource).toContain("data-active={secondaryActive");
     expect(navRailSource).not.toContain("min-[1180px]:w-[148px]");
     expect(navRailSource).not.toContain("min-[1180px]:flex-row");
     expect(navRailSource).toContain("whitespace-nowrap");
-    expect(navRailSource).toContain("✦");
+    expect(navRailSource).not.toContain("✦");
   });
 });

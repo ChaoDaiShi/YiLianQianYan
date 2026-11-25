@@ -6,8 +6,8 @@ describe("chat resource ingest entry", () => {
   it("uses the browser file permission boundary and Resource API", () => {
     const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
     expect(source).toContain('type="file"');
-    expect(source).toContain("ingestResource(file, signal)");
-    expect(source).toContain("resource.id");
+    expect(source).toContain("upload: uploadResource");
+    expect(source).toContain("queue.readyIds()");
   });
   it("offers multi-select, drop and pasted images with removable explicit states", () => {
     const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");

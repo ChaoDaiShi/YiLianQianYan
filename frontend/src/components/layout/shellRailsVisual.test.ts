@@ -13,12 +13,10 @@ describe("Shell rail visual contracts", () => {
     expect(executionSidebarSource).toContain("execution-sidebar-content");
   });
 
-  it("defines shell-wide artwork and adaptive nav rail hooks", () => {
-    expect(appShellSource).toContain('className="shell-ambient');
-    expect(appShellSource).toContain("shell-ambient-strong");
-    expect(appShellSource).toContain('className="shell-ambient-overlay');
+  it("defines an appearance-aware shell and adaptive nav rail hooks", () => {
+    expect(appShellSource).toContain('className="app-shell');
+    expect(appShellSource).toContain("data-background-mode");
     expect(appShellSource).toContain("data-color-scheme");
-    expect(appShellSource).toContain("var(--shell-overlay)");
     expect(navRailSource).toContain("nav-rail-compact");
     expect(navRailSource).toContain("nav-rail-item");
     expect(navRailSource).toContain("nav-rail-item-label");

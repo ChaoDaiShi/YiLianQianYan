@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import taskCenterSource from "./TaskCenterPage.tsx?raw";
+import workflowListSource from "./TaskGraphWorkflowList.tsx?raw";
+import plannerSource from "./TaskGraphPlanner.tsx?raw";
 
 type GraphCreationResult =
   | {
@@ -29,8 +30,8 @@ interface CreationDependencies {
 type CreateEmptyTaskGraph = (dependencies: CreationDependencies) => Promise<void>;
 
 async function loadCreateEmptyTaskGraph(): Promise<CreateEmptyTaskGraph> {
-  const taskCenterModule = await import("./TaskCenterPage");
-  const createEmptyTaskGraph = (taskCenterModule as Record<string, unknown>)
+  const graphActions = await import("./taskGraphActions");
+  const createEmptyTaskGraph = (graphActions as Record<string, unknown>)
     .createEmptyTaskGraph;
   expect(createEmptyTaskGraph).toBeTypeOf("function");
   return createEmptyTaskGraph as CreateEmptyTaskGraph;
@@ -56,7 +57,7 @@ function creationDependencies(
   };
 }
 
-describe("task center page contract", { timeout: 15000 }, () => {
+describe("task workflow creation", { timeout: 15000 }, () => {
   it("never navigates when a malformed success omits the persisted identity", async () => {
     const createEmptyTaskGraph = await loadCreateEmptyTaskGraph();
     const dependencies = creationDependencies(vi.fn().mockResolvedValue({ ok: true, data: {} }));
@@ -75,9 +76,10 @@ describe("task center page contract", { timeout: 15000 }, () => {
     expect(dependencies.navigate).toHaveBeenLastCalledWith("/task-world/second");
   });
   it("keeps creation and planning entries above the empty/nonempty branch", () => {
-    const beforeEmptyBranch = taskCenterSource.split("{taskGraphs.length === 0 ?")[0];
+    const beforeEmptyBranch = workflowListSource.split("graphs.length === 0")[0];
     expect(beforeEmptyBranch).toContain("新建任务画布");
-    expect(beforeEmptyBranch).toContain("描述任务目标");
+    expect(beforeEmptyBranch).toContain("规划任务画布");
+    expect(plannerSource).toContain("描述任务目标");
   });
 
   it("recovers from a rejected creation request without navigating", async () => {
@@ -88,18 +90,14 @@ describe("task center page contract", { timeout: 15000 }, () => {
     expect(dependencies.setError).toHaveBeenCalledWith(expect.objectContaining({ message: "offline" }));
     expect(dependencies.inFlight.current).toBe(false);
   });
-  it("uses the existing task APIs and keeps task-to-conversation links honest", () => {
-    expect(taskCenterSource).toContain("listTasks");
-    expect(taskCenterSource).toContain("listTaskGraphs");
-    expect(taskCenterSource).toContain("/task-world/");
-    expect(taskCenterSource).toContain("TaskDetailPanel");
-    expect(taskCenterSource).toContain("navigate(\"/chat\")");
-    expect(taskCenterSource).not.toContain("conversation_id");
+  it("loads the saved task graph list and retains the planning API", () => {
+    expect(workflowListSource).toContain("listTaskGraphs");
+    expect(plannerSource).toContain("planTaskGraph");
   });
 
   it("shows a real empty state with an explicit task canvas creation entry", () => {
-    expect(taskCenterSource).toContain("还没有任务画布");
-    expect(taskCenterSource).toContain("新建任务画布");
+    expect(workflowListSource).toContain("还没有任务画布");
+    expect(workflowListSource).toContain("新建任务画布");
   });
 
   it("creates at most one empty graph while a request is in flight", async () => {
@@ -159,9 +157,7 @@ describe("task center page contract", { timeout: 15000 }, () => {
   });
 
   it("keeps existing graph cards linked to their task world route", () => {
-    expect(taskCenterSource).toContain("taskGraphs.map((graph)");
-    expect(taskCenterSource).toContain(
-      "navigate(`/task-world/${encodeURIComponent(graph.id)}`)",
-    );
+    expect(workflowListSource).toContain("matches.map(graph =>");
+    expect(workflowListSource).toContain("navigate(taskGraphPath(graph.id))");
   });
 });

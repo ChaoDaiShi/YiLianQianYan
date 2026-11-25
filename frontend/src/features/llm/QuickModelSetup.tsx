@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Button, Input } from "../../components/ui";
+import { useEffect, useState, type ReactNode } from "react";
+import { Button, Input, Select } from "../../components/ui";
 import { activateLlmModel, createLlmModel, listLlmModels, updateLlmModel, verifyLlmModel } from "../../api/client";
 import type { LlmModel } from "../../types";
 import { PROVIDER_PRESETS, type ProviderPresetId } from "./llmModelUtils";
@@ -7,15 +7,20 @@ import { listProviderAccounts, poolRequest, type ProviderAccount } from "./model
 import AccountCredentialFields from "./AccountCredentialFields";
 import { credentialChoice, credentialReady } from "./accountCredentials";
 import { finishQuickModelSetup } from "./quickModelCompletion";
+import ModelCatalogField, { type UpstreamModel } from "./ModelCatalogField";
 
-const selectClass = "w-full rounded-xl border border-[var(--border-soft)] bg-[var(--surface-solid)] p-2 text-sm";
-export default function QuickModelSetup({ onSaved }: { onSaved?: () => void }) {
+const providerOptions = Object.entries(PROVIDER_PRESETS).map(([value, preset]) => ({ value, label: preset.label }));
+export default function QuickModelSetup({ onSaved, children }: {
+  onSaved?: () => void;
+  children: (form: { fields: ReactNode; action: ReactNode; error: string; notice: string }) => ReactNode;
+}) {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
   const [provider, setProvider] = useState<ProviderPresetId>("deepseek");
   const [accountId, setAccountId] = useState("");
   const [base, setBase] = useState(PROVIDER_PRESETS.deepseek.baseUrl);
-  const [model, setModel] = useState("deepseek-flash");
-  const [label, setLabel] = useState("DeepSeek Flash");
+  const [model, setModel] = useState("");
+  const [label, setLabel] = useState("");
+  const [catalogModels, setCatalogModels] = useState<UpstreamModel[]>([]);
   const [key, setKey] = useState("");
   const [credentialModelId, setCredentialModelId] = useState("");
   const [models, setModels] = useState<LlmModel[]>([]);
@@ -25,17 +30,23 @@ export default function QuickModelSetup({ onSaved }: { onSaved?: () => void }) {
   const [savedModelId, setSavedModelId] = useState<string | null>(null);
   const [savedVision, setSavedVision] = useState<{id:string;revision:number} | null>(null);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  useEffect(() => { void Promise.all([listProviderAccounts(), listLlmModels()]).then(([accounts, models]) => { setAccounts(accounts); if (models) setModels(models); else setMessage("无法读取已保存的模型凭据来源。"); }).catch(e => setMessage(String(e))); }, []);
+  const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
+  const currentAccount = accounts.find(account => account.id === accountId);
+  const providerAccounts = accounts.filter(account => account.provider_id === provider);
+  const displayLabel = label.trim() || catalogModels.find(item => item.id === model)?.name || model;
+  const effectiveBase = currentAccount?.base_url ?? base;
+  const visionOptions = catalogModels.filter(item => !item.input_modalities || item.input_modalities.includes("image"));
+  const needsAddress = ["local", "custom"].includes(PROVIDER_PRESETS[provider].category);
+  useEffect(() => { void Promise.all([listProviderAccounts(), listLlmModels()]).then(([accounts, models]) => { setAccounts(accounts); if (models) setModels(models); else setFeedback({ text: "无法读取已保存的模型凭据来源。", error: true }); }).catch(e => setFeedback({ text: String(e), error: true })); }, []);
   useEffect(() => {
     if (!accountId) { setLinkedVision(false); return; }
     let active = true;
     setLinkedVision(false);
-    void Promise.all([poolRequest<Array<{id:string;provider_account_id:string;model:string;service_kind:string}>>("GET", "/api/service-profiles"), poolRequest<{source:string|null;id:string|null}>("GET", "/api/service-defaults/vision")]).then(([profiles, selected]) => { if (active) setLinkedVision(profiles.some(p=>p.id===selected.id && selected.source==="profile" && p.provider_account_id===accountId && p.model===visionModel)); }).catch(e=>{ if (active) setMessage(String(e)); });
+    void Promise.all([poolRequest<Array<{id:string;provider_account_id:string;model:string;service_kind:string}>>("GET", "/api/service-profiles"), poolRequest<{source:string|null;id:string|null}>("GET", "/api/service-defaults/vision")]).then(([profiles, selected]) => { if (active) setLinkedVision(profiles.some(p=>p.id===selected.id && selected.source==="profile" && p.provider_account_id===accountId && p.model===visionModel)); }).catch(e=>{ if (active) setFeedback({ text: String(e), error: true }); });
     return () => { active = false; };
   }, [accountId, visionModel]);
   async function save() {
-    setBusy(true); setMessage("");
+    setBusy(true); setFeedback(null);
     let savedModel = false;
     try {
       // Model creation updates the account's profile list on the server. Read
@@ -54,7 +65,8 @@ export default function QuickModelSetup({ onSaved }: { onSaved?: () => void }) {
       }
       if (!credentialReady(account, account.provider_id, "", "")) throw new Error("账户凭据尚不可用，请检查 API Key 或凭据存储。");
       const accountIdForVision = account.id;
-      const payload = {provider_account_id:account.id, provider:account.provider_id, label, model, base_url:account.base_url, api_format:"openai" as const, api_key:"", api_key_env:"", temperature:0, max_tokens:16384, invoke_timeout_ms:120000};
+      const upstreamLimit = catalogModels.find(item => item.id === model)?.max_output_tokens;
+      const payload = {provider_account_id:account.id, provider:account.provider_id, label:displayLabel, model, base_url:account.base_url, api_format:"openai" as const, api_key:"", api_key_env:"", temperature:0, max_tokens:upstreamLimit ? Math.min(16384, upstreamLimit) : 16384, invoke_timeout_ms:120000};
       const saved = savedModelId ? await updateLlmModel(savedModelId, payload) : await createLlmModel(payload);
       if (!saved) throw new Error("模型保存失败，账户已保留，可重试。");
       savedModel = true; setSavedModelId(saved.id); onSaved?.();
@@ -63,29 +75,41 @@ export default function QuickModelSetup({ onSaved }: { onSaved?: () => void }) {
         activate: () => activateLlmModel(saved.id),
         configureVision: async () => {
         if (useVision && (!linkedVision || savedVision)) {
-          const vision = await poolRequest<{id:string;revision:number}>(savedVision ? "PUT" : "POST", savedVision ? `/api/service-profiles/${savedVision.id}` : "/api/service-profiles", {label:`${label} · 识图`, provider_account_id:accountIdForVision, service_kind:"vision", model:visionModel, adapter:"openai", parameters:{}, expected_revision:savedVision?.revision ?? null});
+          const vision = await poolRequest<{id:string;revision:number}>(savedVision ? "PUT" : "POST", savedVision ? `/api/service-profiles/${savedVision.id}` : "/api/service-profiles", {label:`${displayLabel} · 识图`, provider_account_id:accountIdForVision, service_kind:"vision", model:visionModel, adapter:"openai", parameters:{}, expected_revision:savedVision?.revision ?? null});
           setSavedVision(vision);
           await poolRequest("PUT", "/api/service-defaults/vision", {source:"profile",id:vision.id}); setLinkedVision(true);
         }
         },
       });
-      if (completion === "verify_failed") { setMessage("模型已保存，连接验证未通过；识图默认配置未更改。"); return; }
-      if (completion === "activate_failed") { setMessage("模型已保存并验证，但启用失败；识图默认配置未更改。"); return; }
+      if (completion === "verify_failed") { setFeedback({ text: "模型已保存，连接验证未通过。", error: true }); return; }
+      if (completion === "activate_failed") { setFeedback({ text: "模型已验证，但启用失败。", error: true }); return; }
       onSaved?.();
       await poolRequest("PUT", "/api/model-pool-bindings/default", {pool_id:null});
-      setMessage(`已保存并启用 ${label}，默认对话模型池绑定已解除。`);
-    } catch (e) { setMessage(`${savedModel ? "对话模型已保存；后续步骤未完成。" : ""}${e instanceof Error ? e.message : String(e)}`); } finally { setBusy(false); }
+      setFeedback({ text: `已保存并启用 ${displayLabel}`, error: false });
+    } catch (e) { setFeedback({ text: `${savedModel ? "对话模型已保存，后续步骤未完成。" : ""}${e instanceof Error ? e.message : String(e)}`, error: true }); } finally { setBusy(false); }
   }
-  return <section className="settings-subcard space-y-3"><div><h3 className="font-semibold">添加并使用对话模型</h3><p className="text-sm text-[var(--text-muted)]">选择厂商和模型，可复用已保存账户。保存后验证连接并启用，使用固定模型会解除默认对话模型池绑定。</p></div>
-    <label className="block text-sm">服务商<select className={selectClass} value={provider} onChange={e => { const id=e.target.value as ProviderPresetId; setProvider(id); setAccountId(""); setKey(""); setCredentialModelId(""); setSavedModelId(null); setSavedVision(null); setUseVision(false); setLinkedVision(false); setVisionModel(id==="deepseek"?"deepseek-flash":PROVIDER_PRESETS[id].model); setBase(PROVIDER_PRESETS[id].baseUrl); setModel(PROVIDER_PRESETS[id].model); setLabel(PROVIDER_PRESETS[id].label); }}>
-      {Object.entries(PROVIDER_PRESETS).map(([id,p]) => <option key={id} value={id}>{p.label}</option>)}
-    </select></label>
-    <label className="block text-sm">账户<select className={selectClass} value={accountId} onChange={e=>{setAccountId(e.target.value);setKey("");setCredentialModelId("");setLinkedVision(false);setSavedModelId(null);setSavedVision(null);}}><option value="">创建新账户</option>{accounts.filter(a=>a.provider_id===provider).map(a=><option key={a.id} value={a.id}>{a.label} · {a.credential_status === "configured" ? "已配置" : a.credential_status === "not_required" ? "无需凭据" : a.credential_status === "missing" ? "缺少凭据" : "凭据不可用"}</option>)}</select></label>
-    {!accountId && <Input label="API 地址" value={base} onChange={e=>{setBase(e.target.value);setCredentialModelId("");}}/>}
-    <AccountCredentialFields account={accounts.find(a=>a.id===accountId)} provider={provider} baseUrl={accounts.find(a=>a.id===accountId)?.base_url ?? base} models={models} apiKey={key} modelId={credentialModelId} onKey={setKey} onModel={setCredentialModelId}/>
-    <Input label="模型 ID（可选择或输入）" list="quick-chat-models" value={model} onChange={e=>{setModel(e.target.value);setVisionModel(provider==="deepseek"?"deepseek-flash":e.target.value)}}/><datalist id="quick-chat-models">{(provider==="deepseek"?["deepseek-flash","deepseek-v4-pro"]:[PROVIDER_PRESETS[provider].model]).filter(Boolean).map(id=><option key={id} value={id}/>)}</datalist><Input label="显示名称" value={label} onChange={e=>setLabel(e.target.value)}/>
-    {(PROVIDER_PRESETS[provider].services as string[]).includes("vision")&&<><label className="flex gap-2 text-sm"><input type="checkbox" checked={useVision} onChange={e=>setUseVision(e.target.checked)}/>同时使用此账户配置默认识图服务</label>{useVision&&<Input label="识图模型 ID" value={visionModel} readOnly={provider==="deepseek"} onChange={e=>setVisionModel(e.target.value)}/>}{linkedVision&&<p className="text-sm">识图服务已关联此账户并设为默认。</p>}</>}
-    {savedModelId&&<p className="text-sm text-[var(--text-muted)]">本次模型档案已保存；再次提交会更新同一档案。</p>}
-    <Button disabled={busy||!model.trim()||!label.trim()||(useVision&&!visionModel.trim())||(!accountId&&!base.trim())||!credentialReady(accounts.find(a=>a.id===accountId),provider,key,credentialModelId)} onClick={()=>void save()}>{busy?"正在保存并验证…":"保存并使用"}</Button>{message&&<p role="status" className="text-sm">{message}</p>}
+  const fields = <section className="space-y-3" aria-label="对话模型快速配置">
+    <Select label="服务商" value={provider} options={providerOptions} onChange={e => { const id=e.target.value as ProviderPresetId; setProvider(id); setAccountId(""); setKey(""); setCredentialModelId(""); setSavedModelId(null); setSavedVision(null); setUseVision(false); setLinkedVision(false); setVisionModel(""); setBase(PROVIDER_PRESETS[id].baseUrl); setModel(""); setLabel(""); setCatalogModels([]); }} />
+    {providerAccounts.length > 0 && <Select label="账户" value={accountId} options={[{ value: "", label: "创建新账户" }, ...providerAccounts.map(account => ({ value: account.id, label: account.label }))]} onChange={e=>{setAccountId(e.target.value);setKey("");setCredentialModelId("");setLinkedVision(false);setSavedModelId(null);setSavedVision(null);}} />}
+    {!accountId && needsAddress && <Input label="API 地址" value={base} onChange={event => { setBase(event.target.value); setCredentialModelId(""); }} />}
+    <AccountCredentialFields key={provider + accountId} account={currentAccount} provider={provider} baseUrl={effectiveBase} models={models} apiKey={key} modelId={credentialModelId} onKey={setKey} onModel={setCredentialModelId}/>
+    <ModelCatalogField provider={provider} baseUrl={effectiveBase} apiKey={key} accountId={credentialModelId ? undefined : accountId} modelId={credentialModelId} enabled={credentialReady(currentAccount, provider, key, credentialModelId)}
+      preserveValue={Boolean(savedModelId)} preferredId={PROVIDER_PRESETS[provider].model} value={model} onChange={id => setModel(id)} onLoaded={items => {
+        setCatalogModels(items);
+        const candidates = items.filter(item => !item.input_modalities || item.input_modalities.includes("image"));
+        setVisionModel(current => candidates.some(item => item.id === current) ? current : candidates[0]?.id ?? "");
+      }} advancedFields={<>
+      {!accountId && !needsAddress && <Input label="API 地址" value={base} onChange={event => { setBase(event.target.value); setCredentialModelId(""); }} />}
+      <Input label="显示名称（可选）" value={label} onChange={event => setLabel(event.target.value)} placeholder="默认使用上游模型名称" />
+      {(PROVIDER_PRESETS[provider].services as string[]).includes("vision") && <>
+        <label className="flex gap-2 text-sm"><input type="checkbox" checked={useVision} onChange={event => setUseVision(event.target.checked)} />同时配置默认识图服务</label>
+        {useVision && <Select label="识图模型" value={visionModel} onChange={event => setVisionModel(event.target.value)} options={visionOptions.map(item => ({ value: item.id, label: item.name }))} />}
+        {linkedVision && <p className="text-sm">识图服务已关联此账户。</p>}
+      </>}
+      <p className="text-xs text-[var(--text-secondary)]">保存并使用固定模型会解除默认对话模型池绑定。</p>
+      </>} />
   </section>;
+  const action = <Button disabled={busy || !model.trim() || (useVision && !visionModel.trim()) || (!accountId && !base.trim()) || !credentialReady(currentAccount, provider, key, credentialModelId)}
+    onClick={() => void save()}>{busy ? "正在保存并验证…" : "保存并使用"}</Button>;
+  return children({ fields, action, error: feedback?.error ? feedback.text : "", notice: feedback && !feedback.error ? feedback.text : "" });
 }

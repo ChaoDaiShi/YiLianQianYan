@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import capabilitiesPageSource from "./CapabilitiesPage.tsx?raw";
+import capabilitiesPageSource from "../features/capabilities/CapabilityRegistry.tsx?raw";
 
 describe("Capabilities capability surface", () => {
   it("uses the real registry search, filters, refresh, and detail API", () => {
@@ -18,7 +18,7 @@ describe("Capabilities capability surface", () => {
     expect(capabilitiesPageSource).toContain("permissions");
     expect(capabilitiesPageSource).toContain("getCapabilityManagementTarget");
     expect(capabilitiesPageSource).toContain("新增能力来源");
-    expect(capabilitiesPageSource).toContain("管理来源");
+    expect(capabilitiesPageSource).toContain("managementTarget.label");
     expect(capabilitiesPageSource).not.toContain("执行能力");
     expect(capabilitiesPageSource).not.toContain("切换启用");
   });

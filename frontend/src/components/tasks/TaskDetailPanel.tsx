@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { workspacePagePath } from "../../api/workspacePages";
 import Identifier from "../Identifier";
 import {
   CheckCircle2,
@@ -181,6 +183,9 @@ export default function TaskDetailPanel({
               </Badge>
             </div>
             <Identifier kind="task" value={task.id} className="mt-1 text-xs text-[var(--text-faint)]" />
+            {task.page_source && <Link className="workspace-page-link" to={workspacePagePath(task.workspace_id, task.page_source.page_id)}>
+              来源页面 · 版本 {task.page_source.revision}
+            </Link>}
             {task.description && (
               <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text-secondary)]">
                 {task.description}

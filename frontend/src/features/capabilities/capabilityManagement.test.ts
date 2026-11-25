@@ -26,20 +26,23 @@ function capability(overrides: Partial<CapabilityDescriptor>): CapabilityDescrip
 
 describe("capability source management", () => {
   it("routes editable providers to their real management surface", () => {
-    expect(getCapabilityManagementTarget(capability({ provider: "skill_runtime" }))).toEqual({
+    expect(getCapabilityManagementTarget(capability({ provider: "skill_runtime", name: "workspace:organize-files" }))).toEqual({
       label: "管理技能来源",
-      to: "/capabilities?category=skill&skill=organize-files",
+      to: "/capabilities?category=skill&skill=workspace%3Aorganize-files",
     });
     expect(getCapabilityManagementTarget(capability({ provider: "mcp", metadata: { source_id: "local fs", source_name: null, tags: [], runtime_ready: true, extra: {} } }))).toEqual({
       label: "管理 MCP 服务",
-      to: "/capabilities?category=mcp&server=local%20fs",
+      to: "/capabilities?category=mcp",
     });
     expect(getCapabilityManagementTarget(capability({ provider: "agent_runtime", metadata: { source_id: "agent-1", source_name: null, tags: [], runtime_ready: true, extra: {} } }))).toEqual({ label: "管理智能体来源", to: "/agents?agent=agent-1" });
     expect(getCapabilityManagementTarget(capability({ provider: "workflow_runtime", metadata: { source_id: "flow-1", source_name: null, tags: [], runtime_ready: true, extra: {} } }))).toEqual({ label: "管理工作流来源", to: "/capabilities?category=workflow&workflow=flow-1" });
   });
 
-  it("does not pretend builtin capabilities are directly editable", () => {
-    expect(getCapabilityManagementTarget(capability({ provider: "builtin" }))).toBeNull();
+  it("opens built-in tools in the read-only tool manager", () => {
+    expect(getCapabilityManagementTarget(capability({ kind: "tool", provider: "builtin" }))).toEqual({
+      label: "查看运行时工具",
+      to: "/capabilities?category=tool&tool=organize-files",
+    });
     expect(getCapabilityManagementTarget(capability({ provider: "subagent" }))).toBeNull();
   });
 });

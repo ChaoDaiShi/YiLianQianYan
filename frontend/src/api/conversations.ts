@@ -38,8 +38,11 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   return result.data;
 }
 
-export async function createConversation(title?: string): Promise<ConversationSummary> {
-  const result = await requestResult<ConversationSummary>("POST", "/api/conversations", { title });
+export async function createConversation(title?: string, options?: { useDefaultWorkspace: boolean }): Promise<ConversationSummary> {
+  const result = await requestResult<ConversationSummary>("POST", "/api/conversations", {
+    title,
+    use_default_workspace: options?.useDefaultWorkspace,
+  });
   if (!result.ok) throw new Error(result.error);
   return result.data;
 }

@@ -1,9 +1,9 @@
 import { useCallback, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import TokenUsagePanel from "../features/monitor/TokenUsagePanel";
 import MonitoringToolbox from "../components/system/MonitoringToolbox";
 import { useVisibleRefresh } from "../components/system/useVisibleRefresh";
-import { Activity, Cpu, Database, Disc, FileText, HardDrive, Monitor, RefreshCw, Server } from "lucide-react";
+import { Cpu, Database, Disc, FileText, HardDrive, Monitor, RefreshCw, Server } from "lucide-react";
 import { getSystemInfo, healthCheck, type RuntimeHealth } from "../api/client";
 import {
   Button,
@@ -60,7 +60,6 @@ function SystemMetricSkeleton() {
 
 export default function SystemPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [data, setData] = useState<SystemData | null>(null);
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [error, setError] = useState("");
@@ -87,7 +86,6 @@ export default function SystemPage() {
     <PageShell
       variant="workspace"
       title="系统监控"
-      description="查看应用、服务和资源的当前运行状态。"
       className="ui-opt-system system-center-page page-canvas flex h-full min-h-0 flex-col"
       contentClassName="p-0 flex flex-col flex-1 min-h-0 overflow-hidden"
       actions={(
@@ -106,15 +104,11 @@ export default function SystemPage() {
 
       <div className="system-center-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 scrollbar-thin">
         <section className="preview-monitor-overview" aria-label="服务状态概览"><h2>服务状态</h2><div><Server size={17} /><span>后端服务</span><SystemStatusBadge status={health?.status} label="Backend" /></div><div><Database size={17} /><span>本地数据库</span><SystemStatusBadge status={health?.database} label="Database" /></div></section>
-        <TokenUsagePanel />
-        <details className="preview-monitor-details" open={new URLSearchParams(location.search).get("card") === "approvals"}><summary>监控工具箱与审批</summary>
         <MonitoringToolbox data={data as unknown as Record<string, unknown> | null} health={health as unknown as Record<string, unknown> | null} />
-        </details>
-        <details className="preview-monitor-details"><summary>设备资源与运行详情</summary>
+        <TokenUsagePanel />
         {error && !data ? (
           <ErrorState
             title="系统状态暂时无法加载"
-            description={error}
             action={<Button variant="secondary" onClick={() => void refresh()}>重试</Button>}
           />
         ) : null}
@@ -126,6 +120,7 @@ export default function SystemPage() {
           </div>
         ) : null}
 
+        <details className="preview-monitor-details"><summary>设备资源与运行详情</summary>
         {loading && !data ? (
           <div className="system-monitor-stack" aria-label="正在加载系统状态">
             <SystemSection title="系统资源">
@@ -133,9 +128,6 @@ export default function SystemPage() {
                 <SystemMetricSkeleton />
                 <SystemMetricSkeleton />
               </div>
-            </SystemSection>
-            <SystemSection title="服务状态">
-              <Skeleton className="h-24 w-full" />
             </SystemSection>
           </div>
         ) : null}
@@ -201,21 +193,6 @@ export default function SystemPage() {
               </SystemSection>
             ) : null}
 
-            <SystemSection title="服务状态" description="仅显示已有健康接口返回的状态。">
-              <Panel className="system-health-grid">
-                <div className="system-health-row">
-                  <div className="flex items-center gap-2"><Server className="h-4 w-4 text-[var(--accent-blue)]" aria-hidden="true" />Backend</div>
-                  <SystemStatusBadge status={health?.status} label="Backend" />
-                </div>
-                <div className="system-health-row">
-                  <div className="flex items-center gap-2"><Database className="h-4 w-4 text-[var(--accent-purple)]" aria-hidden="true" />Database</div>
-                  <SystemStatusBadge status={health?.database} label="Database" />
-                </div>
-                {health?.version ? <div className="system-health-meta"><span>Version</span><span>{health.version}</span></div> : null}
-                {health?.policy_version ? <div className="system-health-meta"><span>Policy</span><span>{health.policy_version}</span></div> : null}
-              </Panel>
-            </SystemSection>
-
             <SystemSection title="详细信息">
               <Panel className="system-detail-grid">
                 <div><span>主机</span><strong>{data.hostname}</strong></div>
@@ -223,7 +200,6 @@ export default function SystemPage() {
                 <div><span>内核</span><strong>{data.kernel}</strong></div>
                 <div><span>运行时间</span><strong>{formatUptime(data.uptime_secs)}</strong></div>
                 {lastRefresh ? <div><span>最近刷新</span><strong>{formatLogTimestamp(lastRefresh)}</strong></div> : null}
-                <div className="system-detail-note"><Activity className="h-4 w-4" aria-hidden="true" />数据来自现有系统接口</div>
               </Panel>
             </SystemSection>
           </div>

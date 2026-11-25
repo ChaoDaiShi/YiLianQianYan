@@ -247,7 +247,7 @@ export const ConflictResolutionPanel: React.FC<ConflictResolutionPanelProps> = (
                           {isCurrentResolving && resolvingId === conflict.id ? '提交中...' : opt.label}
                         </button>
                         {opt.disabledReason && (
-                          <div className="hidden group-hover:block absolute bottom-full mb-1 left-0 z-10 w-64 p-2 bg-zinc-900 text-white text-[11px] rounded shadow-lg">
+                          <div className="glass-popup hidden group-hover:block absolute bottom-full mb-1 left-0 z-10 w-64 p-2 bg-[var(--surface-solid)] text-[var(--text-primary)] text-[11px] rounded shadow-lg">
                             {opt.disabledReason}
                           </div>
                         )}

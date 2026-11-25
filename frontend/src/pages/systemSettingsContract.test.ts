@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import pageSource from "../features/settings/editor/SettingsEditorDialog.tsx?raw";
+import dialogLayoutSource from "../features/settings/sections/SettingsDialogLayout.tsx?raw";
 import configSource from "../features/settings/model/config.ts?raw";
 import mappingSource from "../features/settings/model/mapping.ts?raw";
 import agentSettingsSource from "../features/settings/sections/AgentSettings.tsx?raw";
@@ -55,10 +56,9 @@ describe("Settings contract", () => {
     expect(settingsNavigationSource).toContain('label: "基础配置"');
     expect(typesSource).toContain("export interface VoiceSttConfig");
     expect(typesSource).toContain("export interface VoiceTtsConfig");
-    expect(source).toContain("语音识别（STT）");
-    expect(source).toContain("语音合成（TTS）");
-    expect(source).toContain("config.voice.stt");
-    expect(source).toContain("config.voice.tts");
+    expect(voiceSettingsSource).toContain("语音识别厂商");
+    expect(voiceSettingsSource).toContain("语音合成厂商");
+    expect(voiceSettingsSource).toContain("config.voice[side]");
     expect(source).toContain("api_key_configured");
     expect(source).toContain("clearVoiceSecret");
     expect(source).toContain('type="password"');
@@ -66,31 +66,36 @@ describe("Settings contract", () => {
 
   it("provides section semantics and save feedback", () => {
     expect(pageSource).toContain("switch (nodeKey)");
-    expect(pageSource).toContain("<Modal open onClose={onClose}");
+    expect(dialogLayoutSource).toContain("<Modal open onClose={requestClose} closeDisabled={closeDisabled}");
+    expect(dialogLayoutSource).toContain('role="alert"');
     expect(source).toContain("保存设置");
     expect(source).toContain("未保存");
-    expect(source).toContain("保存失败");
+    expect(source).toContain("设置暂时无法保存");
   });
 
   it("opens the selected settings node directly in a single editor", () => {
-    for (const key of ["model", "stt", "tts", "search", "vision", "image", "embedding", "agent", "compaction", "permissions", "sandbox", "extensions", "appearance", "navigation"]) {
+    for (const key of ["stt", "tts", "embedding", "agent", "compaction", "permissions", "sandbox", "extensions", "appearance"]) {
       expect(pageSource).toContain(`case "${key}":`);
     }
-    expect(pageSource.match(/<Modal\s/g)).toHaveLength(1);
+    expect(dialogLayoutSource.match(/<Modal\s/g)).toHaveLength(1);
     expect(pageSource).not.toContain("<BasicConfiguration");
     expect(pageSource).not.toContain("<PageShell");
     expect(pageSource).not.toContain("<SettingsSectionFrame");
-    expect(pageSource).toContain("<ModuleSettingsEditor");
+    expect(pageSource).toContain('if (props.nodeKey === "navigation") return <ModuleSettingsEditor');
+    expect(pageSource).toContain('if (props.nodeKey === "search") return <SearchPanel');
+    expect(pageSource).toContain('if (props.nodeKey === "vision" || props.nodeKey === "image") return <BasicServicePanel');
+    expect(moduleSetupSource).toContain("<SettingsDialogLayout");
+    expect(modelSettingsSource).toContain("<SettingsDialogLayout");
     expect(pageSource).toContain("<AppearanceSettings theme={theme}");
     expect(pageSource).toContain("usesSettingsDraft && !loaded");
     expect(pageSource).toContain("disabled={!loaded || !isUnsaved");
-    expect(pageSource).toContain("if (!loaded) return;");
+    expect(pageSource).toContain("if (!loaded || needsReload) return;");
   });
 
   it("retains explicit secret clearing and discard semantics", () => {
     expect(pageSource).toContain('window.confirm("确定清除已保存的 API 密钥？');
     expect(pageSource).toContain('[side]: { ...config.voice[side], clear_api_key: true, api_key: "" }');
-    expect(pageSource).toContain('const result = await updateSettings(config)');
+    expect(pageSource).toContain('const result = await updateSettings(submittedConfig)');
     expect(pageSource).toContain('clear_embedding_api_key: undefined');
     expect(pageSource).toContain('setReplaceVoiceKey({ stt: false, tts: false })');
     expect(pageSource).toContain('setSavedSnapshot(comparableConfig(nextConfig))');
@@ -118,23 +123,25 @@ describe("Settings contract", () => {
     expect(source).not.toContain("高对比");
   });
 
-  it("keeps background images but hides advanced theme editing", () => {
+  it("keeps common appearance controls and collapses visual adjustments", () => {
     expect(source).toContain("上传背景图");
-    expect(source).toContain("清除背景");
+    expect(source).toContain("恢复内置背景");
     expect(source).not.toContain("自定义 CSS 变量");
     expect(source).not.toContain("导出主题");
     expect(source).not.toContain("导入主题");
-    expect(source).not.toContain("面板透明度");
-    expect(source).not.toContain(">模糊<");
-    expect(source).not.toContain(">字号<");
+    expect(appearanceSettingsSource).toContain("界面字号");
+    expect(appearanceSettingsSource).toMatch(/<details[\s\S]*<summary>高级选项<\/summary>[\s\S]*面板不透明度[\s\S]*背景模糊[\s\S]*<\/details>/);
   });
 
-  it("keeps provider credentials write-only and makes settings actions scroll with their card", () => {
+  it("keeps provider credentials write-only and uses one footer for settings actions", () => {
     expect(modelManagerSource).toContain("replaceApiKey");
     expect(source).toContain("replaceVoiceKey");
     expect(source).toContain("window.confirm");
     expect(source).toContain("provider_readiness");
-    expect(pageSource).toContain("settings-header-actions");
+    expect(dialogLayoutSource).toContain("settings-header-actions");
+    expect(dialogLayoutSource).toContain("footer={confirmDiscard ?");
+    expect(dialogLayoutSource).toContain("继续编辑");
+    expect(dialogLayoutSource).toContain("放弃并关闭");
     expect(source).not.toContain("system-settings-savebar");
     expect(modelManagerSource).toContain("clearProfileSecret");
     expect(modelManagerSource).toContain("clear_api_key: true");

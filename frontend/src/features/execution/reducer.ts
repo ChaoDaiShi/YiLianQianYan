@@ -14,6 +14,8 @@ const DRAFT_KEY = "__draft__";
 const KNOWN_EVENT_TYPES = new Set([
   "connected",
   "token",
+  "reply_checkpoint",
+  "steering_applied",
   "reasoning",
   "reasoning_snapshot",
   "model_route",
@@ -172,6 +174,7 @@ export function createInitialAgentRunState(
   return {
     conversationId,
     content: "",
+    replyCheckpoint: "",
     reasoning: "",
     records: {},
     order: [],
@@ -209,8 +212,12 @@ export function reduceAgentEvent(
       return { ...state, reasoning: state.reasoning + (event.token || ""), connection: "connected", terminal: false };
     case "reasoning_snapshot":
       return { ...state, reasoning: event.token || "", connection: "connected", terminal: false };
+    case "reply_checkpoint":
+      return { ...state, content: event.result ?? state.content, replyCheckpoint: event.result ?? state.content };
+    case "steering_applied":
+      return { ...state, content: "", replyCheckpoint: "" };
     case "model_route":
-      return event.replace_content ? {...state,content:""} : state;
+      return event.replace_content ? { ...state, content: state.replyCheckpoint } : state;
     case "tool_start": {
       const toolCallId = findRecordId(state, event);
       if (!toolCallId) return state;
@@ -250,6 +257,7 @@ export function reduceAgentEvent(
       return upsertRecord(state, toolCallId, event, {
         executionStatus: event.status === "success" ? "succeeded" : "failed",
         result: event.result,
+        configurationSource: event.configuration_source ?? state.records[toolCallId]?.configurationSource,
         finishedAt: Date.now(),
       });
     }
@@ -265,6 +273,7 @@ export function reduceAgentEvent(
     case "done":
       return {
         ...state,
+        content: event.result ?? state.content,
         connection: "connected",
         terminalError: null,
         terminal: true,
@@ -345,7 +354,7 @@ export function hydratePersistedExecutionRecords(
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((value, index) => {
     if (!value || typeof value !== "object") return [];
-    const source = value as Record<string, unknown>;
+    const source = value as Record<string, unknown> & Pick<ExecutionRecord, "configurationSource">;
     if (typeof source.toolCallId !== "string" || !source.toolCallId) return [];
     return [
       {
@@ -368,6 +377,7 @@ export function hydratePersistedExecutionRecords(
             ? source.verificationReason
             : undefined,
         result: typeof source.result === "string" ? source.result : undefined,
+        configurationSource: source.configurationSource ?? undefined,
         startedAt:
           typeof source.startedAt === "number" ? source.startedAt : undefined,
         finishedAt:

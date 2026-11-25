@@ -1,23 +1,11 @@
-import React, { useEffect, useState } from "react";
-import {
-  Shield,
-  Lock,
-  CheckCircle2,
-  AlertTriangle,
-  RefreshCw,
-  EyeOff,
-  Database,
-  Sliders,
-  Info,
-} from "lucide-react";
-import { Badge, Button, Panel, Spinner } from "../../components/ui";
+import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { Badge, Button } from "../../components/ui";
 import {
   getPrivacySummary,
-  getCloudIdentity,
   getCloudSyncPolicy,
   updateCloudSyncPolicy,
   type CloudDataSummary,
-  type CloudIdentity,
   type CloudSyncPolicy,
 } from "../../api/cloud";
 
@@ -33,102 +21,111 @@ export const DEFAULT_SYNC_CATEGORIES: SyncCategoryPolicy[] = [
   {
     key: "conversations",
     name: "对话与消息",
-    description: "同步用户与助理的消息历史。严格限定仅上传 user 与 assistant 角色。",
+    description: "你和助理发送的消息",
     enabled: true,
-    prohibitedNotice: "内部 system 消息、开发调试提示与工具原始执行参数永不同步",
+    prohibitedNotice: "系统消息、调试提示与工具原始参数",
   },
   {
     key: "memories",
     name: "长期记忆",
-    description: "同步用户已确认的偏好与关键记忆，支持多设备连续体验。",
+    description: "已确认的偏好与长期记忆",
     enabled: true,
-    prohibitedNotice: "未被选中的临时上下文与未知嵌套元数据不进入同步",
+    prohibitedNotice: "未选中的临时上下文与未知字段",
   },
   {
     key: "agent_profiles",
     name: "智能体配置",
-    description: "同步自定义智能体名称、描述、用户设定的 instructions 与可用能力清单。",
+    description: "名称、描述、自定义指令和可用能力",
     enabled: true,
-    prohibitedNotice: "API 密钥、Token、环境变量与展开后的系统提示词禁止同步",
+    prohibitedNotice: "密钥、令牌、环境变量与展开后的系统提示词",
   },
   {
     key: "task_graphs",
     name: "任务图谱与画布",
-    description: "同步结构化任务节点、边引用与画布排版视图。",
+    description: "任务节点、连接关系与画布布局",
     enabled: true,
-    prohibitedNotice: "原始节点执行日志、执行中进程上下文不上传",
+    prohibitedNotice: "执行日志和运行中的进程信息",
   },
   {
     key: "workflow_metadata",
     name: "工作流定义",
-    description: "同步工作流节点与流转结构。",
+    description: "工作流节点与流转关系",
     enabled: true,
-    prohibitedNotice: "节点中的嵌入凭据与运行期临时中间输出不上传",
+    prohibitedNotice: "嵌入的凭据和临时运行结果",
   },
   {
     key: "artifact_metadata",
-    name: "工件元数据",
-    description: "同步生成工件的名称、类型、MIME、大小与摘要。",
+    name: "工件信息",
+    description: "工件的名称、类型、大小和摘要",
     enabled: true,
-    prohibitedNotice: "本机绝对路径与文件原始字节禁止存入关系同步表",
+    prohibitedNotice: "本机路径、文件正文与二进制内容",
   },
   {
     key: "capability_usage",
-    name: "插件与能力使用历史",
-    description: "同步安全网关执行状态、耗时、审批需求与风险级别指标。",
+    name: "插件与能力使用记录",
+    description: "执行状态、用时、审批要求和风险级别",
     enabled: true,
-    prohibitedNotice: "禁止同步完整输入参数与执行结果，保护数据隐私",
+    prohibitedNotice: "完整输入参数与执行结果",
   },
   {
     key: "settings",
-    name: "用户界面偏好",
-    description: "仅同步已审核的 system_preferences 界面与产品偏好段落。",
+    name: "界面偏好",
+    description: "可跨设备使用的界面和产品偏好",
     enabled: true,
-    prohibitedNotice: "模型、语音、搜索凭据和运行授权不属于该同步段落",
+    prohibitedNotice: "模型、语音、搜索和 MCP 凭据，以及运行授权",
   },
 ];
 
-export interface SyncPrivacyPanelProps {
+const DATA_TYPE_LABELS: Record<string, string> = {
+  ...Object.fromEntries(DEFAULT_SYNC_CATEGORIES.map(({ key, name }) => [key, name])),
+  conversation: "对话",
+  conversations: "对话",
+  message: "消息",
+  messages: "消息",
+  memory: "记忆",
+  agent_profile: "智能体配置",
+  task_graph: "任务图谱",
+  canvas_view: "画布视图",
+  canvas_views: "画布视图",
+  capability_usage_record: "插件与能力使用记录",
+};
+
+interface SyncPrivacyPanelProps {
+  canReadCloudData: boolean;
   initialCategories?: SyncCategoryPolicy[];
-  onPolicyChange?: (policy: Record<string, boolean>) => void;
 }
 
-export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
-  initialCategories = DEFAULT_SYNC_CATEGORIES,
-  onPolicyChange,
-}) => {
-  const [categories, setCategories] = useState<SyncCategoryPolicy[]>(initialCategories);
+export function SyncPrivacyPanel({
+  canReadCloudData,
+  initialCategories,
+}: SyncPrivacyPanelProps) {
+  const [categories, setCategories] = useState(initialCategories ?? []);
   const [summary, setSummary] = useState<CloudDataSummary | null>(null);
-  const [identity, setIdentity] = useState<CloudIdentity | null>(null);
-  const [loadingSummary, setLoadingSummary] = useState(false);
-  const [summaryError, setSummaryError] = useState<string>("");
+  const [loadingSummary, setLoadingSummary] = useState(canReadCloudData);
+  const [summaryError, setSummaryError] = useState("");
+  const [policyError, setPolicyError] = useState("");
   const [savingPolicy, setSavingPolicy] = useState(false);
 
-  const fetchSummary = async () => {
+  const fetchSummary = useCallback(async () => {
     setLoadingSummary(true);
     setSummaryError("");
-    const identityState = await getCloudIdentity();
-    if (!identityState || identityState.identity.status === "guest") {
-      setIdentity(identityState?.identity ?? null);
-      setSummary({ counts: {}, object_bytes: 0 });
-      setLoadingSummary(false);
-      return;
-    }
     const result = await getPrivacySummary();
     if (result.ok) {
       setSummary(result.data.summary);
-      setIdentity(result.data.identity);
     } else {
       setSummaryError(result.error);
     }
     setLoadingSummary(false);
-  };
+  }, []);
 
   useEffect(() => {
-    void fetchSummary();
+    if (canReadCloudData) void fetchSummary();
+  }, [canReadCloudData, fetchSummary]);
+
+  useEffect(() => {
     void getCloudSyncPolicy().then((result) => {
       if (!result.ok) {
-        setSummaryError(result.error);
+        setPolicyError(`无法读取同步范围：${result.error}`);
         return;
       }
       setCategories(categoriesFromPolicy(result.data.policy));
@@ -137,236 +134,82 @@ export const SyncPrivacyPanel: React.FC<SyncPrivacyPanelProps> = ({
 
   const handleToggleCategory = async (key: string) => {
     const previousCategories = categories;
-    const updated = categories.map((cat) =>
-      cat.key === key ? { ...cat, enabled: !cat.enabled } : cat
+    const updated = categories.map((category) =>
+      category.key === key ? { ...category, enabled: !category.enabled } : category
     );
     setCategories(updated);
     setSavingPolicy(true);
-    const policy = policyFromCategories(updated);
-    const result = await updateCloudSyncPolicy(policy);
-    setSavingPolicy(false);
+    setPolicyError("");
+    const result = await updateCloudSyncPolicy(policyFromCategories(updated));
     if (!result.ok) {
       setCategories(previousCategories);
-      setSummaryError(`同步范围保存失败：${result.error}`);
-      return;
+      setPolicyError(`同步范围保存失败：${result.error}`);
     }
-    setSummaryError("");
-
-    if (onPolicyChange) {
-      const record: Record<string, boolean> = {};
-      for (const cat of updated) {
-        record[cat.key] = cat.enabled;
-      }
-      onPolicyChange(record);
-    }
+    setSavingPolicy(false);
   };
 
+  const policyReady = categories.length > 0;
+
   return (
-    <div className="space-y-6" data-testid="sync-privacy-panel">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
-        <div>
-          <h2 className="text-xl font-bold text-[var(--foreground)] flex items-center gap-2">
-            <Shield className="w-5 h-5 text-[var(--accent)]" />
-            云同步隐私与数据保护
-          </h2>
-          <p className="text-sm text-[var(--foreground-muted)] mt-1">
-            严格类型白名单与数据最小化控制。关闭分类不同步，关闭同步不推导删除。
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge tone="success" className="text-xs">
-            本地优先
-          </Badge>
-          <Badge tone="accent" className="text-xs">
-            严格白名单
-          </Badge>
-          <Badge tone="default" className="text-xs">
-            Fail-Closed
-          </Badge>
-        </div>
-      </div>
-
-      {/* Principle Banner */}
-      <Panel className="border-l-4 border-l-[var(--accent)] bg-[var(--surface-subtle)] space-y-2">
-        <div className="flex items-start gap-3">
-          <Info className="w-5 h-5 text-[var(--accent)] shrink-0 mt-0.5" />
-          <div className="text-sm space-y-1">
-            <p className="font-medium text-[var(--foreground)]">
-              数据最小化与自由文本边界声明
-            </p>
-            <p className="text-[var(--foreground-muted)]">
-              系统对所有同步实体采用<strong>严格 DTO 白名单与未识别字段拒绝 (deny_unknown_fields)</strong> 机制。内部系统提示词、开发者指令、凭据密钥与工具原始执行结果从不进入同步。
-            </p>
-            <p className="text-[var(--foreground-muted)] text-xs">
-              注意：白名单机制无法识别用户在对话正文中自行粘贴的秘密。请通过以下类别开关精确控制上传范围；<strong>关闭某分类同步不会删除本地或云端既有数据</strong>，也不产生删除墓碑。
-            </p>
+    <div className="cloud-privacy-panel" data-testid="sync-privacy-panel">
+      <section className="cloud-card" aria-labelledby="sync-scope-title">
+        <div className="cloud-card-title">
+          <div>
+            <h3 id="sync-scope-title">同步范围</h3>
+            <p>启用跨设备同步后才会按此范围同步。关闭分类会暂停上传和恢复，已有本地和云端数据会保留。</p>
           </div>
+          {policyReady ? <Badge tone="info">允许 {categories.filter((category) => category.enabled).length} / {categories.length} 项</Badge> : null}
         </div>
-      </Panel>
-
-      {/* Category Toggles */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-[var(--foreground)] flex items-center gap-2">
-            <Sliders className="w-4 h-4 text-[var(--accent)]" />
-            同步数据类别控制
-          </h3>
-          <span className="text-xs text-[var(--foreground-muted)]">
-            已启用 {categories.filter((c) => c.enabled).length} / {categories.length} 项
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {policyError ? <p className="cloud-inline-error" role="alert">{policyError}</p> : null}
+        {!policyReady && !policyError ? <p className="cloud-muted" role="status">正在读取同步范围…</p> : null}
+        <ul className="cloud-policy-list">
           {categories.map((category) => (
-            <Panel
-              key={category.key}
-              className={`transition-all duration-200 border ${
-                category.enabled
-                  ? "border-[var(--border-soft)] hover:border-[var(--accent)]"
-                  : "border-[var(--border-subtle)] opacity-75 bg-[var(--surface-subtle)]"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm text-[var(--foreground)] truncate">
-                      {category.name}
-                    </span>
-                    <Badge
-                      tone={category.enabled ? "success" : "default"}
-                      className="text-[11px] px-1.5 py-0"
-                    >
-                      {category.enabled ? "同步开启" : "仅保留本地"}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-[var(--foreground-muted)] leading-relaxed">
-                    {category.description}
-                  </p>
-                  {!category.enabled && (
-                    <p className="text-xs text-[var(--warning,#f59e0b)] leading-relaxed pt-1">
-                      已暂停此类数据的上传与恢复。已有本地和云端数据保留；重新开启后会继续同步。
-                    </p>
-                  )}
-                  <p className="text-[11px] text-[var(--danger,red)] flex items-center gap-1 pt-1">
-                    <EyeOff className="w-3 h-3 shrink-0" />
-                    <span>{category.prohibitedNotice}</span>
-                  </p>
-                </div>
+            <li key={category.key}>
+              <div>
+                <strong>{category.name}</strong>
+                <p>{category.description}。排除{category.prohibitedNotice}。</p>
+              </div>
+              <div className="cloud-policy-control">
+                <span>{category.enabled ? "允许同步" : "不允许同步"}</span>
                 <button
                   type="button"
                   role="switch"
+                  aria-label={`允许同步${category.name}`}
                   aria-checked={category.enabled}
                   onClick={() => void handleToggleCategory(category.key)}
                   disabled={savingPolicy}
-                  className={`shrink-0 w-11 h-6 rounded-full transition-colors relative focus:outline-none focus:ring-2 focus:ring-[var(--accent)] ${
-                    category.enabled ? "bg-[var(--accent)]" : "bg-[var(--border-strong)]"
-                  }`}
-                >
-                  <span
-                    className={`block w-4 h-4 bg-white rounded-full transition-transform absolute top-1 ${
-                      category.enabled ? "left-6" : "left-1"
-                    }`}
-                  />
-                </button>
+                  className="cloud-policy-switch focus-ring-token"
+                ><span /></button>
               </div>
-            </Panel>
+            </li>
           ))}
-        </div>
-      </div>
+        </ul>
+        <p className="cloud-muted">请勿将密钥等秘密粘贴到对话正文。允许同步对话时，正文会一并同步。</p>
+      </section>
 
-      {/* Security Gateway & Fail-Closed Guarantee */}
-      <Panel className="space-y-3">
-        <h3 className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
-          <Lock className="w-4 h-4 text-[var(--accent)]" />
-          安全网关与授权解析 (Fail-Closed)
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-          <div className="p-3 rounded-[var(--radius-md)] bg-[var(--surface-subtle)] border border-[var(--border-soft)] space-y-1">
-            <div className="font-medium text-[var(--foreground)] flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-[var(--success)]" />
-              插件使用闭环 (Capability Usage)
-            </div>
-            <p className="text-[var(--foreground-muted)]">
-              能力执行经网关写入使用记录 (状态、耗时、审批与风险级别)。不包含原始参数与输出，不使用易泄漏正文的哈希摘要。
-            </p>
+      {canReadCloudData ? (
+        <section className="cloud-card" aria-labelledby="cloud-storage-title">
+          <div className="cloud-card-title">
+            <h3 id="cloud-storage-title">云端存储</h3>
+            <Button variant="secondary" size="sm" onClick={() => void fetchSummary()} disabled={loadingSummary}>
+              <RefreshCw />刷新概览
+            </Button>
           </div>
-          <div className="p-3 rounded-[var(--radius-md)] bg-[var(--surface-subtle)] border border-[var(--border-soft)] space-y-1">
-            <div className="font-medium text-[var(--foreground)] flex items-center gap-1.5">
-              <AlertTriangle className="w-3.5 h-3.5 text-[var(--warning)]" />
-              授权记录损坏即阻断 (Fail-Closed)
-            </div>
-            <p className="text-[var(--foreground-muted)]">
-              所有授权字段 (effect, permission, resource, source) 均采用带类型严格解析。任何异常损坏均报错并拒绝执行，永不默认降级为放行。
-            </p>
-          </div>
-        </div>
-      </Panel>
-
-      {/* Cloud Data Summary Section */}
-      <Panel className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Database className="w-4 h-4 text-[var(--accent)]" />
-            <h3 className="text-sm font-semibold text-[var(--foreground)]">
-              云端存储数据概览
-            </h3>
-            {identity?.account_id && (
-              <Badge tone="default" className="text-xs">
-                账号: {identity.email || identity.account_id}
-              </Badge>
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void fetchSummary()}
-            disabled={loadingSummary}
-            className="text-xs h-7 gap-1"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loadingSummary ? "animate-spin" : ""}`} />
-            刷新概览
-          </Button>
-        </div>
-
-        {loadingSummary && !summary ? (
-          <div className="flex items-center justify-center py-6 text-sm text-[var(--foreground-muted)]">
-            <Spinner className="w-4 h-4 mr-2" />
-            正在加载云端数据统计...
-          </div>
-        ) : summaryError ? (
-          <div className="p-3 text-xs text-[var(--danger)] bg-[var(--surface-subtle)] rounded-[var(--radius-md)] border border-[var(--danger)]">
-            云端概览加载失败：{summaryError}
-          </div>
-        ) : summary ? (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          {loadingSummary ? <p className="cloud-muted" role="status">正在读取云端统计…</p> : null}
+          {summaryError ? <p className="cloud-inline-error" role="alert">云端概览加载失败：{summaryError}</p> : null}
+          {summary ? (
+            <dl className="cloud-storage-list">
               {Object.entries(summary.counts).map(([type, count]) => (
-                <div
-                  key={type}
-                  className="p-2.5 rounded-[var(--radius-md)] bg-[var(--surface-subtle)] border border-[var(--border-soft)] text-center"
-                >
-                  <div className="text-[var(--foreground-muted)] truncate">{type}</div>
-                  <div className="text-base font-bold text-[var(--foreground)] mt-0.5">
-                    {count}
-                  </div>
-                </div>
+                <div key={type}><dt>{DATA_TYPE_LABELS[type] ?? type}</dt><dd>{count} 项</dd></div>
               ))}
-            </div>
-            <div className="text-xs text-[var(--foreground-muted)] flex items-center justify-between pt-1">
-              <span>云端对象存储占用：{(summary.object_bytes / 1024).toFixed(1)} KB</span>
-              <span>如需彻底清理云端数据，请前往账号管理提交注销或导出请求。</span>
-            </div>
-          </div>
-        ) : (
-          <div className="text-xs text-[var(--foreground-muted)] py-2">
-            暂无云端数据统计信息。登录云账号后可查询云端同步摘要。
-          </div>
-        )}
-      </Panel>
+              <div><dt>对象存储占用</dt><dd>{(summary.object_bytes / 1024).toFixed(1)} KB</dd></div>
+            </dl>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
-};
+}
 
 export function policyFromCategories(categories: SyncCategoryPolicy[]): CloudSyncPolicy {
   const enabled = new Map(categories.map((category) => [category.key, category.enabled]));

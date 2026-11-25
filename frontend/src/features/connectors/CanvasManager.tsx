@@ -3,7 +3,7 @@ import { deleteConnectorCanvas, listConnectorCanvases, renameConnectorCanvas, ty
 import { Button, ErrorState, Input, Modal } from "../../components/ui";
 
 type CanvasTarget = Pick<ConnectorCanvas, "id" | "name">;
-export default function CanvasManager({ open, onClose, activeId, onDeleted, onUpdated, initialDeleteCanvas }: { open: boolean; onClose: () => void; activeId: string | null; onDeleted: (id: string) => Promise<void>; onUpdated: () => Promise<void>; initialDeleteCanvas?: CanvasTarget | null }) {
+export default function CanvasManager({ open, onClose, activeId, onDeleted, onUpdated }: { open: boolean; onClose: () => void; activeId: string | null; onDeleted: (id: string) => Promise<void>; onUpdated: () => Promise<void> }) {
   const [canvases, setCanvases] = useState<ConnectorCanvas[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [confirm, setConfirm] = useState<CanvasTarget[]>([]);
@@ -19,19 +19,18 @@ export default function CanvasManager({ open, onClose, activeId, onDeleted, onUp
   }
   useEffect(() => {
     if (!open) return;
-    setError(""); setResults([]); setConfirm(initialDeleteCanvas ? [initialDeleteCanvas] : []); setRenaming(null); setSelected([]);
-    if (!initialDeleteCanvas) void reload().catch(cause => setError(String(cause)));
-  }, [open, initialDeleteCanvas?.id, initialDeleteCanvas?.name]);
+    setError(""); setResults([]); setConfirm([]); setRenaming(null); setSelected([]);
+    void reload().catch(cause => setError(String(cause)));
+  }, [open]);
 
-  function back() { if (initialDeleteCanvas) { onClose(); return; } setConfirm([]); setRenaming(null); setError(""); }
+  function back() { setConfirm([]); setRenaming(null); setError(""); }
   async function remove() {
     setBusy(true); setError("");
     const messages: string[] = [];
     const errors: string[] = [];
-    const retained: CanvasTarget[] = [];
     for (const target of confirm) {
       try { await deleteConnectorCanvas(target.id); }
-      catch (cause) { errors.push(`${target.name} 删除失败：${String(cause)}`); retained.push(target); continue; }
+      catch (cause) { errors.push(`${target.name} 删除失败：${String(cause)}`); continue; }
       // The service has already deleted the layout; a refresh error must not report it as retained.
       setCanvases(current => current.filter(canvas => canvas.id !== target.id));
       setSelected(current => current.filter(id => id !== target.id));
@@ -39,9 +38,8 @@ export default function CanvasManager({ open, onClose, activeId, onDeleted, onUp
       try { await onDeleted(target.id); }
       catch (cause) { errors.push(`${target.name} 已删除，画布列表刷新失败：${String(cause)}`); }
     }
-    setConfirm(initialDeleteCanvas ? retained : []); setResults(messages);
+    setConfirm([]); setResults(messages);
     setError(errors.join("；")); setBusy(false);
-    if (initialDeleteCanvas && errors.length === 0) onClose();
   }
   async function rename() {
     if (!renaming) return;
@@ -57,7 +55,7 @@ export default function CanvasManager({ open, onClose, activeId, onDeleted, onUp
       {error && <ErrorState title="画布管理未完成" description={error} />}
       {confirming ? <p className="text-sm leading-relaxed">确定删除 {confirm.map(canvas => `“${canvas.name}”`).join("、")}？删除画布会移除其布局，已绑定的智能体与资源仍会保留。</p> : renaming ? <Input label="画布名称" value={renaming.name} onChange={event => setRenaming({ ...renaming, name: event.target.value })} /> : <>
         <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-[var(--text-muted)]">管理画布。任务图可在工作流中管理。</p><Button size="sm" variant="danger" disabled={busy || selected.length === 0} onClick={() => { setError(""); setConfirm(canvases.filter(canvas => selected.includes(canvas.id))); }}>删除选中项（{selected.length}）</Button></div>
-        {canvases.length === 0 ? <p>暂无画布。</p> : canvases.map(canvas => <article key={canvas.id} className="flex flex-wrap items-center gap-3 border border-[var(--border-soft)] rounded-xl p-3"><input aria-label={`选择画布 ${canvas.name}`} type="checkbox" checked={selected.includes(canvas.id)} onChange={event => setSelected(current => event.target.checked ? [...current, canvas.id] : current.filter(id => id !== canvas.id))} /><span className="mr-auto">{canvas.name}{canvas.id === activeId ? " · 当前" : ""}</span><Button size="sm" variant="secondary" onClick={() => { setError(""); setRenaming({ id: canvas.id, name: canvas.name }); }}>重命名</Button><Button size="sm" variant="danger" disabled={busy} onClick={() => { setError(""); setConfirm([canvas]); }}>删除此画布</Button></article>)}
+        {canvases.length === 0 ? <p>暂无画布。</p> : canvases.map(canvas => <article key={canvas.id} className="glass-card flex flex-wrap items-center gap-3 border border-[var(--border-soft)] rounded-xl p-3"><input aria-label={`选择画布 ${canvas.name}`} type="checkbox" checked={selected.includes(canvas.id)} onChange={event => setSelected(current => event.target.checked ? [...current, canvas.id] : current.filter(id => id !== canvas.id))} /><span className="mr-auto">{canvas.name}{canvas.id === activeId ? " · 当前" : ""}</span><Button size="sm" variant="secondary" onClick={() => { setError(""); setRenaming({ id: canvas.id, name: canvas.name }); }}>重命名</Button><Button size="sm" variant="danger" disabled={busy} onClick={() => { setError(""); setConfirm([canvas]); }}>删除此画布</Button></article>)}
         {results.map(message => <p key={message} role="status" className="text-sm break-words">{message}</p>)}
       </>}
     </div>

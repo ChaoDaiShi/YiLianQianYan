@@ -9,22 +9,21 @@
     --surface-blur: 0px;
     --surface-alpha: 0.52;
     color-scheme: light;
-    --bg-app: #F8F6FD;
-    --bg-soft: #F2EEFA;
-    --bg-subtle: #F2EEFA;
-    /* Shared translucent surfaces keep the global Cyrene artwork visible across every page. */
-    --surface: rgba(255, 255, 255, 0.42);
-    --surface-solid: #FFFDFF;
-    --surface-muted: rgba(252, 249, 255, 0.24);
-    --surface-elevated: rgba(255, 255, 255, 0.58);
-    --surface-hover: rgba(249, 243, 252, 0.62);
-    --titlebar-bg: rgba(255, 255, 255, 0.32);
+    --bg-app: #F8F6FA;
+    --bg-soft: #F3EFF5;
+    --bg-subtle: #F3EFF5;
+    --surface: rgba(255, 255, 255, 0.98);
+    --surface-solid: #FFFFFF;
+    --surface-muted: rgba(243, 239, 245, 0.74);
+    --surface-elevated: rgba(255, 255, 255, 0.99);
+    --surface-hover: rgba(246, 241, 247, 0.96);
+    --titlebar-bg: rgba(255, 255, 255, 0.96);
     --text-primary: #292536;
     --text-secondary: #696276;
-    --text-faint: #9690A1;
+    --text-faint: #797184;
     --text-disabled: #BDB8C5;
-    --divider: rgba(91, 76, 125, 0.11);
-    --border-soft: rgba(86, 72, 117, 0.12);
+    --divider: rgba(91, 76, 125, 0.07);
+    --border-soft: rgba(86, 72, 117, 0.09);
     --accent-primary: #ea91b9;
     --accent-primary-hover: #DF7EAA;
     --accent-contrast: #292536;
@@ -35,11 +34,11 @@
     --accent-gold: #EBCF8C;
     --accent-border: rgba(234, 145, 185, 0.26);
     --focus-ring-soft: rgba(234, 145, 185, 0.30);
-    --sidebar-bg: #29263A;
-    --sidebar-bg-2: #312C46;
-    --sidebar-text: #EEEAF8;
-    --sidebar-fg: #EEEAF8;
-    --sidebar-muted: #AAA3BA;
+    --sidebar-bg: #FAF8FB;
+    --sidebar-bg-2: #FAF8FB;
+    --sidebar-text: #51475B;
+    --sidebar-fg: #51475B;
+    --sidebar-muted: #797184;
     --sidebar-active: rgba(234, 145, 185, 0.17);
     --cyrene-glow-pink: rgba(234, 145, 185, 0.22);
     --cyrene-glow-purple: rgba(173, 155, 232, 0.18);
@@ -195,7 +194,11 @@
 
   html {
     font-size: var(--font-size-base);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
   }
+
+  b, strong { font-weight: 650; }
 
   body {
     font-size: var(--font-size-body);
@@ -212,6 +215,7 @@
   :root.dark {
     color-scheme: dark;
     --focus-outline: var(--accent-primary);
+    --dark-font-weight-step: 100;
   }
 
   :focus-visible {

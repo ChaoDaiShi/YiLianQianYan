@@ -54,4 +54,29 @@ describe("native floating-window gestures", () => {
     gesture.onPointerDown(pointer(0, 0)); gesture.onPointerCancel(); gesture.onPointerMove(pointer(30, 30));
     expect(startDrag).not.toHaveBeenCalled();
   });
+  it("activates only after two valid clicks in double-click mode", () => {
+    const activate = vi.fn();
+    const gesture = createFloatingDragHandlers({ activation: "double-click", activate, startDrag: vi.fn(), onError: vi.fn() });
+    gesture.onClick(click(1));
+    expect(activate).not.toHaveBeenCalled();
+    gesture.onClick(click(2));
+    gesture.onClick(click(3));
+    expect(activate).toHaveBeenCalledTimes(1);
+    gesture.onClick(click(0));
+    expect(activate).toHaveBeenCalledTimes(2);
+  });
+  it("does not count a drag or its release as part of a double-click", () => {
+    const activate = vi.fn();
+    const startDrag = vi.fn().mockResolvedValue(undefined);
+    const gesture = createFloatingDragHandlers({ activation: "double-click", activate, startDrag, onError: vi.fn() });
+    gesture.onClick(click(1));
+    gesture.onPointerDown(pointer(0, 0));
+    gesture.onPointerMove(pointer(10, 0));
+    gesture.onClick(click(2));
+    gesture.onPointerDown(pointer(10, 0));
+    gesture.onPointerUp(pointer(10, 0));
+    gesture.onClick(click(2));
+    expect(startDrag).toHaveBeenCalledTimes(1);
+    expect(activate).not.toHaveBeenCalled();
+  });
 });

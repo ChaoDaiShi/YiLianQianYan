@@ -58,7 +58,7 @@ class FakeRecorder {
   onstop: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
-  constructor(_stream: MediaStream, _options: MediaRecorderOptions) {
+  constructor(readonly stream: MediaStream, _options: MediaRecorderOptions) {
     runtime.recorder = this;
   }
 
@@ -72,15 +72,22 @@ class FakeRecorder {
 }
 
 class FakeAudioContext {
+  rms = 0.1;
+  readonly resume = vi.fn(async () => undefined);
   readonly close = vi.fn(async () => undefined);
   readonly analyser = {
     fftSize: 0,
-    getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.1),
+    getFloatTimeDomainData: (samples: Float32Array) => samples.fill(this.rms),
     disconnect: vi.fn(),
   };
   readonly source = { connect: vi.fn(), disconnect: vi.fn() };
+  readonly filter = { type: "", frequency: { value: 0 }, Q: { value: 0 }, connect: vi.fn(), disconnect: vi.fn() };
+  readonly outputTrack = { stop: vi.fn() };
+  readonly destination = { stream: { getTracks: () => [this.outputTrack] } as unknown as MediaStream };
   createMediaStreamSource = vi.fn(() => this.source);
   createAnalyser = vi.fn(() => this.analyser);
+  createBiquadFilter = vi.fn(() => this.filter);
+  createMediaStreamDestination = vi.fn(() => this.destination);
 }
 
 const session: GlobalVoiceSession = {
@@ -125,6 +132,7 @@ async function flush() {
 describe("useVoiceCapture resource and cancellation behavior", () => {
   let contexts: FakeAudioContext[];
   let cancelFrame: ReturnType<typeof vi.fn>;
+  let sampleFrame: FrameRequestCallback;
 
   beforeEach(() => {
     runtime.refs = [];
@@ -140,7 +148,10 @@ describe("useVoiceCapture resource and cancellation behavior", () => {
     vi.stubGlobal("AudioContext", class extends FakeAudioContext {
       constructor() { super(); contexts.push(this); }
     });
-    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 41));
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
+      sampleFrame = callback;
+      return 41;
+    }));
     vi.stubGlobal("cancelAnimationFrame", cancelFrame);
     vi.stubGlobal("window", { setTimeout: vi.fn(() => 42), clearTimeout: vi.fn() });
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn() } });
@@ -150,6 +161,41 @@ describe("useVoiceCapture resource and cancellation behavior", () => {
     runtime.effects.forEach((effect) => effect.cleanup?.());
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("records filtered audio and transcribes once after the speaker finishes", async () => {
+    const { stream, track } = media();
+    const getUserMedia = vi.mocked(navigator.mediaDevices.getUserMedia);
+    getUserMedia.mockResolvedValue(stream);
+    runtime.transcribe.mockResolvedValue({ text: "一条语音草稿" });
+    const { capture, onFinal } = render();
+    await capture.start("user-click");
+
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    const audio = contexts[0];
+    expect(runtime.recorder?.stream).toBe(audio.destination.stream);
+    expect(audio.filter.type).toBe("highpass");
+    expect(audio.filter.connect).toHaveBeenCalledWith(audio.destination);
+    audio.rms = 0;
+    sampleFrame(0);
+    sampleFrame(900);
+    expect(runtime.recorder?.state).toBe("recording");
+    audio.rms = 0.14;
+    sampleFrame(1000);
+    sampleFrame(1140);
+    audio.rms = 0.032;
+    sampleFrame(1200);
+    sampleFrame(1600);
+    expect(runtime.recorder?.state).toBe("recording");
+    sampleFrame(2000);
+    await flush();
+
+    expect(runtime.transcribe).toHaveBeenCalledOnce();
+    expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ text: "一条语音草稿" }));
+    expect(track.stop).toHaveBeenCalledOnce();
+    expect(audio.outputTrack.stop).toHaveBeenCalledOnce();
   });
 
   it("aborts acquisition before a lease can create capture or notify final", async () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { LayoutList, Plus } from "lucide-react";
 import { Button, ErrorState, Input, Modal } from "../../components/ui";
 import PageShell from "../../components/layout/PageShell";
 import { createConnectorCanvas, listConnectorCanvases, type ConnectorCanvas as CanvasRecord } from "../../api/connectors";
@@ -21,7 +22,6 @@ export default function ConnectorsPage() {
   const [name, setName] = useState("");
   const [agentId, setAgentId] = useState("");
   const [managerOpen, setManagerOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
 
@@ -66,18 +66,22 @@ export default function ConnectorsPage() {
   }
 
   const activeCanvas = canvases.find(canvas => canvas.id === activeId);
-  return <PageShell title="画布" description="每个对话组独立显示，在当前路径末尾续聊或从历史回答新建分支" variant="workspace" contentClassName="p-0 min-h-0 overflow-hidden" actions={<>
-    <select aria-label="当前画布" className="settings-select max-w-48" disabled={busy} value={activeCanvas?.id ?? ""} onChange={event => {
+  const canvasActions = <div className="canvas-toolbar-group" role="group" aria-label="画布管理">
+    <select aria-label="当前画布" className="settings-select" disabled={busy} value={activeCanvas?.id ?? ""} onChange={event => {
       const next = new URLSearchParams(params); next.delete("conversation"); setParams(next);
       setError(""); setActiveId(event.target.value || null);
     }}><option value="">对话组画布</option>{canvases.map(canvas => <option key={canvas.id} value={canvas.id}>{canvas.name}</option>)}</select>
-    <Button size="sm" aria-label="新建画布" className="whitespace-nowrap" disabled={loading} onClick={openNewCanvas}>新建画布</Button>
-    <Button size="sm" aria-label="管理全部画布" className="whitespace-nowrap" variant="secondary" onClick={() => { setDeleteTarget(null); setManagerOpen(true); }}>管理全部画布</Button>
-    <Button size="sm" aria-label="删除当前画布" className="whitespace-nowrap" variant="danger" disabled={!activeCanvas || loading || busy} onClick={() => { if (activeCanvas) { setDeleteTarget({ id: activeCanvas.id, name: activeCanvas.name }); setManagerOpen(true); } }}>删除当前画布</Button>
-  </>}>
+    <Button size="sm" iconOnly aria-label="新建画布" title="新建画布" className="canvas-toolbar-action canvas-toolbar-create" disabled={loading} onClick={openNewCanvas}>
+      <span className="canvas-action-label">新建画布</span><Plus size={16} className="canvas-action-icon" />
+    </Button>
+    <Button size="sm" iconOnly aria-label="管理全部画布" title="管理全部画布" className="canvas-toolbar-action" variant="secondary" onClick={() => setManagerOpen(true)}>
+      <span className="canvas-action-label">管理全部画布</span><LayoutList size={16} className="canvas-action-icon" />
+    </Button>
+  </div>;
+  return <PageShell variant="workspace" contentClassName="p-0 min-h-0 overflow-hidden">
     <div className="flex h-full min-h-0 flex-col">
       {error && <div className="shrink-0 px-5 py-2"><ErrorState title="画布操作未完成" description={error} /></div>}
-      <div className="relative flex-1 min-h-0">{activeCanvas ? <MessageBranchWorkspace key={activeCanvas.id} canvasId={activeCanvas.id} agentId={activeCanvas.agent_id} /> : <ConversationCanvas initialConversationId={params.get("conversation")} />}</div>
+      <div className="relative flex-1 min-h-0">{activeCanvas ? <MessageBranchWorkspace key={activeCanvas.id} canvasId={activeCanvas.id} agentId={activeCanvas.agent_id} canvasActions={canvasActions} /> : <ConversationCanvas initialConversationId={params.get("conversation")} canvasActions={canvasActions} />}</div>
     </div>
     <Modal open={newOpen} onClose={() => setNewOpen(false)} title="新建画布" footer={<Button disabled={busy || !name.trim() || !agentId} onClick={() => void createCanvas()}>创建画布</Button>}>
       <div className="space-y-4"><Input label="画布名称" value={name} onChange={event => setName(event.target.value)} />
@@ -85,6 +89,6 @@ export default function ConnectorsPage() {
         {agents.length === 0 && <Button variant="secondary" onClick={() => navigate("/agents")}>先创建智能体</Button>}{error && <p role="alert">{error}</p>}
       </div>
     </Modal>
-    <CanvasManager open={managerOpen} initialDeleteCanvas={deleteTarget} onClose={() => { setManagerOpen(false); setDeleteTarget(null); }} activeId={activeCanvas?.id ?? null} onDeleted={deleted} onUpdated={async () => { await reloadCatalog(); }} />
+    <CanvasManager open={managerOpen} onClose={() => setManagerOpen(false)} activeId={activeCanvas?.id ?? null} onDeleted={deleted} onUpdated={async () => { await reloadCatalog(); }} />
   </PageShell>;
 }

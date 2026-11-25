@@ -22,13 +22,16 @@ interface MemoryStore {
 
   // Actions
   loadMemories: (query?: { category?: string; source?: string; q?: string }) => Promise<void>;
-  addMemory: (data: { content: string; category?: string; source?: string; metadata?: string }) => Promise<MemoryRecord | null>;
-  editMemory: (id: string, data: { content?: string; category?: string; metadata?: string }) => Promise<boolean>;
-  removeMemory: (id: string) => Promise<void>;
+  addMemory: (data: Parameters<typeof createMemory>[0]) => Promise<MemoryRecord | null>;
+  editMemory: (id: string, data: Parameters<typeof updateMemory>[1]) => Promise<boolean>;
+  removeMemory: (id: string) => Promise<boolean>;
+  evictMemory: (id: string) => void;
   loadStats: () => Promise<void>;
   triggerExtraction: (conversationId?: string) => Promise<void>;
   reindexMemoriesAction: () => Promise<void>;
 }
+
+let activeList: { evicted: Set<string> } | undefined;
 
 export const useMemoryStore = create<MemoryStore>((set, get) => ({
   memories: [],
@@ -39,12 +42,20 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
   reindexResult: null,
 
   loadMemories: async (query) => {
+    const request = { evicted: new Set<string>() };
+    activeList = request;
     set({ isLoading: true, error: null });
     try {
-      const memories = await listMemories(query);
-      set({ memories, isLoading: false });
+      const memories = await listMemories(query, true);
+      if (activeList === request) {
+        set({ memories: memories.filter(memory => !request.evicted.has(memory.id)), isLoading: false });
+      }
     } catch (error) {
-      set({ isLoading: false, error: error instanceof Error ? error.message : String(error) });
+      if (activeList === request) {
+        set({ isLoading: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    } finally {
+      if (activeList === request) activeList = undefined;
     }
   },
 
@@ -78,14 +89,19 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
   removeMemory: async (id) => {
     try {
       await deleteMemory(id);
-      set((state) => ({
-        memories: state.memories.filter((m) => m.id !== id),
-        error: null,
-      }));
+      get().evictMemory(id);
+      set({ error: null });
       get().loadStats();
+      return true;
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });
+      return false;
     }
+  },
+
+  evictMemory: (id) => {
+    activeList?.evicted.add(id);
+    set(state => ({ memories: state.memories.filter(memory => memory.id !== id) }));
   },
 
   loadStats: async () => {

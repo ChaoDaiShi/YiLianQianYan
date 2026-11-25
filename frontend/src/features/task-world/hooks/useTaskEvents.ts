@@ -23,7 +23,9 @@ export function useTaskWorldEvents(
       if (event.type === "task.node.running") void refreshDetail();
       else if (event.type === "task.canvas.updated") void refreshView();
       else void refreshDetail();
-    }, (streamError) => setEventWarning(streamError.message));
+    }, (streamError) => setEventWarning(streamError.message), (connection) => {
+      if (connection === "connected") { setEventWarning(null); void refreshDetail(); void refreshView(); }
+    });
     return () => controller.abort();
   }, [graphId, refreshDetail, refreshView]);
 

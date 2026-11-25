@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { areMessageBubblePropsEqual } from "./MessageBubble";
 import messageBubbleSource from "./MessageBubble.tsx?raw";
+import conversationMarkdownSource from "./ConversationMarkdown.tsx?raw";
 import messageListSource from "./MessageList.tsx?raw";
 import type { Message } from "../../types";
 import { renderToStaticMarkup } from "react-dom/server";
 import MessageBubble from "./MessageBubble";
+import StreamingText from "./StreamingText";
 import { createElement } from "react";
 
 const message: Message = {
@@ -15,6 +17,25 @@ const message: Message = {
 };
 
 describe("MessageBubble render boundary", () => {
+  it("shows a registered generated image alongside the reply content", () => {
+    const markup = renderToStaticMarkup(createElement(MessageBubble, {
+      message,
+      images: [{ id: "output-1", resourceId: "resource-1", title: "莲花" }],
+      onOpenImage: () => undefined,
+    }));
+    const visibleText = markup.replace(/<[^>]+>/g, "");
+    expect(visibleText).toContain("已完成。");
+    expect(visibleText).toContain("正在加载生成的图片");
+    expect(visibleText.indexOf("已完成。")).toBeLessThan(visibleText.indexOf("正在加载生成的图片"));
+  });
+
+  it("keeps wide tables and code inside their own scroll containers during streaming", () => {
+    const text = "| 名称 | 内容 |\n| --- | --- |\n| 字段 | 值 |\n\n```txt\nlong code line\n```";
+    const streaming = renderToStaticMarkup(createElement(StreamingText, { text }));
+    expect(streaming).toContain("table-scroll-container");
+    expect(streaming).toContain("code-scroll-container");
+  });
+
   it("keeps answer actions visible without hover and exposes single-message deletion", () => {
     const markup = renderToStaticMarkup(createElement(MessageBubble, { message, onDelete: () => undefined }));
     expect(markup).toContain('aria-label="回答操作"');
@@ -67,8 +88,8 @@ describe("MessageBubble render boundary", () => {
   });
 
   it("routes markdown web links through the external browser opener", () => {
-    expect(messageBubbleSource).toContain("openExternalUrl");
-    expect(messageBubbleSource).toContain("event.preventDefault()");
+    expect(conversationMarkdownSource).toContain("openExternalUrl");
+    expect(conversationMarkdownSource).toContain("event.preventDefault()");
   });
 
   it("keeps assistant TTS manual and outside the conversation write path", () => {

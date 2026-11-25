@@ -1,0 +1,27 @@
+.rich-message,.rich-message-blocks { display:grid; gap:12px; min-width:0; }
+.rich-component { display:grid; gap:8px; min-width:0; padding:12px; border:1px solid var(--border-soft); border-radius:var(--radius-md); background:var(--surface); overflow-wrap:anywhere; }
+.rich-component header { display:flex; gap:8px; flex-wrap:wrap; justify-content:space-between; }
+.rich-component strong,.rich-chart figcaption,.rich-table caption { font-size:14px; font-weight:600; }
+.rich-component > button,.rich-form > button { justify-self:start; }
+.rich-component a,.rich-save-link { color:var(--accent-soft-fg); text-decoration:underline; }
+.rich-component-note,.rich-component-error { font-size:12px; color:var(--text-secondary); }
+.rich-component-error { color:var(--danger-fg,var(--danger)); overflow-wrap:anywhere; }
+.rich-component pre,.rich-page-diff pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font-family:monospace; }
+.rich-form,.rich-chart { display:grid; gap:9px; min-width:0; margin:0; }
+.rich-chart > svg { width:100%; height:auto; }
+.rich-chart summary { cursor:pointer; color:var(--text-secondary); }
+.rich-chart-values { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,120px),1fr)); gap:5px; }
+.rich-chart-values div { padding:4px 6px; background:var(--surface-muted); }
+.rich-chart-values dd { font-variant-numeric:tabular-nums; }
+.rich-table { min-width:0; }
+.rich-table table { width:100%; border-collapse:collapse; table-layout:fixed; }
+.rich-table caption { text-align:left; margin-bottom:6px; }
+.rich-table td,.rich-table th { padding:4px; border-bottom:1px solid var(--border-soft); text-align:left; vertical-align:top; overflow-wrap:anywhere; line-height:1.5; }
+.rich-table th button { text-align:left; overflow-wrap:anywhere; }
+.rich-math { font-family:"Cambria Math",serif; }
+.rich-page-diff { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:10px 0; }
+.rich-page-diff > div { border:1px solid var(--border-soft); border-radius:var(--radius-md); padding:10px; min-width:0; }
+.rich-page-diff > div:nth-child(2) { background:var(--accent-soft); }
+.rich-save-answer { display:inline-flex; align-items:center; gap:4px; border:1px solid var(--border-soft); border-radius:var(--radius-sm); padding:5px 8px; font-size:12px; color:var(--accent-soft-fg); }
+.rich-save-answer:disabled { opacity:.5; cursor:not-allowed; }
+@media (max-width:560px) { .rich-page-diff { grid-template-columns:1fr; } }

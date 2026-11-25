@@ -1,43 +1,32 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import {
   getCloudProfile,
-  type ActivationPlan,
+  type CloudIdentity,
   type LogoutReport,
-  type ProfileRecord,
   type ProfileView,
 } from "../../api/cloud";
-import {
-  ProfileSwitchController,
-  revocationPresentation,
-  type SwitchState,
-} from "./profileSwitch";
-import { Badge, Button, Spinner } from "../../components/ui";
-import { AlertTriangle, CheckCircle2, RefreshCw, Shield, User } from "lucide-react";
+import { revocationPresentation } from "./profileSwitch";
+import { Badge, Button } from "../../components/ui";
 
 interface AccountProfilePanelProps {
-  controller?: ProfileSwitchController;
+  identity?: CloudIdentity;
   lastLogoutReport?: LogoutReport | null;
-  onRestartPrompt?: (plan: ActivationPlan) => void;
   onRequestLogin?: () => void;
-  initialLoading?: boolean;
   initialProfileView?: ProfileView | null;
   guestMode?: boolean;
 }
 
-export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
-  controller = new ProfileSwitchController(),
+export function AccountProfilePanel({
+  identity,
   lastLogoutReport = null,
-  onRestartPrompt: _onRestartPrompt,
   onRequestLogin,
-  initialLoading = false,
   initialProfileView = null,
   guestMode = false,
-}) => {
-  const [profileView, setProfileView] = useState<ProfileView | null>(initialProfileView);
-  const [loading, setLoading] = useState(initialLoading);
-  const [error, setError] = useState<string>("");
-  const [switchState] = useState<SwitchState>("idle");
-  const [restartPlan] = useState<ActivationPlan | null>(null);
+}: AccountProfilePanelProps) {
+  const [profileView, setProfileView] = useState(initialProfileView);
+  const [loading, setLoading] = useState(!initialProfileView);
+  const [error, setError] = useState("");
 
   const fetchProfile = async () => {
     setLoading(true);
@@ -45,10 +34,6 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
     const result = await getCloudProfile();
     if (result.ok) {
       setProfileView(result.data);
-      controller.setProfileInfo(
-        result.data.active_profile_id,
-        result.data.active_generation
-      );
     } else {
       setError(result.error);
     }
@@ -62,181 +47,99 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
   const revocationMeta = lastLogoutReport
     ? revocationPresentation(lastLogoutReport.remote_revocation)
     : null;
+  const currentProfile = profileView?.profiles.find((record) => record.profile_id === profileView.active_profile_id);
+  const pendingRevocations = profileView?.pending_revocations ?? [];
 
   return (
-    <div className="account-profile-panel space-y-6 p-4 rounded-lg bg-surface border border-border">
-      <div className="flex items-center justify-between border-b border-border pb-3">
-        <div className="flex items-center space-x-2">
-          <Shield className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold">物理账号与 Profile 隔离</h2>
+    <div className="cloud-card account-profile-panel">
+      {!guestMode ? (
+        <div className="cloud-card-title">
+          <div>
+            <h3>切换账号</h3>
+            <p>登录目标账号后，应用会使用该账号的本机工作区。</p>
+          </div>
+          {onRequestLogin ? <Button variant="secondary" size="sm" onClick={onRequestLogin}>登录目标账号</Button> : null}
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => void fetchProfile()}
-          disabled={loading || switchState === "quiescing"}
-        >
-          <RefreshCw className="w-4 h-4 mr-1" />
-          刷新状态
-        </Button>
-      </div>
+      ) : null}
+      {currentProfile?.reauthentication_required ? <p className="cloud-inline-error" role="status">当前账号需重新登录。</p> : null}
 
-      {loading ? (
-        <div className="flex items-center justify-center p-8">
-          <Spinner className="w-6 h-6" />
-          <span className="ml-2 text-muted-foreground">正在加载 Profile 元数据...</span>
-        </div>
-      ) : (
-        <>
-          {error && (
-            <div className="p-3 bg-destructive/10 text-destructive rounded-md flex items-center space-x-2">
-              <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {/* Active Profile Info */}
-          {profileView && !guestMode && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-muted/30 p-4 rounded-md">
-              <div>
-                <span className="text-xs text-muted-foreground block">当前激活 Profile</span>
-                <span className="font-mono text-sm font-medium">{profileView.active_profile_id}</span>
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground block">当前租约 Generation</span>
-                <span className="font-mono text-sm font-medium">{profileView.active_generation}</span>
-              </div>
-              <div className="col-span-1 md:col-span-2">
-                <span className="text-xs text-muted-foreground block">ScopedDb 作用域 (SHA-256)</span>
-                <span className="font-mono text-xs text-muted-foreground break-all">
-                  {profileView.active_lease.scope_id}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Revocation Report Banner */}
-          {lastLogoutReport && (
-            <div className="p-3 border rounded-md flex items-start space-x-3 bg-muted/20">
-              <div className="flex flex-col gap-1 w-full">
-                <div className="flex items-center space-x-2">
-                  <Badge tone={lastLogoutReport.local_cleanup === "cleared" ? "success" : "danger"}>
-                    {lastLogoutReport.local_cleanup === "cleared" ? "本地已退出" : "本地退出未完成"}
-                  </Badge>
-                  {revocationMeta && <Badge tone={revocationMeta.tone}>{revocationMeta.label}</Badge>}
-                </div>
-                <div className="text-sm mt-1">
-                  <p className="font-medium">
-                    {lastLogoutReport.local_cleanup === "cleared" ? "本地凭据已清除。" : "本地仍有未清理凭据，请重试。"}
-                    {revocationMeta ? ` ${revocationMeta.detail}` : ""}
-                  </p>
-                  {lastLogoutReport.remote_revocation === "pending" && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      系统将在后台持专属撤销凭据进行指数退避重试，绝不会重新激活已退出账号。
-                    </p>
-                  )}
-                  {lastLogoutReport.error_codes?.length > 0 && (
-                    <p className="text-xs text-destructive mt-1 font-mono">
-                      错误代码: {lastLogoutReport.error_codes.join(", ")}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {profileView?.pending_revocations?.length ? (
-            <div className="p-3 border rounded-md bg-amber-500/10 space-y-2">
-              <div className="flex items-center gap-2 text-sm font-medium text-amber-700">
-                <AlertTriangle className="w-4 h-4" />
-                <span>远端撤销待处理</span>
-              </div>
-              {profileView.pending_revocations.map((item) => (
-                <div key={`${item.profile_id}:${item.session_id}`} className="text-xs text-muted-foreground">
-                  <span>{item.remote_revocation === "unknown" ? "远端状态未知" : "远端会话正在后台重试撤销"}</span>
-                  {item.last_error_code ? <span> · {item.last_error_code}</span> : null}
-                </div>
-              ))}
-            </div>
+      {lastLogoutReport ? (
+        <div className="cloud-profile-notice">
+          <div className="cloud-actions">
+            <Badge tone={lastLogoutReport.local_cleanup === "cleared" ? "success" : "danger"}>
+              {lastLogoutReport.local_cleanup === "cleared" ? "本地已退出" : "本地退出未完成"}
+            </Badge>
+            {revocationMeta ? <Badge tone={revocationMeta.tone}>{revocationMeta.label}</Badge> : null}
+          </div>
+          <p>
+            {lastLogoutReport.local_cleanup === "cleared" ? "本地凭据已清除。" : "本地仍有未清理凭据，请重试。"}
+            {lastLogoutReport.remote_revocation === "pending" ? "联网后会重试撤销远端会话。" : null}
+          </p>
+          {lastLogoutReport.error_codes?.length ? (
+            <details className="cloud-disclosure">
+              <summary>退出登录诊断</summary>
+              <p>错误代码：{lastLogoutReport.error_codes.join("、")}</p>
+            </details>
           ) : null}
+        </div>
+      ) : null}
 
-          {/* Restart Required Warning Banner */}
-          {switchState === "awaiting_restart" && restartPlan && (
-            <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-md space-y-2">
-              <div className="flex items-center space-x-2 text-amber-600 font-medium">
-                <AlertTriangle className="w-5 h-5" />
-                <span>配置文件已准备就绪，需要重启应用生效</span>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                新 Profile <code className="font-mono">{restartPlan.profile_id}</code> 已完成物理目录创建与事务门闩隔离。请重启桌面客户端以载入专属隔离数据库。
-              </p>
-              <div className="pt-2 flex items-center space-x-2">
-                <Badge tone="warning">Awaiting Restart</Badge>
-                <span className="text-xs text-muted-foreground">
-                  已阻断旧 Profile 的写入与新操作。
-                </span>
-              </div>
-            </div>
-          )}
+      {pendingRevocations.length ? (
+        <div className="cloud-inline-error" role="status">
+          <strong>远端撤销待处理</strong>
+          <ul>
+            {pendingRevocations.map((item) => (
+              <li key={`${item.profile_id}:${item.session_id}`}>
+                {item.remote_revocation === "unknown" ? "远端会话状态未知" : "正在重试撤销远端会话"}
+                {item.last_error_code ? ` · ${item.last_error_code}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
-          {/* Controlled Profile Switch Section */}
-          {!guestMode && <div className="border-t border-border pt-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-medium flex items-center space-x-2">
-                  <User className="w-4 h-4 text-primary" />
-                  <span>切换账号</span>
-                </h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  切换账号统一通过云端登录认证，目标账号由云端确认，隔离各账号数据。
-                </p>
-              </div>
-              {onRequestLogin && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => onRequestLogin()}
-                >
-                  登录目标账号
-                </Button>
-              )}
-            </div>
-          </div>}
-
-          {/* Existing Profiles List */}
-          {!guestMode && profileView && profileView.profiles.length > 0 && (
-            <div className="border-t border-border pt-4 space-y-2">
-              <h4 className="text-xs font-medium text-muted-foreground">已注册的本地 Profiles</h4>
-              <div className="space-y-1">
-                {profileView.profiles.map((record: ProfileRecord) => (
-                  <div
-                    key={record.profile_id}
-                    className="flex items-center justify-between p-2 rounded bg-muted/20 text-xs"
-                  >
-                    <div className="flex items-center space-x-2">
-                      {record.profile_id === profileView.active_profile_id ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                      ) : (
-                        <span className="w-4 h-4 rounded-full border border-border inline-block" />
-                      )}
-                      <span className="font-mono font-medium">{record.profile_id}</span>
-                      <Badge tone={record.kind === "guest" ? "default" : "info"}>
-                        {record.kind}
-                      </Badge>
-                      {record.reauthentication_required && (
-                        <Badge tone="warning">需重新登录</Badge>
-                      )}
-                    </div>
-                    <span className="text-muted-foreground">
-                      {record.service_origin ? `${record.service_origin} (${record.account_id})` : "本地游客"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      )}
+      <details className="cloud-disclosure account-profile-details">
+        <summary>本机身份与数据详情</summary>
+        <Button variant="secondary" size="sm" onClick={() => void fetchProfile()} disabled={loading}>
+          <RefreshCw />刷新本机身份
+        </Button>
+        {loading ? <p role="status">正在读取本机身份…</p> : null}
+        {error ? <p className="cloud-inline-error" role="alert">{error}</p> : null}
+        <dl className="cloud-data-list">
+          {identity ? (
+            <>
+              <div><dt>本机身份</dt><dd>{identity.local_identity_id}</dd></div>
+              <div><dt>当前设备</dt><dd>{identity.device_id}</dd></div>
+              {identity.account_id ? <div><dt>云端账号</dt><dd>{identity.account_id}</dd></div> : null}
+            </>
+          ) : null}
+          {profileView && !guestMode ? (
+            <>
+              <div><dt>本机工作区</dt><dd>{profileView.active_profile_id}</dd></div>
+              <div><dt>当前版本</dt><dd>{profileView.active_generation}</dd></div>
+              <div><dt>数据范围标识</dt><dd>{profileView.active_lease.scope_id}</dd></div>
+            </>
+          ) : null}
+          {!guestMode ? <div><dt>凭据存储</dt><dd>登录凭据保存在系统凭据库。服务密钥保留在本机。</dd></div> : null}
+        </dl>
+        {!guestMode && profileView?.profiles.length ? (
+          <div className="cloud-session-list">
+            <h4>本机工作区列表</h4>
+            {profileView.profiles.map((record) => (
+              <article key={record.profile_id}>
+                <div>
+                  <strong>{record.kind === "guest" ? "本机工作区" : record.service_origin || "账号工作区"}</strong>
+                  <span>{record.profile_id}{record.account_id ? ` · ${record.account_id}` : ""}</span>
+                </div>
+                <div className="cloud-actions">
+                  {record.profile_id === profileView.active_profile_id ? <Badge tone="info">当前工作区</Badge> : null}
+                  {record.reauthentication_required ? <Badge tone="warning">需重新登录</Badge> : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </details>
     </div>
   );
-};
+}

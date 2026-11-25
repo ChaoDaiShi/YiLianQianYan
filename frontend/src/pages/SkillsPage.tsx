@@ -282,9 +282,6 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                 </div>
               )}
             </div>
-            <p className="capability-list-footnote">
-              工作区托管技能可编辑；外部技能目录保持只读。
-            </p>
           </aside>
 
           <section className="capability-detail-panel" aria-label="技能详情">
@@ -323,7 +320,7 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                   <div className="flex flex-wrap items-center gap-2">
                     {!selectedSkill.is_bundled && !selectedSkill.editable && <Button size="sm" variant="secondary" onClick={() => navigate(`/capabilities?${new URLSearchParams({category:"import",import_tab:"packages",import_directory:selectedSkill.root_dir,import_name:selectedSkill.display_name ?? selectedSkill.name})}`)}>检查并导入</Button>}
                     {selectedSkill.compatibility?.status === "external_host" && <Button size="sm" variant="secondary" disabled={detailLoading || Boolean(detailError)} onClick={() => {setEditorMode("create");setFormName(`adapted-${selectedSkill.name.split(":").pop()}`);setFormContent(skillContent);setFormError("请将原文的宿主调用改为本项目可用工具，确认脚本与引用的实际路径；直接保存原文不会解除宿主依赖。");}}>适配为工作区技能</Button>}
-                    {selectedSkill.editable ? (
+                    {selectedSkill.editable && (
                       <>
                         <Button
                           size="sm"
@@ -345,10 +342,6 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                           删除
                         </Button>
                       </>
-                    ) : (
-                      <span className="text-xs text-[var(--text-faint)] italic px-2 py-1">
-                        外部目录技能保持只读，不可在线修改
-                      </span>
                     )}
                   </div>
                 </div>
@@ -401,7 +394,6 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
 
                 <CapabilityDetailSection title="技术详情" technical>
                   <dl className="capability-meta-list">
-                    {selectedSkill.display_name && <CapabilityMetaRow label="技能原名" value={selectedSkill.display_name} />}
                     {selectedSkill.source_root && <CapabilityMetaRow label="发现目录" value={selectedSkill.source_root} mono />}
                     <CapabilityMetaRow
                       label="名称"
@@ -438,8 +430,8 @@ export default function SkillsPage({ embedded = false, initialSkill }: { embedde
                       mono
                     />
                     <CapabilityMetaRow
-                      label="管理状态"
-                      value={selectedSkill.editable ? "工作区托管（可编辑）" : "外部目录（只读）"}
+                      label="托管方式"
+                      value={selectedSkill.editable ? "工作区托管" : selectedSkill.is_bundled ? "官方内置" : "外部目录"}
                     />
                   </dl>
                 </CapabilityDetailSection>

@@ -58,14 +58,12 @@ const EMPTY_DETAIL: DetailState = {
 function getMcpPresentation(mcp: McpServer): {
   statusTone: "default" | "success" | "warning" | "danger";
   statusLabel: string;
-  enableTone: "default" | "success";
   healthMessage: string | null;
 } {
   if (!mcp.enabled) {
     return {
       statusTone: "default",
       statusLabel: "已禁用",
-      enableTone: "default",
       healthMessage: null,
     };
   }
@@ -96,7 +94,6 @@ function getMcpPresentation(mcp: McpServer): {
       break;
   }
 
-  const enableTone = mcp.runtime_status === "ready" ? "success" : "default";
   const healthMessage =
     mcp.runtime_status === "ready"
       ? null
@@ -105,7 +102,6 @@ function getMcpPresentation(mcp: McpServer): {
   return {
     statusTone,
     statusLabel,
-    enableTone,
     healthMessage,
   };
 }
@@ -460,19 +456,18 @@ export default function PluginsPage({ embedded = false, initialServerId }: { emb
           </div>
         </div>
 
-        </>}
-        {/* Divider */}
         <div className="flex items-center gap-3">
           <div className="flex-1 border-t border-[var(--border)]" />
           <span className="text-xs text-[var(--text-faint)] font-mono uppercase">MCP 服务器</span>
           <div className="flex-1 border-t border-[var(--border)]" />
         </div>
+        </>}
 
         {/* MCP Servers */}
         <div className="capability-resource-split">
           <div className="capability-resource-list" aria-label="MCP 服务列表"><p className="capability-list-caption">{filteredServers.length} 个服务</p>{filteredServers.length ? filteredServers.map(server => { const presentation=getMcpPresentation(server); return <button type="button" key={server.id} className="capability-resource-row" aria-current={expandedId===server.id?"true":undefined} onClick={()=>toggleDetail(server.id)}><span className="capability-resource-name"><Link size={15}/><strong>{server.name}</strong></span><span>{mcpTransportRuntimeLabel(server.transport)}</span><small>{presentation.statusLabel} · {server.tools_count ?? "—"} 个工具</small></button>; }) : <EmptyState title="没有匹配的 MCP 服务" description="添加服务或调整筛选条件。" />}</div>
           <section className="capability-resource-detail" aria-label="MCP 服务详情">{selectedServer && selectedPresentation ? <>
-            <h3>{selectedServer.name}</h3><div className="flex gap-2"><Badge tone={selectedServer.enabled?"success":"default"}>{selectedServer.enabled?"已启用":"已禁用"}</Badge><CapabilityStatusBadge tone={selectedPresentation.statusTone} label={selectedPresentation.statusLabel}/></div>
+            <h3>{selectedServer.name}</h3><div className="flex flex-wrap gap-2">{selectedServer.enabled && selectedServer.runtime_status !== "ready" && <Badge tone="success">已启用</Badge>}<CapabilityStatusBadge tone={selectedPresentation.statusTone} label={selectedPresentation.statusLabel}/></div>
             <dl className="mt-3 flex flex-wrap gap-4 text-xs text-[var(--text-secondary)]" aria-label="MCP 运行时能力数量">
               <div className="flex gap-1.5"><dt>工具</dt><dd>{selectedServer.tools_count ?? "未读取"}</dd></div>
               <div className="flex gap-1.5"><dt>资源</dt><dd>{selectedServer.resources_count ?? "未读取"}</dd></div>
@@ -656,7 +651,7 @@ function McpDetailPanel({
 
   return (
     <div className="mt-4 border-t border-[var(--border)] pt-3">
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex flex-wrap items-center gap-2 mb-3">
         {tabs.map((t) => (
           <button
             key={t.key}
