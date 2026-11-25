@@ -311,24 +311,46 @@ fn service_descriptor_rejects_missing_text_setting() {
 }
 
 #[cfg(windows)]
+const TREE_WORKER: &str = "api::plugin_services::tests::managed_tree_worker";
+
+#[cfg(windows)]
+#[test]
+#[ignore = "started by the managed process-tree lifecycle test"]
+fn managed_tree_worker() {
+    // Run only in the per-test directory created by the lifecycle test.
+    assert!(std::path::Path::new("tree-fixture").is_file());
+    if std::env::var_os("YILIAN_TREE_FIXTURE_LEAF").is_some() {
+        std::fs::write("child.pending", std::process::id().to_string()).unwrap();
+        std::fs::rename("child.pending", "child.txt").unwrap();
+        std::thread::sleep(Duration::from_secs(120));
+        return;
+    }
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    crate::utils::process::hide_std_command_window(&mut command);
+    let status = command
+        .args(["--ignored", "--exact", TREE_WORKER])
+        .env("YILIAN_TREE_FIXTURE_LEAF", "1")
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[cfg(windows)]
 #[tokio::test]
 async fn service_start_confirmation_stop_disable_and_shutdown_own_the_process_tree() {
     let temp = std::env::temp_dir().join(format!("yilian-plugin-service-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp).unwrap();
-    let exe = std::path::PathBuf::from(std::env::var("SystemRoot").unwrap())
-        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let exe = std::env::current_exe().unwrap();
     let child_file = temp.join("child.txt");
-    // Publish the PID only after PowerShell has closed the output file.
-    // The parent observes its publication before opening the child process.
-    let script = r#"$p=Start-Process -WindowStyle Hidden -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 120') -PassThru; Set-Content -LiteralPath 'child.pending' -Value $p.Id; Move-Item -LiteralPath 'child.pending' -Destination 'child.txt'; Start-Sleep -Seconds 120"#.to_owned();
+    std::fs::write(temp.join("tree-fixture"), "").unwrap();
     let mut config = values();
     for (key, value) in [
         ("executable", exe.to_string_lossy().into_owned()),
         ("cwd", temp.to_string_lossy().into_owned()),
-        ("arg0", "-NoProfile".into()),
-        ("arg1", "-NonInteractive".into()),
-        ("arg2", "-Command".into()),
-        ("arg3", script),
+        ("arg0", "--ignored".into()),
+        ("arg1", "--exact".into()),
+        ("arg2", TREE_WORKER.into()),
+        ("arg3", "--nocapture".into()),
     ] {
         config.insert(key.into(), json!(value));
     }
@@ -378,15 +400,29 @@ async fn service_start_confirmation_stop_disable_and_shutdown_own_the_process_tr
             .0,
             StatusCode::CONFLICT
         );
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        while !child_file.exists() && std::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        let child_pid: u32 = std::fs::read_to_string(&child_file)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
+        let child_pid: u32 = tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                match std::fs::read_to_string(&child_file) {
+                    Ok(pid) => break pid.trim().parse().expect("fixture published a valid PID"),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        let state = server
+                            .plugin_services
+                            .status("fixture.qq", "napcat")
+                            .unwrap();
+                        assert_eq!(
+                            state.state, "running",
+                            "{action}: fixture exited before readiness, exit code {:?}",
+                            state.exit_code
+                        );
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    Err(error) => panic!("{action}: could not read fixture readiness: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("managed descendant did not publish its PID");
+        assert_ne!(started["pid"].as_u64().unwrap(), u64::from(child_pid));
         use windows_sys::Win32::{
             Foundation::{CloseHandle, WAIT_OBJECT_0},
             System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
