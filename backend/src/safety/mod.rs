@@ -15,6 +15,7 @@ pub mod control_session;
 pub mod descriptor;
 pub mod execution_gateway;
 pub mod grant;
+pub(crate) mod local_scope;
 pub mod permission;
 pub mod policy;
 pub mod policy_engine;

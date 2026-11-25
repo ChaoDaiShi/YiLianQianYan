@@ -68,26 +68,7 @@ fn local_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn lexical_relative(root: &Path, path: &Path) -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        let normalize = |path: &Path| {
-            PathBuf::from(
-                path.to_string_lossy()
-                    .trim_start_matches(r"\\?\")
-                    .to_ascii_lowercase(),
-            )
-        };
-        normalize(path)
-            .strip_prefix(normalize(root))
-            .ok()
-            .map(Path::to_path_buf)
-    }
-    #[cfg(not(windows))]
-    {
-        path.strip_prefix(root).ok().map(Path::to_path_buf)
-    }
-}
+pub(super) use crate::safety::local_scope::relative as lexical_relative;
 
 fn no_links(path: &Path) -> Result<(), String> {
     for ancestor in path.ancestors() {

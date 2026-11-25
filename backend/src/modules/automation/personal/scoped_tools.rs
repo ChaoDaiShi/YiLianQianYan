@@ -132,17 +132,7 @@ impl ScopedTool {
             {
                 return Err("资料查找不允许上级路径".into());
             }
-            #[cfg(windows)]
-            let lexical = |path: &Path| {
-                PathBuf::from(
-                    path.to_string_lossy()
-                        .trim_start_matches(r"\\?\")
-                        .to_lowercase(),
-                )
-            };
-            #[cfg(not(windows))]
-            let lexical = |path: &Path| path.to_path_buf();
-            if !lexical(Path::new(input)).starts_with(lexical(&self.root)) {
+            if crate::safety::local_scope::relative(&self.root, Path::new(input)).is_none() {
                 return Err("资料查找路径超出用户委托目录".into());
             }
             for ancestor in Path::new(input).ancestors() {

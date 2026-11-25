@@ -56,39 +56,7 @@ fn local_path(path: &Path) -> Result<(), String> {
 }
 
 fn lexical_within_root(root: &Path, path: &Path) -> bool {
-    #[cfg(windows)]
-    {
-        // Canonical Windows roots use \\?\ while ordinary caller paths do not.
-        // Compare components before any filesystem lookup; do not use a textual
-        // prefix ("scope-other" must never be considered a child of "scope").
-        fn parts(path: &Path) -> Option<Vec<String>> {
-            path.components()
-                .filter_map(|part| match part {
-                    Component::CurDir => None,
-                    Component::Prefix(prefix) => Some(match prefix.kind() {
-                        std::path::Prefix::Disk(disk) | std::path::Prefix::VerbatimDisk(disk) => {
-                            Some(format!("disk:{}", disk.to_ascii_lowercase() as char))
-                        }
-                        _ => None,
-                    }),
-                    Component::RootDir => Some(Some("root".into())),
-                    Component::Normal(name) => Some(
-                        name.to_str()
-                            .map(|name| format!("name:{}", name.to_ascii_lowercase())),
-                    ),
-                    Component::ParentDir => Some(None),
-                })
-                .collect()
-        }
-        let (Some(root), Some(path)) = (parts(root), parts(path)) else {
-            return false;
-        };
-        path.starts_with(&root)
-    }
-    #[cfg(not(windows))]
-    {
-        path.starts_with(root)
-    }
+    crate::safety::local_scope::relative(root, path).is_some()
 }
 
 fn checked_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
